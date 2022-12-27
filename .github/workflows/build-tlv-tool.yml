@@ -1,0 +1,26 @@
+name: Build-TLV-Tool
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cd tools/tlv_tool; cargo build --verbose
+    - name: Archive artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: tlv_tool
+        path: tools/tlv_tool/target/debug/tlv_tool
+
