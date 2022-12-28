@@ -35,7 +35,7 @@ pub struct Psm {}
 static mut G_PSM: Option<Arc<Mutex<Psm>>> = None;
 static INIT: Once = Once::new();
 
-const PSM_DIR: &str = "/tmp/plonk_psm";
+const PSM_DIR: &str = "/tmp/matter_psm";
 
 macro_rules! psm_path {
     ($key:ident) => {
