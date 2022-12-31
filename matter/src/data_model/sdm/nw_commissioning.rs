@@ -36,9 +36,9 @@ impl ClusterType for NwCommCluster {
 }
 
 enum FeatureMap {
-    _Wifi = 0,
-    _Thread = 1,
-    Ethernet = 2,
+    _Wifi = 0x01,
+    _Thread = 0x02,
+    Ethernet = 0x04,
 }
 
 impl NwCommCluster {
