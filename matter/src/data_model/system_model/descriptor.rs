@@ -48,6 +48,7 @@ impl DescriptorCluster {
             base: Cluster::new(ID)?,
         });
         c.base.add_attribute(attr_serverlist_new()?)?;
+        c.base.add_attribute(attr_partslist_new()?)?;
         Ok(c)
     }
 
@@ -65,6 +66,12 @@ impl DescriptorCluster {
         });
         let _ = tw.end_container();
     }
+
+    fn encode_parts_list(&self, tag: TagType, tw: &mut TLVWriter) {
+        // TODO: Support Partslist
+        let _ = tw.start_array(tag);
+        let _ = tw.end_container();
+    }
 }
 
 impl ClusterType for DescriptorCluster {
@@ -80,7 +87,9 @@ impl ClusterType for DescriptorCluster {
             Some(Attributes::ServerList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
                 self.encode_server_list(tag, tw)
             })),
-
+            Some(Attributes::PartsList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
+                self.encode_parts_list(tag, tw)
+            })),
             _ => {
                 error!("Attribute not supported: this shouldn't happen");
             }
@@ -91,6 +100,15 @@ impl ClusterType for DescriptorCluster {
 fn attr_serverlist_new() -> Result<Attribute, Error> {
     Attribute::new(
         Attributes::ServerList as u16,
+        AttrValue::Custom,
+        Access::RV,
+        Quality::NONE,
+    )
+}
+
+fn attr_partslist_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::PartsList as u16,
         AttrValue::Custom,
         Access::RV,
         Quality::NONE,
