@@ -23,6 +23,7 @@ use crate::{
     mdns::{self, Mdns},
     secure_channel::{common::*, pake::PAKE},
     sys::SysMdnsService,
+    tlv,
     transport::proto_demux::{self, ProtoCtx, ResponseRequired},
 };
 use log::{error, info};
@@ -120,7 +121,9 @@ impl proto_demux::HandleProto for SecureChannel {
         let proto_opcode: OpCode =
             num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(Error::Invalid)?;
         ctx.tx.set_proto_id(PROTO_ID_SECURE_CHANNEL as u16);
-        match proto_opcode {
+        info!("Received Data");
+        tlv::print_tlv_list(ctx.rx.as_borrow_slice());
+        let result = match proto_opcode {
             OpCode::MRPStandAloneAck => self.mrpstandaloneack_handler(ctx),
             OpCode::PBKDFParamRequest => self.pbkdfparamreq_handler(ctx),
             OpCode::PASEPake1 => self.pasepake1_handler(ctx),
@@ -131,7 +134,12 @@ impl proto_demux::HandleProto for SecureChannel {
                 error!("OpCode Not Handled: {:?}", proto_opcode);
                 Err(Error::InvalidOpcode)
             }
+        };
+        if result == Ok(ResponseRequired::Yes) {
+            info!("Sending response");
+            tlv::print_tlv_list(ctx.tx.as_borrow_slice());
         }
+        result
     }
 
     fn get_proto_id(&self) -> usize {
