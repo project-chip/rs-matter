@@ -475,7 +475,10 @@ impl Case {
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
         tw.str16_as(TagType::Context(1), |buf| fabric.noc.as_tlv(buf))?;
-        tw.str16_as(TagType::Context(2), |buf| fabric.icac.as_tlv(buf))?;
+        if let Some(icac_cert) = &fabric.icac {
+            tw.str16_as(TagType::Context(2), |buf| icac_cert.as_tlv(buf))?
+        };
+
         tw.str8(TagType::Context(3), signature)?;
         tw.str8(TagType::Context(4), &resumption_id)?;
         tw.end_container()?;
@@ -515,7 +518,9 @@ impl Case {
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
         tw.str16_as(TagType::Context(1), |buf| fabric.noc.as_tlv(buf))?;
-        tw.str16_as(TagType::Context(2), |buf| fabric.icac.as_tlv(buf))?;
+        if let Some(icac_cert) = &fabric.icac {
+            tw.str16_as(TagType::Context(2), |buf| icac_cert.as_tlv(buf))?;
+        }
         tw.str8(TagType::Context(3), our_pub_key)?;
         tw.str8(TagType::Context(4), peer_pub_key)?;
         tw.end_container()?;

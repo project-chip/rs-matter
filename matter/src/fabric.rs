@@ -52,7 +52,7 @@ pub struct Fabric {
     fabric_id: u64,
     key_pair: Box<dyn CryptoKeyPair>,
     pub root_ca: Cert,
-    pub icac: Cert,
+    pub icac: Option<Cert>,
     pub noc: Cert,
     pub ipk: KeySet,
     compressed_id: [u8; COMPRESSED_FABRIC_ID_LEN],
@@ -63,7 +63,7 @@ impl Fabric {
     pub fn new(
         key_pair: KeyPair,
         root_ca: Cert,
-        icac: Cert,
+        icac: Option<Cert>,
         noc: Cert,
         ipk: &[u8],
     ) -> Result<Self, Error> {
@@ -107,7 +107,7 @@ impl Fabric {
             fabric_id: 0,
             key_pair: Box::new(KeyPairDummy::new()?),
             root_ca: Cert::default(),
-            icac: Cert::default(),
+            icac: Some(Cert::default()),
             noc: Cert::default(),
             ipk: KeySet::default(),
             compressed_id: [0; COMPRESSED_FABRIC_ID_LEN],
@@ -165,8 +165,14 @@ impl Fabric {
         let mut key = [0u8; MAX_CERT_TLV_LEN];
         let len = self.root_ca.as_tlv(&mut key)?;
         psm.set_kv_slice(fb_key!(index, ST_RCA), &key[..len])?;
-        let len = self.icac.as_tlv(&mut key)?;
+
+        let len = if let Some(icac) = &self.icac {
+            icac.as_tlv(&mut key)?
+        } else {
+            0
+        };
         psm.set_kv_slice(fb_key!(index, ST_ICA), &key[..len])?;
+
         let len = self.noc.as_tlv(&mut key)?;
         psm.set_kv_slice(fb_key!(index, ST_NOC), &key[..len])?;
         psm.set_kv_slice(fb_key!(index, ST_IPK), self.ipk.epoch_key())?;
@@ -191,7 +197,11 @@ impl Fabric {
 
         let mut icac = Vec::new();
         psm.get_kv_slice(fb_key!(index, ST_ICA), &mut icac)?;
-        let icac = Cert::new(icac.as_slice())?;
+        let icac = if icac.len() != 0 {
+            Some(Cert::new(icac.as_slice())?)
+        } else {
+            None
+        };
 
         let mut noc = Vec::new();
         psm.get_kv_slice(fb_key!(index, ST_NOC), &mut noc)?;
