@@ -124,6 +124,7 @@ impl NocCluster {
             base: Cluster::new(ID)?,
         });
         c.base.add_attribute(attr_currfabindex_new()?)?;
+        c.base.add_attribute(attr_fabrics_new()?)?;
         Ok(c)
     }
 
@@ -364,6 +365,15 @@ fn attr_currfabindex_new() -> Result<Attribute, Error> {
     )
 }
 
+fn attr_fabrics_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::Fabrics as u16,
+        AttrValue::Custom,
+        Access::RV | Access::FAB_SCOPED,
+        Quality::NONE,
+    )
+}
+
 impl ClusterType for NocCluster {
     fn base(&self) -> &Cluster {
         &self.base
@@ -395,6 +405,17 @@ impl ClusterType for NocCluster {
             Some(Attributes::CurrentFabricIndex) => {
                 encoder.encode(EncodeValue::Value(&attr.fab_idx))
             }
+            Some(Attributes::Fabrics) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
+                let _ = tw.start_array(tag);
+                let _ = self.fabric_mgr.for_each(|entry, fab_idx| {
+                    if !attr.fab_filter || attr.fab_idx == fab_idx {
+                        let _ = entry
+                            .get_fabric_desc(fab_idx)
+                            .to_tlv(tw, TagType::Anonymous);
+                    }
+                });
+                let _ = tw.end_container();
+            })),
             _ => {
                 error!("Attribute not supported: this shouldn't happen");
             }

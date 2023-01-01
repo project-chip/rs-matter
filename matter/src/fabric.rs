@@ -28,6 +28,7 @@ use crate::{
     group_keys::KeySet,
     mdns::{self, Mdns},
     sys::{Psm, SysMdnsService},
+    tlv::{OctetStr, TLVWriter, TagType, ToTLV, UtfStr},
 };
 
 const MAX_CERT_TLV_LEN: usize = 300;
@@ -59,6 +60,19 @@ pub struct Fabric {
     pub ipk: KeySet,
     compressed_id: [u8; COMPRESSED_FABRIC_ID_LEN],
     mdns_service: Option<SysMdnsService>,
+}
+
+#[derive(ToTLV)]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub struct FabricDescriptor<'a> {
+    root_public_key: OctetStr<'a>,
+    vendor_id: u16,
+    fabric_id: u64,
+    node_id: u64,
+    label: UtfStr<'a>,
+    // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
+    #[tagval(0xFE)]
+    pub fab_idx: Option<u8>,
 }
 
 impl Fabric {
@@ -164,6 +178,17 @@ impl Fabric {
 
     pub fn get_fabric_id(&self) -> u64 {
         self.fabric_id
+    }
+
+    pub fn get_fabric_desc(&self, fab_idx: u8) -> FabricDescriptor {
+        FabricDescriptor {
+            root_public_key: OctetStr::new(self.root_ca.get_pubkey()),
+            vendor_id: self.vendor_id,
+            fabric_id: self.fabric_id,
+            node_id: self.node_id,
+            label: UtfStr::new(b""),
+            fab_idx: Some(fab_idx),
+        }
     }
 
     fn store(&self, index: usize, psm: &MutexGuard<Psm>) -> Result<(), Error> {
@@ -311,5 +336,19 @@ impl FabricMgr {
             }
         }
         true
+    }
+
+    // Parameters to T are the Fabric and its Fabric Index
+    pub fn for_each<T>(&self, mut f: T) -> Result<(), Error>
+    where
+        T: FnMut(&Fabric, u8),
+    {
+        let mgr = self.inner.read().unwrap();
+        for i in 1..MAX_SUPPORTED_FABRICS {
+            if let Some(fabric) = &mgr.fabrics[i] {
+                f(fabric, i as u8)
+            }
+        }
+        Ok(())
     }
 }
