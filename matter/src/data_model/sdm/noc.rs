@@ -78,6 +78,16 @@ pub enum Commands {
     AddTrustedRootCert = 0x0b,
 }
 
+#[derive(FromPrimitive)]
+enum Attributes {
+    NOCs = 0,
+    Fabrics = 1,
+    SupportedFabrics = 2,
+    CommissionedFabrics = 3,
+    TrustedRootCerts = 4,
+    CurrentFabricIndex = 5,
+}
+
 pub struct NocCluster {
     base: Cluster,
     dev_att: Box<dyn DevAttDataFetcher>,
@@ -106,13 +116,15 @@ impl NocCluster {
         acl_mgr: Arc<AclMgr>,
         failsafe: Arc<FailSafe>,
     ) -> Result<Box<Self>, Error> {
-        Ok(Box::new(Self {
+        let mut c = Box::new(Self {
             dev_att,
             fabric_mgr,
             acl_mgr,
             failsafe,
             base: Cluster::new(ID)?,
-        }))
+        });
+        c.base.add_attribute(attr_currfabindex_new()?)?;
+        Ok(c)
     }
 
     fn add_acl(&self, fab_idx: u8, admin_subject: u64) -> Result<(), Error> {
@@ -342,6 +354,15 @@ impl NocCluster {
     }
 }
 
+fn attr_currfabindex_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::CurrentFabricIndex as u16,
+        AttrValue::Custom,
+        Access::RV,
+        Quality::NONE,
+    )
+}
+
 impl ClusterType for NocCluster {
     fn base(&self) -> &Cluster {
         &self.base
@@ -365,6 +386,17 @@ impl ClusterType for NocCluster {
             Commands::AttReq => self.handle_command_attrequest(cmd_req),
             Commands::CertChainReq => self.handle_command_certchainrequest(cmd_req),
             _ => Err(IMStatusCode::UnsupportedCommand),
+        }
+    }
+
+    fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
+        match num::FromPrimitive::from_u16(attr.attr_id) {
+            Some(Attributes::CurrentFabricIndex) => {
+                encoder.encode(EncodeValue::Value(&attr.fab_idx))
+            }
+            _ => {
+                error!("Attribute not supported: this shouldn't happen");
+            }
         }
     }
 }
