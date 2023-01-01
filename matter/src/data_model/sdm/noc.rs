@@ -162,6 +162,7 @@ impl NocCluster {
             icac_value,
             noc_value,
             r.ipk_value.0,
+            r.vendor_id,
         )
         .map_err(|_| NocStatus::TableFull)?;
         let fab_idx = self
@@ -479,7 +480,7 @@ struct AddNocReq<'a> {
     icac_value: OctetStr<'a>,
     ipk_value: OctetStr<'a>,
     case_admin_subject: u64,
-    _vendor_id: u16,
+    vendor_id: u16,
 }
 
 #[derive(FromTLV)]

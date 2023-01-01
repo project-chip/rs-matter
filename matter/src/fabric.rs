@@ -39,6 +39,7 @@ macro_rules! fb_key {
     };
 }
 
+const ST_VID: &str = "vid";
 const ST_RCA: &str = "rca";
 const ST_ICA: &str = "ica";
 const ST_NOC: &str = "noc";
@@ -50,6 +51,7 @@ const ST_PRKEY: &str = "privkey";
 pub struct Fabric {
     node_id: u64,
     fabric_id: u64,
+    vendor_id: u16,
     key_pair: Box<dyn CryptoKeyPair>,
     pub root_ca: Cert,
     pub icac: Cert,
@@ -66,6 +68,7 @@ impl Fabric {
         icac: Cert,
         noc: Cert,
         ipk: &[u8],
+        vendor_id: u16,
     ) -> Result<Self, Error> {
         let node_id = noc.get_node_id()?;
         let fabric_id = noc.get_fabric_id()?;
@@ -73,6 +76,7 @@ impl Fabric {
         let mut f = Self {
             node_id,
             fabric_id,
+            vendor_id,
             key_pair: Box::new(key_pair),
             root_ca,
             icac,
@@ -105,6 +109,7 @@ impl Fabric {
         Ok(Self {
             node_id: 0,
             fabric_id: 0,
+            vendor_id: 0,
             key_pair: Box::new(KeyPairDummy::new()?),
             root_ca: Cert::default(),
             icac: Cert::default(),
@@ -181,6 +186,7 @@ impl Fabric {
         let key = &key[..len];
         psm.set_kv_slice(fb_key!(index, ST_PRKEY), key)?;
 
+        psm.set_kv_u64(ST_VID, self.vendor_id.into())?;
         Ok(())
     }
 
@@ -206,7 +212,17 @@ impl Fabric {
         psm.get_kv_slice(fb_key!(index, ST_PRKEY), &mut priv_key)?;
         let keypair = KeyPair::new_from_components(pub_key.as_slice(), priv_key.as_slice())?;
 
-        Fabric::new(keypair, root_ca, icac, noc, ipk.as_slice())
+        let mut vendor_id = 0;
+        psm.get_kv_u64(ST_VID, &mut vendor_id)?;
+
+        Fabric::new(
+            keypair,
+            root_ca,
+            icac,
+            noc,
+            ipk.as_slice(),
+            vendor_id as u16,
+        )
     }
 }
 
