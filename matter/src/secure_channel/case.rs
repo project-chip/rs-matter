@@ -120,7 +120,10 @@ impl Case {
         let d = Sigma3Decrypt::from_tlv(&root)?;
 
         let initiator_noc = Cert::new(d.initiator_noc.0)?;
-        let initiator_icac = Cert::new(d.initiator_icac.0)?;
+        let mut initiator_icac = None;
+        if let Some(icac) = d.initiator_icac {
+            initiator_icac = Some(Cert::new(icac.0)?);
+        }
         if let Err(e) = Case::validate_certs(fabric, &initiator_noc, &initiator_icac) {
             error!("Certificate Chain doesn't match: {}", e);
             common::create_sc_status_report(
@@ -134,7 +137,7 @@ impl Case {
 
         if Case::validate_sigma3_sign(
             d.initiator_noc.0,
-            d.initiator_icac.0,
+            d.initiator_icac.map(|a| a.0),
             &initiator_noc,
             d.signature.0,
             &case_session,
@@ -304,7 +307,7 @@ impl Case {
 
     fn validate_sigma3_sign(
         initiator_noc: &[u8],
-        initiator_icac: &[u8],
+        initiator_icac: Option<&[u8]>,
         initiator_noc_cert: &Cert,
         sign: &[u8],
         case_session: &CaseSession,
@@ -314,8 +317,10 @@ impl Case {
         let mut write_buf = WriteBuf::new(&mut buf, MAX_TBS_SIZE);
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
-        tw.str8(TagType::Context(1), initiator_noc)?;
-        tw.str8(TagType::Context(2), initiator_icac)?;
+        tw.str16(TagType::Context(1), initiator_noc)?;
+        if let Some(icac) = initiator_icac {
+            tw.str16(TagType::Context(2), icac)?;
+        }
         tw.str8(TagType::Context(3), &case_session.peer_pub_key)?;
         tw.str8(TagType::Context(4), &case_session.our_pub_key)?;
         tw.end_container()?;
@@ -325,22 +330,24 @@ impl Case {
         Ok(())
     }
 
-    fn validate_certs(fabric: &Fabric, noc: &Cert, icac: &Cert) -> Result<(), Error> {
-        if let Ok(fid) = icac.get_fabric_id() {
-            if fid != fabric.get_fabric_id() {
-                return Err(Error::Invalid);
-            }
-        }
+    fn validate_certs(fabric: &Fabric, noc: &Cert, icac: &Option<Cert>) -> Result<(), Error> {
+        let mut verifier = noc.verify_chain_start();
 
         if fabric.get_fabric_id() != noc.get_fabric_id()? {
             return Err(Error::Invalid);
         }
 
-        noc.verify_chain_start()
-            .add_cert(icac)?
-            .add_cert(&fabric.root_ca)?
-            .finalise()?;
+        if let Some(icac) = icac {
+            // If ICAC is present handle it
+            if let Ok(fid) = icac.get_fabric_id() {
+                if fid != fabric.get_fabric_id() {
+                    return Err(Error::Invalid);
+                }
+            }
+            verifier = verifier.add_cert(icac)?;
+        }
 
+        verifier.add_cert(&fabric.root_ca)?.finalise()?;
         Ok(())
     }
 
@@ -542,6 +549,6 @@ struct Sigma1Req<'a> {
 #[tlvargs(start = 1, lifetime = "'a")]
 struct Sigma3Decrypt<'a> {
     initiator_noc: OctetStr<'a>,
-    initiator_icac: OctetStr<'a>,
+    initiator_icac: Option<OctetStr<'a>>,
     signature: OctetStr<'a>,
 }
