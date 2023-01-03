@@ -78,6 +78,16 @@ pub enum Commands {
     AddTrustedRootCert = 0x0b,
 }
 
+#[derive(FromPrimitive)]
+enum Attributes {
+    NOCs = 0,
+    Fabrics = 1,
+    SupportedFabrics = 2,
+    CommissionedFabrics = 3,
+    TrustedRootCerts = 4,
+    CurrentFabricIndex = 5,
+}
+
 pub struct NocCluster {
     base: Cluster,
     dev_att: Box<dyn DevAttDataFetcher>,
@@ -106,13 +116,16 @@ impl NocCluster {
         acl_mgr: Arc<AclMgr>,
         failsafe: Arc<FailSafe>,
     ) -> Result<Box<Self>, Error> {
-        Ok(Box::new(Self {
+        let mut c = Box::new(Self {
             dev_att,
             fabric_mgr,
             acl_mgr,
             failsafe,
             base: Cluster::new(ID)?,
-        }))
+        });
+        c.base.add_attribute(attr_currfabindex_new()?)?;
+        c.base.add_attribute(attr_fabrics_new()?)?;
+        Ok(c)
     }
 
     fn add_acl(&self, fab_idx: u8, admin_subject: u64) -> Result<(), Error> {
@@ -155,6 +168,7 @@ impl NocCluster {
             icac_value,
             noc_value,
             r.ipk_value.0,
+            r.vendor_id,
         )
         .map_err(|_| NocStatus::TableFull)?;
         let fab_idx = self
@@ -347,6 +361,24 @@ impl NocCluster {
     }
 }
 
+fn attr_currfabindex_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::CurrentFabricIndex as u16,
+        AttrValue::Custom,
+        Access::RV,
+        Quality::NONE,
+    )
+}
+
+fn attr_fabrics_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::Fabrics as u16,
+        AttrValue::Custom,
+        Access::RV | Access::FAB_SCOPED,
+        Quality::NONE,
+    )
+}
+
 impl ClusterType for NocCluster {
     fn base(&self) -> &Cluster {
         &self.base
@@ -370,6 +402,28 @@ impl ClusterType for NocCluster {
             Commands::AttReq => self.handle_command_attrequest(cmd_req),
             Commands::CertChainReq => self.handle_command_certchainrequest(cmd_req),
             _ => Err(IMStatusCode::UnsupportedCommand),
+        }
+    }
+
+    fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
+        match num::FromPrimitive::from_u16(attr.attr_id) {
+            Some(Attributes::CurrentFabricIndex) => {
+                encoder.encode(EncodeValue::Value(&attr.fab_idx))
+            }
+            Some(Attributes::Fabrics) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
+                let _ = tw.start_array(tag);
+                let _ = self.fabric_mgr.for_each(|entry, fab_idx| {
+                    if !attr.fab_filter || attr.fab_idx == fab_idx {
+                        let _ = entry
+                            .get_fabric_desc(fab_idx)
+                            .to_tlv(tw, TagType::Anonymous);
+                    }
+                });
+                let _ = tw.end_container();
+            })),
+            _ => {
+                error!("Attribute not supported: this shouldn't happen");
+            }
         }
     }
 }
@@ -452,7 +506,7 @@ struct AddNocReq<'a> {
     icac_value: OctetStr<'a>,
     ipk_value: OctetStr<'a>,
     case_admin_subject: u64,
-    _vendor_id: u16,
+    vendor_id: u16,
 }
 
 #[derive(FromTLV)]
