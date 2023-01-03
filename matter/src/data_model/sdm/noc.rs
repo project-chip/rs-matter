@@ -141,8 +141,13 @@ impl NocCluster {
 
         let noc_value = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
         info!("Received NOC as: {}", noc_value);
-        let icac_value = Cert::new(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-        info!("Received ICAC as: {}", icac_value);
+        let icac_value = if r.icac_value.0.len() != 0 {
+            let cert = Cert::new(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+            info!("Received ICAC as: {}", cert);
+            Some(cert)
+        } else {
+            None
+        };
 
         let fabric = Fabric::new(
             noc_data.key_pair,
