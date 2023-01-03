@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use super::core::IMStatusCode;
 use super::core::OpCode;
 use super::messages::ib;
 use super::messages::msg;
@@ -50,11 +51,22 @@ impl InteractionModel {
         rx_buf: &[u8],
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
-        proto_tx.set_proto_opcode(OpCode::InvokeResponse as u8);
+        if InteractionModel::req_timeout_handled(trans, proto_tx)? == true {
+            return Ok(ResponseRequired::Yes);
+        }
 
+        proto_tx.set_proto_opcode(OpCode::InvokeResponse as u8);
         let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
         let root = get_root_node_struct(rx_buf)?;
         let inv_req = InvReq::from_tlv(&root)?;
+
+        let timed_tx = trans.exch.get_expiry_ts().map(|_| true);
+        let timed_request = inv_req.timed_request.filter(|a| *a == true);
+        // Either both should be None, or both should be Some(true)
+        if timed_tx != timed_request {
+            InteractionModel::create_status_response(proto_tx, IMStatusCode::TimedRequestMisMatch)?;
+            return Ok(ResponseRequired::Yes);
+        }
 
         tw.start_struct(TagType::Anonymous)?;
         // Suppress Response -> TODO: Need to revisit this for cases where we send a command back

@@ -32,6 +32,9 @@ impl InteractionModel {
         rx_buf: &[u8],
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
+        if InteractionModel::req_timeout_handled(trans, proto_tx)? == true {
+            return Ok(ResponseRequired::Yes);
+        }
         proto_tx.set_proto_opcode(OpCode::WriteResponse as u8);
 
         let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);

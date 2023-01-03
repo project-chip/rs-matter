@@ -67,10 +67,21 @@ pub mod msg {
 
     use crate::{
         error::Error,
+        interaction_model::core::IMStatusCode,
         tlv::{FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
     };
 
     use super::ib::{AttrData, AttrPath, AttrResp, CmdData, DataVersionFilter};
+
+    #[derive(FromTLV)]
+    pub struct TimedReq {
+        pub timeout: u16,
+    }
+
+    #[derive(ToTLV)]
+    pub struct StatusResp {
+        pub status: IMStatusCode,
+    }
 
     #[derive(FromTLV)]
     #[tlvargs(lifetime = "'a")]
