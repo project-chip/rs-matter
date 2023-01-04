@@ -58,6 +58,10 @@ pub struct ImEngine {
     pub dm: DataModel,
     pub acl_mgr: Arc<AclMgr>,
     pub im: Box<InteractionModel>,
+    // By default, a new exchange is created for every run, if you wish to instead using a specific
+    // exchange, set this variable. This is helpful in situations where you have to run multiple
+    // actions in the same transaction (exchange)
+    pub exch: Option<Exchange>,
 }
 
 pub struct ImInput<'a> {
@@ -111,12 +115,19 @@ impl ImEngine {
 
         let im = Box::new(InteractionModel::new(Box::new(dm.clone())));
 
-        Self { dm, acl_mgr, im }
+        Self {
+            dm,
+            acl_mgr,
+            im,
+            exch: None,
+        }
     }
 
     /// Run a transaction through the interaction model engine
     pub fn process(&mut self, input: &ImInput, data_out: &mut [u8]) -> usize {
-        let mut exch = Exchange::new(1, 0, exchange::Role::Responder);
+        let mut new_exch = Exchange::new(1, 0, exchange::Role::Responder);
+        // Choose whether to use a new exchange, or use the one from the ImEngine configuration
+        let mut exch = self.exch.as_mut().unwrap_or_else(|| &mut new_exch);
 
         let mut sess_mgr: SessionMgr = Default::default();
 
