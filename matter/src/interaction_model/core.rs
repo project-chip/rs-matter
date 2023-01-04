@@ -78,11 +78,15 @@ impl<'a> Transaction<'a> {
 
     pub fn set_timeout(&mut self, timeout: u64) {
         self.exch
-            .set_expiry_ts(SystemTime::now().checked_add(Duration::from_millis(timeout)));
+            .set_data_time(SystemTime::now().checked_add(Duration::from_millis(timeout)));
+    }
+
+    pub fn get_timeout(&mut self) -> Option<SystemTime> {
+        self.exch.get_data_time()
     }
 
     pub fn has_timed_out(&self) -> bool {
-        if let Some(timeout) = self.exch.get_expiry_ts() {
+        if let Some(timeout) = self.exch.get_data_time() {
             if SystemTime::now() > timeout {
                 return true;
             }

@@ -129,15 +129,15 @@ impl Exchange {
         }
     }
 
-    pub fn set_exchange_data(&mut self, data: Box<dyn Any>) {
+    pub fn set_data_boxed(&mut self, data: Box<dyn Any>) {
         self.data = DataOption::Boxed(data);
     }
 
-    pub fn clear_exchange_data(&mut self) {
+    pub fn clear_data_boxed(&mut self) {
         self.data = DataOption::None;
     }
 
-    pub fn get_exchange_data<T: Any>(&mut self) -> Option<&mut T> {
+    pub fn get_data_boxed<T: Any>(&mut self) -> Option<&mut T> {
         if let DataOption::Boxed(a) = &mut self.data {
             a.downcast_mut::<T>()
         } else {
@@ -145,7 +145,7 @@ impl Exchange {
         }
     }
 
-    pub fn take_exchange_data<T: Any>(&mut self) -> Option<Box<T>> {
+    pub fn take_data_boxed<T: Any>(&mut self) -> Option<Box<T>> {
         let old = std::mem::replace(&mut self.data, DataOption::None);
         match old {
             DataOption::Boxed(d) => d.downcast::<T>().ok(),
@@ -156,13 +156,13 @@ impl Exchange {
         }
     }
 
-    pub fn set_expiry_ts(&mut self, expiry_ts: Option<SystemTime>) {
+    pub fn set_data_time(&mut self, expiry_ts: Option<SystemTime>) {
         if let Some(t) = expiry_ts {
             self.data = DataOption::Time(t);
         }
     }
 
-    pub fn get_expiry_ts(&self) -> Option<SystemTime> {
+    pub fn get_data_time(&self) -> Option<SystemTime> {
         match self.data {
             DataOption::Time(t) => Some(t),
             _ => None,

@@ -60,7 +60,7 @@ impl InteractionModel {
         let root = get_root_node_struct(rx_buf)?;
         let inv_req = InvReq::from_tlv(&root)?;
 
-        let timed_tx = trans.exch.get_expiry_ts().map(|_| true);
+        let timed_tx = trans.get_timeout().map(|_| true);
         let timed_request = inv_req.timed_request.filter(|a| *a == true);
         // Either both should be None, or both should be Some(true)
         if timed_tx != timed_request {
