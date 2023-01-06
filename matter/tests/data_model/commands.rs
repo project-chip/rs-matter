@@ -47,8 +47,7 @@ fn handle_commands(input: &[(CmdPath, Option<u8>)], expected: &[ExpectedInvResp]
 
     td.commands(input).unwrap();
 
-    let (_, out_buf_len) = im_engine(OpCode::InvokeRequest, wb.as_borrow_slice(), &mut out_buf);
-    let out_buf = &out_buf[..out_buf_len];
+    let (_, _, out_buf) = im_engine(OpCode::InvokeRequest, wb.as_borrow_slice(), &mut out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 

@@ -73,8 +73,7 @@ fn gen_read_reqs_output<'a>(
     let mut input = ImInput::new(OpCode::ReadRequest, wb.as_borrow_slice());
     input.set_peer_node_id(peer_node_id);
 
-    let out_buf_len = im.process(&input, out_buf);
-    let out_buf = &out_buf[..out_buf_len];
+    let (_, out_buf) = im.process(&input, out_buf);
 
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
@@ -100,9 +99,8 @@ fn handle_write_reqs(
 
     let mut input = ImInput::new(OpCode::WriteRequest, wb.as_borrow_slice());
     input.set_peer_node_id(peer_node_id);
-    let out_buf_len = im.process(&input, &mut out_buf);
+    let (_, out_buf) = im.process(&input, &mut out_buf);
 
-    let out_buf = &out_buf[..out_buf_len];
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 

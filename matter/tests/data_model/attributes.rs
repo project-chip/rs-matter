@@ -54,8 +54,7 @@ fn gen_read_reqs_output<'a>(input: &[AttrPath], out_buf: &'a mut [u8]) -> Report
     let read_req = ReadReq::new(true).set_attr_requests(input);
     read_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let (_, out_buf_len) = im_engine(OpCode::ReadRequest, wb.as_borrow_slice(), out_buf);
-    let out_buf = &out_buf[..out_buf_len];
+    let (_, _, out_buf) = im_engine(OpCode::ReadRequest, wb.as_borrow_slice(), out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
     ReportDataMsg::from_tlv(&root).unwrap()
@@ -73,12 +72,12 @@ fn handle_write_reqs(input: &[AttrData], expected: &[AttrStatus]) -> DataModel {
     let write_req = WriteReq::new(false, input);
     write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let (dm, out_buf_len) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
-    let out_buf = &out_buf[..out_buf_len];
+    let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 
     let mut index = 0;
+
     let response_iter = root
         .find_tag(msg::WriteRespTag::WriteResponses as u32)
         .unwrap()

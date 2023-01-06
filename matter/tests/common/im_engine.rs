@@ -29,7 +29,7 @@ use matter::{
     error::Error,
     fabric::FabricMgr,
     interaction_model::{core::OpCode, messages::ib::CmdPath, messages::msg, InteractionModel},
-    tlv::{TLVWriter, TagType, ToTLV},
+    tlv::{TLVArray, TLVWriter, TagType, ToTLV},
     transport::packet::Packet,
     transport::proto_demux::HandleProto,
     transport::{
@@ -124,7 +124,7 @@ impl ImEngine {
     }
 
     /// Run a transaction through the interaction model engine
-    pub fn process(&mut self, input: &ImInput, data_out: &mut [u8]) -> usize {
+    pub fn process<'a>(&mut self, input: &ImInput, data_out: &'a mut [u8]) -> (u8, &'a mut [u8]) {
         let mut new_exch = Exchange::new(1, 0, exchange::Role::Responder);
         // Choose whether to use a new exchange, or use the one from the ImEngine configuration
         let mut exch = self.exch.as_mut().unwrap_or_else(|| &mut new_exch);
@@ -163,16 +163,21 @@ impl ImEngine {
         self.im.handle_proto_id(&mut ctx).unwrap();
         let out_data_len = ctx.tx.as_borrow_slice().len();
         data_out[..out_data_len].copy_from_slice(ctx.tx.as_borrow_slice());
-        out_data_len
+        let response = ctx.tx.get_proto_opcode();
+        (response, &mut data_out[..out_data_len])
     }
 }
 
 // Create an Interaction Model, Data Model and run a rx/tx transaction through it
-pub fn im_engine(action: OpCode, data_in: &[u8], data_out: &mut [u8]) -> (DataModel, usize) {
+pub fn im_engine<'a>(
+    action: OpCode,
+    data_in: &[u8],
+    data_out: &'a mut [u8],
+) -> (DataModel, u8, &'a mut [u8]) {
     let mut engine = ImEngine::new();
     let input = ImInput::new(action, data_in);
-    let output_len = engine.process(&input, data_out);
-    (engine.dm, output_len)
+    let (response, output) = engine.process(&input, data_out);
+    (engine.dm, response, output)
 }
 
 pub struct TestData<'a, 'b> {

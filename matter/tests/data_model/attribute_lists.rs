@@ -46,8 +46,7 @@ fn handle_write_reqs(input: &[AttrData], expected: &[AttrStatus]) -> DataModel {
     let write_req = WriteReq::new(false, input);
     write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let (dm, out_buf_len) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
-    let out_buf = &out_buf[..out_buf_len];
+    let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 
