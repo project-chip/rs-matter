@@ -73,12 +73,12 @@ pub mod msg {
 
     use super::ib::{AttrData, AttrPath, AttrResp, CmdData, DataVersionFilter};
 
-    #[derive(FromTLV)]
+    #[derive(FromTLV, ToTLV)]
     pub struct TimedReq {
         pub timeout: u16,
     }
 
-    #[derive(ToTLV)]
+    #[derive(FromTLV, ToTLV)]
     pub struct StatusResp {
         pub status: IMStatusCode,
     }

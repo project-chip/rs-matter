@@ -22,4 +22,5 @@ mod data_model {
     mod attribute_lists;
     mod attributes;
     mod commands;
+    mod timed_requests;
 }

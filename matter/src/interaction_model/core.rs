@@ -44,7 +44,7 @@ use super::{messages::msg::TimedReq, InteractionConsumer};
 /* Interaction Model ID as per the Matter Spec */
 const PROTO_ID_INTERACTION_MODEL: usize = 0x01;
 
-#[derive(FromPrimitive, Debug, Copy, Clone)]
+#[derive(FromPrimitive, Debug, Copy, Clone, PartialEq)]
 pub enum OpCode {
     Reserved = 0,
     StatusResponse = 1,
