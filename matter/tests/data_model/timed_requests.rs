@@ -25,11 +25,11 @@ use matter::{
     },
     interaction_model::{
         core::{IMStatusCode, OpCode},
+        messages::GenericPath,
         messages::{
             ib::{AttrData, AttrPath, AttrStatus},
-            msg::{StatusResp, TimedReq, WriteReq},
+            msg::{StatusResp, TimedReq, WriteReq, WriteResp},
         },
-        messages::{msg, GenericPath},
     },
     tlv::{self, FromTLV, TLVWriter, TagType, ToTLV},
     transport::exchange::{self, Exchange},
@@ -86,29 +86,14 @@ fn handle_timed_write_reqs(
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 
-    let mut index = 0;
-
     match expected {
         WriteResponse::TransactionSuccess(t) => {
             assert_eq!(
                 num::FromPrimitive::from_u8(resp_opcode),
                 Some(OpCode::WriteResponse)
             );
-            let response_iter = root
-                .find_tag(msg::WriteRespTag::WriteResponses as u32)
-                .unwrap()
-                .confirm_array()
-                .unwrap()
-                .enter()
-                .unwrap();
-            for response in response_iter {
-                println!("Validating index {}", index);
-                let status = AttrStatus::from_tlv(&response).unwrap();
-                assert_eq!(t[index], status);
-                println!("Index {} success", index);
-                index += 1;
-            }
-            assert_eq!(index, t.len());
+            let resp = WriteResp::from_tlv(&root).unwrap();
+            assert_eq!(resp.write_responses, t);
         }
         WriteResponse::TransactionError => {
             assert_eq!(

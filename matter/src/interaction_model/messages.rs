@@ -71,7 +71,7 @@ pub mod msg {
         tlv::{FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
     };
 
-    use super::ib::{AttrData, AttrPath, AttrResp, CmdData, DataVersionFilter};
+    use super::ib::{self, AttrData, AttrPath, AttrResp, AttrStatus, CmdData, DataVersionFilter};
 
     #[derive(FromTLV, ToTLV)]
     pub struct TimedReq {
@@ -83,6 +83,12 @@ pub mod msg {
         pub status: IMStatusCode,
     }
 
+    pub enum InvReqTag {
+        SupressResponse = 0,
+        TimedReq = 1,
+        InvokeRequests = 2,
+    }
+
     #[derive(FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct InvReq<'a> {
@@ -91,15 +97,18 @@ pub mod msg {
         pub inv_requests: Option<TLVArray<'a, CmdData<'a>>>,
     }
 
+    // This enum is helpful when we are constructing the response
+    // step by step in incremental manner
     pub enum InvRespTag {
         SupressResponse = 0,
         InvokeResponses = 1,
     }
 
-    pub enum InvReqTag {
-        SupressResponse = 0,
-        TimedReq = 1,
-        InvokeRequests = 2,
+    #[derive(FromTLV, ToTLV, Debug)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct InvResp<'a> {
+        pub suppress_response: Option<bool>,
+        pub inv_responses: Option<TLVArray<'a, ib::InvResp<'a>>>,
     }
 
     #[derive(Default, ToTLV, FromTLV)]
@@ -171,6 +180,12 @@ pub mod msg {
     }
 
     // Write Response
+    #[derive(ToTLV, FromTLV)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct WriteResp<'a> {
+        pub write_responses: TLVArray<'a, AttrStatus>,
+    }
+
     pub enum WriteRespTag {
         WriteResponses = 0,
     }
@@ -190,7 +205,7 @@ pub mod ib {
     use super::GenericPath;
 
     // Command Response
-    #[derive(Clone, Copy, FromTLV, ToTLV)]
+    #[derive(Clone, Copy, FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub enum InvResp<'a> {
         Cmd(CmdData<'a>),

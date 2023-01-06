@@ -56,17 +56,10 @@ fn handle_commands(input: &[CmdData], expected: &[ExpectedInvResp]) {
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 
+    let resp = msg::InvResp::from_tlv(&root).unwrap();
     let mut index = 0;
-    let cmd_list_iter = root
-        .find_tag(msg::InvRespTag::InvokeResponses as u32)
-        .unwrap()
-        .confirm_array()
-        .unwrap()
-        .enter()
-        .unwrap();
-    for response in cmd_list_iter {
+    for inv_response in resp.inv_responses.unwrap().iter() {
         println!("Validating index {}", index);
-        let inv_response = InvResp::from_tlv(&response).unwrap();
         match expected[index] {
             ExpectedInvResp::Cmd(e_c, e_d) => match inv_response {
                 InvResp::Cmd(c) => {

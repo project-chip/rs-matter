@@ -23,11 +23,11 @@ use matter::{
     },
     interaction_model::{
         core::{IMStatusCode, OpCode},
+        messages::GenericPath,
         messages::{
             ib::{AttrData, AttrPath, AttrResp, AttrStatus},
-            msg::{ReadReq, ReportDataMsg, WriteReq},
+            msg::{ReadReq, ReportDataMsg, WriteReq, WriteResp},
         },
-        messages::{msg, GenericPath},
     },
     tlv::{self, ElementType, FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
     utils::writebuf::WriteBuf,
@@ -73,26 +73,10 @@ fn handle_write_reqs(input: &[AttrData], expected: &[AttrStatus]) -> DataModel {
     write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
     let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
-    tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
+    let response = WriteResp::from_tlv(&root).unwrap();
+    assert_eq!(response.write_responses, expected);
 
-    let mut index = 0;
-
-    let response_iter = root
-        .find_tag(msg::WriteRespTag::WriteResponses as u32)
-        .unwrap()
-        .confirm_array()
-        .unwrap()
-        .enter()
-        .unwrap();
-    for response in response_iter {
-        println!("Validating index {}", index);
-        let status = AttrStatus::from_tlv(&response).unwrap();
-        assert_eq!(expected[index], status);
-        println!("Index {} success", index);
-        index += 1;
-    }
-    assert_eq!(index, expected.len());
     dm
 }
 

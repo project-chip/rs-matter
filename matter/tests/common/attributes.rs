@@ -21,6 +21,7 @@ use matter::interaction_model::{messages::ib::AttrResp, messages::msg::ReportDat
 pub fn assert_attr_report(received: &ReportDataMsg, expected: &[AttrResp]) {
     let mut index = 0;
 
+    // We can't use assert_eq because it will also try to match data-version
     for inv_response in received.attr_reports.as_ref().unwrap().iter() {
         println!("Validating index {}", index);
         match expected[index] {
@@ -34,14 +35,7 @@ pub fn assert_attr_report(received: &ReportDataMsg, expected: &[AttrResp]) {
                     panic!("Invalid response, expected AttrRespIn::Data");
                 }
             },
-            AttrResp::Status(e_s) => match inv_response {
-                AttrResp::Status(s) => {
-                    assert_eq!(e_s, s);
-                }
-                _ => {
-                    panic!("Invalid response, expected AttrRespIn::Status");
-                }
-            },
+            AttrResp::Status(s) => assert_eq!(AttrResp::Status(s), inv_response),
         }
         println!("Index {} success", index);
         index += 1;
