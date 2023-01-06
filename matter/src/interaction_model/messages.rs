@@ -83,7 +83,7 @@ pub mod msg {
         pub status: IMStatusCode,
     }
 
-    #[derive(FromTLV)]
+    #[derive(FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct InvReq<'a> {
         pub suppress_response: Option<bool>,

@@ -19,17 +19,17 @@ use matter::{
     data_model::{cluster_on_off, objects::EncodeValue},
     interaction_model::{
         core::{IMStatusCode, OpCode},
-        messages::ib::{CmdPath, CmdStatus, InvResp},
         messages::msg,
+        messages::{
+            ib::{CmdData, CmdPath, CmdStatus, InvResp},
+            msg::InvReq,
+        },
     },
-    tlv::{self, FromTLV},
+    tlv::{self, FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
     utils::writebuf::WriteBuf,
 };
 
-use crate::common::{
-    echo_cluster,
-    im_engine::{im_engine, TestData},
-};
+use crate::common::{echo_cluster, im_engine::im_engine};
 
 enum ExpectedInvResp {
     Cmd(CmdPath, u8),
@@ -37,15 +37,20 @@ enum ExpectedInvResp {
 }
 
 // Helper for handling Invoke Command sequences
-fn handle_commands(input: &[(CmdPath, Option<u8>)], expected: &[ExpectedInvResp]) {
+fn handle_commands(input: &[CmdData], expected: &[ExpectedInvResp]) {
     let mut buf = [0u8; 400];
     let mut out_buf = [0u8; 400];
 
     let buf_len = buf.len();
     let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut td = TestData::new(&mut wb);
+    let mut tw = TLVWriter::new(&mut wb);
 
-    td.commands(input).unwrap();
+    let req = InvReq {
+        suppress_response: Some(false),
+        timed_request: Some(false),
+        inv_requests: Some(TLVArray::Slice(input)),
+    };
+    req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
     let (_, _, out_buf) = im_engine(OpCode::InvokeRequest, wb.as_borrow_slice(), &mut out_buf);
     tlv::print_tlv_list(out_buf);
@@ -92,15 +97,21 @@ fn handle_commands(input: &[(CmdPath, Option<u8>)], expected: &[ExpectedInvResp]
     assert_eq!(index, expected.len());
 }
 
+macro_rules! cmd_data {
+    ($path:ident, $data:literal) => {
+        CmdData::new($path, EncodeValue::Value(&($data as u32)))
+    };
+}
+
 macro_rules! echo_req {
     ($endpoint:literal, $data:literal) => {
-        (
+        CmdData::new(
             CmdPath::new(
                 Some($endpoint),
                 Some(echo_cluster::ID),
                 Some(echo_cluster::Commands::EchoReq as u16),
             ),
-            Some($data),
+            EncodeValue::Value(&($data as u32)),
         )
     };
 }
@@ -158,11 +169,11 @@ fn test_invoke_cmds_unsupported_fields() {
     let invalid_command = CmdPath::new(Some(0), Some(echo_cluster::ID), Some(0x1234));
     let invalid_command_wc_endpoint = CmdPath::new(None, Some(echo_cluster::ID), Some(0x1234));
     let input = &[
-        (invalid_endpoint, Some(5)),
-        (invalid_cluster, Some(5)),
-        (invalid_cluster_wc_endpoint, Some(5)),
-        (invalid_command, Some(5)),
-        (invalid_command_wc_endpoint, Some(5)),
+        cmd_data!(invalid_endpoint, 5),
+        cmd_data!(invalid_cluster, 5),
+        cmd_data!(invalid_cluster_wc_endpoint, 5),
+        cmd_data!(invalid_command, 5),
+        cmd_data!(invalid_command_wc_endpoint, 5),
     ];
 
     let expected = &[
@@ -190,15 +201,12 @@ fn test_invoke_cmd_wc_endpoint_all_have_clusters() {
     // 1 echo Request with wildcard endpoint
     // should generate 2 responses from the echo clusters on both
     let _ = env_logger::try_init();
-
-    let input = &[(
-        CmdPath::new(
-            None,
-            Some(echo_cluster::ID),
-            Some(echo_cluster::Commands::EchoReq as u16),
-        ),
-        Some(5),
-    )];
+    let path = CmdPath::new(
+        None,
+        Some(echo_cluster::ID),
+        Some(echo_cluster::Commands::EchoReq as u16),
+    );
+    let input = &[cmd_data!(path, 5)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 15)];
     handle_commands(input, expected);
 }
@@ -219,7 +227,7 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
         Some(cluster_on_off::ID),
         Some(cluster_on_off::Commands::On as u16),
     );
-    let input = &[(target, Some(1))];
+    let input = &[cmd_data!(target, 1)];
     let expected = &[ExpectedInvResp::Status(CmdStatus::new(
         expected_path,
         IMStatusCode::Sucess,

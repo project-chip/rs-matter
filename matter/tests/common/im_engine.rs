@@ -28,8 +28,7 @@ use matter::{
     },
     error::Error,
     fabric::FabricMgr,
-    interaction_model::{core::OpCode, messages::ib::CmdPath, messages::msg, InteractionModel},
-    tlv::{TLVArray, TLVWriter, TagType, ToTLV},
+    interaction_model::{core::OpCode, InteractionModel},
     transport::packet::Packet,
     transport::proto_demux::HandleProto,
     transport::{
@@ -39,7 +38,6 @@ use matter::{
         proto_demux::ProtoCtx,
         session::{CloneData, SessionMgr, SessionMode},
     },
-    utils::writebuf::WriteBuf,
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -178,40 +176,4 @@ pub fn im_engine<'a>(
     let input = ImInput::new(action, data_in);
     let (response, output) = engine.process(&input, data_out);
     (engine.dm, response, output)
-}
-
-pub struct TestData<'a, 'b> {
-    tw: TLVWriter<'a, 'b>,
-}
-
-impl<'a, 'b> TestData<'a, 'b> {
-    pub fn new(buf: &'b mut WriteBuf<'a>) -> Self {
-        Self {
-            tw: TLVWriter::new(buf),
-        }
-    }
-
-    pub fn commands(&mut self, cmds: &[(CmdPath, Option<u8>)]) -> Result<(), Error> {
-        self.tw.start_struct(TagType::Anonymous)?;
-        self.tw.bool(
-            TagType::Context(msg::InvReqTag::SupressResponse as u8),
-            false,
-        )?;
-        self.tw
-            .bool(TagType::Context(msg::InvReqTag::TimedReq as u8), false)?;
-        self.tw
-            .start_array(TagType::Context(msg::InvReqTag::InvokeRequests as u8))?;
-
-        for (cmd, data) in cmds {
-            self.tw.start_struct(TagType::Anonymous)?;
-            cmd.to_tlv(&mut self.tw, TagType::Context(0))?;
-            if let Some(d) = *data {
-                self.tw.u8(TagType::Context(1), d)?;
-            }
-            self.tw.end_container()?;
-        }
-
-        self.tw.end_container()?;
-        self.tw.end_container()
-    }
 }
