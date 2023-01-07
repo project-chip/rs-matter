@@ -19,6 +19,7 @@ use super::cluster_basic_information::BasicInfoCluster;
 use super::cluster_basic_information::BasicInfoConfig;
 use super::cluster_on_off::OnOffCluster;
 use super::objects::*;
+use super::sdm::admin_commissioning::AdminCommCluster;
 use super::sdm::dev_att::DevAttDataFetcher;
 use super::sdm::general_commissioning::GenCommCluster;
 use super::sdm::noc::NocCluster;
@@ -51,6 +52,7 @@ pub fn device_type_add_root_node(
     let failsafe = general_commissioning.failsafe();
     node.add_cluster(0, general_commissioning)?;
     node.add_cluster(0, NwCommCluster::new()?)?;
+    node.add_cluster(0, AdminCommCluster::new()?)?;
     node.add_cluster(
         0,
         NocCluster::new(dev_att, fabric_mgr, acl_mgr.clone(), failsafe)?,
