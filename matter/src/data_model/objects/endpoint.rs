@@ -19,7 +19,7 @@ use crate::{data_model::objects::ClusterType, error::*, interaction_model::core:
 
 use std::fmt;
 
-pub const CLUSTERS_PER_ENDPT: usize = 7;
+pub const CLUSTERS_PER_ENDPT: usize = 9;
 
 pub struct Endpoint {
     clusters: Vec<Box<dyn ClusterType>>,
