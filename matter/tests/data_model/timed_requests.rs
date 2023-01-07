@@ -25,21 +25,56 @@ use matter::{
     },
     interaction_model::{
         core::{IMStatusCode, OpCode},
-        messages::GenericPath,
+        messages::{ib::CmdData, ib::CmdPath, msg::InvReq, GenericPath},
         messages::{
             ib::{AttrData, AttrPath, AttrStatus},
-            msg::{StatusResp, TimedReq, WriteReq, WriteResp},
+            msg::{self, StatusResp, TimedReq, WriteReq, WriteResp},
         },
     },
-    tlv::{self, FromTLV, TLVWriter},
+    tlv::{self, FromTLV, TLVArray, TLVWriter, ToTLV},
     transport::exchange::{self, Exchange},
 };
 
-use crate::common::{
-    echo_cluster,
-    im_engine::{ImEngine, ImInput},
+use crate::{
+    common::{
+        commands::*,
+        echo_cluster,
+        im_engine::{ImEngine, ImInput},
+    },
+    echo_req, echo_resp,
 };
 
+fn handle_timed_reqs<'a>(
+    opcode: OpCode,
+    request: &dyn ToTLV,
+    timeout: u16,
+    delay: u16,
+    output: &'a mut [u8],
+) -> (u8, DataModel, &'a [u8]) {
+    let mut im_engine = ImEngine::new();
+    // Use the same exchange for all parts of the transaction
+    im_engine.exch = Some(Exchange::new(1, 0, exchange::Role::Responder));
+
+    if timeout != 0 {
+        // Send Timed Req
+        let mut tmp_buf = [0u8; 400];
+        let timed_req = TimedReq { timeout };
+        let im_input = ImInput::new(OpCode::TimedRequest, &timed_req);
+        let (_, out_buf) = im_engine.process(&im_input, &mut tmp_buf);
+        tlv::print_tlv_list(out_buf);
+    } else {
+        println!("Skipping timed request");
+    }
+
+    // Process any delays
+    let delay = time::Duration::from_millis(delay.into());
+    thread::sleep(delay);
+
+    // Send Write Req
+    let input = ImInput::new(opcode, request);
+    let (resp_opcode, output) = im_engine.process(&input, output);
+    (resp_opcode, im_engine.dm, output)
+}
 enum WriteResponse<'a> {
     TransactionError,
     TransactionSuccess(&'a [AttrStatus]),
@@ -52,27 +87,16 @@ fn handle_timed_write_reqs(
     timeout: u16,
     delay: u16,
 ) -> DataModel {
-    let mut im_engine = ImEngine::new();
-    // Use the same exchange for all parts of the transaction
-    im_engine.exch = Some(Exchange::new(1, 0, exchange::Role::Responder));
-
-    // Send Timed Req
-    let mut out_buf = [0u8; 400];
-    let timed_req = TimedReq { timeout };
-    let im_input = ImInput::new(OpCode::TimedRequest, &timed_req);
-    let (_, out_buf) = im_engine.process(&im_input, &mut out_buf);
-    tlv::print_tlv_list(out_buf);
-
-    // Process any delays
-    let delay = time::Duration::from_millis(delay.into());
-    thread::sleep(delay);
-
-    // Send Write Req
     let mut out_buf = [0u8; 400];
     let write_req = WriteReq::new(false, input);
-    let input = ImInput::new(OpCode::WriteRequest, &write_req);
-    let (resp_opcode, out_buf) = im_engine.process(&input, &mut out_buf);
 
+    let (resp_opcode, dm, out_buf) = handle_timed_reqs(
+        OpCode::WriteRequest,
+        &write_req,
+        timeout,
+        delay,
+        &mut out_buf,
+    );
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 
@@ -94,7 +118,7 @@ fn handle_timed_write_reqs(
             assert_eq!(status_resp.status, IMStatusCode::Timeout);
         }
     }
-    im_engine.dm
+    dm
 }
 
 #[test]
@@ -156,5 +180,105 @@ fn test_timed_write_fail_and_success() {
             echo_cluster::Attributes::AttWrite as u16
         )
         .unwrap()
+    );
+}
+
+enum TimedInvResponse<'a> {
+    TransactionError(IMStatusCode),
+    TransactionSuccess(&'a [ExpectedInvResp]),
+}
+// Helper for handling Invoke Command sequences
+fn handle_timed_commands(
+    input: &[CmdData],
+    expected: TimedInvResponse,
+    timeout: u16,
+    delay: u16,
+    set_timed_request: bool,
+) -> DataModel {
+    let mut out_buf = [0u8; 400];
+    let req = InvReq {
+        suppress_response: Some(false),
+        timed_request: Some(set_timed_request),
+        inv_requests: Some(TLVArray::Slice(input)),
+    };
+
+    let (resp_opcode, dm, out_buf) =
+        handle_timed_reqs(OpCode::InvokeRequest, &req, timeout, delay, &mut out_buf);
+    tlv::print_tlv_list(out_buf);
+    let root = tlv::get_root_node_struct(out_buf).unwrap();
+
+    match expected {
+        TimedInvResponse::TransactionSuccess(t) => {
+            assert_eq!(
+                num::FromPrimitive::from_u8(resp_opcode),
+                Some(OpCode::InvokeResponse)
+            );
+            let resp = msg::InvResp::from_tlv(&root).unwrap();
+            assert_inv_response(&resp, t)
+        }
+        TimedInvResponse::TransactionError(e) => {
+            assert_eq!(
+                num::FromPrimitive::from_u8(resp_opcode),
+                Some(OpCode::StatusResponse)
+            );
+            let status_resp = StatusResp::from_tlv(&root).unwrap();
+            assert_eq!(status_resp.status, e);
+        }
+    }
+    dm
+}
+
+#[test]
+fn test_timed_cmd_success() {
+    // A timed request that works
+    let _ = env_logger::try_init();
+
+    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
+    let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
+    handle_timed_commands(
+        input,
+        TimedInvResponse::TransactionSuccess(expected),
+        400,
+        0,
+        true,
+    );
+}
+
+#[test]
+fn test_timed_cmd_timeout() {
+    // A timed request that is executed after t imeout
+    let _ = env_logger::try_init();
+
+    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
+    handle_timed_commands(
+        input,
+        TimedInvResponse::TransactionError(IMStatusCode::Timeout),
+        400,
+        500,
+        true,
+    );
+}
+
+#[test]
+fn test_timed_cmd_timedout_mismatch() {
+    // A timed request with timeout mismatch
+    let _ = env_logger::try_init();
+
+    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
+    handle_timed_commands(
+        input,
+        TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
+        400,
+        0,
+        false,
+    );
+
+    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
+    handle_timed_commands(
+        input,
+        TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
+        0,
+        0,
+        true,
     );
 }

@@ -15,25 +15,24 @@
  *    limitations under the License.
  */
 
+use crate::{
+    cmd_data,
+    common::{commands::*, echo_cluster, im_engine::im_engine},
+    echo_req, echo_resp,
+};
+
 use matter::{
     data_model::{cluster_on_off, objects::EncodeValue},
     interaction_model::{
         core::{IMStatusCode, OpCode},
-        messages::msg,
         messages::{
-            ib::{CmdData, CmdPath, CmdStatus, InvResp},
+            ib::{CmdData, CmdPath, CmdStatus},
+            msg,
             msg::InvReq,
         },
     },
     tlv::{self, FromTLV, TLVArray},
 };
-
-use crate::common::{echo_cluster, im_engine::im_engine};
-
-enum ExpectedInvResp {
-    Cmd(CmdPath, u8),
-    Status(CmdStatus),
-}
 
 // Helper for handling Invoke Command sequences
 fn handle_commands(input: &[CmdData], expected: &[ExpectedInvResp]) {
@@ -47,71 +46,8 @@ fn handle_commands(input: &[CmdData], expected: &[ExpectedInvResp]) {
     let (_, _, out_buf) = im_engine(OpCode::InvokeRequest, &req, &mut out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
-
     let resp = msg::InvResp::from_tlv(&root).unwrap();
-    let mut index = 0;
-    for inv_response in resp.inv_responses.unwrap().iter() {
-        println!("Validating index {}", index);
-        match expected[index] {
-            ExpectedInvResp::Cmd(e_c, e_d) => match inv_response {
-                InvResp::Cmd(c) => {
-                    assert_eq!(e_c, c.path);
-                    match c.data {
-                        EncodeValue::Tlv(t) => {
-                            assert_eq!(e_d, t.find_tag(0).unwrap().u8().unwrap())
-                        }
-                        _ => panic!("Incorrect CmdDataType"),
-                    }
-                }
-                _ => {
-                    panic!("Invalid response, expected InvResponse::Cmd");
-                }
-            },
-            ExpectedInvResp::Status(e_status) => match inv_response {
-                InvResp::Status(status) => {
-                    assert_eq!(e_status, status);
-                }
-                _ => {
-                    panic!("Invalid response, expected InvResponse::Status");
-                }
-            },
-        }
-        println!("Index {} success", index);
-        index += 1;
-    }
-    assert_eq!(index, expected.len());
-}
-
-macro_rules! cmd_data {
-    ($path:ident, $data:literal) => {
-        CmdData::new($path, EncodeValue::Value(&($data as u32)))
-    };
-}
-
-macro_rules! echo_req {
-    ($endpoint:literal, $data:literal) => {
-        CmdData::new(
-            CmdPath::new(
-                Some($endpoint),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::Commands::EchoReq as u16),
-            ),
-            EncodeValue::Value(&($data as u32)),
-        )
-    };
-}
-
-macro_rules! echo_resp {
-    ($endpoint:literal, $data:literal) => {
-        ExpectedInvResp::Cmd(
-            CmdPath::new(
-                Some($endpoint),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::Commands::EchoResp as u16),
-            ),
-            $data,
-        )
-    };
+    assert_inv_response(&resp, expected)
 }
 
 #[test]
