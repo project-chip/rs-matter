@@ -19,14 +19,13 @@ use matter::{
     data_model::{core::DataModel, objects::EncodeValue},
     interaction_model::{
         core::{IMStatusCode, OpCode},
+        messages::GenericPath,
         messages::{
             ib::{AttrData, AttrPath, AttrStatus},
-            msg::WriteReq,
+            msg::{WriteReq, WriteResp},
         },
-        messages::{msg, GenericPath},
     },
-    tlv::{self, FromTLV, Nullable, TLVWriter, TagType, ToTLV},
-    utils::writebuf::WriteBuf,
+    tlv::{self, FromTLV, Nullable},
 };
 
 use crate::common::{
@@ -36,37 +35,14 @@ use crate::common::{
 
 // Helper for handling Write Attribute sequences
 fn handle_write_reqs(input: &[AttrData], expected: &[AttrStatus]) -> DataModel {
-    let mut buf = [0u8; 400];
     let mut out_buf = [0u8; 400];
-
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-
     let write_req = WriteReq::new(false, input);
-    write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let (dm, out_buf_len) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
-    let out_buf = &out_buf[..out_buf_len];
+    let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, &write_req, &mut out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
-
-    let mut index = 0;
-    let response_iter = root
-        .find_tag(msg::WriteRespTag::WriteResponses as u32)
-        .unwrap()
-        .confirm_array()
-        .unwrap()
-        .enter()
-        .unwrap();
-    for response in response_iter {
-        println!("Validating index {}", index);
-        let status = AttrStatus::from_tlv(&response).unwrap();
-        assert_eq!(expected[index], status);
-        println!("Index {} success", index);
-        index += 1;
-    }
-    assert_eq!(index, expected.len());
+    let resp = WriteResp::from_tlv(&root).unwrap();
+    assert_eq!(resp.write_responses, expected);
     dm
 }
 

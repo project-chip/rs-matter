@@ -19,6 +19,7 @@ use super::{ElementType, TLVContainerIterator, TLVElement, TLVWriter, TagType};
 use crate::error::Error;
 use core::slice::Iter;
 use log::error;
+use std::fmt::Debug;
 
 pub trait FromTLV<'a> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error>
@@ -282,6 +283,7 @@ impl<T> TLVArrayOwned<T> {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum TLVArray<'a, T> {
     // This is used for the to-tlv path
     Slice(&'a [T]),
@@ -342,6 +344,27 @@ impl<'a, T: FromTLV<'a> + Copy> Iterator for TLVArrayIter<'a, T> {
     }
 }
 
+impl<'a, T> PartialEq<&[T]> for TLVArray<'a, T>
+where
+    T: ToTLV + FromTLV<'a> + Copy + PartialEq,
+{
+    fn eq(&self, other: &&[T]) -> bool {
+        let mut iter1 = self.iter();
+        let mut iter2 = other.into_iter();
+        loop {
+            match (iter1.next(), iter2.next()) {
+                (None, None) => return true,
+                (Some(x), Some(y)) => {
+                    if x != *y {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
 impl<'a, T: ToTLV> ToTLV for TLVArray<'a, T> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
         match *self {
@@ -361,6 +384,15 @@ impl<'a, T> FromTLV<'a> for TLVArray<'a, T> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
         t.confirm_array()?;
         Ok(Self::Ptr(*t))
+    }
+}
+
+impl<'a, T: Debug + ToTLV + FromTLV<'a> + Copy> Debug for TLVArray<'a, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for i in self.iter() {
+            writeln!(f, "{:?}", i)?;
+        }
+        writeln!(f, "")
     }
 }
 

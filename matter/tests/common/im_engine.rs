@@ -28,7 +28,7 @@ use matter::{
     },
     error::Error,
     fabric::FabricMgr,
-    interaction_model::{core::OpCode, messages::ib::CmdPath, messages::msg, InteractionModel},
+    interaction_model::{core::OpCode, InteractionModel},
     tlv::{TLVWriter, TagType, ToTLV},
     transport::packet::Packet,
     transport::proto_demux::HandleProto,
@@ -58,20 +58,24 @@ pub struct ImEngine {
     pub dm: DataModel,
     pub acl_mgr: Arc<AclMgr>,
     pub im: Box<InteractionModel>,
+    // By default, a new exchange is created for every run, if you wish to instead using a specific
+    // exchange, set this variable. This is helpful in situations where you have to run multiple
+    // actions in the same transaction (exchange)
+    pub exch: Option<Exchange>,
 }
 
 pub struct ImInput<'a> {
     action: OpCode,
-    data_in: &'a [u8],
+    data: &'a dyn ToTLV,
     peer_id: u64,
 }
 
 pub const IM_ENGINE_PEER_ID: u64 = 445566;
 impl<'a> ImInput<'a> {
-    pub fn new(action: OpCode, data_in: &'a [u8]) -> Self {
+    pub fn new(action: OpCode, data: &'a dyn ToTLV) -> Self {
         Self {
             action,
-            data_in,
+            data,
             peer_id: IM_ENGINE_PEER_ID,
         }
     }
@@ -111,12 +115,19 @@ impl ImEngine {
 
         let im = Box::new(InteractionModel::new(Box::new(dm.clone())));
 
-        Self { dm, acl_mgr, im }
+        Self {
+            dm,
+            acl_mgr,
+            im,
+            exch: None,
+        }
     }
 
     /// Run a transaction through the interaction model engine
-    pub fn process(&mut self, input: &ImInput, data_out: &mut [u8]) -> usize {
-        let mut exch = Exchange::new(1, 0, exchange::Role::Responder);
+    pub fn process<'a>(&mut self, input: &ImInput, data_out: &'a mut [u8]) -> (u8, &'a mut [u8]) {
+        let mut new_exch = Exchange::new(1, 0, exchange::Role::Responder);
+        // Choose whether to use a new exchange, or use the one from the ImEngine configuration
+        let mut exch = self.exch.as_mut().unwrap_or_else(|| &mut new_exch);
 
         let mut sess_mgr: SessionMgr = Default::default();
 
@@ -143,59 +154,39 @@ impl ImEngine {
         rx.set_proto_id(0x01);
         rx.set_proto_opcode(input.action as u8);
         rx.peer = Address::default();
-        let in_data_len = input.data_in.len();
-        let rx_buf = rx.as_borrow_slice();
-        rx_buf[..in_data_len].copy_from_slice(input.data_in);
-        rx.get_parsebuf().unwrap().set_len(in_data_len);
+
+        {
+            let mut buf = [0u8; 400];
+            let buf_len = buf.len();
+            let mut wb = WriteBuf::new(&mut buf, buf_len);
+            let mut tw = TLVWriter::new(&mut wb);
+
+            input.data.to_tlv(&mut tw, TagType::Anonymous).unwrap();
+
+            let input_data = wb.as_borrow_slice();
+            let in_data_len = input_data.len();
+            let rx_buf = rx.as_borrow_slice();
+            rx_buf[..in_data_len].copy_from_slice(input_data);
+            rx.get_parsebuf().unwrap().set_len(in_data_len);
+        }
 
         let mut ctx = ProtoCtx::new(exch_ctx, rx, tx);
         self.im.handle_proto_id(&mut ctx).unwrap();
         let out_data_len = ctx.tx.as_borrow_slice().len();
         data_out[..out_data_len].copy_from_slice(ctx.tx.as_borrow_slice());
-        out_data_len
+        let response = ctx.tx.get_proto_opcode();
+        (response, &mut data_out[..out_data_len])
     }
 }
 
 // Create an Interaction Model, Data Model and run a rx/tx transaction through it
-pub fn im_engine(action: OpCode, data_in: &[u8], data_out: &mut [u8]) -> (DataModel, usize) {
+pub fn im_engine<'a>(
+    action: OpCode,
+    data: &dyn ToTLV,
+    data_out: &'a mut [u8],
+) -> (DataModel, u8, &'a mut [u8]) {
     let mut engine = ImEngine::new();
-    let input = ImInput::new(action, data_in);
-    let output_len = engine.process(&input, data_out);
-    (engine.dm, output_len)
-}
-
-pub struct TestData<'a, 'b> {
-    tw: TLVWriter<'a, 'b>,
-}
-
-impl<'a, 'b> TestData<'a, 'b> {
-    pub fn new(buf: &'b mut WriteBuf<'a>) -> Self {
-        Self {
-            tw: TLVWriter::new(buf),
-        }
-    }
-
-    pub fn commands(&mut self, cmds: &[(CmdPath, Option<u8>)]) -> Result<(), Error> {
-        self.tw.start_struct(TagType::Anonymous)?;
-        self.tw.bool(
-            TagType::Context(msg::InvReqTag::SupressResponse as u8),
-            false,
-        )?;
-        self.tw
-            .bool(TagType::Context(msg::InvReqTag::TimedReq as u8), false)?;
-        self.tw
-            .start_array(TagType::Context(msg::InvReqTag::InvokeRequests as u8))?;
-
-        for (cmd, data) in cmds {
-            self.tw.start_struct(TagType::Anonymous)?;
-            cmd.to_tlv(&mut self.tw, TagType::Context(0))?;
-            if let Some(d) = *data {
-                self.tw.u8(TagType::Context(1), d)?;
-            }
-            self.tw.end_container()?;
-        }
-
-        self.tw.end_container()?;
-        self.tw.end_container()
-    }
+    let input = ImInput::new(action, data);
+    let (response, output) = engine.process(&input, data_out);
+    (engine.dm, response, output)
 }
