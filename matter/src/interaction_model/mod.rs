@@ -15,9 +15,11 @@
  *    limitations under the License.
  */
 
-use std::any::Any;
-
-use crate::{error::Error, tlv::TLVWriter, transport::session::Session};
+use crate::{
+    error::Error,
+    tlv::TLVWriter,
+    transport::{exchange::Exchange, session::Session},
+};
 
 use self::messages::msg::{InvReq, ReadReq, WriteReq};
 
@@ -28,8 +30,8 @@ pub enum TransactionState {
 }
 pub struct Transaction<'a> {
     pub state: TransactionState,
-    pub data: Option<Box<dyn Any>>,
     pub session: &'a mut Session,
+    pub exch: &'a mut Exchange,
 }
 
 pub trait InteractionConsumer {

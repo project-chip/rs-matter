@@ -15,10 +15,15 @@
  *    limitations under the License.
  */
 
+use std::time::{Duration, SystemTime};
+
 use crate::{
     error::*,
-    tlv::{self, FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
+    interaction_model::messages::msg::StatusResp,
+    tlv::{self, get_root_node_struct, FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
     transport::{
+        exchange::Exchange,
+        packet::Packet,
         proto_demux::{self, ProtoCtx, ResponseRequired},
         session::Session,
     },
@@ -28,10 +33,10 @@ use log::{error, info};
 use num;
 use num_derive::FromPrimitive;
 
-use super::InteractionConsumer;
 use super::InteractionModel;
 use super::Transaction;
 use super::TransactionState;
+use super::{messages::msg::TimedReq, InteractionConsumer};
 
 /* Handle messages related to the Interation Model
  */
@@ -55,11 +60,11 @@ pub enum OpCode {
 }
 
 impl<'a> Transaction<'a> {
-    pub fn new(session: &'a mut Session) -> Self {
+    pub fn new(session: &'a mut Session, exch: &'a mut Exchange) -> Self {
         Self {
             state: TransactionState::Ongoing,
-            data: None,
             session,
+            exch,
         }
     }
 
@@ -70,17 +75,81 @@ impl<'a> Transaction<'a> {
     pub fn is_complete(&self) -> bool {
         self.state == TransactionState::Complete
     }
+
+    pub fn set_timeout(&mut self, timeout: u64) {
+        self.exch
+            .set_data_time(SystemTime::now().checked_add(Duration::from_millis(timeout)));
+    }
+
+    pub fn get_timeout(&mut self) -> Option<SystemTime> {
+        self.exch.get_data_time()
+    }
+
+    pub fn has_timed_out(&self) -> bool {
+        if let Some(timeout) = self.exch.get_data_time() {
+            if SystemTime::now() > timeout {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl InteractionModel {
     pub fn new(consumer: Box<dyn InteractionConsumer>) -> InteractionModel {
         InteractionModel { consumer }
     }
+
+    pub fn handle_timed_req(
+        &mut self,
+        trans: &mut Transaction,
+        rx_buf: &[u8],
+        proto_tx: &mut Packet,
+    ) -> Result<ResponseRequired, Error> {
+        proto_tx.set_proto_opcode(OpCode::StatusResponse as u8);
+
+        let root = get_root_node_struct(rx_buf)?;
+        let req = TimedReq::from_tlv(&root)?;
+        trans.set_timeout(req.timeout.into());
+
+        let status = StatusResp {
+            status: IMStatusCode::Sucess,
+        };
+        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
+        let _ = status.to_tlv(&mut tw, TagType::Anonymous);
+        Ok(ResponseRequired::Yes)
+    }
+
+    /// Handle Request Timeouts
+    /// This API checks if a request was a timed request, and if so, and if the timeout has
+    /// expired, it will generate the appropriate response as expected
+    pub(super) fn req_timeout_handled(
+        trans: &mut Transaction,
+        proto_tx: &mut Packet,
+    ) -> Result<bool, Error> {
+        if trans.has_timed_out() {
+            trans.complete();
+            InteractionModel::create_status_response(proto_tx, IMStatusCode::Timeout)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub(super) fn create_status_response(
+        proto_tx: &mut Packet,
+        status: IMStatusCode,
+    ) -> Result<(), Error> {
+        proto_tx.set_proto_opcode(OpCode::StatusResponse as u8);
+        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
+        let status = StatusResp { status };
+        status.to_tlv(&mut tw, TagType::Anonymous)
+    }
 }
 
 impl proto_demux::HandleProto for InteractionModel {
     fn handle_proto_id(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
-        let mut trans = Transaction::new(&mut ctx.exch_ctx.sess);
+        let mut trans = Transaction::new(&mut ctx.exch_ctx.sess, ctx.exch_ctx.exch);
         let proto_opcode: OpCode =
             num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(Error::Invalid)?;
         ctx.tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
@@ -92,6 +161,7 @@ impl proto_demux::HandleProto for InteractionModel {
             OpCode::InvokeRequest => self.handle_invoke_req(&mut trans, buf, &mut ctx.tx)?,
             OpCode::ReadRequest => self.handle_read_req(&mut trans, buf, &mut ctx.tx)?,
             OpCode::WriteRequest => self.handle_write_req(&mut trans, buf, &mut ctx.tx)?,
+            OpCode::TimedRequest => self.handle_timed_req(&mut trans, buf, &mut ctx.tx)?,
             _ => {
                 error!("Opcode Not Handled: {:?}", proto_opcode);
                 return Err(Error::InvalidOpcode);
@@ -137,6 +207,10 @@ pub enum IMStatusCode {
     UnsupportedCluster = 0xc3,
     NoUpstreamSubscription = 0xc5,
     NeedsTimedInteraction = 0xc6,
+    UnsupportedEvent = 0xc7,
+    PathsExhausted = 0xc8,
+    TimedRequestMisMatch = 0xc9,
+    FailSafeRequired = 0xca,
 }
 
 impl From<Error> for IMStatusCode {

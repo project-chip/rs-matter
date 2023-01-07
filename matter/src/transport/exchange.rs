@@ -20,6 +20,7 @@ use colored::*;
 use log::{error, info, trace};
 use std::any::Any;
 use std::fmt;
+use std::time::SystemTime;
 
 use crate::error::Error;
 use crate::secure_channel;
@@ -59,17 +60,32 @@ impl Default for State {
     }
 }
 
+// Instead of just doing an Option<>, we create some special handling
+// where the commonly used higher layer data store does't have to do a Box
+#[derive(Debug)]
+pub enum DataOption {
+    Boxed(Box<dyn Any>),
+    Time(SystemTime),
+    None,
+}
+
+impl Default for DataOption {
+    fn default() -> Self {
+        DataOption::None
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Exchange {
     id: u16,
     sess_idx: usize,
     role: Role,
     state: State,
+    mrp: ReliableMessage,
     // Currently I see this primarily used in PASE and CASE. If that is the limited use
     // of this, we might move this into a separate data structure, so as not to burden
     // all 'exchanges'.
-    data: Option<Box<dyn Any>>,
-    mrp: ReliableMessage,
+    data: DataOption,
 }
 
 impl Exchange {
@@ -79,13 +95,13 @@ impl Exchange {
             sess_idx,
             role,
             state: State::Open,
-            data: None,
             mrp: ReliableMessage::new(),
+            ..Default::default()
         }
     }
 
     pub fn close(&mut self) {
-        self.data = None;
+        self.data = DataOption::None;
         self.state = State::Close;
     }
 
@@ -106,20 +122,51 @@ impl Exchange {
         self.role
     }
 
-    pub fn set_exchange_data(&mut self, data: Box<dyn Any>) {
-        self.data = Some(data);
+    pub fn is_data_none(&self) -> bool {
+        match self.data {
+            DataOption::None => true,
+            _ => false,
+        }
     }
 
-    pub fn clear_exchange_data(&mut self) {
-        self.data = None;
+    pub fn set_data_boxed(&mut self, data: Box<dyn Any>) {
+        self.data = DataOption::Boxed(data);
     }
 
-    pub fn get_exchange_data<T: Any>(&mut self) -> Option<&mut T> {
-        self.data.as_mut()?.downcast_mut::<T>()
+    pub fn clear_data_boxed(&mut self) {
+        self.data = DataOption::None;
     }
 
-    pub fn take_exchange_data<T: Any>(&mut self) -> Option<Box<T>> {
-        self.data.take()?.downcast::<T>().ok()
+    pub fn get_data_boxed<T: Any>(&mut self) -> Option<&mut T> {
+        if let DataOption::Boxed(a) = &mut self.data {
+            a.downcast_mut::<T>()
+        } else {
+            None
+        }
+    }
+
+    pub fn take_data_boxed<T: Any>(&mut self) -> Option<Box<T>> {
+        let old = std::mem::replace(&mut self.data, DataOption::None);
+        match old {
+            DataOption::Boxed(d) => d.downcast::<T>().ok(),
+            _ => {
+                self.data = old;
+                None
+            }
+        }
+    }
+
+    pub fn set_data_time(&mut self, expiry_ts: Option<SystemTime>) {
+        if let Some(t) = expiry_ts {
+            self.data = DataOption::Time(t);
+        }
+    }
+
+    pub fn get_data_time(&self) -> Option<SystemTime> {
+        match self.data {
+            DataOption::Time(t) => Some(t),
+            _ => None,
+        }
     }
 
     fn send(

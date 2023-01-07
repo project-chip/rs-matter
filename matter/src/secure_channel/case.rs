@@ -82,7 +82,7 @@ impl Case {
         let mut case_session = ctx
             .exch_ctx
             .exch
-            .take_exchange_data::<CaseSession>()
+            .take_data_boxed::<CaseSession>()
             .ok_or(Error::InvalidState)?;
         if case_session.state != State::Sigma1Rx {
             return Err(Error::Invalid);
@@ -171,7 +171,7 @@ impl Case {
             SCStatusCodes::SessionEstablishmentSuccess,
             None,
         )?;
-        ctx.exch_ctx.exch.clear_exchange_data();
+        ctx.exch_ctx.exch.clear_data_boxed();
         ctx.exch_ctx.exch.close();
 
         Ok(())
@@ -269,7 +269,7 @@ impl Case {
         tw.str16(TagType::Context(4), encrypted)?;
         tw.end_container()?;
         case_session.tt_hash.update(ctx.tx.as_borrow_slice())?;
-        ctx.exch_ctx.exch.set_exchange_data(case_session);
+        ctx.exch_ctx.exch.set_data_boxed(case_session);
         Ok(())
     }
 
