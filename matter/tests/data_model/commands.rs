@@ -25,8 +25,7 @@ use matter::{
             msg::InvReq,
         },
     },
-    tlv::{self, FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
-    utils::writebuf::WriteBuf,
+    tlv::{self, FromTLV, TLVArray},
 };
 
 use crate::common::{echo_cluster, im_engine::im_engine};
@@ -38,21 +37,14 @@ enum ExpectedInvResp {
 
 // Helper for handling Invoke Command sequences
 fn handle_commands(input: &[CmdData], expected: &[ExpectedInvResp]) {
-    let mut buf = [0u8; 400];
     let mut out_buf = [0u8; 400];
-
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-
     let req = InvReq {
         suppress_response: Some(false),
         timed_request: Some(false),
         inv_requests: Some(TLVArray::Slice(input)),
     };
-    req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let (_, _, out_buf) = im_engine(OpCode::InvokeRequest, wb.as_borrow_slice(), &mut out_buf);
+    let (_, _, out_buf) = im_engine(OpCode::InvokeRequest, &req, &mut out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
 

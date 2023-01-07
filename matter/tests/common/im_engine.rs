@@ -29,6 +29,7 @@ use matter::{
     error::Error,
     fabric::FabricMgr,
     interaction_model::{core::OpCode, InteractionModel},
+    tlv::{TLVWriter, TagType, ToTLV},
     transport::packet::Packet,
     transport::proto_demux::HandleProto,
     transport::{
@@ -38,6 +39,7 @@ use matter::{
         proto_demux::ProtoCtx,
         session::{CloneData, SessionMgr, SessionMode},
     },
+    utils::writebuf::WriteBuf,
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
@@ -64,16 +66,16 @@ pub struct ImEngine {
 
 pub struct ImInput<'a> {
     action: OpCode,
-    data_in: &'a [u8],
+    data: &'a dyn ToTLV,
     peer_id: u64,
 }
 
 pub const IM_ENGINE_PEER_ID: u64 = 445566;
 impl<'a> ImInput<'a> {
-    pub fn new(action: OpCode, data_in: &'a [u8]) -> Self {
+    pub fn new(action: OpCode, data: &'a dyn ToTLV) -> Self {
         Self {
             action,
-            data_in,
+            data,
             peer_id: IM_ENGINE_PEER_ID,
         }
     }
@@ -152,10 +154,21 @@ impl ImEngine {
         rx.set_proto_id(0x01);
         rx.set_proto_opcode(input.action as u8);
         rx.peer = Address::default();
-        let in_data_len = input.data_in.len();
-        let rx_buf = rx.as_borrow_slice();
-        rx_buf[..in_data_len].copy_from_slice(input.data_in);
-        rx.get_parsebuf().unwrap().set_len(in_data_len);
+
+        {
+            let mut buf = [0u8; 400];
+            let buf_len = buf.len();
+            let mut wb = WriteBuf::new(&mut buf, buf_len);
+            let mut tw = TLVWriter::new(&mut wb);
+
+            input.data.to_tlv(&mut tw, TagType::Anonymous).unwrap();
+
+            let input_data = wb.as_borrow_slice();
+            let in_data_len = input_data.len();
+            let rx_buf = rx.as_borrow_slice();
+            rx_buf[..in_data_len].copy_from_slice(input_data);
+            rx.get_parsebuf().unwrap().set_len(in_data_len);
+        }
 
         let mut ctx = ProtoCtx::new(exch_ctx, rx, tx);
         self.im.handle_proto_id(&mut ctx).unwrap();
@@ -169,11 +182,11 @@ impl ImEngine {
 // Create an Interaction Model, Data Model and run a rx/tx transaction through it
 pub fn im_engine<'a>(
     action: OpCode,
-    data_in: &[u8],
+    data: &dyn ToTLV,
     data_out: &'a mut [u8],
 ) -> (DataModel, u8, &'a mut [u8]) {
     let mut engine = ImEngine::new();
-    let input = ImInput::new(action, data_in);
+    let input = ImInput::new(action, data);
     let (response, output) = engine.process(&input, data_out);
     (engine.dm, response, output)
 }

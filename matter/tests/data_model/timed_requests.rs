@@ -31,9 +31,8 @@ use matter::{
             msg::{StatusResp, TimedReq, WriteReq, WriteResp},
         },
     },
-    tlv::{self, FromTLV, TLVWriter, TagType, ToTLV},
+    tlv::{self, FromTLV, TLVWriter},
     transport::exchange::{self, Exchange},
-    utils::writebuf::WriteBuf,
 };
 
 use crate::common::{
@@ -53,20 +52,14 @@ fn handle_timed_write_reqs(
     timeout: u16,
     delay: u16,
 ) -> DataModel {
-    let mut buf = [0u8; 400];
-    let buf_len = buf.len();
-
     let mut im_engine = ImEngine::new();
     // Use the same exchange for all parts of the transaction
     im_engine.exch = Some(Exchange::new(1, 0, exchange::Role::Responder));
 
     // Send Timed Req
     let mut out_buf = [0u8; 400];
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
     let timed_req = TimedReq { timeout };
-    timed_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
-    let im_input = ImInput::new(OpCode::TimedRequest, wb.as_borrow_slice());
+    let im_input = ImInput::new(OpCode::TimedRequest, &timed_req);
     let (_, out_buf) = im_engine.process(&im_input, &mut out_buf);
     tlv::print_tlv_list(out_buf);
 
@@ -76,11 +69,8 @@ fn handle_timed_write_reqs(
 
     // Send Write Req
     let mut out_buf = [0u8; 400];
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
     let write_req = WriteReq::new(false, input);
-    write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
-    let input = ImInput::new(OpCode::WriteRequest, wb.as_borrow_slice());
+    let input = ImInput::new(OpCode::WriteRequest, &write_req);
     let (resp_opcode, out_buf) = im_engine.process(&input, &mut out_buf);
 
     tlv::print_tlv_list(out_buf);

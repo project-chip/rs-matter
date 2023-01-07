@@ -29,7 +29,7 @@ use matter::{
             msg::{ReadReq, ReportDataMsg, WriteReq, WriteResp},
         },
     },
-    tlv::{self, ElementType, FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
+    tlv::{self, ElementType, FromTLV, TLVElement, TLVList, TLVWriter, TagType},
     utils::writebuf::WriteBuf,
 };
 
@@ -46,15 +46,8 @@ fn handle_read_reqs(input: &[AttrPath], expected: &[AttrResp]) {
 
 // Helper for handling Read Req sequences
 fn gen_read_reqs_output<'a>(input: &[AttrPath], out_buf: &'a mut [u8]) -> ReportDataMsg<'a> {
-    let mut buf = [0u8; 400];
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-
     let read_req = ReadReq::new(true).set_attr_requests(input);
-    read_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
-
-    let (_, _, out_buf) = im_engine(OpCode::ReadRequest, wb.as_borrow_slice(), out_buf);
+    let (_, _, out_buf) = im_engine(OpCode::ReadRequest, &read_req, out_buf);
     tlv::print_tlv_list(out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
     ReportDataMsg::from_tlv(&root).unwrap()
@@ -62,17 +55,10 @@ fn gen_read_reqs_output<'a>(input: &[AttrPath], out_buf: &'a mut [u8]) -> Report
 
 // Helper for handling Write Attribute sequences
 fn handle_write_reqs(input: &[AttrData], expected: &[AttrStatus]) -> DataModel {
-    let mut buf = [0u8; 400];
     let mut out_buf = [0u8; 400];
-
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-
     let write_req = WriteReq::new(false, input);
-    write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, wb.as_borrow_slice(), &mut out_buf);
+    let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, &write_req, &mut out_buf);
     let root = tlv::get_root_node_struct(out_buf).unwrap();
     let response = WriteResp::from_tlv(&root).unwrap();
     assert_eq!(response.write_responses, expected);

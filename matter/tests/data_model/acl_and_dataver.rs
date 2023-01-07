@@ -29,8 +29,7 @@ use matter::{
         },
         messages::{msg, GenericPath},
     },
-    tlv::{self, ElementType, FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
-    utils::writebuf::WriteBuf,
+    tlv::{self, ElementType, FromTLV, TLVArray, TLVElement, TLVWriter, TagType},
 };
 
 use crate::{
@@ -61,16 +60,10 @@ fn gen_read_reqs_output<'a>(
     dataver_filters: Option<TLVArray<'a, DataVersionFilter>>,
     out_buf: &'a mut [u8],
 ) -> ReportDataMsg<'a> {
-    let mut buf = [0u8; 400];
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-
     let mut read_req = ReadReq::new(true).set_attr_requests(input);
     read_req.dataver_filters = dataver_filters;
-    read_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let mut input = ImInput::new(OpCode::ReadRequest, wb.as_borrow_slice());
+    let mut input = ImInput::new(OpCode::ReadRequest, &read_req);
     input.set_peer_node_id(peer_node_id);
 
     let (_, out_buf) = im.process(&input, out_buf);
@@ -87,17 +80,10 @@ fn handle_write_reqs(
     input: &[AttrData],
     expected: &[AttrStatus],
 ) {
-    let mut buf = [0u8; 400];
     let mut out_buf = [0u8; 400];
-
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(&mut buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-
     let write_req = WriteReq::new(false, input);
-    write_req.to_tlv(&mut tw, TagType::Anonymous).unwrap();
 
-    let mut input = ImInput::new(OpCode::WriteRequest, wb.as_borrow_slice());
+    let mut input = ImInput::new(OpCode::WriteRequest, &write_req);
     input.set_peer_node_id(peer_node_id);
     let (_, out_buf) = im.process(&input, &mut out_buf);
 
