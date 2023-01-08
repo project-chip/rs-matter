@@ -25,19 +25,15 @@ use crate::{
     fabric::FabricMgr,
     interaction_model::InteractionModel,
     mdns::Mdns,
-    secure_channel::core::SecureChannel,
+    secure_channel::{core::SecureChannel, spake2p::VerifierData},
     transport,
 };
 use std::sync::Arc;
 
-#[derive(Default)]
 /// Device Commissioning Data
 pub struct CommissioningData {
-    /// The commissioning salt
-    pub salt: [u8; 16],
-    /// The password for commissioning the device
-    // TODO: We should replace this with verifier instead of password
-    pub passwd: u32,
+    /// The data like password or verifier that is required to authenticate
+    pub verifier: VerifierData,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
 }
@@ -78,11 +74,7 @@ impl Matter {
         matter.transport_mgr.register_protocol(interaction_model)?;
         let mut secure_channel = Box::new(SecureChannel::new(matter.fabric_mgr.clone()));
         if open_comm_window {
-            secure_channel.open_comm_window(
-                &dev_comm.salt,
-                dev_comm.passwd,
-                dev_comm.discriminator,
-            )?;
+            secure_channel.open_comm_window(dev_comm.verifier, dev_comm.discriminator)?;
         }
 
         matter.transport_mgr.register_protocol(secure_channel)?;

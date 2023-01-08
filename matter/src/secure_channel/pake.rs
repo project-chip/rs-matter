@@ -19,12 +19,11 @@ use std::time::{Duration, SystemTime};
 
 use super::{
     common::{create_sc_status_report, SCStatusCodes},
-    spake2p::Spake2P,
+    spake2p::{Spake2P, VerifierData},
 };
 use crate::{
     crypto,
     error::Error,
-    sys::SPAKE2_ITERATION_COUNT,
     tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV},
     transport::{
         exchange::ExchangeCtx,
@@ -111,20 +110,17 @@ impl Default for PakeState {
     }
 }
 
-#[derive(Default)]
 pub struct PAKE {
-    salt: [u8; 16],
-    passwd: u32,
+    verifier: VerifierData,
     state: PakeState,
 }
 
 impl PAKE {
-    pub fn new(salt: &[u8; 16], passwd: u32) -> Self {
+    pub fn new(verifier: VerifierData) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         PAKE {
-            passwd,
-            salt: *salt,
-            ..Default::default()
+            verifier,
+            state: Default::default(),
         }
     }
 
@@ -176,8 +172,7 @@ impl PAKE {
         let pA = extract_pasepake_1_or_3_params(ctx.rx.as_borrow_slice())?;
         let mut pB: [u8; 65] = [0; 65];
         let mut cB: [u8; 32] = [0; 32];
-        sd.spake2p
-            .start_verifier(self.passwd, SPAKE2_ITERATION_COUNT, &self.salt)?;
+        sd.spake2p.start_verifier(&self.verifier)?;
         sd.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
 
         let mut tw = TLVWriter::new(ctx.tx.get_writebuf()?);
@@ -231,8 +226,8 @@ impl PAKE {
         };
         if !a.has_params {
             let params_resp = PBKDFParamRespParams {
-                count: SPAKE2_ITERATION_COUNT,
-                salt: OctetStr(&self.salt),
+                count: self.verifier.count,
+                salt: OctetStr(&self.verifier.salt),
             };
             resp.params = Some(params_resp);
         }
