@@ -30,8 +30,6 @@ pub struct MdnsInner {
     vid: u16,
     /// Product ID
     pid: u16,
-    /// Discriminator
-    discriminator: u16,
 }
 
 pub struct Mdns {
@@ -46,8 +44,10 @@ static INIT: Once = Once::new();
 
 #[derive(Clone, Copy)]
 pub enum ServiceMode {
+    /// The commissioned state
     Commissioned,
-    Commissionable,
+    /// The commissionable state with the discriminator that should be used
+    Commissionable(u16),
 }
 
 impl Mdns {
@@ -72,11 +72,10 @@ impl Mdns {
     /// Set mDNS service specific values
     /// Values like vid, pid, discriminator etc
     // TODO: More things like device-type etc can be added here
-    pub fn set_values(&self, vid: u16, pid: u16, discriminator: u16) {
+    pub fn set_values(&self, vid: u16, pid: u16) {
         let mut inner = self.inner.lock().unwrap();
         inner.vid = vid;
         inner.pid = pid;
-        inner.discriminator = discriminator;
     }
 
     /// Publish a mDNS service
@@ -87,13 +86,11 @@ impl Mdns {
             ServiceMode::Commissioned => {
                 sys_publish_service(name, "_matter._tcp", MATTER_PORT, &[])
             }
-            ServiceMode::Commissionable => {
-                let inner = self.inner.lock().unwrap();
-                let short =
-                    (inner.discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT;
-                let serv_type = format!("_matterc._udp,_S{},_L{}", short, inner.discriminator);
+            ServiceMode::Commissionable(discriminator) => {
+                let short = (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT;
+                let serv_type = format!("_matterc._udp,_S{},_L{}", short, discriminator);
 
-                let str_discriminator = format!("{}", inner.discriminator);
+                let str_discriminator = format!("{}", discriminator);
                 let txt_kvs = [["D", &str_discriminator], ["CM", "1"]];
                 sys_publish_service(name, &serv_type, MATTER_PORT, &txt_kvs)
             }

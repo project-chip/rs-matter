@@ -48,10 +48,16 @@ impl SecureChannel {
         }
     }
 
-    pub fn open_comm_window(&mut self, salt: &[u8; 16], passwd: u32) -> Result<(), Error> {
+    pub fn open_comm_window(
+        &mut self,
+        salt: &[u8; 16],
+        passwd: u32,
+        discriminator: u16,
+    ) -> Result<(), Error> {
         let name: u64 = rand::thread_rng().gen_range(0..0xFFFFFFFFFFFFFFFF);
         let name = format!("{:016X}", name);
-        let mdns = Mdns::get()?.publish_service(&name, mdns::ServiceMode::Commissionable)?;
+        let mdns = Mdns::get()?
+            .publish_service(&name, mdns::ServiceMode::Commissionable(discriminator))?;
         self.pake = Some((PAKE::new(salt, passwd), mdns));
         Ok(())
     }
