@@ -62,7 +62,7 @@ impl Matter {
         dev_comm: CommissioningData,
     ) -> Result<Box<Matter>, Error> {
         let mdns = Mdns::get()?;
-        mdns.set_values(dev_det.vid, dev_det.pid, dev_comm.discriminator);
+        mdns.set_values(dev_det.vid, dev_det.pid);
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);
@@ -78,7 +78,11 @@ impl Matter {
         matter.transport_mgr.register_protocol(interaction_model)?;
         let mut secure_channel = Box::new(SecureChannel::new(matter.fabric_mgr.clone()));
         if open_comm_window {
-            secure_channel.open_comm_window(&dev_comm.salt, dev_comm.passwd)?;
+            secure_channel.open_comm_window(
+                &dev_comm.salt,
+                dev_comm.passwd,
+                dev_comm.discriminator,
+            )?;
         }
 
         matter.transport_mgr.register_protocol(secure_channel)?;
