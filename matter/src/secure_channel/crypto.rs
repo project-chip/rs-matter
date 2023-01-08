@@ -38,7 +38,9 @@ pub trait CryptoSpake2 {
     fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error>;
 
     #[allow(non_snake_case)]
-    fn set_L(&mut self, w1s: &[u8]) -> Result<(), Error>;
+    fn set_L(&mut self, l: &[u8]) -> Result<(), Error>;
+    #[allow(non_snake_case)]
+    fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error>;
     #[allow(non_snake_case)]
     fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error>;
     #[allow(non_snake_case)]
