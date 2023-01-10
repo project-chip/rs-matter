@@ -62,8 +62,10 @@ impl Matter {
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);
+        let mut pase = PaseMgr::new();
         let open_comm_window = fabric_mgr.is_empty();
-        let data_model = DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr)?;
+        let data_model =
+            DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr, pase.clone())?;
         let mut matter = Box::new(Matter {
             transport_mgr: transport::mgr::Mgr::new()?,
             data_model,
@@ -73,12 +75,11 @@ impl Matter {
             Box::new(InteractionModel::new(Box::new(matter.data_model.clone())));
         matter.transport_mgr.register_protocol(interaction_model)?;
 
-        let mut pase = PaseMgr::new();
         if open_comm_window {
             pase.enable_pase_session(dev_comm.verifier, dev_comm.discriminator)?;
         }
 
-        let secure_channel = Box::new(SecureChannel::new(pase.clone(), matter.fabric_mgr.clone()));
+        let secure_channel = Box::new(SecureChannel::new(pase, matter.fabric_mgr.clone()));
         matter.transport_mgr.register_protocol(secure_channel)?;
         Ok(matter)
     }

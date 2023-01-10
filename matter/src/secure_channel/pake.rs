@@ -42,13 +42,13 @@ use crate::{
 use log::{error, info};
 use rand::prelude::*;
 
-enum PaseSessionState {
+enum PaseMgrState {
     Enabled(PAKE, SysMdnsService),
     Disabled,
 }
 
 pub struct PaseMgrInternal {
-    state: PaseSessionState,
+    state: PaseMgrState,
 }
 
 #[derive(Clone)]
@@ -58,7 +58,7 @@ pub struct PaseMgr(Arc<Mutex<PaseMgrInternal>>);
 impl PaseMgr {
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(PaseMgrInternal {
-            state: PaseSessionState::Disabled,
+            state: PaseMgrState::Disabled,
         })))
     }
 
@@ -72,13 +72,13 @@ impl PaseMgr {
         let name = format!("{:016X}", name);
         let mdns = Mdns::get()?
             .publish_service(&name, mdns::ServiceMode::Commissionable(discriminator))?;
-        s.state = PaseSessionState::Enabled(PAKE::new(verifier), mdns);
+        s.state = PaseMgrState::Enabled(PAKE::new(verifier), mdns);
         Ok(())
     }
 
     pub fn disable_pase_session(&mut self) {
         let mut s = self.0.lock().unwrap();
-        s.state = PaseSessionState::Disabled;
+        s.state = PaseMgrState::Disabled;
     }
 
     /// If the PASE Session is enabled, execute the closure,
@@ -88,7 +88,7 @@ impl PaseMgr {
         F: FnOnce(&mut PAKE, &mut ProtoCtx) -> Result<(), Error>,
     {
         let mut s = self.0.lock().unwrap();
-        if let PaseSessionState::Enabled(pake, _) = &mut s.state {
+        if let PaseMgrState::Enabled(pake, _) = &mut s.state {
             f(pake, ctx)
         } else {
             error!("PASE Not enabled");
@@ -190,7 +190,7 @@ impl Default for PakeState {
 }
 
 pub struct PAKE {
-    verifier: VerifierData,
+    pub verifier: VerifierData,
     state: PakeState,
 }
 
