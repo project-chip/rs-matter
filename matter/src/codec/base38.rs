@@ -44,3 +44,17 @@ pub fn encode(bytes: &[u8]) -> String {
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_base38_encode() {
+        const ENCODED: &str = "-MOA57ZU02IT2L2BJ00";
+        const DECODED: [u8; 11] = [
+            0x88, 0xff, 0xa7, 0x91, 0x50, 0x40, 0x00, 0x47, 0x51, 0xdd, 0x02,
+        ];
+        assert_eq!(encode(&DECODED), ENCODED);
+    }
+}
