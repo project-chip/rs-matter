@@ -51,6 +51,7 @@
 //!     pid: 0xFFF1,
 //!     hw_ver: 2,
 //!     sw_ver: 1,
+//!     device_name: "OnOff Light".to_string(),
 //! };
 //!
 //! /// Get the Matter Object

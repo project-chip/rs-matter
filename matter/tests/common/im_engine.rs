@@ -93,7 +93,9 @@ impl ImEngine {
             pid: 11,
             hw_ver: 12,
             sw_ver: 13,
+            device_name: "Test Device".to_string(),
         };
+
         let dev_att = Box::new(DummyDevAtt {});
         let fabric_mgr = Arc::new(FabricMgr::new().unwrap());
         let acl_mgr = Arc::new(AclMgr::new_with(false).unwrap());

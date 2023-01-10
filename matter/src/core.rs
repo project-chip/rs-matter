@@ -62,7 +62,12 @@ impl Matter {
         dev_comm: &CommissioningData,
     ) -> Result<Box<Matter>, Error> {
         let mdns = Mdns::get()?;
-        mdns.set_values(dev_det.vid, dev_det.pid, dev_comm.discriminator);
+        mdns.set_values(
+            dev_det.vid,
+            dev_det.pid,
+            dev_comm.discriminator,
+            &dev_det.device_name,
+        );
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);

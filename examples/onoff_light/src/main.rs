@@ -37,6 +37,7 @@ fn main() {
         pid: 0x8002,
         hw_ver: 2,
         sw_ver: 1,
+        device_name: "OnOff Light".to_string(),
     };
     let dev_att = Box::new(dev_att::HardCodedDevAtt::new());
 
