@@ -29,6 +29,7 @@ use matter::{
     error::Error,
     fabric::FabricMgr,
     interaction_model::{core::OpCode, InteractionModel},
+    secure_channel::pake::PaseMgr,
     tlv::{TLVWriter, TagType, ToTLV},
     transport::packet::Packet,
     transport::proto_demux::HandleProto,
@@ -97,12 +98,20 @@ impl ImEngine {
         let dev_att = Box::new(DummyDevAtt {});
         let fabric_mgr = Arc::new(FabricMgr::new().unwrap());
         let acl_mgr = Arc::new(AclMgr::new_with(false).unwrap());
+        let pase_mgr = PaseMgr::new();
         acl_mgr.erase_all();
         let mut default_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
         // Only allow the standard peer node id of the IM Engine
         default_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
         acl_mgr.add(default_acl).unwrap();
-        let dm = DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr.clone()).unwrap();
+        let dm = DataModel::new(
+            dev_det,
+            dev_att,
+            fabric_mgr.clone(),
+            acl_mgr.clone(),
+            pase_mgr,
+        )
+        .unwrap();
 
         {
             let mut d = dm.node.write().unwrap();

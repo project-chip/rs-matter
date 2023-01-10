@@ -18,6 +18,8 @@
 use crate::cmd_enter;
 use crate::data_model::objects::*;
 use crate::interaction_model::core::IMStatusCode;
+use crate::secure_channel::pake::PaseMgr;
+use crate::secure_channel::spake2p::VerifierData;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::{error::*, interaction_model::command::CommandReq};
 use log::{error, info};
@@ -74,7 +76,7 @@ fn attr_admin_vid_new() -> Result<Attribute, Error> {
 }
 
 pub struct AdminCommCluster {
-    window_status: WindowStatus,
+    pase_mgr: PaseMgr,
     base: Cluster,
 }
 
@@ -89,23 +91,16 @@ impl ClusterType for AdminCommCluster {
     fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
         match num::FromPrimitive::from_u16(attr.attr_id) {
             Some(Attributes::WindowStatus) => {
-                let status = self.window_status as u8;
+                let status = 1_u8;
                 encoder.encode(EncodeValue::Value(&status))
             }
             Some(Attributes::AdminVendorId) => {
-                let vid = if self.window_status == WindowStatus::WindowNotOpen {
-                    Nullable::Null
-                } else {
-                    Nullable::NotNull(1_u8)
-                };
+                let vid = Nullable::NotNull(1_u8);
+
                 encoder.encode(EncodeValue::Value(&vid))
             }
             Some(Attributes::AdminFabricIndex) => {
-                let vid = if self.window_status == WindowStatus::WindowNotOpen {
-                    Nullable::Null
-                } else {
-                    Nullable::NotNull(1_u8)
-                };
+                let vid = Nullable::NotNull(1_u8);
                 encoder.encode(EncodeValue::Value(&vid))
             }
             _ => {
@@ -129,9 +124,9 @@ impl ClusterType for AdminCommCluster {
 }
 
 impl AdminCommCluster {
-    pub fn new() -> Result<Box<Self>, Error> {
+    pub fn new(pase_mgr: PaseMgr) -> Result<Box<Self>, Error> {
         let mut c = Box::new(AdminCommCluster {
-            window_status: WindowStatus::WindowNotOpen,
+            pase_mgr,
             base: Cluster::new(ID)?,
         });
         c.base.add_attribute(attr_window_status_new()?)?;
@@ -145,9 +140,11 @@ impl AdminCommCluster {
         cmd_req: &mut CommandReq,
     ) -> Result<(), IMStatusCode> {
         cmd_enter!("Open Commissioning Window");
-        let _req =
+        let req =
             OpenCommWindowReq::from_tlv(&cmd_req.data).map_err(|_| IMStatusCode::InvalidCommand)?;
-        self.window_status = WindowStatus::EnhancedWindowOpen;
+        let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
+        self.pase_mgr
+            .enable_pase_session(verifier, req.discriminator)?;
         Err(IMStatusCode::Sucess)
     }
 }
@@ -156,8 +153,8 @@ impl AdminCommCluster {
 #[tlvargs(lifetime = "'a")]
 pub struct OpenCommWindowReq<'a> {
     _timeout: u16,
-    _verifier: OctetStr<'a>,
-    _discriminator: u16,
-    _iterations: u32,
-    _salt: OctetStr<'a>,
+    verifier: OctetStr<'a>,
+    discriminator: u16,
+    iterations: u32,
+    salt: OctetStr<'a>,
 }
