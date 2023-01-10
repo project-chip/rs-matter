@@ -26,12 +26,12 @@ use crate::{
     crypto::{self, CryptoKeyPair, KeyPair, Sha256},
     error::Error,
     fabric::{Fabric, FabricMgr, FabricMgrInner},
-    secure_channel::common,
     secure_channel::common::SCStatusCodes,
+    secure_channel::common::{self, OpCode},
     tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType},
     transport::{
         network::Address,
-        proto_demux::ProtoCtx,
+        proto_demux::{ProtoCtx, ResponseRequired},
         queue::{Msg, WorkQ},
         session::{CloneData, SessionMode},
     },
@@ -78,7 +78,7 @@ impl Case {
         Self { fabric_mgr }
     }
 
-    pub fn handle_casesigma3(&mut self, ctx: &mut ProtoCtx) -> Result<(), Error> {
+    pub fn casesigma3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
         let mut case_session = ctx
             .exch_ctx
             .exch
@@ -97,7 +97,7 @@ impl Case {
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(());
+            return Ok(ResponseRequired::Yes);
         }
         // Safe to unwrap here
         let fabric = fabric.as_ref().as_ref().unwrap();
@@ -132,7 +132,7 @@ impl Case {
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(());
+            return Ok(ResponseRequired::Yes);
         }
 
         if Case::validate_sigma3_sign(
@@ -151,7 +151,7 @@ impl Case {
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(());
+            return Ok(ResponseRequired::Yes);
         }
 
         // Only now do we add this message to the TT Hash
@@ -174,10 +174,12 @@ impl Case {
         ctx.exch_ctx.exch.clear_data_boxed();
         ctx.exch_ctx.exch.close();
 
-        Ok(())
+        Ok(ResponseRequired::Yes)
     }
 
-    pub fn handle_casesigma1(&mut self, ctx: &mut ProtoCtx) -> Result<(), Error> {
+    pub fn casesigma1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        ctx.tx.set_proto_opcode(OpCode::CASESigma2 as u8);
+
         let rx_buf = ctx.rx.as_borrow_slice();
         let root = get_root_node_struct(rx_buf)?;
         let r = Sigma1Req::from_tlv(&root)?;
@@ -193,7 +195,7 @@ impl Case {
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(());
+            return Ok(ResponseRequired::Yes);
         }
 
         let local_sessid = ctx.exch_ctx.sess.reserve_new_sess_id();
@@ -239,7 +241,7 @@ impl Case {
                     None,
                 )?;
                 ctx.exch_ctx.exch.close();
-                return Ok(());
+                return Ok(ResponseRequired::Yes);
             }
 
             let sign_len = Case::get_sigma2_sign(
@@ -270,7 +272,7 @@ impl Case {
         tw.end_container()?;
         case_session.tt_hash.update(ctx.tx.as_borrow_slice())?;
         ctx.exch_ctx.exch.set_data_boxed(case_session);
-        Ok(())
+        Ok(ResponseRequired::Yes)
     }
 
     fn get_session_clone_data(
