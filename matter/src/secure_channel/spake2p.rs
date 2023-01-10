@@ -82,7 +82,7 @@ const CRYPTO_W_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + 8;
 const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
 
 const MAX_SALT_SIZE_BYTES: usize = 32;
-const VERIFIER_SIZE_BYTES: usize = CRYPTO_W_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
+const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
 
 #[cfg(feature = "crypto_openssl")]
 fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
@@ -131,15 +131,20 @@ impl VerifierData {
         s
     }
 
-    pub fn new(
-        verifier: [u8; VERIFIER_SIZE_BYTES],
-        count: u32,
-        salt: [u8; MAX_SALT_SIZE_BYTES],
-    ) -> Self {
+    pub fn new(verifier: &[u8], count: u32, salt: &[u8]) -> Self {
+        let mut v = [0_u8; VERIFIER_SIZE_BYTES];
+        let mut s = [0_u8; MAX_SALT_SIZE_BYTES];
+
+        let slice = &mut v[..verifier.len()];
+        slice.copy_from_slice(verifier);
+
+        let slice = &mut s[..salt.len()];
+        slice.copy_from_slice(salt);
+
         Self {
-            data: VerifierOption::Verifier(verifier),
+            data: VerifierOption::Verifier(v),
             count,
-            salt,
+            salt: s,
         }
     }
 }
@@ -181,12 +186,12 @@ impl Spake2P {
     }
 
     pub fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
+        self.crypto_spake2 = Some(crypto_spake2_new()?);
         match verifier.data {
             VerifierOption::Password(pw) => {
                 // Derive w0 and L from the password
                 let mut w0w1s: [u8; (2 * CRYPTO_W_SIZE_BYTES)] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
                 Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
-                self.crypto_spake2 = Some(crypto_spake2_new()?);
 
                 let w0s_len = w0w1s.len() / 2;
                 if let Some(crypto_spake2) = &mut self.crypto_spake2 {
@@ -226,6 +231,7 @@ impl Spake2P {
                 Spake2P::get_Ke_and_cAcB(&TT, pA, pB, &mut self.Ke, &mut self.cA, cB)?;
             }
         }
+
         // We are finished with using the crypto_spake2 now
         self.crypto_spake2 = None;
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation);
