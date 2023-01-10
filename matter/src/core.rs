@@ -25,6 +25,7 @@ use crate::{
     fabric::FabricMgr,
     interaction_model::InteractionModel,
     mdns::Mdns,
+    pairing::compute_and_print_pairing_code,
     secure_channel::core::SecureChannel,
     transport,
 };
@@ -68,6 +69,8 @@ impl Matter {
             dev_comm.discriminator,
             &dev_det.device_name,
         );
+
+        compute_and_print_pairing_code(dev_det, dev_comm);
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);

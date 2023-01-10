@@ -26,6 +26,7 @@ enum Attributes {
     SwVer = 9,
 }
 
+#[derive(Default)]
 pub struct BasicInfoConfig {
     pub vid: u16,
     pub pid: u16,
