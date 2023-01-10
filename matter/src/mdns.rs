@@ -36,7 +36,7 @@ pub struct Mdns {
     inner: Mutex<MdnsInner>,
 }
 
-const SHORT_DISCRIMINATOR_MASK: u16 = 0x700;
+const SHORT_DISCRIMINATOR_MASK: u16 = 0xf00;
 const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
 
 static mut G_MDNS: Option<Arc<Mdns>> = None;
