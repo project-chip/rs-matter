@@ -58,6 +58,7 @@ impl FromTLV<'_> for Privilege {
 }
 
 impl ToTLV for Privilege {
+    #[allow(clippy::bool_to_int_with_if)]
     fn to_tlv(
         &self,
         tw: &mut crate::tlv::TLVWriter,

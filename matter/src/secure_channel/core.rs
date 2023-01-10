@@ -143,6 +143,6 @@ impl proto_demux::HandleProto for SecureChannel {
     }
 
     fn get_proto_id(&self) -> usize {
-        PROTO_ID_SECURE_CHANNEL as usize
+        PROTO_ID_SECURE_CHANNEL
     }
 }

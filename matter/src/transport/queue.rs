@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-
 use std::sync::Once;
 
 use async_channel::{bounded, Receiver, Sender};

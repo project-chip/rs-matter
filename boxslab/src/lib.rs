@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-
 use std::{
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
@@ -115,7 +114,7 @@ impl<T: SlabPool> Slab<T> {
         }))
     }
 
-    pub fn new(new_object: T::SlabType) -> Option<BoxSlab<T>> {
+    pub fn try_new(new_object: T::SlabType) -> Option<BoxSlab<T>> {
         let slab = T::get_slab();
         let mut inner = slab.0.lock().unwrap();
         if let Some(index) = inner.map.first_false_index() {
@@ -180,14 +179,14 @@ mod tests {
     #[test]
     fn simple_alloc_free() {
         {
-            let a = Slab::<TestSlab>::new(Test { val: Arc::new(10) }).unwrap();
+            let a = Slab::<TestSlab>::try_new(Test { val: Arc::new(10) }).unwrap();
             assert_eq!(*a.val.deref(), 10);
             let inner = TestSlab::get_slab().0.lock().unwrap();
-            assert_eq!(inner.map.is_empty(), false);
+            assert!(!inner.map.is_empty());
         }
         // Validates that the 'Drop' got executed
         let inner = TestSlab::get_slab().0.lock().unwrap();
-        assert_eq!(inner.map.is_empty(), true);
+        assert!(inner.map.is_empty());
         println!("Box Size {}", std::mem::size_of::<Box<Test>>());
         println!("BoxSlab Size {}", std::mem::size_of::<BoxSlab<TestSlab>>());
     }
@@ -195,25 +194,22 @@ mod tests {
     #[test]
     fn alloc_full_block() {
         {
-            let a = Slab::<TestSlab>::new(Test { val: Arc::new(10) }).unwrap();
-            let b = Slab::<TestSlab>::new(Test { val: Arc::new(11) }).unwrap();
-            let c = Slab::<TestSlab>::new(Test { val: Arc::new(12) }).unwrap();
+            let a = Slab::<TestSlab>::try_new(Test { val: Arc::new(10) }).unwrap();
+            let b = Slab::<TestSlab>::try_new(Test { val: Arc::new(11) }).unwrap();
+            let c = Slab::<TestSlab>::try_new(Test { val: Arc::new(12) }).unwrap();
             // Test that at overflow, we return None
-            assert_eq!(
-                Slab::<TestSlab>::new(Test { val: Arc::new(13) }).is_none(),
-                true
-            );
+            assert!(Slab::<TestSlab>::try_new(Test { val: Arc::new(13) }).is_none(),);
             assert_eq!(*b.val.deref(), 11);
 
             {
                 let inner = TestSlab::get_slab().0.lock().unwrap();
                 // Test that the bitmap is marked as full
-                assert_eq!(inner.map.is_full(), true);
+                assert!(inner.map.is_full());
             }
 
             // Purposefully drop, to test that new allocation is possible
             std::mem::drop(b);
-            let d = Slab::<TestSlab>::new(Test { val: Arc::new(21) }).unwrap();
+            let d = Slab::<TestSlab>::try_new(Test { val: Arc::new(21) }).unwrap();
             assert_eq!(*d.val.deref(), 21);
 
             // Ensure older allocations are still valid
@@ -223,16 +219,16 @@ mod tests {
 
         // Validates that the 'Drop' got executed - test that the bitmap is empty
         let inner = TestSlab::get_slab().0.lock().unwrap();
-        assert_eq!(inner.map.is_empty(), true);
+        assert!(inner.map.is_empty());
     }
 
     #[test]
     fn test_drop_logic() {
         let root = Arc::new(10);
         {
-            let _a = Slab::<TestSlab>::new(Test { val: root.clone() }).unwrap();
-            let _b = Slab::<TestSlab>::new(Test { val: root.clone() }).unwrap();
-            let _c = Slab::<TestSlab>::new(Test { val: root.clone() }).unwrap();
+            let _a = Slab::<TestSlab>::try_new(Test { val: root.clone() }).unwrap();
+            let _b = Slab::<TestSlab>::try_new(Test { val: root.clone() }).unwrap();
+            let _c = Slab::<TestSlab>::try_new(Test { val: root.clone() }).unwrap();
             assert_eq!(Arc::strong_count(&root), 4);
         }
         // Test that Drop was correctly called on all the members of the pool

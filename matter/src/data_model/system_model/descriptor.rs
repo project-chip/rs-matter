@@ -27,6 +27,7 @@ use log::error;
 pub const ID: u32 = 0x001D;
 
 #[derive(FromPrimitive)]
+#[allow(clippy::enum_variant_names)]
 enum Attributes {
     DeviceTypeList = 0,
     ServerList = 1,

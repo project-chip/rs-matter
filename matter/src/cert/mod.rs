@@ -348,20 +348,17 @@ impl DistNames {
         w.start_seq(tag)?;
         for (id, value) in &self.dn {
             if let Ok(tag) = num::FromPrimitive::from_u8(*id).ok_or(Error::InvalidData) {
-                match tag {
-                    DnTags::NocCat => {
-                        w.start_set("")?;
-                        w.start_seq("")?;
-                        w.oid("Chip NOC CAT Id:", &OID_MATTER_NOC_CAT_ID)?;
-                        w.utf8str("", format!("{:08X}", value).as_str())?;
-                        w.end_seq()?;
-                        w.end_set()?;
-                    }
-                    _ => {
-                        let index: usize = (*id as usize) - (DnTags::NodeId as usize);
-                        let this = &dn_encoding[index];
-                        encode_u64_dn(*value, this.0, this.1, w)?;
-                    }
+                if let DnTags::NocCat = tag {
+                    w.start_set("")?;
+                    w.start_seq("")?;
+                    w.oid("Chip NOC CAT Id:", &OID_MATTER_NOC_CAT_ID)?;
+                    w.utf8str("", format!("{:08X}", value).as_str())?;
+                    w.end_seq()?;
+                    w.end_set()?;
+                } else {
+                    let index: usize = (*id as usize) - (DnTags::NodeId as usize);
+                    let this = &dn_encoding[index];
+                    encode_u64_dn(*value, this.0, this.1, w)?;
                 }
             } else {
                 error!("Non Matter DNs are not yet supported {}", id);
@@ -452,7 +449,7 @@ impl Cert {
 
     pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut w = ASN1Writer::new(buf);
-        let _ = self.encode(&mut w)?;
+        self.encode(&mut w)?;
         Ok(w.as_slice().len())
     }
 
@@ -657,7 +654,7 @@ mod tests {
 
         for input in test_input.iter() {
             println!("Testing next input...");
-            let root = tlv::get_root_node(*input).unwrap();
+            let root = tlv::get_root_node(input).unwrap();
             let cert = Cert::from_tlv(&root).unwrap();
             let mut buf = [0u8; 1024];
             let buf_len = buf.len();

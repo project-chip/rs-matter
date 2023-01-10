@@ -466,7 +466,8 @@ impl SessionMgr {
     }
 
     pub fn recv(&mut self) -> Result<(BoxSlab<PacketPool>, Option<usize>), Error> {
-        let mut rx = Slab::<PacketPool>::new(Packet::new_rx()?).ok_or(Error::PacketPoolExhaust)?;
+        let mut rx =
+            Slab::<PacketPool>::try_new(Packet::new_rx()?).ok_or(Error::PacketPoolExhaust)?;
 
         let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
 

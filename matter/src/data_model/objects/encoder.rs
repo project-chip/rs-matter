@@ -95,7 +95,7 @@ impl<'a> ToTLV for EncodeValue<'a> {
                 (f)(tag_type, tw);
                 Ok(())
             }
-            EncodeValue::Tlv(_) => (panic!("This looks invalid")),
+            EncodeValue::Tlv(_) => panic!("This looks invalid"),
             EncodeValue::Value(v) => v.to_tlv(tw, tag_type),
         }
     }

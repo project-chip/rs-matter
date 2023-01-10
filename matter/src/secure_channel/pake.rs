@@ -219,7 +219,7 @@ impl PAKE {
         let local_sessid = ctx.exch_ctx.sess.reserve_new_sess_id();
         let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
         let mut spake2p = Box::new(Spake2P::new());
-        spake2p.set_app_data(spake2p_data as u32);
+        spake2p.set_app_data(spake2p_data);
 
         // Generate response
         let mut tw = TLVWriter::new(ctx.tx.get_writebuf()?);

@@ -44,6 +44,7 @@ const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
 static mut G_MDNS: Option<Arc<Mdns>> = None;
 static INIT: Once = Once::new();
 
+#[derive(Clone, Copy)]
 pub enum ServiceMode {
     Commissioned,
     Commissionable,

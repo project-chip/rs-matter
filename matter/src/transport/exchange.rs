@@ -123,10 +123,7 @@ impl Exchange {
     }
 
     pub fn is_data_none(&self) -> bool {
-        match self.data {
-            DataOption::None => true,
-            _ => false,
-        }
+        matches!(self.data, DataOption::None)
     }
 
     pub fn set_data_boxed(&mut self, data: Box<dyn Any>) {
@@ -147,12 +144,11 @@ impl Exchange {
 
     pub fn take_data_boxed<T: Any>(&mut self) -> Option<Box<T>> {
         let old = std::mem::replace(&mut self.data, DataOption::None);
-        match old {
-            DataOption::Boxed(d) => d.downcast::<T>().ok(),
-            _ => {
-                self.data = old;
-                None
-            }
+        if let DataOption::Boxed(d) = old {
+            d.downcast::<T>().ok()
+        } else {
+            self.data = old;
+            None
         }
     }
 
@@ -293,15 +289,14 @@ impl ExchangeMgr {
         // Get the session
         let (mut proto_rx, index) = self.sess_mgr.recv()?;
 
-        let index = match index {
-            Some(s) => s,
-            None => {
-                // The sessions were full, evict one session, and re-perform post-recv
-                let evict_index = self.sess_mgr.get_lru();
-                self.evict_session(evict_index)?;
-                info!("Reattempting session creation");
-                self.sess_mgr.post_recv(&proto_rx)?.ok_or(Error::Invalid)?
-            }
+        let index = if let Some(s) = index {
+            s
+        } else {
+            // The sessions were full, evict one session, and re-perform post-recv
+            let evict_index = self.sess_mgr.get_lru();
+            self.evict_session(evict_index)?;
+            info!("Reattempting session creation");
+            self.sess_mgr.post_recv(&proto_rx)?.ok_or(Error::Invalid)?
         };
         let mut session = self.sess_mgr.get_session_handle(index);
 
@@ -352,7 +347,7 @@ impl ExchangeMgr {
             }
         }
         for (exch_id, _) in to_purge.iter() {
-            self.exchanges.remove(&*exch_id);
+            self.exchanges.remove(exch_id);
         }
     }
 
@@ -370,7 +365,7 @@ impl ExchangeMgr {
         // As per the spec, we need to send a CLOSE here
 
         let mut session = self.sess_mgr.get_session_handle(index);
-        let mut tx = Slab::<PacketPool>::new(Packet::new_tx()?).ok_or(Error::NoSpace)?;
+        let mut tx = Slab::<PacketPool>::try_new(Packet::new_tx()?).ok_or(Error::NoSpace)?;
         secure_channel::common::create_sc_status_report(
             &mut tx,
             secure_channel::common::SCStatusCodes::CloseSession,
@@ -408,13 +403,13 @@ impl ExchangeMgr {
         Ok(())
     }
 
-    pub fn add_session(&mut self, clone_data: CloneData) -> Result<SessionHandle, Error> {
-        let sess_idx = match self.sess_mgr.clone_session(&clone_data) {
+    pub fn add_session(&mut self, clone_data: &CloneData) -> Result<SessionHandle, Error> {
+        let sess_idx = match self.sess_mgr.clone_session(clone_data) {
             Ok(idx) => idx,
             Err(Error::NoSpace) => {
                 let evict_index = self.sess_mgr.get_lru();
                 self.evict_session(evict_index)?;
-                self.sess_mgr.clone_session(&clone_data)?
+                self.sess_mgr.clone_session(clone_data)?
             }
             Err(e) => {
                 return Err(e);
@@ -437,6 +432,7 @@ impl fmt::Display for ExchangeMgr {
 }
 
 #[cfg(test)]
+#[allow(clippy::bool_assert_comparison)]
 mod tests {
 
     use crate::{
@@ -496,8 +492,8 @@ mod tests {
         let mut peer_sess_id = 100;
         for _ in 1..count {
             let clone_data = get_clone_data(peer_sess_id, local_sess_id);
-            match mgr.add_session(clone_data) {
-                Ok(s) => (assert_eq!(peer_sess_id, s.get_peer_sess_id())),
+            match mgr.add_session(&clone_data) {
+                Ok(s) => assert_eq!(peer_sess_id, s.get_peer_sess_id()),
                 Err(Error::NoSpace) => break,
                 _ => {
                     panic!("Couldn't, create session");
@@ -558,7 +554,7 @@ mod tests {
         for i in 1..(MAX_SESSIONS + 1) {
             // Now purposefully overflow the sessions by adding another session
             let session = mgr
-                .add_session(get_clone_data(new_peer_sess_id, new_local_sess_id))
+                .add_session(&get_clone_data(new_peer_sess_id, new_local_sess_id))
                 .unwrap();
             assert_eq!(session.get_peer_sess_id(), new_peer_sess_id);
 

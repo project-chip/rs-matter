@@ -34,7 +34,7 @@ type WriteNode<'a> = RwLockWriteGuard<'a, Box<Node>>;
 
 pub fn device_type_add_root_node(
     node: &mut WriteNode,
-    dev_info: BasicInfoConfig,
+    dev_info: &BasicInfoConfig,
     dev_att: Box<dyn DevAttDataFetcher>,
     fabric_mgr: Arc<FabricMgr>,
     acl_mgr: Arc<AclMgr>,

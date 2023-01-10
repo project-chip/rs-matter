@@ -50,7 +50,7 @@ pub struct DataModel {
 
 impl DataModel {
     pub fn new(
-        dev_details: BasicInfoConfig,
+        dev_details: &BasicInfoConfig,
         dev_att: Box<dyn DevAttDataFetcher>,
         fabric_mgr: Arc<FabricMgr>,
         acl_mgr: Arc<AclMgr>,
@@ -171,7 +171,7 @@ impl DataModel {
             // Set the cluster's data version
             attr_encoder.set_data_ver(cluster_data_ver);
             let mut access_req = AccessReq::new(accessor, path, Access::READ);
-            Cluster::read_attribute(c, &mut access_req, attr_encoder, &attr_details);
+            Cluster::read_attribute(c, &mut access_req, attr_encoder, attr_details);
             Ok(())
         });
         if let Err(e) = result {

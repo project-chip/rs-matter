@@ -74,8 +74,8 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
             TagType::CommonPrf32(v) => (3, v as u64),
             TagType::ImplPrf16(v) => (4, v as u64),
             TagType::ImplPrf32(v) => (5, v as u64),
-            TagType::FullQual48(v) => (6, v as u64),
-            TagType::FullQual64(v) => (7, v as u64),
+            TagType::FullQual48(v) => (6, v),
+            TagType::FullQual64(v) => (7, v),
         };
         self.buf
             .le_u8(((tag_id) << TAG_SHIFT_BITS) | (val_type as u8))?;
@@ -269,13 +269,11 @@ mod tests {
 
         tw.u8(TagType::Anonymous, 12).unwrap();
         tw.u8(TagType::Context(1), 13).unwrap();
-        match tw.u16(TagType::Anonymous, 12) {
-            Ok(_) => panic!("This should have returned error"),
-            _ => (),
+        if tw.u16(TagType::Anonymous, 12).is_ok() {
+            panic!("This should have returned error")
         }
-        match tw.u16(TagType::Context(2), 13) {
-            Ok(_) => panic!("This should have returned error"),
-            _ => (),
+        if tw.u16(TagType::Context(2), 13).is_ok() {
+            panic!("This should have returned error")
         }
         assert_eq!(buf, [4, 12, 36, 1, 13, 4]);
     }

@@ -83,7 +83,7 @@ enum WriteResponse<'a> {
 // Helper for handling Write Attribute sequences
 fn handle_timed_write_reqs(
     input: &[AttrData],
-    expected: WriteResponse,
+    expected: &WriteResponse,
     timeout: u16,
     delay: u16,
 ) -> DataModel {
@@ -159,10 +159,10 @@ fn test_timed_write_fail_and_success() {
     ];
 
     // Test with incorrect handling
-    handle_timed_write_reqs(input, WriteResponse::TransactionError, 400, 500);
+    handle_timed_write_reqs(input, &WriteResponse::TransactionError, 400, 500);
 
     // Test with correct handling
-    let dm = handle_timed_write_reqs(input, WriteResponse::TransactionSuccess(expected), 400, 0);
+    let dm = handle_timed_write_reqs(input, &WriteResponse::TransactionSuccess(expected), 400, 0);
     assert_eq!(
         AttrValue::Uint16(val0),
         dm.read_attribute_raw(
@@ -190,7 +190,7 @@ enum TimedInvResponse<'a> {
 // Helper for handling Invoke Command sequences
 fn handle_timed_commands(
     input: &[CmdData],
-    expected: TimedInvResponse,
+    expected: &TimedInvResponse,
     timeout: u16,
     delay: u16,
     set_timed_request: bool,
@@ -222,7 +222,7 @@ fn handle_timed_commands(
                 Some(OpCode::StatusResponse)
             );
             let status_resp = StatusResp::from_tlv(&root).unwrap();
-            assert_eq!(status_resp.status, e);
+            assert_eq!(status_resp.status, *e);
         }
     }
     dm
@@ -237,7 +237,7 @@ fn test_timed_cmd_success() {
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
     handle_timed_commands(
         input,
-        TimedInvResponse::TransactionSuccess(expected),
+        &TimedInvResponse::TransactionSuccess(expected),
         400,
         0,
         true,
@@ -252,7 +252,7 @@ fn test_timed_cmd_timeout() {
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     handle_timed_commands(
         input,
-        TimedInvResponse::TransactionError(IMStatusCode::Timeout),
+        &TimedInvResponse::TransactionError(IMStatusCode::Timeout),
         400,
         500,
         true,
@@ -267,7 +267,7 @@ fn test_timed_cmd_timedout_mismatch() {
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     handle_timed_commands(
         input,
-        TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
+        &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
         400,
         0,
         false,
@@ -276,7 +276,7 @@ fn test_timed_cmd_timedout_mismatch() {
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     handle_timed_commands(
         input,
-        TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
+        &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
         0,
         0,
         true,
