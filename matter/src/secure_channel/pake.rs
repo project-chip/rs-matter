@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
+};
 
 use super::{
     common::{create_sc_status_report, SCStatusCodes},
@@ -24,17 +27,93 @@ use super::{
 use crate::{
     crypto,
     error::Error,
+    mdns::{self, Mdns},
+    secure_channel::common::OpCode,
+    sys::SysMdnsService,
     tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV},
     transport::{
         exchange::ExchangeCtx,
         network::Address,
-        proto_demux::ProtoCtx,
+        proto_demux::{ProtoCtx, ResponseRequired},
         queue::{Msg, WorkQ},
         session::{CloneData, SessionMode},
     },
 };
 use log::{error, info};
 use rand::prelude::*;
+
+enum PaseSessionState {
+    Enabled(PAKE, SysMdnsService),
+    Disabled,
+}
+
+pub struct PaseMgrInternal {
+    state: PaseSessionState,
+}
+
+#[derive(Clone)]
+// Could this lock be avoided?
+pub struct PaseMgr(Arc<Mutex<PaseMgrInternal>>);
+
+impl PaseMgr {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(PaseMgrInternal {
+            state: PaseSessionState::Disabled,
+        })))
+    }
+
+    pub fn enable_pase_session(
+        &mut self,
+        verifier: VerifierData,
+        discriminator: u16,
+    ) -> Result<(), Error> {
+        let mut s = self.0.lock().unwrap();
+        let name: u64 = rand::thread_rng().gen_range(0..0xFFFFFFFFFFFFFFFF);
+        let name = format!("{:016X}", name);
+        let mdns = Mdns::get()?
+            .publish_service(&name, mdns::ServiceMode::Commissionable(discriminator))?;
+        s.state = PaseSessionState::Enabled(PAKE::new(verifier), mdns);
+        Ok(())
+    }
+
+    pub fn disable_pase_session(&mut self) {
+        let mut s = self.0.lock().unwrap();
+        s.state = PaseSessionState::Disabled;
+    }
+
+    /// If the PASE Session is enabled, execute the closure,
+    /// if not enabled, generate SC Status Report
+    fn if_enabled<F>(&mut self, ctx: &mut ProtoCtx, f: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut PAKE, &mut ProtoCtx) -> Result<(), Error>,
+    {
+        let mut s = self.0.lock().unwrap();
+        if let PaseSessionState::Enabled(pake, _) = &mut s.state {
+            f(pake, ctx)
+        } else {
+            error!("PASE Not enabled");
+            create_sc_status_report(&mut ctx.tx, SCStatusCodes::InvalidParameter, None)
+        }
+    }
+
+    pub fn pbkdfparamreq_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        ctx.tx.set_proto_opcode(OpCode::PBKDFParamResponse as u8);
+        self.if_enabled(ctx, |pake, ctx| pake.handle_pbkdfparamrequest(ctx))?;
+        Ok(ResponseRequired::Yes)
+    }
+
+    pub fn pasepake1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        ctx.tx.set_proto_opcode(OpCode::PASEPake2 as u8);
+        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake1(ctx))?;
+        Ok(ResponseRequired::Yes)
+    }
+
+    pub fn pasepake3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
+        self.disable_pase_session();
+        Ok(ResponseRequired::Yes)
+    }
+}
 
 // This file basically deals with the handlers for the PASE secure channel protocol
 // TLV extraction and encoding is done in this file.

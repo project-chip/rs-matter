@@ -25,7 +25,7 @@ use crate::{
     fabric::FabricMgr,
     interaction_model::InteractionModel,
     mdns::Mdns,
-    secure_channel::{core::SecureChannel, spake2p::VerifierData},
+    secure_channel::{core::SecureChannel, pake::PaseMgr, spake2p::VerifierData},
     transport,
 };
 use std::sync::Arc;
@@ -72,11 +72,13 @@ impl Matter {
         let interaction_model =
             Box::new(InteractionModel::new(Box::new(matter.data_model.clone())));
         matter.transport_mgr.register_protocol(interaction_model)?;
-        let mut secure_channel = Box::new(SecureChannel::new(matter.fabric_mgr.clone()));
+
+        let mut pase = PaseMgr::new();
         if open_comm_window {
-            secure_channel.open_comm_window(dev_comm.verifier, dev_comm.discriminator)?;
+            pase.enable_pase_session(dev_comm.verifier, dev_comm.discriminator)?;
         }
 
+        let secure_channel = Box::new(SecureChannel::new(pase.clone(), matter.fabric_mgr.clone()));
         matter.transport_mgr.register_protocol(secure_channel)?;
         Ok(matter)
     }
