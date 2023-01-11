@@ -1,3 +1,5 @@
+//! This module contains the logic for generating the pairing code and the QR code for easy pairing.
+
 use log::info;
 use qrcode::{render::unicode, QrCode, Version};
 use verhoeff::Verhoeff;
@@ -6,6 +8,25 @@ use crate::{
     codec::base38, data_model::cluster_basic_information::BasicInfoConfig, error::Error,
     CommissioningData,
 };
+
+const LONG_BITS: usize = 12;
+const VERSION_FIELD_LENGTH_IN_BITS: usize = 3;
+const VENDOR_IDFIELD_LENGTH_IN_BITS: usize = 16;
+const PRODUCT_IDFIELD_LENGTH_IN_BITS: usize = 16;
+const COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS: usize = 2;
+const RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS: usize = 8;
+const PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS: usize = LONG_BITS;
+const SETUP_PINCODE_FIELD_LENGTH_IN_BITS: usize = 27;
+const PADDING_FIELD_LENGTH_IN_BITS: usize = 4;
+const TOTAL_PAYLOAD_DATA_SIZE_IN_BITS: usize = VERSION_FIELD_LENGTH_IN_BITS
+    + VENDOR_IDFIELD_LENGTH_IN_BITS
+    + PRODUCT_IDFIELD_LENGTH_IN_BITS
+    + COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS
+    + RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS
+    + PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS
+    + SETUP_PINCODE_FIELD_LENGTH_IN_BITS
+    + PADDING_FIELD_LENGTH_IN_BITS;
+const TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES: usize = TOTAL_PAYLOAD_DATA_SIZE_IN_BITS / 8;
 
 #[repr(u8)]
 #[derive(Clone, Copy)]
@@ -19,6 +40,16 @@ pub struct DiscoveryCapabilitiesSchema {
     on_ip_network: bool,
     ble: bool,
     soft_access_point: bool,
+}
+
+impl DiscoveryCapabilitiesSchema {
+    pub fn new(on_ip_network: bool, ble: bool, soft_access_point: bool) -> Self {
+        DiscoveryCapabilitiesSchema {
+            on_ip_network,
+            ble,
+            soft_access_point,
+        }
+    }
 }
 
 impl DiscoveryCapabilitiesSchema {
@@ -59,18 +90,20 @@ impl<'data> QrCodeData<'data> {
     }
 }
 
-pub fn compute_and_print_pairing_code(dev_det: &BasicInfoConfig, comm_data: &CommissioningData) {
+struct TlvData {
+    data_length_in_bytes: u32,
+}
+
+/// Prepares and prints the pairing code and the QR code for easy pairing.
+pub fn print_pairing_code_and_qr(dev_det: &BasicInfoConfig, comm_data: &CommissioningData) {
     let pairing_code = compute_pairing_code(comm_data);
-    pretty_print_pairing_code(&pairing_code);
 
-    let disc_cap = DiscoveryCapabilitiesSchema {
-        on_ip_network: true,
-        ble: false,
-        soft_access_point: false,
-    };
-
+    // todo: allow the discovery capabilities to be passed in
+    let disc_cap = DiscoveryCapabilitiesSchema::new(true, false, false);
     let qr_code_data = QrCodeData::new(dev_det, comm_data, disc_cap);
     let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
+
+    pretty_print_pairing_code(&pairing_code);
     print_qr_code(&data_str);
 }
 
@@ -98,7 +131,7 @@ fn compute_pairing_code(comm_data: &CommissioningData) -> String {
     digits
 }
 
-pub fn pretty_print_pairing_code(pairing_code: &str) {
+fn pretty_print_pairing_code(pairing_code: &str) {
     assert!(pairing_code.len() == 11);
     let mut pretty = String::new();
     pretty.push_str(&pairing_code[..4]);
@@ -116,7 +149,7 @@ fn print_qr_code(qr_data: &str) {
         .dark_color(unicode::Dense1x2::Light)
         .light_color(unicode::Dense1x2::Dark)
         .build();
-    println!("{}", image);
+    info!("\n{}", image);
 }
 
 fn populate_bits(
@@ -148,34 +181,11 @@ fn populate_bits(
 
     Ok(())
 }
-const LONG_BITS: usize = 12;
-const VERSION_FIELD_LENGTH_IN_BITS: usize = 3;
-const VENDOR_IDFIELD_LENGTH_IN_BITS: usize = 16;
-const PRODUCT_IDFIELD_LENGTH_IN_BITS: usize = 16;
-const COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS: usize = 2;
-const RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS: usize = 8;
-const PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS: usize = LONG_BITS;
-const SETUP_PINCODE_FIELD_LENGTH_IN_BITS: usize = 27;
-const PADDING_FIELD_LENGTH_IN_BITS: usize = 4;
-const RAW_VENDOR_TAG_LENGTH_IN_BITS: usize = 7;
-const TOTAL_PAYLOAD_DATA_SIZE_IN_BITS: usize = VERSION_FIELD_LENGTH_IN_BITS
-    + VENDOR_IDFIELD_LENGTH_IN_BITS
-    + PRODUCT_IDFIELD_LENGTH_IN_BITS
-    + COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS
-    + RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS
-    + PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS
-    + SETUP_PINCODE_FIELD_LENGTH_IN_BITS
-    + PADDING_FIELD_LENGTH_IN_BITS;
-const TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES: usize = TOTAL_PAYLOAD_DATA_SIZE_IN_BITS / 8;
-
-struct TlvData {
-    data_length_in_bytes: u32,
-}
 
 fn payload_base38_representation_with_tlv(
     payload: &QrCodeData,
     bits: &mut [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES],
-    tlv_data: Option<TlvData>,
+    tlv_data: Option<&TlvData>,
 ) -> Result<String, Error> {
     generate_bit_set(payload, bits, tlv_data)?;
     let base38_encoded = base38::encode(&*bits);
@@ -193,10 +203,10 @@ fn payload_base38_representation(payload: &QrCodeData) -> Result<String, Error> 
 fn generate_bit_set(
     payload: &QrCodeData,
     bits: &mut [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES],
-    tlv_data: Option<TlvData>,
+    tlv_data: Option<&TlvData>,
 ) -> Result<(), Error> {
     let mut offset: usize = 0;
-    let total_payload_size_in_bits = if let Some(tlv_data) = &tlv_data {
+    let total_payload_size_in_bits = if let Some(tlv_data) = tlv_data {
         TOTAL_PAYLOAD_DATA_SIZE_IN_BITS + (tlv_data.data_length_in_bytes * 8) as usize
     } else {
         TOTAL_PAYLOAD_DATA_SIZE_IN_BITS
@@ -314,12 +324,8 @@ mod tests {
             pid: 65279,
             ..Default::default()
         };
-        let disc_cap = DiscoveryCapabilitiesSchema {
-            on_ip_network: false,
-            ble: true,
-            soft_access_point: false,
-        };
 
+        let disc_cap = DiscoveryCapabilitiesSchema::new(false, true, false);
         let qr_code_data = QrCodeData::new(&dev_det, &comm_data, disc_cap);
         let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)

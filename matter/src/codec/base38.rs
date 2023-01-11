@@ -1,16 +1,7 @@
+//! Base38 encoding functions.
 const BASE38_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.";
 
-fn encode_base38(mut value: u32, char_count: u8) -> String {
-    let mut result = String::new();
-    for _ in 0..char_count {
-        let mut chars = BASE38_CHARS.chars();
-        let remainder = value % 38;
-        result.push(chars.nth(remainder as usize).unwrap());
-        value = (value - remainder) / 38;
-    }
-    result
-}
-
+/// Encodes a byte array into a base38 string.
 pub fn encode(bytes: &[u8]) -> String {
     let length = bytes.len();
     let mut offset = 0;
@@ -42,6 +33,17 @@ pub fn encode(bytes: &[u8]) -> String {
         }
     }
 
+    result
+}
+
+fn encode_base38(mut value: u32, char_count: u8) -> String {
+    let mut result = String::new();
+    for _ in 0..char_count {
+        let mut chars = BASE38_CHARS.chars();
+        let remainder = value % 38;
+        result.push(chars.nth(remainder as usize).unwrap());
+        value = (value - remainder) / 38;
+    }
     result
 }
 
