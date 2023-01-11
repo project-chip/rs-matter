@@ -50,10 +50,6 @@ async-channel = "1.6"
 # to compute the check digit
 verhoeff = "1"
 
-# needed to compute base38 packed binary data Structure
-base-encode = "0.3"
-packed_struct = "0.10"
-
 # print QR code
 qrcode = { version = "0.12", default-features = false }
 

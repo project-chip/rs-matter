@@ -1,10 +1,10 @@
 use log::info;
-use packed_struct::prelude::*;
 use qrcode::{render::unicode, QrCode, Version};
 use verhoeff::Verhoeff;
 
 use crate::{
-    codec::base38, data_model::cluster_basic_information::BasicInfoConfig, CommissioningData,
+    codec::base38, data_model::cluster_basic_information::BasicInfoConfig, error::Error,
+    CommissioningData,
 };
 
 #[repr(u8)]
@@ -59,37 +59,19 @@ impl<'data> QrCodeData<'data> {
     }
 }
 
-#[derive(PackedStruct, Debug)]
-#[packed_struct(bit_numbering = "msb0", size_bytes = "11", endian = "msb")]
-pub struct PackedQrData {
-    #[packed_field(bits = "0..3")]
-    version: Integer<u8, packed_bits::Bits<3>>,
-    #[packed_field(bits = "3..19")]
-    vid: Integer<u16, packed_bits::Bits<16>>,
-    #[packed_field(bits = "19..35")]
-    pid: Integer<u16, packed_bits::Bits<16>>,
-    #[packed_field(bits = "35..37")]
-    commissionning_flow_type: Integer<u8, packed_bits::Bits<2>>,
-    #[packed_field(bits = "37")]
-    soft_access_point: bool,
-    #[packed_field(bits = "38")]
-    ble: bool,
-    #[packed_field(bits = "39")]
-    on_ip_network: bool,
-    #[packed_field(bits = "40..45")]
-    _reserved: Integer<u8, packed_bits::Bits<5>>,
-    #[packed_field(bits = "45..57")]
-    discriminator: Integer<u16, packed_bits::Bits<12>>,
-    #[packed_field(bits = "57..84")]
-    passcode: Integer<u32, packed_bits::Bits<27>>,
-    #[packed_field(bits = "84..88")]
-    _padding: Integer<u8, packed_bits::Bits<4>>,
-}
-
 pub fn compute_and_print_pairing_code(dev_det: &BasicInfoConfig, comm_data: &CommissioningData) {
     let pairing_code = compute_pairing_code(comm_data);
     pretty_print_pairing_code(&pairing_code);
-    print_qr_code(&pairing_code, dev_det, comm_data);
+
+    let disc_cap = DiscoveryCapabilitiesSchema {
+        on_ip_network: true,
+        ble: false,
+        soft_access_point: false,
+    };
+
+    let qr_code_data = QrCodeData::new(dev_det, comm_data, disc_cap);
+    let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
+    print_qr_code(&data_str);
 }
 
 fn compute_pairing_code(comm_data: &CommissioningData) -> String {
@@ -127,8 +109,8 @@ pub fn pretty_print_pairing_code(pairing_code: &str) {
     info!("Pairing Code: {}", pretty);
 }
 
-fn print_qr_code(pairing_code: &str, dev_det: &BasicInfoConfig, comm_data: &CommissioningData) {
-    let code = QrCode::with_version(pairing_code, Version::Normal(2), qrcode::EcLevel::M).unwrap();
+fn print_qr_code(qr_data: &str) {
+    let code = QrCode::with_version(qr_data, Version::Normal(2), qrcode::EcLevel::M).unwrap();
     let image = code
         .render::<unicode::Dense1x2>()
         .dark_color(unicode::Dense1x2::Light)
@@ -137,42 +119,162 @@ fn print_qr_code(pairing_code: &str, dev_det: &BasicInfoConfig, comm_data: &Comm
     println!("{}", image);
 }
 
-fn base38_encode_qr(qr_data: &QrCodeData) -> String {
-    let QrCodeData {
-        flow_type,
-        discovery_capabilities,
-        dev_det,
-        comm_data,
-    } = &qr_data;
+fn populate_bits(
+    bits: &mut [u8],
+    offset: &mut usize,
+    mut input: u64,
+    number_of_bits: usize,
+    total_payload_data_size_in_bits: usize,
+) -> Result<(), Error> {
+    if *offset + number_of_bits > total_payload_data_size_in_bits {
+        return Err(Error::InvalidArgument);
+    }
 
-    let BasicInfoConfig { vid, pid, .. } = dev_det;
-    const VERSION: u8 = 0; // 3-bit value specifying the QR code payload version. SHALL be 000.
+    if input >= 1u64 << number_of_bits {
+        return Err(Error::InvalidArgument);
+    }
 
-    let packed_qr_data = PackedQrData {
-        version: VERSION.into(),
-        vid: (*vid).reverse_bits().into(),
-        pid: (*pid).reverse_bits().into(),
-        commissionning_flow_type: ((*flow_type) as u8).into(),
-        soft_access_point: discovery_capabilities.soft_access_point,
-        ble: discovery_capabilities.ble,
-        on_ip_network: discovery_capabilities.on_ip_network,
-        _reserved: 0u8.into(),
-        discriminator: comm_data.discriminator.reverse_bits().into(),
-        passcode: comm_data.passwd.reverse_bits().into(),
-        _padding: 0u8.into(),
+    let mut index = *offset;
+    *offset += number_of_bits;
+
+    while input != 0 {
+        if input & 1 == 1 {
+            let mask = (1 << (index % 8)) as u8;
+            bits[index / 8] |= mask;
+        }
+        index += 1;
+        input >>= 1;
+    }
+
+    Ok(())
+}
+const LONG_BITS: usize = 12;
+const VERSION_FIELD_LENGTH_IN_BITS: usize = 3;
+const VENDOR_IDFIELD_LENGTH_IN_BITS: usize = 16;
+const PRODUCT_IDFIELD_LENGTH_IN_BITS: usize = 16;
+const COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS: usize = 2;
+const RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS: usize = 8;
+const PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS: usize = LONG_BITS;
+const SETUP_PINCODE_FIELD_LENGTH_IN_BITS: usize = 27;
+const PADDING_FIELD_LENGTH_IN_BITS: usize = 4;
+const RAW_VENDOR_TAG_LENGTH_IN_BITS: usize = 7;
+const TOTAL_PAYLOAD_DATA_SIZE_IN_BITS: usize = VERSION_FIELD_LENGTH_IN_BITS
+    + VENDOR_IDFIELD_LENGTH_IN_BITS
+    + PRODUCT_IDFIELD_LENGTH_IN_BITS
+    + COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS
+    + RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS
+    + PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS
+    + SETUP_PINCODE_FIELD_LENGTH_IN_BITS
+    + PADDING_FIELD_LENGTH_IN_BITS;
+const TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES: usize = TOTAL_PAYLOAD_DATA_SIZE_IN_BITS / 8;
+
+struct TlvData {
+    data_length_in_bytes: u32,
+}
+
+fn payload_base38_representation_with_tlv(
+    payload: &QrCodeData,
+    bits: &mut [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES],
+    tlv_data: Option<TlvData>,
+) -> Result<String, Error> {
+    generate_bit_set(payload, bits, tlv_data)?;
+    let base38_encoded = base38::encode(&*bits);
+    Ok(format!("MT:{}", base38_encoded))
+}
+
+fn payload_base38_representation(payload: &QrCodeData) -> Result<String, Error> {
+    let mut bits: [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES] = [0; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES];
+
+    // VerifyOrReturnError(mPayload.isValidQRCodePayload(), CHIP_ERROR_INVALID_ARGUMENT);
+
+    payload_base38_representation_with_tlv(payload, &mut bits, None)
+}
+
+fn generate_bit_set(
+    payload: &QrCodeData,
+    bits: &mut [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES],
+    tlv_data: Option<TlvData>,
+) -> Result<(), Error> {
+    let mut offset: usize = 0;
+    let total_payload_size_in_bits = if let Some(tlv_data) = &tlv_data {
+        TOTAL_PAYLOAD_DATA_SIZE_IN_BITS + (tlv_data.data_length_in_bytes * 8) as usize
+    } else {
+        TOTAL_PAYLOAD_DATA_SIZE_IN_BITS
     };
 
-    println!("{:?}", packed_qr_data);
-    println!("{}", packed_qr_data);
+    if bits.len() * 8 < total_payload_size_in_bits {
+        return Err(Error::BufferTooSmall);
+    };
 
-    let data = packed_qr_data.pack().unwrap();
-    let data = data
-        .into_iter()
-        .map(|b| b.reverse_bits())
-        .collect::<Vec<u8>>();
+    const VERSION: u64 = 0;
+    populate_bits(
+        bits,
+        &mut offset,
+        VERSION,
+        VERSION_FIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
 
-    let base38 = base38::encode(&data);
-    format!("MT:{}", base38)
+    populate_bits(
+        bits,
+        &mut offset,
+        payload.dev_det.vid as u64,
+        VENDOR_IDFIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    populate_bits(
+        bits,
+        &mut offset,
+        payload.dev_det.pid as u64,
+        PRODUCT_IDFIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    populate_bits(
+        bits,
+        &mut offset,
+        payload.flow_type as u64,
+        COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    populate_bits(
+        bits,
+        &mut offset,
+        payload.discovery_capabilities.as_bits() as u64,
+        RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    populate_bits(
+        bits,
+        &mut offset,
+        payload.comm_data.discriminator as u64,
+        PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    populate_bits(
+        bits,
+        &mut offset,
+        payload.comm_data.passwd as u64,
+        SETUP_PINCODE_FIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    populate_bits(
+        bits,
+        &mut offset,
+        0,
+        PADDING_FIELD_LENGTH_IN_BITS,
+        total_payload_size_in_bits,
+    )?;
+
+    // todo: add tlv data
+    // ReturnErrorOnFailure(populateTLVBits(bits.data(), offset, tlvDataStart, tlvDataLengthInBytes, totalPayloadSizeInBits));
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -219,7 +321,7 @@ mod tests {
         };
 
         let qr_code_data = QrCodeData::new(&dev_det, &comm_data, disc_cap);
-        let data_str = base38_encode_qr(&qr_code_data);
+        let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
     }
 }
