@@ -47,8 +47,10 @@ static mut G_MDNS: Option<Arc<Mdns>> = None;
 static INIT: Once = Once::new();
 
 pub enum ServiceMode {
+    /// The commissioned state
     Commissioned,
-    Commissionable,
+    /// The commissionable state with the discriminator that should be used
+    Commissionable(u16),
 }
 
 impl Mdns {

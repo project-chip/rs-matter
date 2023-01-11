@@ -19,17 +19,15 @@ mod dev_att;
 use matter::core::{self, CommissioningData};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
 use matter::data_model::device_types::device_type_add_on_off_light;
-use rand::prelude::*;
+use matter::secure_channel::spake2p::VerifierData;
 
 fn main() {
     env_logger::init();
-    let mut comm_data = CommissioningData {
+    let comm_data = CommissioningData {
         // TODO: Hard-coded for now
-        passwd: 123456,
+        verifier: VerifierData::new_with_pw(123456),
         discriminator: 250,
-        ..Default::default()
     };
-    rand::thread_rng().fill_bytes(&mut comm_data.salt);
 
     // vid/pid should match those in the DAC
     let dev_info = BasicInfoConfig {

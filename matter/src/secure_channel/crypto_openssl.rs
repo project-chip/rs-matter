@@ -117,9 +117,14 @@ impl CryptoSpake2 for CryptoOpenSSL {
         Ok(())
     }
 
+    fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
+        self.L = EcPoint::from_bytes(&self.group, l, &mut self.bn_ctx)?;
+        Ok(())
+    }
+
     #[allow(non_snake_case)]
     #[allow(dead_code)]
-    fn set_L(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve

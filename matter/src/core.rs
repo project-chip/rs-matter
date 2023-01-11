@@ -31,14 +31,10 @@ use crate::{
 };
 use std::sync::Arc;
 
-#[derive(Default)]
 /// Device Commissioning Data
 pub struct CommissioningData {
-    /// The commissioning salt
-    pub salt: [u8; 16],
-    /// The password for commissioning the device
-    // TODO: We should replace this with verifier instead of password
-    pub passwd: u32,
+    /// The data like password or verifier that is required to authenticate
+    pub verifier: VerifierData,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
 }
@@ -74,8 +70,10 @@ impl Matter {
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);
+        let mut pase = PaseMgr::new();
         let open_comm_window = fabric_mgr.is_empty();
-        let data_model = DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr)?;
+        let data_model =
+            DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr, pase.clone())?;
         let mut matter = Box::new(Matter {
             transport_mgr: transport::mgr::Mgr::new()?,
             data_model,
@@ -84,11 +82,12 @@ impl Matter {
         let interaction_model =
             Box::new(InteractionModel::new(Box::new(matter.data_model.clone())));
         matter.transport_mgr.register_protocol(interaction_model)?;
-        let mut secure_channel = Box::new(SecureChannel::new(matter.fabric_mgr.clone()));
+
         if open_comm_window {
-            secure_channel.open_comm_window(&dev_comm.salt, dev_comm.passwd)?;
+            pase.enable_pase_session(dev_comm.verifier, dev_comm.discriminator)?;
         }
 
+        let secure_channel = Box::new(SecureChannel::new(pase, matter.fabric_mgr.clone()));
         matter.transport_mgr.register_protocol(secure_channel)?;
         Ok(matter)
     }
