@@ -18,7 +18,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
-use log::info;
+use log::{error, info};
 use owning_ref::RwLockReadGuardRef;
 
 use crate::{
@@ -45,6 +45,7 @@ const ST_RCA: &str = "rca";
 const ST_ICA: &str = "ica";
 const ST_NOC: &str = "noc";
 const ST_IPK: &str = "ipk";
+const ST_LBL: &str = "label";
 const ST_PBKEY: &str = "pubkey";
 const ST_PRKEY: &str = "privkey";
 
@@ -58,6 +59,7 @@ pub struct Fabric {
     pub icac: Option<Cert>,
     pub noc: Cert,
     pub ipk: KeySet,
+    label: String,
     compressed_id: [u8; COMPRESSED_FABRIC_ID_LEN],
     mdns_service: Option<SysMdnsService>,
 }
@@ -97,6 +99,7 @@ impl Fabric {
             noc,
             ipk: KeySet::default(),
             compressed_id: [0; COMPRESSED_FABRIC_ID_LEN],
+            label: "".into(),
             mdns_service: None,
         };
         Fabric::get_compressed_id(f.root_ca.get_pubkey(), fabric_id, &mut f.compressed_id)?;
@@ -129,6 +132,7 @@ impl Fabric {
             icac: Some(Cert::default()),
             noc: Cert::default(),
             ipk: KeySet::default(),
+            label: "".into(),
             compressed_id: [0; COMPRESSED_FABRIC_ID_LEN],
             mdns_service: None,
         })
@@ -186,7 +190,7 @@ impl Fabric {
             vendor_id: self.vendor_id,
             fabric_id: self.fabric_id,
             node_id: self.node_id,
-            label: UtfStr::new(b""),
+            label: UtfStr(self.label.as_bytes()),
             fab_idx: Some(fab_idx),
         }
     }
@@ -206,6 +210,7 @@ impl Fabric {
         let len = self.noc.as_tlv(&mut key)?;
         psm.set_kv_slice(fb_key!(index, ST_NOC), &key[..len])?;
         psm.set_kv_slice(fb_key!(index, ST_IPK), self.ipk.epoch_key())?;
+        psm.set_kv_slice(fb_key!(index, ST_LBL), self.label.as_bytes())?;
 
         let mut key = [0_u8; crypto::EC_POINT_LEN_BYTES];
         let len = self.key_pair.get_public_key(&mut key)?;
@@ -217,7 +222,7 @@ impl Fabric {
         let key = &key[..len];
         psm.set_kv_slice(fb_key!(index, ST_PRKEY), key)?;
 
-        psm.set_kv_u64(ST_VID, self.vendor_id.into())?;
+        psm.set_kv_u64(fb_key!(index, ST_VID), self.vendor_id.into())?;
         Ok(())
     }
 
@@ -241,6 +246,13 @@ impl Fabric {
         let mut ipk = Vec::new();
         psm.get_kv_slice(fb_key!(index, ST_IPK), &mut ipk)?;
 
+        let mut label = Vec::new();
+        psm.get_kv_slice(fb_key!(index, ST_LBL), &mut label)?;
+        let label = String::from_utf8(label).map_err(|_| {
+            error!("Couldn't read label");
+            Error::Invalid
+        })?;
+
         let mut pub_key = Vec::new();
         psm.get_kv_slice(fb_key!(index, ST_PBKEY), &mut pub_key)?;
         let mut priv_key = Vec::new();
@@ -248,16 +260,20 @@ impl Fabric {
         let keypair = KeyPair::new_from_components(pub_key.as_slice(), priv_key.as_slice())?;
 
         let mut vendor_id = 0;
-        psm.get_kv_u64(ST_VID, &mut vendor_id)?;
+        psm.get_kv_u64(fb_key!(index, ST_VID), &mut vendor_id)?;
 
-        Fabric::new(
+        let f = Fabric::new(
             keypair,
             root_ca,
             icac,
             noc,
             ipk.as_slice(),
             vendor_id as u16,
-        )
+        );
+        f.map(|mut f| {
+            f.label = label;
+            f
+        })
     }
 }
 
@@ -357,6 +373,30 @@ impl FabricMgr {
         for i in 1..MAX_SUPPORTED_FABRICS {
             if let Some(fabric) = &mgr.fabrics[i] {
                 f(fabric, i as u8)
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_label(&self, index: u8, label: String) -> Result<(), Error> {
+        let index = index as usize;
+        let mut mgr = self.inner.write()?;
+        if label != "" {
+            for i in 1..MAX_SUPPORTED_FABRICS {
+                if let Some(fabric) = &mgr.fabrics[i] {
+                    if fabric.label == label {
+                        return Err(Error::Invalid);
+                    }
+                }
+            }
+        }
+        if let Some(fabric) = &mut mgr.fabrics[index] {
+            let old = fabric.label.clone();
+            fabric.label = label;
+            let psm = self.psm.lock().unwrap();
+            if fabric.store(index, &psm).is_err() {
+                fabric.label = old;
+                return Err(Error::StdIoError);
             }
         }
         Ok(())
