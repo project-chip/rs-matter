@@ -27,7 +27,7 @@ use crate::fabric::{Fabric, FabricMgr};
 use crate::interaction_model::command::CommandReq;
 use crate::interaction_model::core::IMStatusCode;
 use crate::interaction_model::messages::ib;
-use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV};
+use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
 use crate::transport::session::SessionMode;
 use crate::utils::writebuf::WriteBuf;
 use crate::{cmd_enter, error::*};
@@ -75,6 +75,8 @@ pub enum Commands {
     CSRResp = 0x05,
     AddNOC = 0x06,
     NOCResp = 0x08,
+    UpdateFabricLabel = 0x09,
+    RemoveFabric = 0x0a,
     AddTrustedRootCert = 0x0b,
 }
 
@@ -183,19 +185,55 @@ impl NocCluster {
         if self.failsafe.record_add_noc(fab_idx).is_err() {
             error!("Failed to record NoC in the FailSafe, what to do?");
         }
+        NocCluster::create_nocresponse(cmd_req.resp, NocStatus::Ok, fab_idx, "".to_owned());
+        cmd_req.trans.complete();
+        Ok(())
+    }
 
+    fn create_nocresponse(
+        tw: &mut TLVWriter,
+        status_code: NocStatus,
+        fab_idx: u8,
+        debug_txt: String,
+    ) {
         let cmd_data = NocResp {
-            status_code: NocStatus::Ok as u8,
+            status_code: status_code as u8,
             fab_idx,
-            debug_txt: "".to_owned(),
+            debug_txt,
         };
-        let resp = ib::InvResp::cmd_new(
+        let invoke_resp = ib::InvResp::cmd_new(
             0,
             ID,
             Commands::NOCResp as u16,
             EncodeValue::Value(&cmd_data),
         );
-        let _ = resp.to_tlv(cmd_req.resp, TagType::Anonymous);
+        let _ = invoke_resp.to_tlv(tw, TagType::Anonymous);
+    }
+
+    fn handle_command_updatefablabel(
+        &mut self,
+        cmd_req: &mut CommandReq,
+    ) -> Result<(), IMStatusCode> {
+        cmd_enter!("Update Fabric Label");
+        let req = UpdateFabricLabelReq::from_tlv(&cmd_req.data)
+            .map_err(|_| IMStatusCode::InvalidDataType)?;
+        let label = req
+            .label
+            .to_string()
+            .map_err(|_| IMStatusCode::InvalidDataType)?;
+
+        let (result, fab_idx) =
+            if let SessionMode::Case(fab_idx) = cmd_req.trans.session.get_session_mode() {
+                if self.fabric_mgr.set_label(fab_idx, label).is_err() {
+                    (NocStatus::LabelConflict, fab_idx)
+                } else {
+                    (NocStatus::Ok, fab_idx)
+                }
+            } else {
+                // Update Fabric Label not allowed
+                (NocStatus::InvalidFabricIndex, 0)
+            };
+        NocCluster::create_nocresponse(cmd_req.resp, result, fab_idx, "".to_string());
         cmd_req.trans.complete();
         Ok(())
     }
@@ -203,18 +241,8 @@ impl NocCluster {
     fn handle_command_addnoc(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
         cmd_enter!("AddNOC");
         if let Err(e) = self._handle_command_addnoc(cmd_req) {
-            let cmd_data = NocResp {
-                status_code: e as u8,
-                fab_idx: 0,
-                debug_txt: "".to_owned(),
-            };
-            let invoke_resp = ib::InvResp::cmd_new(
-                0,
-                ID,
-                Commands::NOCResp as u16,
-                EncodeValue::Value(&cmd_data),
-            );
-            let _ = invoke_resp.to_tlv(cmd_req.resp, TagType::Anonymous);
+            //TODO: Fab-idx 0?
+            NocCluster::create_nocresponse(cmd_req.resp, e, 0, "".to_owned());
             cmd_req.trans.complete();
         }
         Ok(())
@@ -401,6 +429,7 @@ impl ClusterType for NocCluster {
             Commands::AddTrustedRootCert => self.handle_command_addtrustedrootcert(cmd_req),
             Commands::AttReq => self.handle_command_attrequest(cmd_req),
             Commands::CertChainReq => self.handle_command_certchainrequest(cmd_req),
+            Commands::UpdateFabricLabel => self.handle_command_updatefablabel(cmd_req),
             _ => Err(IMStatusCode::UnsupportedCommand),
         }
     }
@@ -513,6 +542,12 @@ struct AddNocReq<'a> {
 #[tlvargs(lifetime = "'a")]
 struct CommonReq<'a> {
     str: OctetStr<'a>,
+}
+
+#[derive(FromTLV)]
+#[tlvargs(lifetime = "'a")]
+struct UpdateFabricLabelReq<'a> {
+    label: UtfStr<'a>,
 }
 
 #[derive(FromTLV)]

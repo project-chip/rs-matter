@@ -119,11 +119,21 @@ impl<'a> UtfStr<'a> {
     pub fn new(str: &'a [u8]) -> Self {
         Self(str)
     }
+
+    pub fn to_string(self) -> Result<String, Error> {
+        String::from_utf8(self.0.to_vec()).map_err(|_| Error::Invalid)
+    }
 }
 
 impl<'a> ToTLV for UtfStr<'a> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.utf16(tag, self.0)
+    }
+}
+
+impl<'a> FromTLV<'a> for UtfStr<'a> {
+    fn from_tlv(t: &TLVElement<'a>) -> Result<UtfStr<'a>, Error> {
+        t.slice().map(UtfStr)
     }
 }
 
