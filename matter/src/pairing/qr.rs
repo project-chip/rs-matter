@@ -1,29 +1,6 @@
-/*
- *
- *    Copyright (c) 2020-2022 Project CHIP Authors
- *
- *    Licensed under the Apache License, Version 2.0 (the "License");
- *    you may not use this file except in compliance with the License.
- *    You may obtain a copy of the License at
- *
- *        http://www.apache.org/licenses/LICENSE-2.0
- *
- *    Unless required by applicable law or agreed to in writing, software
- *    distributed under the License is distributed on an "AS IS" BASIS,
- *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *    See the License for the specific language governing permissions and
- *    limitations under the License.
- */
-
-//! This module contains the logic for generating the pairing code and the QR code for easy pairing.
-
-use log::info;
-use qrcode::{render::unicode, QrCode, Version};
-use verhoeff::Verhoeff;
-
-use crate::{
-    codec::base38, data_model::cluster_basic_information::BasicInfoConfig, error::Error,
-    CommissioningData,
+use super::{
+    vendor_identifiers::{is_vendor_id_valid_operationally, VendorId},
+    *,
 };
 
 const LONG_BITS: usize = 12;
@@ -45,49 +22,10 @@ const TOTAL_PAYLOAD_DATA_SIZE_IN_BITS: usize = VERSION_FIELD_LENGTH_IN_BITS
     + PADDING_FIELD_LENGTH_IN_BITS;
 const TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES: usize = TOTAL_PAYLOAD_DATA_SIZE_IN_BITS / 8;
 
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum CommissionningFlowType {
-    Standard = 0,
-    UserIntent = 1,
-    Custom = 2,
-}
-
-pub struct DiscoveryCapabilitiesSchema {
-    on_ip_network: bool,
-    ble: bool,
-    soft_access_point: bool,
-}
-
-impl DiscoveryCapabilitiesSchema {
-    pub fn new(on_ip_network: bool, ble: bool, soft_access_point: bool) -> Self {
-        DiscoveryCapabilitiesSchema {
-            on_ip_network,
-            ble,
-            soft_access_point,
-        }
-    }
-}
-
-impl DiscoveryCapabilitiesSchema {
-    fn as_bits(&self) -> u8 {
-        let mut bits = 0;
-        if self.soft_access_point {
-            bits |= 1 << 0;
-        }
-        if self.ble {
-            bits |= 1 << 1;
-        }
-        if self.on_ip_network {
-            bits |= 1 << 2;
-        }
-        bits
-    }
-}
-
 pub struct QrCodeData<'data> {
+    version: u8,
     flow_type: CommissionningFlowType,
-    discovery_capabilities: DiscoveryCapabilitiesSchema,
+    discovery_capabilities: DiscoveryCapabilities,
     dev_det: &'data BasicInfoConfig,
     comm_data: &'data CommissioningData,
 }
@@ -96,70 +34,113 @@ impl<'data> QrCodeData<'data> {
     pub fn new(
         dev_det: &'data BasicInfoConfig,
         comm_data: &'data CommissioningData,
-        discovery_capabilities: DiscoveryCapabilitiesSchema,
+        discovery_capabilities: DiscoveryCapabilities,
     ) -> Self {
+        const DEFAULT_VERSION: u8 = 0;
+
         QrCodeData {
+            version: DEFAULT_VERSION,
             flow_type: CommissionningFlowType::Standard,
             discovery_capabilities,
             dev_det,
             comm_data,
         }
     }
+
+    fn is_valid(&self) -> bool {
+        // 3-bit value specifying the QR code payload version.
+        if self.version >= 1 << VERSION_FIELD_LENGTH_IN_BITS {
+            return false;
+        }
+
+        if !self.discovery_capabilities.has_value() {
+            return false;
+        }
+
+        if self.comm_data.passwd >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
+            return false;
+        }
+
+        self.check_payload_common_constraints()
+    }
+
+    fn check_payload_common_constraints(&self) -> bool {
+        // A version not equal to 0 would be invalid for v1 and would indicate new format (e.g. version 2)
+        if self.version != 0 {
+            return false;
+        }
+
+        if !Self::is_valid_setup_pin(self.comm_data.passwd) {
+            return false;
+        }
+
+        // VendorID must be unspecified (0) or in valid range expected.
+        if !is_vendor_id_valid_operationally(self.dev_det.vid)
+            && (self.dev_det.vid != VendorId::CommonOrUnspecified as u16)
+        {
+            return false;
+        }
+
+        // A value of 0x0000 SHALL NOT be assigned to a product since Product ID = 0x0000 is used for these specific cases:
+        //  * To announce an anonymized Product ID as part of device discovery
+        //  * To indicate an OTA software update file applies to multiple Product IDs equally.
+        //  * To avoid confusion when presenting the Onboarding Payload for ECM with multiple nodes
+        if self.dev_det.pid == 0 && self.dev_det.vid != VendorId::CommonOrUnspecified as u16 {
+            return false;
+        }
+
+        true
+    }
+
+    fn is_valid_setup_pin(setup_pin: u32) -> bool {
+        const SETUP_PINCODE_MAXIMUM_VALUE: u32 = 99999998;
+        const SETUP_PINCODE_UNDEFINED_VALUE: u32 = 0;
+
+        // SHALL be restricted to the values 0x0000001 to 0x5F5E0FE (00000001 to 99999998 in decimal), excluding the invalid Passcode
+        // values.
+        if setup_pin == SETUP_PINCODE_UNDEFINED_VALUE
+            || setup_pin > SETUP_PINCODE_MAXIMUM_VALUE
+            || setup_pin == 11111111
+            || setup_pin == 22222222
+            || setup_pin == 33333333
+            || setup_pin == 44444444
+            || setup_pin == 55555555
+            || setup_pin == 66666666
+            || setup_pin == 77777777
+            || setup_pin == 88888888
+            || setup_pin == 12345678
+            || setup_pin == 87654321
+        {
+            return false;
+        }
+
+        true
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum CommissionningFlowType {
+    Standard = 0,
+    UserIntent = 1,
+    Custom = 2,
 }
 
 struct TlvData {
     data_length_in_bytes: u32,
 }
 
-/// Prepares and prints the pairing code and the QR code for easy pairing.
-pub fn print_pairing_code_and_qr(dev_det: &BasicInfoConfig, comm_data: &CommissioningData) {
-    let pairing_code = compute_pairing_code(comm_data);
+pub(super) fn payload_base38_representation(payload: &QrCodeData) -> Result<String, Error> {
+    let mut bits: [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES] = [0; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES];
 
-    // todo: allow the discovery capabilities to be passed in
-    let disc_cap = DiscoveryCapabilitiesSchema::new(true, false, false);
-    let qr_code_data = QrCodeData::new(dev_det, comm_data, disc_cap);
-    let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
+    if !payload.is_valid() {
+        return Err(Error::InvalidArgument);
+    }
 
-    pretty_print_pairing_code(&pairing_code);
-    print_qr_code(&data_str);
+    payload_base38_representation_with_tlv(payload, &mut bits, None)
 }
 
-fn compute_pairing_code(comm_data: &CommissioningData) -> String {
-    // 0: no Vendor ID and Product ID present in Manual Pairing Code
-    const VID_PID_PRESENT: u8 = 0;
-
-    let CommissioningData {
-        discriminator,
-        passwd,
-        ..
-    } = comm_data;
-
-    let mut digits = String::new();
-    digits.push_str(&((VID_PID_PRESENT << 2) | (discriminator >> 10) as u8).to_string());
-    digits.push_str(&format!(
-        "{:0>5}",
-        ((discriminator & 0x300) << 6) | (passwd & 0x3FFF) as u16
-    ));
-    digits.push_str(&format!("{:0>4}", passwd >> 14));
-
-    let check_digit = digits.calculate_verhoeff_check_digit();
-    digits.push_str(&check_digit.to_string());
-
-    digits
-}
-
-fn pretty_print_pairing_code(pairing_code: &str) {
-    assert!(pairing_code.len() == 11);
-    let mut pretty = String::new();
-    pretty.push_str(&pairing_code[..4]);
-    pretty.push('-');
-    pretty.push_str(&pairing_code[4..8]);
-    pretty.push('-');
-    pretty.push_str(&pairing_code[8..]);
-    info!("Pairing Code: {}", pretty);
-}
-
-fn print_qr_code(qr_data: &str) {
+pub(super) fn print_qr_code(qr_data: &str) {
     let code = QrCode::with_version(qr_data, Version::Normal(2), qrcode::EcLevel::M).unwrap();
     let image = code
         .render::<unicode::Dense1x2>()
@@ -209,14 +190,6 @@ fn payload_base38_representation_with_tlv(
     Ok(format!("MT:{}", base38_encoded))
 }
 
-fn payload_base38_representation(payload: &QrCodeData) -> Result<String, Error> {
-    let mut bits: [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES] = [0; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES];
-
-    // VerifyOrReturnError(mPayload.isValidQRCodePayload(), CHIP_ERROR_INVALID_ARGUMENT);
-
-    payload_base38_representation_with_tlv(payload, &mut bits, None)
-}
-
 fn generate_bit_set(
     payload: &QrCodeData,
     bits: &mut [u8; TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES],
@@ -233,11 +206,10 @@ fn generate_bit_set(
         return Err(Error::BufferTooSmall);
     };
 
-    const VERSION: u64 = 0;
     populate_bits(
         bits,
         &mut offset,
-        VERSION,
+        payload.version as u64,
         VERSION_FIELD_LENGTH_IN_BITS,
         total_payload_size_in_bits,
     )?;
@@ -309,25 +281,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn can_compute_pairing_code() {
-        let comm_data = CommissioningData {
-            passwd: 123456,
-            discriminator: 250,
-            ..Default::default()
-        };
-        let pairing_code = compute_pairing_code(&comm_data);
-        assert_eq!(pairing_code, "00876800071");
-
-        let comm_data = CommissioningData {
-            passwd: 34567890,
-            discriminator: 2976,
-            ..Default::default()
-        };
-        let pairing_code = compute_pairing_code(&comm_data);
-        assert_eq!(pairing_code, "26318621095");
-    }
-
-    #[test]
     fn can_base38_encode() {
         const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
 
@@ -342,7 +295,7 @@ mod tests {
             ..Default::default()
         };
 
-        let disc_cap = DiscoveryCapabilitiesSchema::new(false, true, false);
+        let disc_cap = DiscoveryCapabilities::new(false, true, false);
         let qr_code_data = QrCodeData::new(&dev_det, &comm_data, disc_cap);
         let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
