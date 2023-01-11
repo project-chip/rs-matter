@@ -381,7 +381,7 @@ impl FabricMgr {
     pub fn set_label(&self, index: u8, label: String) -> Result<(), Error> {
         let index = index as usize;
         let mut mgr = self.inner.write()?;
-        if label != "" {
+        if !label.is_empty() {
             for i in 1..MAX_SUPPORTED_FABRICS {
                 if let Some(fabric) = &mgr.fabrics[i] {
                     if fabric.label == label {

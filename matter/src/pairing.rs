@@ -23,7 +23,7 @@ use verhoeff::Verhoeff;
 
 use crate::{
     codec::base38, data_model::cluster_basic_information::BasicInfoConfig, error::Error,
-    CommissioningData,
+    secure_channel::spake2p::VerifierOption, CommissioningData,
 };
 
 const LONG_BITS: usize = 12;
@@ -130,9 +130,14 @@ fn compute_pairing_code(comm_data: &CommissioningData) -> String {
 
     let CommissioningData {
         discriminator,
-        passwd,
+        verifier,
         ..
     } = comm_data;
+
+    let passwd = match verifier.data {
+        VerifierOption::Password(pwd) => pwd,
+        VerifierOption::Verifier(_) => todo!(),
+    };
 
     let mut digits = String::new();
     digits.push_str(&((VID_PID_PRESENT << 2) | (discriminator >> 10) as u8).to_string());
@@ -233,6 +238,11 @@ fn generate_bit_set(
         return Err(Error::BufferTooSmall);
     };
 
+    let passwd = match payload.comm_data.verifier.data {
+        VerifierOption::Password(pwd) => pwd,
+        VerifierOption::Verifier(_) => todo!(),
+    };
+
     const VERSION: u64 = 0;
     populate_bits(
         bits,
@@ -285,7 +295,7 @@ fn generate_bit_set(
     populate_bits(
         bits,
         &mut offset,
-        payload.comm_data.passwd as u64,
+        passwd as u64,
         SETUP_PINCODE_FIELD_LENGTH_IN_BITS,
         total_payload_size_in_bits,
     )?;
@@ -306,22 +316,22 @@ fn generate_bit_set(
 
 #[cfg(test)]
 mod tests {
+    use crate::secure_channel::spake2p::VerifierData;
+
     use super::*;
 
     #[test]
     fn can_compute_pairing_code() {
         let comm_data = CommissioningData {
-            passwd: 123456,
+            verifier: VerifierData::new_with_pw(123456),
             discriminator: 250,
-            ..Default::default()
         };
         let pairing_code = compute_pairing_code(&comm_data);
         assert_eq!(pairing_code, "00876800071");
 
         let comm_data = CommissioningData {
-            passwd: 34567890,
+            verifier: VerifierData::new_with_pw(34567890),
             discriminator: 2976,
-            ..Default::default()
         };
         let pairing_code = compute_pairing_code(&comm_data);
         assert_eq!(pairing_code, "26318621095");
@@ -332,9 +342,8 @@ mod tests {
         const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
 
         let comm_data = CommissioningData {
-            passwd: 34567890,
+            verifier: VerifierData::new_with_pw(34567890),
             discriminator: 2976,
-            ..Default::default()
         };
         let dev_det = BasicInfoConfig {
             vid: 9050,

@@ -30,8 +30,6 @@ pub struct MdnsInner {
     vid: u16,
     /// Product ID
     pid: u16,
-    /// Discriminator
-    discriminator: u16,
     /// Device name
     device_name: String,
 }
@@ -75,11 +73,10 @@ impl Mdns {
     /// Set mDNS service specific values
     /// Values like vid, pid, discriminator etc
     // TODO: More things like device-type etc can be added here
-    pub fn set_values(&self, vid: u16, pid: u16, discriminator: u16, device_name: &str) {
+    pub fn set_values(&self, vid: u16, pid: u16, device_name: &str) {
         let mut inner = self.inner.lock().unwrap();
         inner.vid = vid;
         inner.pid = pid;
-        inner.discriminator = discriminator;
         inner.device_name = device_name.chars().take(32).collect();
     }
 
@@ -92,12 +89,12 @@ impl Mdns {
             ServiceMode::Commissioned => {
                 sys_publish_service(name, "_matter._tcp", MATTER_PORT, &[])
             }
-            ServiceMode::Commissionable => {
+            ServiceMode::Commissionable(discriminator) => {
                 let inner = self.inner.lock().unwrap();
-                let short = compute_short_discriminator(inner.discriminator);
-                let serv_type = format!("_matterc._udp,_S{},_L{}", short, inner.discriminator);
+                let short = compute_short_discriminator(discriminator);
+                let serv_type = format!("_matterc._udp,_S{},_L{}", short, discriminator);
 
-                let str_discriminator = format!("{}", inner.discriminator);
+                let str_discriminator = format!("{}", discriminator);
                 let txt_kvs = [
                     ["D", &str_discriminator],
                     ["CM", "1"],

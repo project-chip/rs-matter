@@ -26,7 +26,7 @@ use crate::{
     interaction_model::InteractionModel,
     mdns::Mdns,
     pairing::print_pairing_code_and_qr,
-    secure_channel::core::SecureChannel,
+    secure_channel::{core::SecureChannel, pake::PaseMgr, spake2p::VerifierData},
     transport,
 };
 use std::sync::Arc;
@@ -56,17 +56,12 @@ impl Matter {
     pub fn new(
         dev_det: &BasicInfoConfig,
         dev_att: Box<dyn DevAttDataFetcher>,
-        dev_comm: &CommissioningData,
+        dev_comm: CommissioningData,
     ) -> Result<Box<Matter>, Error> {
         let mdns = Mdns::get()?;
-        mdns.set_values(
-            dev_det.vid,
-            dev_det.pid,
-            dev_comm.discriminator,
-            &dev_det.device_name,
-        );
+        mdns.set_values(dev_det.vid, dev_det.pid, &dev_det.device_name);
 
-        print_pairing_code_and_qr(dev_det, dev_comm);
+        print_pairing_code_and_qr(dev_det, &dev_comm);
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);

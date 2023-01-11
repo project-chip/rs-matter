@@ -106,14 +106,7 @@ impl ImEngine {
         // Only allow the standard peer node id of the IM Engine
         default_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
         acl_mgr.add(default_acl).unwrap();
-        let dm = DataModel::new(
-            dev_det,
-            dev_att,
-            fabric_mgr.clone(),
-            acl_mgr.clone(),
-            pase_mgr,
-        )
-        .unwrap();
+        let dm = DataModel::new(&dev_det, dev_att, fabric_mgr, acl_mgr.clone(), pase_mgr).unwrap();
 
         {
             let mut d = dm.node.write().unwrap();
