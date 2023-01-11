@@ -48,6 +48,8 @@ impl<'data> QrCodeData<'data> {
     }
 
     fn is_valid(&self) -> bool {
+        let passwd = passwd_from_comm_data(self.comm_data);
+
         // 3-bit value specifying the QR code payload version.
         if self.version >= 1 << VERSION_FIELD_LENGTH_IN_BITS {
             return false;
@@ -57,7 +59,7 @@ impl<'data> QrCodeData<'data> {
             return false;
         }
 
-        if self.comm_data.passwd >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
+        if passwd >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
             return false;
         }
 
@@ -70,7 +72,9 @@ impl<'data> QrCodeData<'data> {
             return false;
         }
 
-        if !Self::is_valid_setup_pin(self.comm_data.passwd) {
+        let passwd = passwd_from_comm_data(self.comm_data);
+
+        if !Self::is_valid_setup_pin(passwd) {
             return false;
         }
 
@@ -206,6 +210,8 @@ fn generate_bit_set(
         return Err(Error::BufferTooSmall);
     };
 
+    let passwd = passwd_from_comm_data(payload.comm_data);
+
     populate_bits(
         bits,
         &mut offset,
@@ -257,7 +263,7 @@ fn generate_bit_set(
     populate_bits(
         bits,
         &mut offset,
-        payload.comm_data.passwd as u64,
+        passwd as u64,
         SETUP_PINCODE_FIELD_LENGTH_IN_BITS,
         total_payload_size_in_bits,
     )?;
@@ -278,16 +284,17 @@ fn generate_bit_set(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::secure_channel::spake2p::VerifierData;
 
     #[test]
     fn can_base38_encode() {
         const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
 
         let comm_data = CommissioningData {
-            passwd: 34567890,
+            verifier: VerifierData::new_with_pw(34567890),
             discriminator: 2976,
-            ..Default::default()
         };
         let dev_det = BasicInfoConfig {
             vid: 9050,

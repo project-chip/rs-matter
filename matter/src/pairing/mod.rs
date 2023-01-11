@@ -27,7 +27,7 @@ use verhoeff::Verhoeff;
 
 use crate::{
     codec::base38, data_model::cluster_basic_information::BasicInfoConfig, error::Error,
-    CommissioningData,
+    secure_channel::spake2p::VerifierOption, CommissioningData,
 };
 
 use self::{
@@ -93,4 +93,12 @@ pub fn print_pairing_code_and_qr(
 
     pretty_print_pairing_code(&pairing_code);
     print_qr_code(&data_str);
+}
+
+pub(self) fn passwd_from_comm_data(comm_data: &CommissioningData) -> u32 {
+    // todo: should this be part of the comm_data implementation?
+    match comm_data.verifier.data {
+        VerifierOption::Password(pwd) => pwd,
+        VerifierOption::Verifier(_) => 0,
+    }
 }

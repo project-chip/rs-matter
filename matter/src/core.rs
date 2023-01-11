@@ -61,7 +61,7 @@ impl Matter {
         let mdns = Mdns::get()?;
         mdns.set_values(dev_det.vid, dev_det.pid, &dev_det.device_name);
 
-        print_pairing_code_and_qr(dev_det, dev_comm, DiscoveryCapabilities::default());
+        print_pairing_code_and_qr(dev_det, &dev_comm, DiscoveryCapabilities::default());
 
         let fabric_mgr = Arc::new(FabricMgr::new()?);
         let acl_mgr = Arc::new(AclMgr::new()?);
