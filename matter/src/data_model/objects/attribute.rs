@@ -203,6 +203,7 @@ impl std::fmt::Display for Attribute {
 }
 
 #[cfg(test)]
+#[allow(clippy::bool_assert_comparison)]
 mod tests {
     use super::Access;
     use crate::data_model::objects::Privilege;

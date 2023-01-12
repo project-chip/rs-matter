@@ -291,7 +291,6 @@ impl Cluster {
             a.set_value(value)
                 .map(|_| {
                     self.cluster_changed();
-                    ()
                 })
                 .map_err(|_| IMStatusCode::UnsupportedWrite)
         } else {
@@ -303,7 +302,6 @@ impl Cluster {
         let a = self.get_attribute_mut(attr_id)?;
         a.set_value(value).map(|_| {
             self.cluster_changed();
-            ()
         })
     }
 

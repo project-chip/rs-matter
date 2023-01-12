@@ -51,7 +51,7 @@ impl InteractionModel {
         rx_buf: &[u8],
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
-        if InteractionModel::req_timeout_handled(trans, proto_tx)? == true {
+        if InteractionModel::req_timeout_handled(trans, proto_tx)? {
             return Ok(ResponseRequired::Yes);
         }
 
@@ -61,7 +61,7 @@ impl InteractionModel {
         let inv_req = InvReq::from_tlv(&root)?;
 
         let timed_tx = trans.get_timeout().map(|_| true);
-        let timed_request = inv_req.timed_request.filter(|a| *a == true);
+        let timed_request = inv_req.timed_request.filter(|a| *a);
         // Either both should be None, or both should be Some(true)
         if timed_tx != timed_request {
             InteractionModel::create_status_response(proto_tx, IMStatusCode::TimedRequestMisMatch)?;

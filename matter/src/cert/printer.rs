@@ -18,6 +18,7 @@
 use super::{CertConsumer, MAX_DEPTH};
 use crate::error::Error;
 use chrono::{TimeZone, Utc};
+use log::warn;
 use std::fmt;
 
 pub struct CertPrinter<'a, 'b> {
@@ -118,15 +119,23 @@ impl<'a, 'b> CertConsumer for CertPrinter<'a, 'b> {
         Ok(())
     }
     fn utctime(&mut self, tag: &str, epoch: u32) -> Result<(), Error> {
-        let mut matter_epoch = Utc.ymd(2000, 1, 1).and_hms(0, 0, 0).timestamp();
+        let mut matter_epoch = Utc
+            .with_ymd_and_hms(2000, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+
         matter_epoch += epoch as i64;
-        let _ = writeln!(
-            self.f,
-            "{} {} {}",
-            SPACE[self.level],
-            tag,
-            Utc.timestamp(matter_epoch, 0)
-        );
+
+        let dt = match Utc.timestamp_opt(matter_epoch, 0) {
+            chrono::LocalResult::None => return Err(Error::InvalidTime),
+            chrono::LocalResult::Single(s) => s,
+            chrono::LocalResult::Ambiguous(_, a) => {
+                warn!("Ambiguous time for epoch {epoch}; returning latest timestamp: {a}");
+                a
+            }
+        };
+
+        let _ = writeln!(self.f, "{} {} {}", SPACE[self.level], tag, dt);
         Ok(())
     }
 }

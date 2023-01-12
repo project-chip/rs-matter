@@ -348,22 +348,20 @@ pub mod ib {
             } else {
                 f(ListOperation::EditItem(index), data)
             }
-        } else {
-            if data.confirm_array().is_ok() {
-                // If data is list, this is either Delete List or OverWrite List operation
-                // in either case, we have to first delete the whole list
-                f(ListOperation::DeleteList, data)?;
-                // Now the data must be a list, that should be added item by item
+        } else if data.confirm_array().is_ok() {
+            // If data is list, this is either Delete List or OverWrite List operation
+            // in either case, we have to first delete the whole list
+            f(ListOperation::DeleteList, data)?;
+            // Now the data must be a list, that should be added item by item
 
-                let container = data.enter().ok_or(Error::Invalid)?;
-                for d in container {
-                    f(ListOperation::AddItem, &d)?;
-                }
-                Ok(())
-            } else {
-                // If data is not a list, this must be an add operation
-                f(ListOperation::AddItem, data)
+            let container = data.enter().ok_or(Error::Invalid)?;
+            for d in container {
+                f(ListOperation::AddItem, &d)?;
             }
+            Ok(())
+        } else {
+            // If data is not a list, this must be an add operation
+            f(ListOperation::AddItem, data)
         }
     }
 

@@ -21,6 +21,7 @@ use std::sync::RwLock;
 
 #[derive(PartialEq)]
 #[allow(dead_code)]
+#[allow(clippy::enum_variant_names)]
 enum NocState {
     NocNotRecvd,
     // This is the local fabric index

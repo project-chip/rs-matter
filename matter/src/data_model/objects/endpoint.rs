@@ -25,6 +25,8 @@ pub struct Endpoint {
     clusters: Vec<Box<dyn ClusterType>>,
 }
 
+pub type BoxedClusters = [Box<dyn ClusterType>];
+
 impl Endpoint {
     pub fn new() -> Result<Box<Endpoint>, Error> {
         Ok(Box::new(Endpoint {
@@ -63,7 +65,7 @@ impl Endpoint {
     pub fn get_wildcard_clusters(
         &self,
         cluster: Option<u32>,
-    ) -> Result<(&[Box<dyn ClusterType>], bool), IMStatusCode> {
+    ) -> Result<(&BoxedClusters, bool), IMStatusCode> {
         if let Some(c) = cluster {
             if let Some(i) = self.get_cluster_index(c) {
                 Ok((&self.clusters[i..i + 1], false))
@@ -79,7 +81,7 @@ impl Endpoint {
     pub fn get_wildcard_clusters_mut(
         &mut self,
         cluster: Option<u32>,
-    ) -> Result<(&mut [Box<dyn ClusterType>], bool), IMStatusCode> {
+    ) -> Result<(&mut BoxedClusters, bool), IMStatusCode> {
         if let Some(c) = cluster {
             if let Some(i) = self.get_cluster_index(c) {
                 Ok((&mut self.clusters[i..i + 1], false))

@@ -47,7 +47,7 @@ impl Default for TlvArgs {
 fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
     let mut tlvargs: TlvArgs = Default::default();
 
-    if ast.attrs.len() > 0 {
+    if !ast.attrs.is_empty() {
         if let List(MetaList {
             path,
             paren_token: _,
@@ -87,7 +87,7 @@ fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
 }
 
 fn parse_tag_val(field: &syn::Field) -> Option<u8> {
-    if field.attrs.len() > 0 {
+    if !field.attrs.is_empty() {
         if let List(MetaList {
             path,
             paren_token: _,
@@ -110,8 +110,8 @@ fn parse_tag_val(field: &syn::Field) -> Option<u8> {
 fn gen_totlv_for_struct(
     fields: &syn::FieldsNamed,
     struct_name: &proc_macro2::Ident,
-    tlvargs: TlvArgs,
-    generics: syn::Generics,
+    tlvargs: &TlvArgs,
+    generics: &syn::Generics,
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
     let datatype = format_ident!("start_{}", tlvargs.datatype);
@@ -127,7 +127,7 @@ fn gen_totlv_for_struct(
         //        keys.push(quote! { #literal_key_str });
         idents.push(&field.ident);
         //        types.push(type_name.to_token_stream());
-        if let Some(a) = parse_tag_val(&field) {
+        if let Some(a) = parse_tag_val(field) {
             tags.push(a);
         } else {
             tags.push(tag_start);
@@ -152,10 +152,10 @@ fn gen_totlv_for_struct(
 
 /// Generate a ToTlv implementation for an enum
 fn gen_totlv_for_enum(
-    data_enum: syn::DataEnum,
+    data_enum: &syn::DataEnum,
     enum_name: &proc_macro2::Ident,
-    tlvargs: TlvArgs,
-    generics: syn::Generics,
+    tlvargs: &TlvArgs,
+    generics: &syn::Generics,
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
 
@@ -232,9 +232,9 @@ pub fn derive_totlv(item: TokenStream) -> TokenStream {
         ..
     }) = ast.data
     {
-        gen_totlv_for_struct(fields, name, tlvargs, generics)
+        gen_totlv_for_struct(fields, name, &tlvargs, &generics)
     } else if let syn::Data::Enum(data_enum) = ast.data {
-        gen_totlv_for_enum(data_enum, name, tlvargs, generics)
+        gen_totlv_for_enum(&data_enum, name, &tlvargs, &generics)
     } else {
         panic!(
             "Derive ToTLV - Only supported Struct for now {:?}",
@@ -248,7 +248,7 @@ fn gen_fromtlv_for_struct(
     fields: &syn::FieldsNamed,
     struct_name: &proc_macro2::Ident,
     tlvargs: TlvArgs,
-    generics: syn::Generics,
+    generics: &syn::Generics,
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
     let lifetime = tlvargs.lifetime;
@@ -260,7 +260,7 @@ fn gen_fromtlv_for_struct(
 
     for field in fields.named.iter() {
         let type_name = &field.ty;
-        if let Some(a) = parse_tag_val(&field) {
+        if let Some(a) = parse_tag_val(field) {
             // TODO: The current limitation with this is that a hard-coded integer
             // value has to be mentioned in the tagval attribute. This is because
             // our tags vector is for integers, and pushing an 'identifier' on it
@@ -330,10 +330,10 @@ fn gen_fromtlv_for_struct(
 
 /// Generate a FromTlv implementation for an enum
 fn gen_fromtlv_for_enum(
-    data_enum: syn::DataEnum,
+    data_enum: &syn::DataEnum,
     enum_name: &proc_macro2::Ident,
     tlvargs: TlvArgs,
-    generics: syn::Generics,
+    generics: &syn::Generics,
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
     let lifetime = tlvargs.lifetime;
@@ -422,9 +422,9 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
         ..
     }) = ast.data
     {
-        gen_fromtlv_for_struct(fields, name, tlvargs, generics)
+        gen_fromtlv_for_struct(fields, name, tlvargs, &generics)
     } else if let syn::Data::Enum(data_enum) = ast.data {
-        gen_fromtlv_for_enum(data_enum, name, tlvargs, generics)
+        gen_fromtlv_for_enum(&data_enum, name, tlvargs, &generics)
     } else {
         panic!(
             "Derive FromTLV - Only supported Struct for now {:?}",

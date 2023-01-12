@@ -88,7 +88,7 @@ static TAG_EXTRACTOR: [ExtractTag; 8] = [
     // ImplPrf32 5
     |t| TagType::ImplPrf32(LittleEndian::read_u32(&t.buf[t.current..])),
     // FullQual48 6
-    |t| TagType::FullQual48(LittleEndian::read_u48(&t.buf[t.current..]) as u64),
+    |t| TagType::FullQual48(LittleEndian::read_u48(&t.buf[t.current..])),
     // FullQual64 7
     |t| TagType::FullQual64(LittleEndian::read_u64(&t.buf[t.current..])),
 ];
@@ -330,32 +330,28 @@ impl<'a> PartialEq for TLVElement<'a> {
                     let ours = ours.unwrap();
                     let theirs = theirs.unwrap();
 
-                    match ours.element_type {
-                        ElementType::EndCnt => {
-                            if nest_level == 0 {
-                                break;
-                            } else {
-                                nest_level -= 1;
-                            }
+                    if let ElementType::EndCnt = ours.element_type {
+                        if nest_level == 0 {
+                            break;
                         }
-                        _ => {
-                            if is_container(ours.element_type) {
-                                nest_level += 1;
-                                // Only compare the discriminants in case of array/list/structures,
-                                // instead of actual element values. Those will be subsets within this same
-                                // list that will get validated anyway
-                                if std::mem::discriminant(&ours.element_type)
-                                    != std::mem::discriminant(&theirs.element_type)
-                                {
-                                    return false;
-                                }
-                            } else if ours.element_type != theirs.element_type {
+                        nest_level -= 1;
+                    } else {
+                        if is_container(ours.element_type) {
+                            nest_level += 1;
+                            // Only compare the discriminants in case of array/list/structures,
+                            // instead of actual element values. Those will be subsets within this same
+                            // list that will get validated anyway
+                            if std::mem::discriminant(&ours.element_type)
+                                != std::mem::discriminant(&theirs.element_type)
+                            {
                                 return false;
                             }
+                        } else if ours.element_type != theirs.element_type {
+                            return false;
+                        }
 
-                            if ours.tag_type != theirs.tag_type {
-                                return false;
-                            }
+                        if ours.tag_type != theirs.tag_type {
+                            return false;
                         }
                     }
                 }
@@ -668,9 +664,8 @@ impl<'a> TLVContainerIterator<'a> {
                             }
                             _ => return Some(last_elem),
                         }
-                    } else {
-                        nest_level -= 1;
                     }
+                    nest_level -= 1;
                 }
                 _ => {
                     if is_container(element.element_type) {
