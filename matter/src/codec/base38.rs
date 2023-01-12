@@ -20,8 +20,7 @@
 const BASE38_CHARS: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-.";
 
 /// Encodes a byte array into a base38 string.
-pub fn encode(bytes: &[u8]) -> String {
-    let length = bytes.len();
+pub fn encode(bytes: &[u8], length: usize) -> String {
     let mut offset = 0;
     let mut result = String::new();
 
@@ -75,6 +74,6 @@ mod tests {
         const DECODED: [u8; 11] = [
             0x88, 0xff, 0xa7, 0x91, 0x50, 0x40, 0x00, 0x47, 0x51, 0xdd, 0x02,
         ];
-        assert_eq!(encode(&DECODED), ENCODED);
+        assert_eq!(encode(&DECODED, 11), ENCODED);
     }
 }

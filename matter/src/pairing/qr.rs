@@ -15,7 +15,12 @@
  *    limitations under the License.
  */
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+
+use crate::{
+    tlv::{TLVWriter, TagType},
+    utils::writebuf::WriteBuf,
+};
 
 use super::{
     vendor_identifiers::{is_vendor_id_valid_operationally, VendorId},
@@ -75,7 +80,8 @@ pub struct QrSetupPayload<'data> {
     discovery_capabilities: DiscoveryCapabilities,
     dev_det: &'data BasicInfoConfig,
     comm_data: &'data CommissioningData,
-    optional_data: HashMap<u8, OptionalQRCodeInfo>,
+    // we use a BTreeMap to keep the order of the optional data stable
+    optional_data: BTreeMap<u8, OptionalQRCodeInfo>,
 }
 
 impl<'data> QrSetupPayload<'data> {
@@ -92,7 +98,7 @@ impl<'data> QrSetupPayload<'data> {
             discovery_capabilities,
             dev_det,
             comm_data,
-            optional_data: HashMap::new(),
+            optional_data: BTreeMap::new(),
         }
     }
 
@@ -145,7 +151,7 @@ impl<'data> QrSetupPayload<'data> {
         Ok(())
     }
 
-    pub fn get_all_optional_data(&self) -> &HashMap<u8, OptionalQRCodeInfo> {
+    pub fn get_all_optional_data(&self) -> &BTreeMap<u8, OptionalQRCodeInfo> {
         &self.optional_data
     }
 
@@ -229,7 +235,9 @@ pub enum CommissionningFlowType {
 }
 
 struct TlvData {
-    data_length_in_bytes: u32,
+    max_data_length_in_bytes: u32,
+    data_length_in_bytes: Option<usize>,
+    data: Option<Vec<u8>>,
 }
 
 pub(super) fn payload_base38_representation(payload: &QrSetupPayload) -> Result<String, Error> {
@@ -238,7 +246,9 @@ pub(super) fn payload_base38_representation(payload: &QrSetupPayload) -> Result<
         (
             vec![0; buffer_size],
             Some(TlvData {
-                data_length_in_bytes: buffer_size as u32,
+                max_data_length_in_bytes: buffer_size as u32,
+                data_length_in_bytes: None,
+                data: None,
             }),
         )
     } else {
@@ -264,7 +274,7 @@ fn estimate_buffer_size(payload: &QrSetupPayload) -> Result<usize, Error> {
             // We'll need to encode the string length and then the string data.
             // Length is at most 8 bytes.
             size += 8;
-            size += data.len();
+            size += data.as_bytes().len()
         } else {
             // Integer.  Assume it might need up to 8 bytes, for simplicity.
             size += 8;
@@ -291,7 +301,6 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
     // Estimate 4 bytes of overhead per field.  This can happen for a large
     // octet string field: 1 byte control, 1 byte context tag, 2 bytes
     // length.
-    // todo: recursive process other fields
     first_field_size + 4
 }
 
@@ -338,21 +347,63 @@ fn populate_bits(
 fn payload_base38_representation_with_tlv(
     payload: &QrSetupPayload,
     bits: &mut [u8],
-    tlv_data: Option<TlvData>,
+    mut tlv_data: Option<TlvData>,
 ) -> Result<String, Error> {
-    generate_bit_set(payload, bits, tlv_data)?;
-    let base38_encoded = base38::encode(&*bits);
+    if let Some(tlv_data) = tlv_data.as_mut() {
+        generate_tlv_from_optional_data(payload, tlv_data)?;
+    }
+
+    let bytes_written = generate_bit_set(payload, bits, tlv_data)?;
+    let base38_encoded = base38::encode(&*bits, bytes_written);
     Ok(format!("MT:{}", base38_encoded))
+}
+
+fn generate_tlv_from_optional_data(
+    payload: &QrSetupPayload,
+    tlv_data: &mut TlvData,
+) -> Result<(), Error> {
+    let size_needed = tlv_data.max_data_length_in_bytes as usize;
+    let mut tlv_buffer = vec![0u8; size_needed];
+    let mut wb = WriteBuf::new(&mut tlv_buffer, size_needed);
+    let mut tw = TLVWriter::new(&mut wb);
+
+    tw.start_struct(TagType::Anonymous)?;
+    let data = payload.get_all_optional_data();
+
+    for (tag, value) in data {
+        match &value.data {
+            QRCodeInfoType::String(data) => {
+                if data.len() > 256 {
+                    tw.str16(TagType::Context(*tag), data.as_bytes())?;
+                } else {
+                    tw.str8(TagType::Context(*tag), data.as_bytes())?;
+                }
+            }
+            // todo: check i32 -> u32??
+            QRCodeInfoType::Int32(data) => tw.u32(TagType::Context(*tag), *data as u32)?,
+            // todo: check i64 -> u64??
+            QRCodeInfoType::Int64(data) => tw.u64(TagType::Context(*tag), *data as u64)?,
+            QRCodeInfoType::UInt32(data) => tw.u32(TagType::Context(*tag), *data)?,
+            QRCodeInfoType::UInt64(data) => tw.u64(TagType::Context(*tag), *data)?,
+        }
+    }
+
+    tw.end_container()?;
+    tlv_data.data_length_in_bytes = Some(tw.get_tail());
+    tlv_data.data = Some(tlv_buffer);
+
+    Ok(())
 }
 
 fn generate_bit_set(
     payload: &QrSetupPayload,
     bits: &mut [u8],
     tlv_data: Option<TlvData>,
-) -> Result<(), Error> {
+) -> Result<usize, Error> {
     let mut offset: usize = 0;
-    let total_payload_size_in_bits = if let Some(tlv_data) = tlv_data {
-        TOTAL_PAYLOAD_DATA_SIZE_IN_BITS + (tlv_data.data_length_in_bytes * 8) as usize
+
+    let total_payload_size_in_bits = if let Some(tlv_data) = &tlv_data {
+        TOTAL_PAYLOAD_DATA_SIZE_IN_BITS + (tlv_data.data_length_in_bytes.unwrap_or_default() * 8)
     } else {
         TOTAL_PAYLOAD_DATA_SIZE_IN_BITS
     };
@@ -425,10 +476,46 @@ fn generate_bit_set(
         total_payload_size_in_bits,
     )?;
 
-    // todo: add tlv data
-    // ReturnErrorOnFailure(populateTLVBits(bits.data(), offset, tlvDataStart, tlvDataLengthInBytes, totalPayloadSizeInBits));
+    if let Some(tlv_data) = tlv_data {
+        populate_tlv_bits(bits, &mut offset, tlv_data, total_payload_size_in_bits)?;
+    }
+
+    let bytes_written = (offset + 7) / 8;
+    Ok(bytes_written)
+}
+
+fn populate_tlv_bits(
+    bits: &mut [u8],
+    offset: &mut usize,
+    tlv_data: TlvData,
+    total_payload_size_in_bits: usize,
+) -> Result<(), Error> {
+    if let (Some(data), Some(data_length_in_bytes)) = (tlv_data.data, tlv_data.data_length_in_bytes)
+    {
+        for pos in 0..data_length_in_bytes {
+            populate_bits(
+                bits,
+                offset,
+                data[pos] as u64,
+                8,
+                total_payload_size_in_bits,
+            )?;
+        }
+    } else {
+        return Err(Error::InvalidArgument);
+    }
 
     Ok(())
+}
+
+/// Spec 5.1.4.1 Manufacture-specific tag numbers are in the range [0x80, 0xFF]
+fn is_vendor_tag(tag: u8) -> bool {
+    !is_common_tag(tag)
+}
+
+/// Spec 5.1.4.2 CHIPCommon tag numbers are in the range [0x00, 0x7F]
+fn is_common_tag(tag: u8) -> bool {
+    tag < 0x80
 }
 
 #[cfg(test)]
@@ -455,14 +542,49 @@ mod tests {
         let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
     }
-}
 
-/// Spec 5.1.4.1 Manufacture-specific tag numbers are in the range [0x80, 0xFF]
-fn is_vendor_tag(tag: u8) -> bool {
-    !is_common_tag(tag)
-}
+    #[test]
+    fn can_base38_encode_with_optional_data() {
+        // todo: this must be validated!
+        const QR_CODE: &str = "MT:YNJV7VSC00CMVH70V3P0-ISA0DK5N1K8SQ1RYCU1WET70.QT52B.E232XZE0O0";
+        const OPTIONAL_DEFAULT_STRING_TAG: u8 = 0x82; // Vendor "test" tag
+        const OPTIONAL_DEFAULT_STRING_VALUE: &str = "myData";
 
-/// Spec 5.1.4.2 CHIPCommon tag numbers are in the range [0x00, 0x7F]
-fn is_common_tag(tag: u8) -> bool {
-    tag < 0x80
+        const OPTIONAL_DEFAULT_INT_TAG: u8 = 0x83; // Vendor "test" tag
+        const OPTIONAL_DEFAULT_INT_VALUE: u32 = 12;
+
+        let comm_data = CommissioningData {
+            passwd: 34567890,
+            discriminator: 2976,
+            ..Default::default()
+        };
+        let dev_det = BasicInfoConfig {
+            vid: 9050,
+            pid: 65279,
+            ..Default::default()
+        };
+
+        let disc_cap = DiscoveryCapabilities::new(false, true, false);
+        let mut qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
+        qr_code_data
+            .add_serial_number(SerialNumber::String("123456789".to_string()))
+            .expect("Failed to add serial number");
+
+        qr_code_data
+            .add_optional_vendor_data(
+                OPTIONAL_DEFAULT_STRING_TAG,
+                QRCodeInfoType::String(OPTIONAL_DEFAULT_STRING_VALUE.to_string()),
+            )
+            .expect("Failed to add optional data");
+
+        qr_code_data
+            .add_optional_vendor_data(
+                OPTIONAL_DEFAULT_INT_TAG,
+                QRCodeInfoType::UInt32(OPTIONAL_DEFAULT_INT_VALUE),
+            )
+            .expect("Failed to add optional data");
+
+        let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
+        assert_eq!(data_str, QR_CODE)
+    }
 }
