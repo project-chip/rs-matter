@@ -106,7 +106,7 @@ impl ImEngine {
         default_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
         acl_mgr.add(default_acl).unwrap();
         let dm = DataModel::new(
-            &dev_det,
+            dev_det,
             dev_att,
             fabric_mgr.clone(),
             acl_mgr.clone(),

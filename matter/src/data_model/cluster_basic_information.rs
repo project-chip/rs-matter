@@ -97,7 +97,7 @@ pub struct BasicInfoCluster {
 }
 
 impl BasicInfoCluster {
-    pub fn new(cfg: &BasicInfoConfig) -> Result<Box<Self>, Error> {
+    pub fn new(cfg: BasicInfoConfig) -> Result<Box<Self>, Error> {
         let mut cluster = Box::new(BasicInfoCluster {
             base: Cluster::new(ID)?,
         });

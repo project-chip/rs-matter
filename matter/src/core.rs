@@ -53,9 +53,9 @@ impl Matter {
     /// requires a set of device attestation certificates and keys. It is the responsibility of
     /// this object to return the device attestation details when queried upon.
     pub fn new(
-        dev_det: &BasicInfoConfig,
+        dev_det: BasicInfoConfig,
         dev_att: Box<dyn DevAttDataFetcher>,
-        dev_comm: &CommissioningData,
+        dev_comm: CommissioningData,
     ) -> Result<Box<Matter>, Error> {
         let mdns = Mdns::get()?;
         mdns.set_values(dev_det.vid, dev_det.pid);

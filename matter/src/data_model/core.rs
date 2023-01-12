@@ -51,7 +51,7 @@ pub struct DataModel {
 
 impl DataModel {
     pub fn new(
-        dev_details: &BasicInfoConfig,
+        dev_details: BasicInfoConfig,
         dev_att: Box<dyn DevAttDataFetcher>,
         fabric_mgr: Arc<FabricMgr>,
         acl_mgr: Arc<AclMgr>,
