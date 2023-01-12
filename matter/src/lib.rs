@@ -50,6 +50,7 @@
 //!     pid: 0xFFF1,
 //!     hw_ver: 2,
 //!     sw_ver: 1,
+//!     serial_no: "aabbcc".to_string(),
 //! };
 //!
 //! /// Get the Matter Object
