@@ -39,6 +39,7 @@ pub enum Error {
     NoHandler,
     NoNetworkInterface,
     NoNodeId,
+    NoMemory,
     NoSession,
     NoSpace,
     NoSpaceAckTable,

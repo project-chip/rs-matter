@@ -32,7 +32,7 @@ use crate::{
 
 use self::{
     code::{compute_pairing_code, pretty_print_pairing_code},
-    qr::{payload_base38_representation, print_qr_code, QrCodeData},
+    qr::{payload_base38_representation, print_qr_code, QrSetupPayload},
 };
 
 pub struct DiscoveryCapabilities {
@@ -88,7 +88,7 @@ pub fn print_pairing_code_and_qr(
     discovery_capabilities: DiscoveryCapabilities,
 ) {
     let pairing_code = compute_pairing_code(comm_data);
-    let qr_code_data = QrCodeData::new(dev_det, comm_data, discovery_capabilities);
+    let qr_code_data = QrSetupPayload::new(dev_det, comm_data, discovery_capabilities);
     let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
 
     pretty_print_pairing_code(&pairing_code);
