@@ -94,6 +94,7 @@ impl ImEngine {
             pid: 11,
             hw_ver: 12,
             sw_ver: 13,
+            serial_no: "aabbccdd".to_string(),
         };
         let dev_att = Box::new(DummyDevAtt {});
         let fabric_mgr = Arc::new(FabricMgr::new().unwrap());

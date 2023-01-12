@@ -84,7 +84,7 @@ impl DataModel {
     ) -> Result<AttrValue, IMStatusCode> {
         let node = self.node.read().unwrap();
         let cluster = node.get_cluster(endpoint, cluster)?;
-        cluster.base().read_attribute_raw(attr).map(|a| *a)
+        cluster.base().read_attribute_raw(attr).map(|a| a.clone())
     }
 
     // Encode a write attribute from a path that may or may not be wildcard
