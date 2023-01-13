@@ -354,7 +354,7 @@ fn payload_base38_representation_with_tlv(
     }
 
     let bytes_written = generate_bit_set(payload, bits, tlv_data)?;
-    let base38_encoded = base38::encode(&*bits, bytes_written);
+    let base38_encoded = base38::encode(&*bits, Some(bytes_written));
     Ok(format!("MT:{}", base38_encoded))
 }
 

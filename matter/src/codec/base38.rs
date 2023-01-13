@@ -81,9 +81,18 @@ const BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK: [u8; 3] = [2, 4, 5];
 const RADIX: u32 = BASE38_CHARS.len() as u32;
 
 /// Encode a byte array into a base38 string.
-pub fn encode(bytes: &[u8], length: usize) -> String {
+///
+/// # Arguments
+/// * `bytes` - byte array to encode
+/// * `length` - optional length of the byte array to encode. If not specified, the entire byte array is encoded.
+pub fn encode(bytes: &[u8], length: Option<usize>) -> String {
     let mut offset = 0;
     let mut result = String::new();
+
+    // if length is specified, use it, otherwise use the length of the byte array
+    // if length is specified but is greater than the length of the byte array, use the length of the byte array
+    let b_len = bytes.len();
+    let length = length.map(|l| l.min(b_len)).unwrap_or(b_len);
 
     while offset < length {
         let remaining = length - offset;
@@ -125,6 +134,11 @@ fn encode_base38(mut value: u32, char_count: u8) -> String {
 }
 
 /// Decode a base38-encoded string into a byte slice
+///
+/// # Arguments
+/// * `base38_str` - base38-encoded string to decode
+///
+/// Fails if the string contains invalid characters
 pub fn decode(base38_str: &str) -> Result<Vec<u8>, Error> {
     let mut result = Vec::new();
     let mut base38_characters_number: usize = base38_str.len();
@@ -197,7 +211,11 @@ mod tests {
 
     #[test]
     fn can_base38_encode() {
-        assert_eq!(encode(&DECODED, 11), ENCODED);
+        assert_eq!(encode(&DECODED, None), ENCODED);
+        assert_eq!(encode(&DECODED, Some(11)), ENCODED);
+
+        // length is greater than the length of the byte array
+        assert_eq!(encode(&DECODED, Some(12)), ENCODED);
     }
 
     #[test]
