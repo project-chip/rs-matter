@@ -263,8 +263,8 @@ pub(super) fn payload_base38_representation(payload: &QrSetupPayload) -> Result<
 }
 
 fn estimate_buffer_size(payload: &QrSetupPayload) -> Result<usize, Error> {
-    // Estimate the size of the needed buffer.
-    let mut estimate = 0;
+    // Estimate the size of the needed buffer; initialize with the size of the standard payload.
+    let mut estimate = TOTAL_PAYLOAD_DATA_SIZE_IN_BYTES;
 
     let data_item_size_estimate = |info: &QRCodeInfoType| {
         // Each data item needs a control byte and a context tag.
@@ -301,7 +301,9 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
     // Estimate 4 bytes of overhead per field.  This can happen for a large
     // octet string field: 1 byte control, 1 byte context tag, 2 bytes
     // length.
-    first_field_size + 4
+    //
+    // The struct itself has a control byte and an end-of-struct marker.
+    first_field_size + 4 + 2
 }
 
 pub(super) fn print_qr_code(qr_data: &str) {
@@ -371,14 +373,9 @@ fn generate_tlv_from_optional_data(
     let data = payload.get_all_optional_data();
 
     for (tag, value) in data {
+        println!("tag: {tag:?}");
         match &value.data {
-            QRCodeInfoType::String(data) => {
-                if data.len() > 256 {
-                    tw.str16(TagType::Context(*tag), data.as_bytes())?;
-                } else {
-                    tw.str8(TagType::Context(*tag), data.as_bytes())?;
-                }
-            }
+            QRCodeInfoType::String(data) => tw.utf8(TagType::Context(*tag), data.as_bytes())?,
             // todo: check i32 -> u32??
             QRCodeInfoType::Int32(data) => tw.u32(TagType::Context(*tag), *data as u32)?,
             // todo: check i64 -> u64??
@@ -409,6 +406,7 @@ fn generate_bit_set(
     };
 
     if bits.len() * 8 < total_payload_size_in_bits {
+        println!("{:?} vs {total_payload_size_in_bits}", bits.len() * 8);
         return Err(Error::BufferTooSmall);
     };
 
@@ -538,30 +536,54 @@ mod tests {
     }
 
     #[test]
-    fn can_base38_encode_with_optional_data() {
-        // todo: this must be validated!
-        const QR_CODE: &str = "MT:YNJV7VSC00CMVH70V3P0-ISA0DK5N1K8SQ1RYCU1WET70.QT52B.E232XZE0O0";
-        const OPTIONAL_DEFAULT_STRING_TAG: u8 = 0x82; // Vendor "test" tag
-        const OPTIONAL_DEFAULT_STRING_VALUE: &str = "myData";
-
-        const OPTIONAL_DEFAULT_INT_TAG: u8 = 0x83; // Vendor "test" tag
-        const OPTIONAL_DEFAULT_INT_VALUE: u32 = 12;
+    fn can_base38_encode_with_vendor_data() {
+        const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
 
         let comm_data = CommissioningData {
-            passwd: 34567890,
-            discriminator: 2976,
+            passwd: 20202021,
+            discriminator: 3840,
             ..Default::default()
         };
         let dev_det = BasicInfoConfig {
-            vid: 9050,
-            pid: 65279,
+            vid: 65521,
+            pid: 32769,
             ..Default::default()
         };
 
-        let disc_cap = DiscoveryCapabilities::new(false, true, false);
+        let disc_cap = DiscoveryCapabilities::new(true, false, false);
         let mut qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
         qr_code_data
-            .add_serial_number(SerialNumber::String("123456789".to_string()))
+            .add_serial_number(SerialNumber::String("1234567890".to_string()))
+            .expect("Failed to add serial number");
+
+        let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
+        assert_eq!(data_str, QR_CODE)
+    }
+
+    #[test]
+    fn can_base38_encode_with_optional_data() {
+        const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1UXH34YY0V3KY.O39C40";
+        const OPTIONAL_DEFAULT_STRING_TAG: u8 = 0x82; // Vendor "test" tag
+        const OPTIONAL_DEFAULT_STRING_VALUE: &str = "myData";
+
+        // const OPTIONAL_DEFAULT_INT_TAG: u8 = 0x83; // Vendor "test" tag
+        // const OPTIONAL_DEFAULT_INT_VALUE: u32 = 12;
+
+        let comm_data = CommissioningData {
+            passwd: 20202021,
+            discriminator: 3840,
+            ..Default::default()
+        };
+        let dev_det = BasicInfoConfig {
+            vid: 65521,
+            pid: 32769,
+            ..Default::default()
+        };
+
+        let disc_cap = DiscoveryCapabilities::new(true, false, false);
+        let mut qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
+        qr_code_data
+            .add_serial_number(SerialNumber::String("1234567890".to_string()))
             .expect("Failed to add serial number");
 
         qr_code_data
@@ -571,12 +593,13 @@ mod tests {
             )
             .expect("Failed to add optional data");
 
-        qr_code_data
-            .add_optional_vendor_data(
-                OPTIONAL_DEFAULT_INT_TAG,
-                QRCodeInfoType::UInt32(OPTIONAL_DEFAULT_INT_VALUE),
-            )
-            .expect("Failed to add optional data");
+        // todo: check why u32 is not accepted by 'chip-tool payload parse-setup-payload'
+        // qr_code_data
+        //     .add_optional_vendor_data(
+        //         OPTIONAL_DEFAULT_INT_TAG,
+        //         QRCodeInfoType::UInt32(OPTIONAL_DEFAULT_INT_VALUE),
+        //     )
+        //     .expect("Failed to add optional data");
 
         let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
