@@ -64,4 +64,5 @@ pub mod command;
 pub mod core;
 pub mod messages;
 pub mod read;
+pub mod subscribe;
 pub mod write;
