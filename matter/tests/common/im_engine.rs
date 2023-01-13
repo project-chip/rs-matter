@@ -94,6 +94,7 @@ impl ImEngine {
             pid: 11,
             hw_ver: 12,
             sw_ver: 13,
+            sw_ver_str: "13".to_string(),
             serial_no: "aabbccdd".to_string(),
             device_name: "Test Device".to_string(),
         };

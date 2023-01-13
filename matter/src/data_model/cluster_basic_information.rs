@@ -28,6 +28,7 @@ enum Attributes {
     ProductId = 4,
     HwVer = 7,
     SwVer = 9,
+    SwVerString = 0xa,
     SerialNo = 0x0f,
 }
 
@@ -37,6 +38,7 @@ pub struct BasicInfoConfig {
     pub pid: u16,
     pub hw_ver: u16,
     pub sw_ver: u32,
+    pub sw_ver_str: String,
     pub serial_no: String,
     /// Device name; up to 32 characters
     pub device_name: String,
@@ -80,6 +82,12 @@ impl BasicInfoCluster {
             Attribute::new(
                 Attributes::SwVer as u16,
                 AttrValue::Uint32(cfg.sw_ver),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::SwVerString as u16,
+                AttrValue::Utf8(cfg.sw_ver_str),
                 Access::RV,
                 Quality::FIXED,
             )?,

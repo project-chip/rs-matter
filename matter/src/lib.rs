@@ -49,6 +49,7 @@
 //!     pid: 0xFFF1,
 //!     hw_ver: 2,
 //!     sw_ver: 1,
+//!     sw_ver_str: "1".to_string(),
 //!     serial_no: "aabbcc".to_string(),
 //!     device_name: "OnOff Light".to_string(),
 //! };
