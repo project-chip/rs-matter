@@ -55,10 +55,11 @@ pub fn encode(bytes: &[u8], length: usize) -> String {
 
 fn encode_base38(mut value: u32, char_count: u8) -> String {
     let mut result = String::new();
+    let chars = BASE38_CHARS.chars();
     for _ in 0..char_count {
-        let mut chars = BASE38_CHARS.chars();
+        let mut use_chars = chars.clone();
         let remainder = value % 38;
-        result.push(chars.nth(remainder as usize).unwrap());
+        result.push(use_chars.nth(remainder as usize).unwrap());
         value = (value - remainder) / 38;
     }
     result

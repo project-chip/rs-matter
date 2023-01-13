@@ -492,14 +492,8 @@ fn populate_tlv_bits(
 ) -> Result<(), Error> {
     if let (Some(data), Some(data_length_in_bytes)) = (tlv_data.data, tlv_data.data_length_in_bytes)
     {
-        for pos in 0..data_length_in_bytes {
-            populate_bits(
-                bits,
-                offset,
-                data[pos] as u64,
-                8,
-                total_payload_size_in_bits,
-            )?;
+        for b in data.iter().take(data_length_in_bytes) {
+            populate_bits(bits, offset, *b as u64, 8, total_payload_size_in_bits)?;
         }
     } else {
         return Err(Error::InvalidArgument);
