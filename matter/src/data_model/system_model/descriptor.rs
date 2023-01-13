@@ -48,9 +48,27 @@ impl DescriptorCluster {
             data_model,
             base: Cluster::new(ID)?,
         });
-        c.base.add_attribute(attr_devtypelist_new()?)?;
-        c.base.add_attribute(attr_serverlist_new()?)?;
-        c.base.add_attribute(attr_partslist_new()?)?;
+        let attrs = [
+            Attribute::new(
+                Attributes::DeviceTypeList as u16,
+                AttrValue::Custom,
+                Access::RV,
+                Quality::NONE,
+            )?,
+            Attribute::new(
+                Attributes::ServerList as u16,
+                AttrValue::Custom,
+                Access::RV,
+                Quality::NONE,
+            )?,
+            Attribute::new(
+                Attributes::PartsList as u16,
+                AttrValue::Custom,
+                Access::RV,
+                Quality::NONE,
+            )?,
+        ];
+        c.base.add_attributes(&attrs[..])?;
         Ok(c)
     }
 
@@ -132,30 +150,4 @@ impl ClusterType for DescriptorCluster {
             }
         }
     }
-}
-
-fn attr_devtypelist_new() -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::DeviceTypeList as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NONE,
-    )
-}
-fn attr_serverlist_new() -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::ServerList as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NONE,
-    )
-}
-
-fn attr_partslist_new() -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::PartsList as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NONE,
-    )
 }

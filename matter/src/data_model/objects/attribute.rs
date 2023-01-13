@@ -151,7 +151,7 @@ impl AttrValue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Attribute {
     pub(super) id: u16,
     pub(super) value: AttrValue,

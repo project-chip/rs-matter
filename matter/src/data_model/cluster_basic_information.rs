@@ -42,59 +42,6 @@ pub struct BasicInfoConfig {
     pub device_name: String,
 }
 
-fn attr_dm_rev_new() -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::DMRevision as u16,
-        AttrValue::Uint8(1),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
-
-fn attr_vid_new(vid: u16) -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::VendorId as u16,
-        AttrValue::Uint16(vid),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
-
-fn attr_pid_new(pid: u16) -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::ProductId as u16,
-        AttrValue::Uint16(pid),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
-
-fn attr_hw_ver_new(hw_ver: u16) -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::HwVer as u16,
-        AttrValue::Uint16(hw_ver),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
-
-fn attr_sw_ver_new(sw_ver: u32) -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::SwVer as u16,
-        AttrValue::Uint32(sw_ver),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
-
-fn attr_serial_no_new(label: String) -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::SerialNo as u16,
-        AttrValue::Utf8(label),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
 pub struct BasicInfoCluster {
     base: Cluster,
 }
@@ -104,14 +51,47 @@ impl BasicInfoCluster {
         let mut cluster = Box::new(BasicInfoCluster {
             base: Cluster::new(ID)?,
         });
-        cluster.base.add_attribute(attr_dm_rev_new()?)?;
-        cluster.base.add_attribute(attr_vid_new(cfg.vid)?)?;
-        cluster.base.add_attribute(attr_pid_new(cfg.pid)?)?;
-        cluster.base.add_attribute(attr_hw_ver_new(cfg.hw_ver)?)?;
-        cluster.base.add_attribute(attr_sw_ver_new(cfg.sw_ver)?)?;
-        cluster
-            .base
-            .add_attribute(attr_serial_no_new(cfg.serial_no)?)?;
+
+        let attrs = [
+            Attribute::new(
+                Attributes::DMRevision as u16,
+                AttrValue::Uint8(1),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::VendorId as u16,
+                AttrValue::Uint16(cfg.vid),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::ProductId as u16,
+                AttrValue::Uint16(cfg.pid),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::HwVer as u16,
+                AttrValue::Uint16(cfg.hw_ver),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::SwVer as u16,
+                AttrValue::Uint32(cfg.sw_ver),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::SerialNo as u16,
+                AttrValue::Utf8(cfg.serial_no),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+        ];
+        cluster.base.add_attributes(&attrs[..])?;
+
         Ok(cluster)
     }
 }
