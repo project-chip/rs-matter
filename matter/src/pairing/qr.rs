@@ -373,13 +373,10 @@ fn generate_tlv_from_optional_data(
     let data = payload.get_all_optional_data();
 
     for (tag, value) in data {
-        println!("tag: {tag:?}");
         match &value.data {
             QRCodeInfoType::String(data) => tw.utf8(TagType::Context(*tag), data.as_bytes())?,
-            // todo: check i32 -> u32??
-            QRCodeInfoType::Int32(data) => tw.u32(TagType::Context(*tag), *data as u32)?,
-            // todo: check i64 -> u64??
-            QRCodeInfoType::Int64(data) => tw.u64(TagType::Context(*tag), *data as u64)?,
+            QRCodeInfoType::Int32(data) => tw.i32(TagType::Context(*tag), *data)?,
+            QRCodeInfoType::Int64(data) => tw.i64(TagType::Context(*tag), *data)?,
             QRCodeInfoType::UInt32(data) => tw.u32(TagType::Context(*tag), *data)?,
             QRCodeInfoType::UInt64(data) => tw.u64(TagType::Context(*tag), *data)?,
         }
@@ -406,7 +403,6 @@ fn generate_bit_set(
     };
 
     if bits.len() * 8 < total_payload_size_in_bits {
-        println!("{:?} vs {total_payload_size_in_bits}", bits.len() * 8);
         return Err(Error::BufferTooSmall);
     };
 
@@ -562,12 +558,13 @@ mod tests {
 
     #[test]
     fn can_base38_encode_with_optional_data() {
-        const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1UXH34YY0V3KY.O39C40";
+        const QR_CODE: &str =
+            "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1UXH34YY0V3KY.O3DKN440F710Q940";
         const OPTIONAL_DEFAULT_STRING_TAG: u8 = 0x82; // Vendor "test" tag
         const OPTIONAL_DEFAULT_STRING_VALUE: &str = "myData";
 
-        // const OPTIONAL_DEFAULT_INT_TAG: u8 = 0x83; // Vendor "test" tag
-        // const OPTIONAL_DEFAULT_INT_VALUE: u32 = 12;
+        const OPTIONAL_DEFAULT_INT_TAG: u8 = 0x83; // Vendor "test" tag
+        const OPTIONAL_DEFAULT_INT_VALUE: i32 = 65550;
 
         let comm_data = CommissioningData {
             passwd: 20202021,
@@ -593,13 +590,14 @@ mod tests {
             )
             .expect("Failed to add optional data");
 
-        // todo: check why u32 is not accepted by 'chip-tool payload parse-setup-payload'
-        // qr_code_data
-        //     .add_optional_vendor_data(
-        //         OPTIONAL_DEFAULT_INT_TAG,
-        //         QRCodeInfoType::UInt32(OPTIONAL_DEFAULT_INT_VALUE),
-        //     )
-        //     .expect("Failed to add optional data");
+        // todo: check why unsigned ints are not accepted by 'chip-tool payload parse-setup-payload'
+
+        qr_code_data
+            .add_optional_vendor_data(
+                OPTIONAL_DEFAULT_INT_TAG,
+                QRCodeInfoType::Int32(OPTIONAL_DEFAULT_INT_VALUE),
+            )
+            .expect("Failed to add optional data");
 
         let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)

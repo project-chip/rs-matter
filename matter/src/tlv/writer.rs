@@ -95,12 +95,32 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
         self.buf.le_u8(data)
     }
 
+    pub fn i16(&mut self, tag_type: TagType, data: i16) -> Result<(), Error> {
+        if data >= i8::MIN as i16 && data <= i8::MAX as i16 {
+            self.i8(tag_type, data as i8)
+        } else {
+            self.put_control_tag(tag_type, WriteElementType::S16)?;
+            self.buf.le_i16(data)
+        }
+    }
+
     pub fn u16(&mut self, tag_type: TagType, data: u16) -> Result<(), Error> {
         if data <= 0xff {
             self.u8(tag_type, data as u8)
         } else {
             self.put_control_tag(tag_type, WriteElementType::U16)?;
             self.buf.le_u16(data)
+        }
+    }
+
+    pub fn i32(&mut self, tag_type: TagType, data: i32) -> Result<(), Error> {
+        if data >= i8::MIN as i32 && data <= i8::MAX as i32 {
+            self.i8(tag_type, data as i8)
+        } else if data >= i16::MIN as i32 && data <= i16::MAX as i32 {
+            self.i16(tag_type, data as i16)
+        } else {
+            self.put_control_tag(tag_type, WriteElementType::S32)?;
+            self.buf.le_i32(data)
         }
     }
 
@@ -112,6 +132,19 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
         } else {
             self.put_control_tag(tag_type, WriteElementType::U32)?;
             self.buf.le_u32(data)
+        }
+    }
+
+    pub fn i64(&mut self, tag_type: TagType, data: i64) -> Result<(), Error> {
+        if data >= i8::MIN as i64 && data <= i8::MAX as i64 {
+            self.i8(tag_type, data as i8)
+        } else if data >= i16::MIN as i64 && data <= i16::MAX as i64 {
+            self.i16(tag_type, data as i16)
+        } else if data >= i32::MIN as i64 && data <= i32::MAX as i64 {
+            self.i32(tag_type, data as i32)
+        } else {
+            self.put_control_tag(tag_type, WriteElementType::S64)?;
+            self.buf.le_i64(data)
         }
     }
 
