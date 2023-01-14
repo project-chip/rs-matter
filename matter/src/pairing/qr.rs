@@ -92,14 +92,20 @@ impl<'data> QrSetupPayload<'data> {
     ) -> Self {
         const DEFAULT_VERSION: u8 = 0;
 
-        QrSetupPayload {
+        let mut result = QrSetupPayload {
             version: DEFAULT_VERSION,
             flow_type: CommissionningFlowType::Standard,
             discovery_capabilities,
             dev_det,
             comm_data,
             optional_data: BTreeMap::new(),
+        };
+
+        if !dev_det.serial_no.is_empty() {
+            result.add_serial_number(SerialNumber::String(dev_det.serial_no.clone()));
         }
+
+        result
     }
 
     fn is_valid(&self) -> bool {
@@ -157,7 +163,7 @@ impl<'data> QrSetupPayload<'data> {
         &self.optional_data
     }
 
-    pub fn add_serial_number(&mut self, serial_number: SerialNumber) -> Result<(), Error> {
+    pub fn add_serial_number(&mut self, serial_number: SerialNumber) {
         match serial_number {
             SerialNumber::String(serial_number) => self.add_optional_extension_data(
                 SERIAL_NUMBER_TAG,
@@ -168,6 +174,7 @@ impl<'data> QrSetupPayload<'data> {
                 QRCodeInfoType::UInt32(serial_number),
             ),
         }
+        .expect("can not add serial number");
     }
 
     fn check_payload_common_constraints(&self) -> bool {
@@ -311,13 +318,24 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
 }
 
 pub(super) fn print_qr_code(qr_data: &str) {
-    let code = QrCode::with_version(qr_data, Version::Normal(2), qrcode::EcLevel::M).unwrap();
+    let needed_version = compute_qr_version(qr_data);
+    let code =
+        QrCode::with_version(qr_data, Version::Normal(needed_version), qrcode::EcLevel::M).unwrap();
     let image = code
         .render::<unicode::Dense1x2>()
         .dark_color(unicode::Dense1x2::Light)
         .light_color(unicode::Dense1x2::Dark)
         .build();
     info!("\n{}", image);
+}
+
+fn compute_qr_version(qr_data: &str) -> i16 {
+    match qr_data.len() {
+        0..=38 => 2,
+        39..=61 => 3,
+        62..=90 => 4,
+        _ => 5,
+    }
 }
 
 fn populate_bits(
@@ -543,22 +561,18 @@ mod tests {
         const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
 
         let comm_data = CommissioningData {
-            passwd: 20202021,
+            verifier: VerifierData::new_with_pw(20202021),
             discriminator: 3840,
-            ..Default::default()
         };
         let dev_det = BasicInfoConfig {
             vid: 65521,
             pid: 32769,
+            serial_no: "1234567890".to_string(),
             ..Default::default()
         };
 
         let disc_cap = DiscoveryCapabilities::new(true, false, false);
-        let mut qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
-        qr_code_data
-            .add_serial_number(SerialNumber::String("1234567890".to_string()))
-            .expect("Failed to add serial number");
-
+        let qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
         let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
     }
@@ -574,21 +588,18 @@ mod tests {
         const OPTIONAL_DEFAULT_INT_VALUE: i32 = 65550;
 
         let comm_data = CommissioningData {
-            passwd: 20202021,
+            verifier: VerifierData::new_with_pw(20202021),
             discriminator: 3840,
-            ..Default::default()
         };
         let dev_det = BasicInfoConfig {
             vid: 65521,
             pid: 32769,
+            serial_no: "1234567890".to_string(),
             ..Default::default()
         };
 
         let disc_cap = DiscoveryCapabilities::new(true, false, false);
         let mut qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
-        qr_code_data
-            .add_serial_number(SerialNumber::String("1234567890".to_string()))
-            .expect("Failed to add serial number");
 
         qr_code_data
             .add_optional_vendor_data(
