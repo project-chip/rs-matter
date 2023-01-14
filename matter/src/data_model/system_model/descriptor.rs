@@ -21,12 +21,13 @@ use crate::data_model::core::DataModel;
 use crate::data_model::objects::*;
 use crate::error::*;
 use crate::interaction_model::messages::GenericPath;
-use crate::tlv::{TLVWriter, TagType};
+use crate::tlv::{TLVWriter, TagType, ToTLV};
 use log::error;
 
 pub const ID: u32 = 0x001D;
 
 #[derive(FromPrimitive)]
+#[allow(clippy::enum_variant_names)]
 enum Attributes {
     DeviceTypeList = 0,
     ServerList = 1,
@@ -47,9 +48,26 @@ impl DescriptorCluster {
             data_model,
             base: Cluster::new(ID)?,
         });
+        c.base.add_attribute(attr_devtypelist_new()?)?;
         c.base.add_attribute(attr_serverlist_new()?)?;
         c.base.add_attribute(attr_partslist_new()?)?;
         Ok(c)
+    }
+
+    fn encode_devtype_list(&self, tag: TagType, tw: &mut TLVWriter) {
+        let path = GenericPath {
+            endpoint: Some(self.endpoint_id),
+            cluster: None,
+            leaf: None,
+        };
+        let _ = tw.start_array(tag);
+        let dm = self.data_model.node.read().unwrap();
+        let _ = dm.for_each_endpoint(&path, |_, e| {
+            let dev_type = e.get_dev_type();
+            let _ = dev_type.to_tlv(tw, TagType::Anonymous);
+            Ok(())
+        });
+        let _ = tw.end_container();
     }
 
     fn encode_server_list(&self, tag: TagType, tw: &mut TLVWriter) {
@@ -68,8 +86,24 @@ impl DescriptorCluster {
     }
 
     fn encode_parts_list(&self, tag: TagType, tw: &mut TLVWriter) {
-        // TODO: Support Partslist
+        let path = GenericPath {
+            endpoint: None,
+            cluster: None,
+            leaf: None,
+        };
         let _ = tw.start_array(tag);
+        if self.endpoint_id == 0 {
+            // TODO: If endpoint is another than 0, need to figure out what to do
+            let dm = self.data_model.node.read().unwrap();
+            let _ = dm.for_each_endpoint(&path, |current_path, _| {
+                if let Some(endpoint_id) = current_path.endpoint {
+                    if endpoint_id != 0 {
+                        let _ = tw.u16(TagType::Anonymous, endpoint_id);
+                    }
+                }
+                Ok(())
+            });
+        }
         let _ = tw.end_container();
     }
 }
@@ -84,6 +118,9 @@ impl ClusterType for DescriptorCluster {
 
     fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
         match num::FromPrimitive::from_u16(attr.attr_id) {
+            Some(Attributes::DeviceTypeList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
+                self.encode_devtype_list(tag, tw)
+            })),
             Some(Attributes::ServerList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
                 self.encode_server_list(tag, tw)
             })),
@@ -97,6 +134,14 @@ impl ClusterType for DescriptorCluster {
     }
 }
 
+fn attr_devtypelist_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::DeviceTypeList as u16,
+        AttrValue::Custom,
+        Access::RV,
+        Quality::NONE,
+    )
+}
 fn attr_serverlist_new() -> Result<Attribute, Error> {
     Attribute::new(
         Attributes::ServerList as u16,

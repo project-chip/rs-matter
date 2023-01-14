@@ -94,6 +94,7 @@ impl ImEngine {
             pid: 11,
             hw_ver: 12,
             sw_ver: 13,
+            serial_no: "aabbccdd".to_string(),
         };
         let dev_att = Box::new(DummyDevAtt {});
         let fabric_mgr = Arc::new(FabricMgr::new().unwrap());
@@ -136,7 +137,7 @@ impl ImEngine {
     pub fn process<'a>(&mut self, input: &ImInput, data_out: &'a mut [u8]) -> (u8, &'a mut [u8]) {
         let mut new_exch = Exchange::new(1, 0, exchange::Role::Responder);
         // Choose whether to use a new exchange, or use the one from the ImEngine configuration
-        let mut exch = self.exch.as_mut().unwrap_or_else(|| &mut new_exch);
+        let exch = self.exch.as_mut().unwrap_or(&mut new_exch);
 
         let mut sess_mgr: SessionMgr = Default::default();
 
@@ -153,12 +154,9 @@ impl ImEngine {
         );
         let sess_idx = sess_mgr.clone_session(&clone_data).unwrap();
         let sess = sess_mgr.get_session_handle(sess_idx);
-        let exch_ctx = ExchangeCtx {
-            exch: &mut exch,
-            sess,
-        };
-        let mut rx = Slab::<PacketPool>::new(Packet::new_rx().unwrap()).unwrap();
-        let tx = Slab::<PacketPool>::new(Packet::new_tx().unwrap()).unwrap();
+        let exch_ctx = ExchangeCtx { exch, sess };
+        let mut rx = Slab::<PacketPool>::try_new(Packet::new_rx().unwrap()).unwrap();
+        let tx = Slab::<PacketPool>::try_new(Packet::new_tx().unwrap()).unwrap();
         // Create fake rx packet
         rx.set_proto_id(0x01);
         rx.set_proto_opcode(input.action as u8);

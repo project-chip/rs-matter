@@ -23,11 +23,15 @@ use crate::{
 };
 use std::fmt;
 
+use super::DeviceType;
+
 pub trait ChangeConsumer {
     fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error>;
 }
 
 pub const ENDPTS_PER_ACC: usize = 3;
+
+pub type BoxedEndpoints = [Option<Box<Endpoint>>];
 
 #[derive(Default)]
 pub struct Node {
@@ -49,7 +53,7 @@ impl std::fmt::Display for Node {
 
 impl Node {
     pub fn new() -> Result<Box<Node>, Error> {
-        let node = Box::new(Node::default());
+        let node = Box::default();
         Ok(node)
     }
 
@@ -57,13 +61,13 @@ impl Node {
         self.changes_cb = Some(consumer);
     }
 
-    pub fn add_endpoint(&mut self) -> Result<u32, Error> {
+    pub fn add_endpoint(&mut self, dev_type: DeviceType) -> Result<u32, Error> {
         let index = self
             .endpoints
             .iter()
             .position(|x| x.is_none())
             .ok_or(Error::NoSpace)?;
-        let mut endpoint = Endpoint::new()?;
+        let mut endpoint = Endpoint::new(dev_type)?;
         if let Some(cb) = &self.changes_cb {
             cb.endpoint_added(index as u16, &mut endpoint)?;
         }
@@ -121,7 +125,7 @@ impl Node {
     pub fn get_wildcard_endpoints(
         &self,
         endpoint: Option<u16>,
-    ) -> Result<(&[Option<Box<Endpoint>>], usize, bool), IMStatusCode> {
+    ) -> Result<(&BoxedEndpoints, usize, bool), IMStatusCode> {
         if let Some(e) = endpoint {
             let e = e as usize;
             if self.endpoints.len() <= e || self.endpoints[e].is_none() {
@@ -137,7 +141,7 @@ impl Node {
     pub fn get_wildcard_endpoints_mut(
         &mut self,
         endpoint: Option<u16>,
-    ) -> Result<(&mut [Option<Box<Endpoint>>], usize, bool), IMStatusCode> {
+    ) -> Result<(&mut BoxedEndpoints, usize, bool), IMStatusCode> {
         if let Some(e) = endpoint {
             let e = e as usize;
             if self.endpoints.len() <= e || self.endpoints[e].is_none() {

@@ -95,7 +95,7 @@ impl<'a> ToTLV for EncodeValue<'a> {
                 (f)(tag_type, tw);
                 Ok(())
             }
-            EncodeValue::Tlv(_) => (panic!("This looks invalid")),
+            EncodeValue::Tlv(_) => panic!("This looks invalid"),
             EncodeValue::Value(v) => v.to_tlv(tw, tag_type),
         }
     }
@@ -114,4 +114,10 @@ pub trait Encoder {
     fn encode(&mut self, value: EncodeValue);
     /// Encode a status report
     fn encode_status(&mut self, status: IMStatusCode, cluster_status: u16);
+}
+
+#[derive(ToTLV, Copy, Clone)]
+pub struct DeviceType {
+    pub dtype: u16,
+    pub drev: u16,
 }

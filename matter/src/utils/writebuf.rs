@@ -199,24 +199,20 @@ mod tests {
         buf.le_u64(0xcafebabecafebabe).unwrap();
         // Now the buffer is fully filled up, so no further puts will happen
 
-        match buf.le_u8(1) {
-            Ok(_) => panic!("Should return error"),
-            _ => (),
+        if buf.le_u8(1).is_ok() {
+            panic!("Should return error")
         }
 
-        match buf.le_u16(65) {
-            Ok(_) => panic!("Should return error"),
-            _ => (),
+        if buf.le_u16(65).is_ok() {
+            panic!("Should return error")
         }
 
-        match buf.le_u32(0xcafebabe) {
-            Ok(_) => panic!("Should return error"),
-            _ => (),
+        if buf.le_u32(0xcafebabe).is_ok() {
+            panic!("Should return error")
         }
 
-        match buf.le_u64(0xcafebabecafebabe) {
-            Ok(_) => panic!("Should return error"),
-            _ => (),
+        if buf.le_u64(0xcafebabecafebabe).is_ok() {
+            panic!("Should return error")
         }
     }
 
@@ -267,9 +263,8 @@ mod tests {
 
         buf.le_u16(65).unwrap();
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
-        match buf.copy_from_slice(&new_slice) {
-            Ok(_) => panic!("This should have returned error"),
-            Err(_) => (),
+        if buf.copy_from_slice(&new_slice).is_ok() {
+            panic!("This should have returned error")
         }
     }
 
@@ -296,9 +291,8 @@ mod tests {
 
         buf.le_u16(65).unwrap();
         let new_slice: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
-        match buf.prepend(&new_slice) {
-            Ok(_) => panic!("Prepend should return error"),
-            Err(_) => (),
+        if buf.prepend(&new_slice).is_ok() {
+            panic!("Prepend should return error")
         }
     }
 

@@ -238,6 +238,7 @@ fn test_read_wc_endpoint_wc_attribute() {
     let attr_list_tlvs = get_tlvs(
         &mut buf,
         &[
+            GlobalElements::FeatureMap as u16,
             GlobalElements::AttributeList as u16,
             echo_cluster::Attributes::Att1 as u16,
             echo_cluster::Attributes::Att2 as u16,
@@ -247,6 +248,14 @@ fn test_read_wc_endpoint_wc_attribute() {
     );
 
     let expected = &[
+        attr_data!(
+            GenericPath::new(
+                Some(0),
+                Some(echo_cluster::ID),
+                Some(GlobalElements::FeatureMap as u32),
+            ),
+            ElementType::U8(0)
+        ),
         attr_data!(
             GenericPath::new(
                 Some(0),
@@ -278,6 +287,14 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::Attributes::AttCustom as u32),
             ),
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
+        ),
+        attr_data!(
+            GenericPath::new(
+                Some(1),
+                Some(echo_cluster::ID),
+                Some(GlobalElements::FeatureMap as u32),
+            ),
+            ElementType::U8(0)
         ),
         attr_data!(
             GenericPath::new(

@@ -84,7 +84,7 @@ impl DataModel {
     ) -> Result<AttrValue, IMStatusCode> {
         let node = self.node.read().unwrap();
         let cluster = node.get_cluster(endpoint, cluster)?;
-        cluster.base().read_attribute_raw(attr).map(|a| *a)
+        cluster.base().read_attribute_raw(attr).map(|a| a.clone())
     }
 
     // Encode a write attribute from a path that may or may not be wildcard
@@ -180,7 +180,7 @@ impl DataModel {
             // Set the cluster's data version
             attr_encoder.set_data_ver(cluster_data_ver);
             let mut access_req = AccessReq::new(accessor, path, Access::READ);
-            Cluster::read_attribute(c, &mut access_req, attr_encoder, &attr_details);
+            Cluster::read_attribute(c, &mut access_req, attr_encoder, attr_details);
             Ok(())
         });
         if let Err(e) = result {

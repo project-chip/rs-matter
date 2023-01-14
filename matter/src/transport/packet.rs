@@ -138,8 +138,8 @@ impl<'a> Packet<'a> {
 
     pub fn as_borrow_slice(&mut self) -> &mut [u8] {
         match &mut self.data {
-            Direction::Rx(pb, _) => (pb.as_borrow_slice()),
-            Direction::Tx(wb) => (wb.as_mut_slice()),
+            Direction::Rx(pb, _) => pb.as_borrow_slice(),
+            Direction::Tx(wb) => wb.as_mut_slice(),
         }
     }
 

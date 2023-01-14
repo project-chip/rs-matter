@@ -87,7 +87,6 @@ pub trait ClusterType {
 pub struct Cluster {
     pub(super) id: u32,
     attributes: Vec<Attribute>,
-    feature_map: Option<u32>,
     data_ver: u32,
 }
 
@@ -96,7 +95,6 @@ impl Cluster {
         let mut c = Cluster {
             id,
             attributes: Vec::with_capacity(ATTRS_PER_CLUSTER),
-            feature_map: None,
             data_ver: rand::thread_rng().gen_range(0..0xFFFFFFFF),
         };
         c.add_default_attributes()?;
@@ -112,22 +110,20 @@ impl Cluster {
     }
 
     pub fn set_feature_map(&mut self, map: u32) -> Result<(), Error> {
-        if self.feature_map.is_none() {
-            self.add_attribute(Attribute::new(
-                GlobalElements::FeatureMap as u16,
-                AttrValue::Uint32(map),
-                Access::RV,
-                Quality::NONE,
-            )?)?;
-        } else {
-            self.write_attribute_raw(GlobalElements::FeatureMap as u16, AttrValue::Uint32(map))
-                .map_err(|_| Error::Invalid)?;
-        }
-        self.feature_map = Some(map);
+        self.write_attribute_raw(GlobalElements::FeatureMap as u16, AttrValue::Uint32(map))
+            .map_err(|_| Error::Invalid)?;
         Ok(())
     }
 
     fn add_default_attributes(&mut self) -> Result<(), Error> {
+        // Default feature map is 0
+        self.add_attribute(Attribute::new(
+            GlobalElements::FeatureMap as u16,
+            AttrValue::Uint32(0),
+            Access::RV,
+            Quality::NONE,
+        )?)?;
+
         self.add_attribute(Attribute::new(
             GlobalElements::AttributeList as u16,
             AttrValue::Custom,
@@ -233,8 +229,7 @@ impl Cluster {
                     return;
                 }
                 GlobalElements::FeatureMap => {
-                    let val = if let Some(m) = self.feature_map { m } else { 0 };
-                    encoder.encode(EncodeValue::Value(&val));
+                    encoder.encode(EncodeValue::Value(&attr.value));
                     return;
                 }
                 _ => {
@@ -284,14 +279,13 @@ impl Cluster {
     ) -> Result<(), IMStatusCode> {
         let a = self.get_attribute_mut(attr_id)?;
         if a.value != AttrValue::Custom {
-            let mut value = a.value;
+            let mut value = a.value.clone();
             value
                 .update_from_tlv(data)
                 .map_err(|_| IMStatusCode::Failure)?;
             a.set_value(value)
                 .map(|_| {
                     self.cluster_changed();
-                    ()
                 })
                 .map_err(|_| IMStatusCode::UnsupportedWrite)
         } else {
@@ -303,7 +297,6 @@ impl Cluster {
         let a = self.get_attribute_mut(attr_id)?;
         a.set_value(value).map(|_| {
             self.cluster_changed();
-            ()
         })
     }
 

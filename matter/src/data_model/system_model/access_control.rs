@@ -63,7 +63,7 @@ impl AccessControlCluster {
     /// Care about fabric-scoped behaviour is taken
     fn write_acl_attr(
         &mut self,
-        op: ListOperation,
+        op: &ListOperation,
         data: &TLVElement,
         fab_idx: u8,
     ) -> Result<(), IMStatusCode> {
@@ -77,12 +77,12 @@ impl AccessControlCluster {
                 acl_entry.fab_idx = Some(fab_idx);
 
                 if let ListOperation::EditItem(index) = op {
-                    self.acl_mgr.edit(index as u8, fab_idx, acl_entry)
+                    self.acl_mgr.edit(*index as u8, fab_idx, acl_entry)
                 } else {
                     self.acl_mgr.add(acl_entry)
                 }
             }
-            ListOperation::DeleteItem(index) => self.acl_mgr.delete(index as u8, fab_idx),
+            ListOperation::DeleteItem(index) => self.acl_mgr.delete(*index as u8, fab_idx),
             ListOperation::DeleteList => self.acl_mgr.delete_for_fabric(fab_idx),
         };
         match result {
@@ -128,14 +128,13 @@ impl ClusterType for AccessControlCluster {
         attr: &AttrDetails,
         data: &TLVElement,
     ) -> Result<(), IMStatusCode> {
-        let result = match num::FromPrimitive::from_u16(attr.attr_id) {
-            Some(Attributes::Acl) => attr_list_write(attr, data, |op, data| {
-                self.write_acl_attr(op, data, attr.fab_idx)
-            }),
-            _ => {
-                error!("Attribute not yet supported: this shouldn't happen");
-                Err(IMStatusCode::NotFound)
-            }
+        let result = if let Some(Attributes::Acl) = num::FromPrimitive::from_u16(attr.attr_id) {
+            attr_list_write(attr, data, |op, data| {
+                self.write_acl_attr(&op, data, attr.fab_idx)
+            })
+        } else {
+            error!("Attribute not yet supported: this shouldn't happen");
+            Err(IMStatusCode::NotFound)
         };
         if result.is_ok() {
             self.base.cluster_changed();
@@ -223,7 +222,7 @@ mod tests {
 
         // Test, ACL has fabric index 2, but the accessing fabric is 1
         //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1
-        let result = acl.write_acl_attr(ListOperation::AddItem, &data, 1);
+        let result = acl.write_acl_attr(&ListOperation::AddItem, &data, 1);
         assert_eq!(result, Ok(()));
 
         let verifier = AclEntry::new(1, Privilege::VIEW, AuthMode::Case);
@@ -259,7 +258,7 @@ mod tests {
         let data = get_root_node_struct(writebuf.as_borrow_slice()).unwrap();
 
         // Test, Edit Fabric 2's index 1 - with accessing fabring as 2 - allow
-        let result = acl.write_acl_attr(ListOperation::EditItem(1), &data, 2);
+        let result = acl.write_acl_attr(&ListOperation::EditItem(1), &data, 2);
         // Fabric 2's index 1, is actually our index 2, update the verifier
         verifier[2] = new;
         assert_eq!(result, Ok(()));
@@ -292,7 +291,7 @@ mod tests {
         let data = TLVElement::new(TagType::Anonymous, ElementType::True);
 
         // Test , Delete Fabric 1's index 0
-        let result = acl.write_acl_attr(ListOperation::DeleteItem(0), &data, 1);
+        let result = acl.write_acl_attr(&ListOperation::DeleteItem(0), &data, 1);
         assert_eq!(result, Ok(()));
 
         let verifier = [input[0], input[2]];
@@ -323,7 +322,7 @@ mod tests {
         for i in input {
             acl_mgr.add(i).unwrap();
         }
-        let acl = AccessControlCluster::new(acl_mgr.clone()).unwrap();
+        let acl = AccessControlCluster::new(acl_mgr).unwrap();
         // Test 1, all 3 entries are read in the response without fabric filtering
         {
             let mut tw = TLVWriter::new(&mut writebuf);

@@ -487,6 +487,7 @@ impl std::fmt::Display for AclMgr {
 }
 
 #[cfg(test)]
+#[allow(clippy::bool_assert_comparison)]
 mod tests {
     use crate::{
         data_model::objects::{Access, Privilege},

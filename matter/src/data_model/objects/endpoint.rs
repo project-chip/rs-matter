@@ -19,15 +19,21 @@ use crate::{data_model::objects::ClusterType, error::*, interaction_model::core:
 
 use std::fmt;
 
+use super::DeviceType;
+
 pub const CLUSTERS_PER_ENDPT: usize = 9;
 
 pub struct Endpoint {
+    dev_type: DeviceType,
     clusters: Vec<Box<dyn ClusterType>>,
 }
 
+pub type BoxedClusters = [Box<dyn ClusterType>];
+
 impl Endpoint {
-    pub fn new() -> Result<Box<Endpoint>, Error> {
+    pub fn new(dev_type: DeviceType) -> Result<Box<Endpoint>, Error> {
         Ok(Box::new(Endpoint {
+            dev_type,
             clusters: Vec::with_capacity(CLUSTERS_PER_ENDPT),
         }))
     }
@@ -39,6 +45,10 @@ impl Endpoint {
         } else {
             Err(Error::NoSpace)
         }
+    }
+
+    pub fn get_dev_type(&self) -> &DeviceType {
+        &self.dev_type
     }
 
     fn get_cluster_index(&self, cluster_id: u32) -> Option<usize> {
@@ -63,7 +73,7 @@ impl Endpoint {
     pub fn get_wildcard_clusters(
         &self,
         cluster: Option<u32>,
-    ) -> Result<(&[Box<dyn ClusterType>], bool), IMStatusCode> {
+    ) -> Result<(&BoxedClusters, bool), IMStatusCode> {
         if let Some(c) = cluster {
             if let Some(i) = self.get_cluster_index(c) {
                 Ok((&self.clusters[i..i + 1], false))
@@ -79,7 +89,7 @@ impl Endpoint {
     pub fn get_wildcard_clusters_mut(
         &mut self,
         cluster: Option<u32>,
-    ) -> Result<(&mut [Box<dyn ClusterType>], bool), IMStatusCode> {
+    ) -> Result<(&mut BoxedClusters, bool), IMStatusCode> {
         if let Some(c) = cluster {
             if let Some(i) = self.get_cluster_index(c) {
                 Ok((&mut self.clusters[i..i + 1], false))

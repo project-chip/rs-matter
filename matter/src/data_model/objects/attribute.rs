@@ -88,7 +88,7 @@ bitflags! {
  * - instead of arrays, can use linked-lists to conserve space and avoid the internal fragmentation
  */
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Clone)]
 pub enum AttrValue {
     Int64(i64),
     Uint8(u8),
@@ -96,6 +96,7 @@ pub enum AttrValue {
     Uint32(u32),
     Uint64(u64),
     Bool(bool),
+    Utf8(String),
     Custom,
 }
 
@@ -108,6 +109,7 @@ impl Debug for AttrValue {
             AttrValue::Uint32(v) => write!(f, "{:?}", *v),
             AttrValue::Uint64(v) => write!(f, "{:?}", *v),
             AttrValue::Bool(v) => write!(f, "{:?}", *v),
+            AttrValue::Utf8(v) => write!(f, "{:?}", *v),
             AttrValue::Custom => write!(f, "custom-attribute"),
         }?;
         Ok(())
@@ -123,6 +125,7 @@ impl ToTLV for AttrValue {
             AttrValue::Uint16(v) => tw.u16(tag_type, *v),
             AttrValue::Uint32(v) => tw.u32(tag_type, *v),
             AttrValue::Uint64(v) => tw.u64(tag_type, *v),
+            AttrValue::Utf8(v) => tw.utf8(tag_type, v.as_bytes()),
             _ => {
                 error!("Attribute type not yet supported");
                 Err(Error::AttributeNotFound)
@@ -203,6 +206,7 @@ impl std::fmt::Display for Attribute {
 }
 
 #[cfg(test)]
+#[allow(clippy::bool_assert_comparison)]
 mod tests {
     use super::Access;
     use crate::data_model::objects::Privilege;

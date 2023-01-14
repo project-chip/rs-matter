@@ -18,6 +18,7 @@
 use super::{CertConsumer, MAX_DEPTH};
 use crate::error::Error;
 use chrono::{TimeZone, Utc};
+use log::warn;
 
 #[derive(Debug)]
 pub struct ASN1Writer<'a> {
@@ -255,10 +256,22 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
     }
 
     fn utctime(&mut self, _tag: &str, epoch: u32) -> Result<(), Error> {
-        let mut matter_epoch = Utc.ymd(2000, 1, 1).and_hms(0, 0, 0).timestamp();
+        let mut matter_epoch = Utc
+            .with_ymd_and_hms(2000, 1, 1, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+
         matter_epoch += epoch as i64;
 
-        let dt = Utc.timestamp(matter_epoch, 0);
+        let dt = match Utc.timestamp_opt(matter_epoch, 0) {
+            chrono::LocalResult::None => return Err(Error::InvalidTime),
+            chrono::LocalResult::Single(s) => s,
+            chrono::LocalResult::Ambiguous(_, a) => {
+                warn!("Ambiguous time for epoch {epoch}; returning latest timestamp: {a}");
+                a
+            }
+        };
+
         let time_str = format!("{}Z", dt.format("%y%m%d%H%M%S"));
         self.write_str(0x17, time_str.as_bytes())
     }

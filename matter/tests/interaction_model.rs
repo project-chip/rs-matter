@@ -136,8 +136,8 @@ fn handle_data(action: OpCode, data_in: &[u8], data_out: &mut [u8]) -> (DataMode
         exch: &mut exch,
         sess,
     };
-    let mut rx = Slab::<PacketPool>::new(Packet::new_rx().unwrap()).unwrap();
-    let tx = Slab::<PacketPool>::new(Packet::new_tx().unwrap()).unwrap();
+    let mut rx = Slab::<PacketPool>::try_new(Packet::new_rx().unwrap()).unwrap();
+    let tx = Slab::<PacketPool>::try_new(Packet::new_tx().unwrap()).unwrap();
     // Create fake rx packet
     rx.set_proto_id(0x01);
     rx.set_proto_opcode(action as u8);

@@ -118,7 +118,7 @@ impl Mgr {
                     // If a new session was created, add it
                     let _ = self
                         .exch_mgr
-                        .add_session(clone_data)
+                        .add_session(&clone_data)
                         .map_err(|e| error!("Error adding new session {:?}", e));
                 }
                 _ => {
@@ -170,6 +170,6 @@ impl Mgr {
     }
 
     fn new_tx() -> Result<BoxSlab<PacketPool>, Error> {
-        Slab::<PacketPool>::new(Packet::new_tx()?).ok_or(Error::PacketPoolExhaust)
+        Slab::<PacketPool>::try_new(Packet::new_tx()?).ok_or(Error::PacketPoolExhaust)
     }
 }

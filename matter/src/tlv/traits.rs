@@ -88,7 +88,7 @@ macro_rules! totlv_for {
     };
 }
 
-impl<'a, T: ToTLV, const N: usize> ToTLV for [T; N] {
+impl<T: ToTLV, const N: usize> ToTLV for [T; N] {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.start_array(tag)?;
         for i in self {
@@ -211,7 +211,7 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Option<T> {
 impl<T: ToTLV> ToTLV for Option<T> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         match self {
-            Some(s) => (s.to_tlv(tw, tag)),
+            Some(s) => s.to_tlv(tw, tag),
             None => Ok(()),
         }
     }
@@ -321,12 +321,10 @@ impl<'a, T: ToTLV> TLVArray<'a, T> {
 
 impl<'a, T: ToTLV + FromTLV<'a> + Copy> TLVArray<'a, T> {
     pub fn get_index(&self, index: usize) -> T {
-        let mut curr = 0;
-        for element in self.iter() {
+        for (curr, element) in self.iter().enumerate() {
             if curr == index {
                 return element;
             }
-            curr += 1;
         }
         panic!("Out of bounds");
     }
@@ -360,7 +358,7 @@ where
 {
     fn eq(&self, other: &&[T]) -> bool {
         let mut iter1 = self.iter();
-        let mut iter2 = other.into_iter();
+        let mut iter2 = other.iter();
         loop {
             match (iter1.next(), iter2.next()) {
                 (None, None) => return true,
@@ -402,7 +400,7 @@ impl<'a, T: Debug + ToTLV + FromTLV<'a> + Copy> Debug for TLVArray<'a, T> {
         for i in self.iter() {
             writeln!(f, "{:?}", i)?;
         }
-        writeln!(f, "")
+        writeln!(f)
     }
 }
 

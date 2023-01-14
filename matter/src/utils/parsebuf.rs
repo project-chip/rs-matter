@@ -117,22 +117,19 @@ mod tests {
 
         assert_eq!(buf.le_u8().unwrap(), 0x01);
 
-        match buf.le_u16() {
-            Ok(_) => panic!("This should have returned error"),
-            Err(_) => (),
+        if buf.le_u16().is_ok() {
+            panic!("This should have returned error")
         }
 
-        match buf.le_u32() {
-            Ok(_) => panic!("This should have returned error"),
-            Err(_) => (),
+        if buf.le_u32().is_ok() {
+            panic!("This should have returned error")
         }
 
         // Now consume the leftover byte
         assert_eq!(buf.le_u8().unwrap(), 65);
 
-        match buf.le_u8() {
-            Ok(_) => panic!("This should have returned error"),
-            Err(_) => (),
+        if buf.le_u8().is_ok() {
+            panic!("This should have returned error")
         }
         assert_eq!(buf.as_slice(), []);
     }
@@ -161,9 +158,8 @@ mod tests {
         assert_eq!(buf.le_u8().unwrap(), 0x01);
         assert_eq!(buf.le_u16().unwrap(), 65);
         assert_eq!(buf.le_u32().unwrap(), 0xcafebabe);
-        match buf.tail(5) {
-            Ok(_) => panic!("This should have returned error"),
-            Err(_) => (),
+        if buf.tail(5).is_ok() {
+            panic!("This should have returned error")
         }
         assert_eq!(buf.tail(2).unwrap(), [0xc, 0xd]);
     }

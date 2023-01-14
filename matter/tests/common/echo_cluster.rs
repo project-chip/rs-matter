@@ -121,7 +121,7 @@ impl ClusterType for EchoCluster {
     ) -> Result<(), IMStatusCode> {
         match num::FromPrimitive::from_u16(attr.attr_id) {
             Some(Attributes::AttWriteList) => {
-                attr_list_write(attr, data, |op, data| self.write_attr_list(op, data))
+                attr_list_write(attr, data, |op, data| self.write_attr_list(&op, data))
             }
             _ => self.base.write_attribute_from_tlv(attr.attr_id, data),
         }
@@ -132,7 +132,7 @@ impl ClusterType for EchoCluster {
             .cmd
             .path
             .leaf
-            .map(|c| num::FromPrimitive::from_u32(c))
+            .map(num::FromPrimitive::from_u32)
             .ok_or(IMStatusCode::UnsupportedCommand)?
             .ok_or(IMStatusCode::UnsupportedCommand)?;
         match cmd {
@@ -206,7 +206,7 @@ impl EchoCluster {
 
     fn write_attr_list(
         &mut self,
-        op: ListOperation,
+        op: &ListOperation,
         data: &TLVElement,
     ) -> Result<(), IMStatusCode> {
         let tc_handle = TestChecker::get().unwrap();
@@ -224,16 +224,16 @@ impl EchoCluster {
             }
             ListOperation::EditItem(index) => {
                 let data = data.u16().map_err(|_| IMStatusCode::Failure)?;
-                if tc.write_list[index as usize].is_some() {
-                    tc.write_list[index as usize] = Some(data);
+                if tc.write_list[*index as usize].is_some() {
+                    tc.write_list[*index as usize] = Some(data);
                     Ok(())
                 } else {
                     Err(IMStatusCode::InvalidAction)
                 }
             }
             ListOperation::DeleteItem(index) => {
-                if tc.write_list[index as usize].is_some() {
-                    tc.write_list[index as usize] = None;
+                if tc.write_list[*index as usize].is_some() {
+                    tc.write_list[*index as usize] = None;
                     Ok(())
                 } else {
                     Err(IMStatusCode::InvalidAction)

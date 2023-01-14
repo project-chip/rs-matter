@@ -131,7 +131,7 @@ impl NocCluster {
     }
 
     fn add_acl(&self, fab_idx: u8, admin_subject: u64) -> Result<(), Error> {
-        let mut acl = AclEntry::new(fab_idx as u8, Privilege::ADMIN, AuthMode::Case);
+        let mut acl = AclEntry::new(fab_idx, Privilege::ADMIN, AuthMode::Case);
         acl.add_subject(admin_subject)?;
         self.acl_mgr.add(acl)
     }
@@ -156,7 +156,7 @@ impl NocCluster {
 
         let noc_value = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
         info!("Received NOC as: {}", noc_value);
-        let icac_value = if r.icac_value.0.len() != 0 {
+        let icac_value = if !r.icac_value.0.is_empty() {
             let cert = Cert::new(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
             info!("Received ICAC as: {}", cert);
             Some(cert)
@@ -178,7 +178,7 @@ impl NocCluster {
             .add(fabric)
             .map_err(|_| NocStatus::TableFull)?;
 
-        if self.add_acl(fab_idx as u8, r.case_admin_subject).is_err() {
+        if self.add_acl(fab_idx, r.case_admin_subject).is_err() {
             error!("Failed to add ACL, what to do?");
         }
 

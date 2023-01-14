@@ -179,7 +179,7 @@ impl proto_demux::HandleProto for InteractionModel {
     }
 
     fn get_proto_id(&self) -> usize {
-        PROTO_ID_INTERACTION_MODEL as usize
+        PROTO_ID_INTERACTION_MODEL
     }
 }
 

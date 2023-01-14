@@ -233,7 +233,7 @@ impl Fabric {
 
         let mut icac = Vec::new();
         psm.get_kv_slice(fb_key!(index, ST_ICA), &mut icac)?;
-        let icac = if icac.len() != 0 {
+        let icac = if !icac.is_empty() {
             Some(Cert::new(icac.as_slice())?)
         } else {
             None
