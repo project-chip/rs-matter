@@ -41,7 +41,6 @@
 //! let comm_data = CommissioningData {
 //!     verifier: VerifierData::new_with_pw(123456),
 //!     discriminator: 250,
-//!     
 //! };
 //!
 //! /// The basic information about this device
