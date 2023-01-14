@@ -38,6 +38,8 @@ pub struct BasicInfoConfig {
     pub hw_ver: u16,
     pub sw_ver: u32,
     pub serial_no: String,
+    /// Device name; up to 32 characters
+    pub device_name: String,
 }
 
 fn attr_dm_rev_new() -> Result<Attribute, Error> {
@@ -47,8 +49,6 @@ fn attr_dm_rev_new() -> Result<Attribute, Error> {
         Access::RV,
         Quality::FIXED,
     )
-    /// Device name; up to 32 characters
-    pub device_name: String,
 }
 
 fn attr_vid_new(vid: u16) -> Result<Attribute, Error> {
