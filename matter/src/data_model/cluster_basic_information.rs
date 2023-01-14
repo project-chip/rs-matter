@@ -17,13 +17,18 @@
 
 use super::objects::*;
 use crate::error::*;
+use num_derive::FromPrimitive;
 
 pub const ID: u32 = 0x0028;
+
+#[derive(FromPrimitive)]
 enum Attributes {
+    DMRevision = 0,
     VendorId = 2,
     ProductId = 4,
     HwVer = 7,
     SwVer = 9,
+    SerialNo = 0x0f,
 }
 
 #[derive(Default)]
@@ -32,6 +37,16 @@ pub struct BasicInfoConfig {
     pub pid: u16,
     pub hw_ver: u16,
     pub sw_ver: u32,
+    pub serial_no: String,
+}
+
+fn attr_dm_rev_new() -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::DMRevision as u16,
+        AttrValue::Uint8(1),
+        Access::RV,
+        Quality::FIXED,
+    )
     /// Device name; up to 32 characters
     pub device_name: String,
 }
@@ -72,19 +87,31 @@ fn attr_sw_ver_new(sw_ver: u32) -> Result<Attribute, Error> {
     )
 }
 
+fn attr_serial_no_new(label: String) -> Result<Attribute, Error> {
+    Attribute::new(
+        Attributes::SerialNo as u16,
+        AttrValue::Utf8(label),
+        Access::RV,
+        Quality::FIXED,
+    )
+}
 pub struct BasicInfoCluster {
     base: Cluster,
 }
 
 impl BasicInfoCluster {
-    pub fn new(cfg: &BasicInfoConfig) -> Result<Box<Self>, Error> {
+    pub fn new(cfg: BasicInfoConfig) -> Result<Box<Self>, Error> {
         let mut cluster = Box::new(BasicInfoCluster {
             base: Cluster::new(ID)?,
         });
+        cluster.base.add_attribute(attr_dm_rev_new()?)?;
         cluster.base.add_attribute(attr_vid_new(cfg.vid)?)?;
         cluster.base.add_attribute(attr_pid_new(cfg.pid)?)?;
         cluster.base.add_attribute(attr_hw_ver_new(cfg.hw_ver)?)?;
         cluster.base.add_attribute(attr_sw_ver_new(cfg.sw_ver)?)?;
+        cluster
+            .base
+            .add_attribute(attr_serial_no_new(cfg.serial_no)?)?;
         Ok(cluster)
     }
 }

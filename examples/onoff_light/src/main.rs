@@ -35,11 +35,12 @@ fn main() {
         pid: 0x8002,
         hw_ver: 2,
         sw_ver: 1,
+        serial_no: "aabbccdd".to_string(),
         device_name: "OnOff Light".to_string(),
     };
     let dev_att = Box::new(dev_att::HardCodedDevAtt::new());
 
-    let mut matter = core::Matter::new(&dev_info, dev_att, comm_data).unwrap();
+    let mut matter = core::Matter::new(dev_info, dev_att, comm_data).unwrap();
     let dm = matter.get_data_model();
     {
         let mut node = dm.node.write().unwrap();

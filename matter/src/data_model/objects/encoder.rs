@@ -115,3 +115,9 @@ pub trait Encoder {
     /// Encode a status report
     fn encode_status(&mut self, status: IMStatusCode, cluster_status: u16);
 }
+
+#[derive(ToTLV, Copy, Clone)]
+pub struct DeviceType {
+    pub dtype: u16,
+    pub drev: u16,
+}

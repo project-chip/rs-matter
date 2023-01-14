@@ -50,12 +50,13 @@
 //!     pid: 0xFFF1,
 //!     hw_ver: 2,
 //!     sw_ver: 1,
+//!     serial_no: "aabbcc".to_string(),
 //!     device_name: "OnOff Light".to_string(),
 //! };
 //!
 //! /// Get the Matter Object
 //! /// The dev_att is an object that implements the DevAttDataFetcher trait.
-//! let mut matter = Matter::new(&dev_info, dev_att, comm_data).unwrap();
+//! let mut matter = Matter::new(dev_info, dev_att, comm_data).unwrap();
 //! let dm = matter.get_data_model();
 //! {
 //!     let mut node = dm.node.write().unwrap();
