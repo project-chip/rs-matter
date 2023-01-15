@@ -102,7 +102,6 @@ impl Mdns {
                     ["VP", &format!("{}+{}", inner.vid, inner.pid)],
                     ["SII", "5000"], /* Sleepy Idle Interval */
                     ["SAI", "300"],  /* Sleepy Active Interval */
-                    ["T", "1"],      /* TCP supported */
                     ["PH", "33"],    /* Pairing Hint */
                     ["PI", ""],      /* Pairing Instruction */
                 ];
