@@ -131,6 +131,11 @@ impl<'a> WriteBuf<'a> {
             LittleEndian::write_u16(&mut x.buf[x.end..], data);
         })
     }
+    pub fn le_i16(&mut self, data: i16) -> Result<(), Error> {
+        self.append_with(2, |x| {
+            LittleEndian::write_i16(&mut x.buf[x.end..], data);
+        })
+    }
 
     pub fn le_u32(&mut self, data: u32) -> Result<(), Error> {
         self.append_with(4, |x| {
@@ -138,9 +143,21 @@ impl<'a> WriteBuf<'a> {
         })
     }
 
+    pub fn le_i32(&mut self, data: i32) -> Result<(), Error> {
+        self.append_with(4, |x| {
+            LittleEndian::write_i32(&mut x.buf[x.end..], data);
+        })
+    }
+
     pub fn le_u64(&mut self, data: u64) -> Result<(), Error> {
         self.append_with(8, |x| {
             LittleEndian::write_u64(&mut x.buf[x.end..], data);
+        })
+    }
+
+    pub fn le_i64(&mut self, data: i64) -> Result<(), Error> {
+        self.append_with(8, |x| {
+            LittleEndian::write_i64(&mut x.buf[x.end..], data);
         })
     }
 

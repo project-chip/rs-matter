@@ -30,19 +30,20 @@ pub struct MdnsInner {
     vid: u16,
     /// Product ID
     pid: u16,
+    /// Device name
+    device_name: String,
 }
 
 pub struct Mdns {
     inner: Mutex<MdnsInner>,
 }
 
-const SHORT_DISCRIMINATOR_MASK: u16 = 0xf00;
+const SHORT_DISCRIMINATOR_MASK: u16 = 0xF00;
 const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
 
 static mut G_MDNS: Option<Arc<Mdns>> = None;
 static INIT: Once = Once::new();
 
-#[derive(Clone, Copy)]
 pub enum ServiceMode {
     /// The commissioned state
     Commissioned,
@@ -72,28 +73,60 @@ impl Mdns {
     /// Set mDNS service specific values
     /// Values like vid, pid, discriminator etc
     // TODO: More things like device-type etc can be added here
-    pub fn set_values(&self, vid: u16, pid: u16) {
+    pub fn set_values(&self, vid: u16, pid: u16, device_name: &str) {
         let mut inner = self.inner.lock().unwrap();
         inner.vid = vid;
         inner.pid = pid;
+        inner.device_name = device_name.chars().take(32).collect();
     }
 
     /// Publish a mDNS service
     /// name - is the service name (comma separated subtypes may follow)
     /// mode - the current service mode
+    #[allow(clippy::needless_pass_by_value)]
     pub fn publish_service(&self, name: &str, mode: ServiceMode) -> Result<SysMdnsService, Error> {
         match mode {
             ServiceMode::Commissioned => {
                 sys_publish_service(name, "_matter._tcp", MATTER_PORT, &[])
             }
             ServiceMode::Commissionable(discriminator) => {
-                let short = (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT;
+                let inner = self.inner.lock().unwrap();
+                let short = compute_short_discriminator(discriminator);
                 let serv_type = format!("_matterc._udp,_S{},_L{}", short, discriminator);
 
                 let str_discriminator = format!("{}", discriminator);
-                let txt_kvs = [["D", &str_discriminator], ["CM", "1"]];
+                let txt_kvs = [
+                    ["D", &str_discriminator],
+                    ["CM", "1"],
+                    ["DN", &inner.device_name],
+                    ["VP", &format!("{}+{}", inner.vid, inner.pid)],
+                    ["SII", "5000"], /* Sleepy Idle Interval */
+                    ["SAI", "300"],  /* Sleepy Active Interval */
+                    ["PH", "33"],    /* Pairing Hint */
+                    ["PI", ""],      /* Pairing Instruction */
+                ];
                 sys_publish_service(name, &serv_type, MATTER_PORT, &txt_kvs)
             }
         }
+    }
+}
+
+fn compute_short_discriminator(discriminator: u16) -> u16 {
+    (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_compute_short_discriminator() {
+        let discriminator: u16 = 0b0000_1111_0000_0000;
+        let short = compute_short_discriminator(discriminator);
+        assert_eq!(short, 0b1111);
+
+        let discriminator: u16 = 840;
+        let short = compute_short_discriminator(discriminator);
+        assert_eq!(short, 3);
     }
 }

@@ -24,6 +24,7 @@ use log::error;
 pub enum Error {
     AttributeNotFound,
     AttributeIsCustom,
+    BufferTooSmall,
     ClusterNotFound,
     CommandNotFound,
     EndpointNotFound,
@@ -38,6 +39,7 @@ pub enum Error {
     NoHandler,
     NoNetworkInterface,
     NoNodeId,
+    NoMemory,
     NoSession,
     NoSpace,
     NoSpaceAckTable,
@@ -58,6 +60,7 @@ pub enum Error {
     InvalidSignature,
     InvalidState,
     InvalidTime,
+    InvalidArgument,
     RwLock,
     TLVNotFound,
     TLVTypeMismatch,

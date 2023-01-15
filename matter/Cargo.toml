@@ -47,6 +47,12 @@ safemem = "0.3.3"
 chrono = { version = "0.4.19", default-features = false, features = ["clock", "std"] }
 async-channel = "1.6"
 
+# to compute the check digit
+verhoeff = "1"
+
+# print QR code
+qrcode = { version = "0.12", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = "0.3"
 

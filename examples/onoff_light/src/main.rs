@@ -36,6 +36,7 @@ fn main() {
         hw_ver: 2,
         sw_ver: 1,
         serial_no: "aabbccdd".to_string(),
+        device_name: "OnOff Light".to_string(),
     };
     let dev_att = Box::new(dev_att::HardCodedDevAtt::new());
 

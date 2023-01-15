@@ -41,7 +41,6 @@
 //! let comm_data = CommissioningData {
 //!     verifier: VerifierData::new_with_pw(123456),
 //!     discriminator: 250,
-//!     
 //! };
 //!
 //! /// The basic information about this device
@@ -51,6 +50,7 @@
 //!     hw_ver: 2,
 //!     sw_ver: 1,
 //!     serial_no: "aabbcc".to_string(),
+//!     device_name: "OnOff Light".to_string(),
 //! };
 //!
 //! /// Get the Matter Object
@@ -69,6 +69,7 @@
 
 pub mod acl;
 pub mod cert;
+pub mod codec;
 pub mod core;
 pub mod crypto;
 pub mod data_model;
@@ -77,6 +78,7 @@ pub mod fabric;
 pub mod group_keys;
 pub mod interaction_model;
 pub mod mdns;
+pub mod pairing;
 pub mod secure_channel;
 pub mod sys;
 pub mod tlv;
