@@ -19,6 +19,7 @@ use super::cluster_basic_information::BasicInfoCluster;
 use super::cluster_basic_information::BasicInfoConfig;
 use super::cluster_on_off::OnOffCluster;
 use super::objects::*;
+use super::sdm::admin_commissioning::AdminCommCluster;
 use super::sdm::dev_att::DevAttDataFetcher;
 use super::sdm::general_commissioning::GenCommCluster;
 use super::sdm::noc::NocCluster;
@@ -27,20 +28,27 @@ use super::system_model::access_control::AccessControlCluster;
 use crate::acl::AclMgr;
 use crate::error::*;
 use crate::fabric::FabricMgr;
+use crate::secure_channel::pake::PaseMgr;
 use std::sync::Arc;
 use std::sync::RwLockWriteGuard;
+
+pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
+    dtype: 0x0016,
+    drev: 1,
+};
 
 type WriteNode<'a> = RwLockWriteGuard<'a, Box<Node>>;
 
 pub fn device_type_add_root_node(
     node: &mut WriteNode,
-    dev_info: &BasicInfoConfig,
+    dev_info: BasicInfoConfig,
     dev_att: Box<dyn DevAttDataFetcher>,
     fabric_mgr: Arc<FabricMgr>,
     acl_mgr: Arc<AclMgr>,
+    pase_mgr: PaseMgr,
 ) -> Result<u32, Error> {
     // Add the root endpoint
-    let endpoint = node.add_endpoint()?;
+    let endpoint = node.add_endpoint(DEV_TYPE_ROOT_NODE)?;
     if endpoint != 0 {
         // Somehow endpoint 0 was already added, this shouldn't be the case
         return Err(Error::Invalid);
@@ -51,6 +59,7 @@ pub fn device_type_add_root_node(
     let failsafe = general_commissioning.failsafe();
     node.add_cluster(0, general_commissioning)?;
     node.add_cluster(0, NwCommCluster::new()?)?;
+    node.add_cluster(0, AdminCommCluster::new(pase_mgr)?)?;
     node.add_cluster(
         0,
         NocCluster::new(dev_att, fabric_mgr, acl_mgr.clone(), failsafe)?,
@@ -59,8 +68,13 @@ pub fn device_type_add_root_node(
     Ok(endpoint)
 }
 
+const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
+    dtype: 0x0100,
+    drev: 2,
+};
+
 pub fn device_type_add_on_off_light(node: &mut WriteNode) -> Result<u32, Error> {
-    let endpoint = node.add_endpoint()?;
+    let endpoint = node.add_endpoint(DEV_TYPE_ON_OFF_LIGHT)?;
     node.add_cluster(endpoint, OnOffCluster::new()?)?;
     Ok(endpoint)
 }

@@ -36,6 +36,7 @@ use crate::{
         },
         InteractionConsumer, Transaction,
     },
+    secure_channel::pake::PaseMgr,
     tlv::{TLVArray, TLVWriter, TagType, ToTLV},
     transport::session::{Session, SessionMode},
 };
@@ -50,10 +51,11 @@ pub struct DataModel {
 
 impl DataModel {
     pub fn new(
-        dev_details: &BasicInfoConfig,
+        dev_details: BasicInfoConfig,
         dev_att: Box<dyn DevAttDataFetcher>,
         fabric_mgr: Arc<FabricMgr>,
         acl_mgr: Arc<AclMgr>,
+        pase_mgr: PaseMgr,
     ) -> Result<Self, Error> {
         let dm = DataModel {
             node: Arc::new(RwLock::new(Node::new()?)),
@@ -62,7 +64,14 @@ impl DataModel {
         {
             let mut node = dm.node.write()?;
             node.set_changes_cb(Box::new(dm.clone()));
-            device_type_add_root_node(&mut node, dev_details, dev_att, fabric_mgr, acl_mgr)?;
+            device_type_add_root_node(
+                &mut node,
+                dev_details,
+                dev_att,
+                fabric_mgr,
+                acl_mgr,
+                pase_mgr,
+            )?;
         }
         Ok(dm)
     }
@@ -75,7 +84,7 @@ impl DataModel {
     ) -> Result<AttrValue, IMStatusCode> {
         let node = self.node.read().unwrap();
         let cluster = node.get_cluster(endpoint, cluster)?;
-        cluster.base().read_attribute_raw(attr).map(|a| *a)
+        cluster.base().read_attribute_raw(attr).map(|a| a.clone())
     }
 
     // Encode a write attribute from a path that may or may not be wildcard

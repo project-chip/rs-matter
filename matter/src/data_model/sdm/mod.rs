@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+pub mod admin_commissioning;
 pub mod dev_att;
 pub mod failsafe;
 pub mod general_commissioning;

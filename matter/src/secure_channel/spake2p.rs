@@ -15,8 +15,13 @@
  *    limitations under the License.
  */
 
-use crate::crypto::{self, HmacSha256};
+use crate::{
+    crypto::{self, HmacSha256},
+    sys,
+};
 use byteorder::{ByteOrder, LittleEndian};
+use log::error;
+use rand::prelude::*;
 use subtle::ConstantTimeEq;
 
 use crate::{
@@ -74,6 +79,10 @@ const SPAKE2P_KEY_CONFIRM_INFO: [u8; 16] = *b"ConfirmationKeys";
 const SPAKE2P_CONTEXT_PREFIX: [u8; 26] = *b"CHIP PAKE V1 Commissioning";
 const CRYPTO_GROUP_SIZE_BYTES: usize = 32;
 const CRYPTO_W_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + 8;
+const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
+
+const MAX_SALT_SIZE_BYTES: usize = 32;
+const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
 
 #[cfg(feature = "crypto_openssl")]
 fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
@@ -93,6 +102,50 @@ fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
 impl Default for Spake2P {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct VerifierData {
+    pub data: VerifierOption,
+    // For the VerifierOption::Verifier, the following fields only serve
+    // information purposes
+    pub salt: [u8; MAX_SALT_SIZE_BYTES],
+    pub count: u32,
+}
+
+pub enum VerifierOption {
+    /// With Password
+    Password(u32),
+    /// With Verifier
+    Verifier([u8; VERIFIER_SIZE_BYTES]),
+}
+
+impl VerifierData {
+    pub fn new_with_pw(pw: u32) -> Self {
+        let mut s = Self {
+            salt: [0; MAX_SALT_SIZE_BYTES],
+            count: sys::SPAKE2_ITERATION_COUNT,
+            data: VerifierOption::Password(pw),
+        };
+        rand::thread_rng().fill_bytes(&mut s.salt);
+        s
+    }
+
+    pub fn new(verifier: &[u8], count: u32, salt: &[u8]) -> Self {
+        let mut v = [0_u8; VERIFIER_SIZE_BYTES];
+        let mut s = [0_u8; MAX_SALT_SIZE_BYTES];
+
+        let slice = &mut v[..verifier.len()];
+        slice.copy_from_slice(verifier);
+
+        let slice = &mut s[..salt.len()];
+        slice.copy_from_slice(salt);
+
+        Self {
+            data: VerifierOption::Verifier(v),
+            count,
+            salt: s,
+        }
     }
 }
 
@@ -132,17 +185,31 @@ impl Spake2P {
         let _ = pbkdf2_hmac(&pw_str, iter as usize, salt, w0w1s);
     }
 
-    pub fn start_verifier(&mut self, pw: u32, iter: u32, salt: &[u8]) -> Result<(), Error> {
-        let mut w0w1s: [u8; (2 * CRYPTO_W_SIZE_BYTES)] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
-        Spake2P::get_w0w1s(pw, iter, salt, &mut w0w1s);
+    pub fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
         self.crypto_spake2 = Some(crypto_spake2_new()?);
+        match verifier.data {
+            VerifierOption::Password(pw) => {
+                // Derive w0 and L from the password
+                let mut w0w1s: [u8; (2 * CRYPTO_W_SIZE_BYTES)] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
+                Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
-        let w0s_len = w0w1s.len() / 2;
-        if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-            crypto_spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
-            crypto_spake2.set_L(&w0w1s[w0s_len..])?;
+                let w0s_len = w0w1s.len() / 2;
+                if let Some(crypto_spake2) = &mut self.crypto_spake2 {
+                    crypto_spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
+                    crypto_spake2.set_L_from_w1s(&w0w1s[w0s_len..])?;
+                }
+            }
+            VerifierOption::Verifier(v) => {
+                // Extract w0 and L from the verifier
+                if v.len() != CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES {
+                    error!("Verifier of invalid length");
+                }
+                if let Some(crypto_spake2) = &mut self.crypto_spake2 {
+                    crypto_spake2.set_w0(&v[0..CRYPTO_GROUP_SIZE_BYTES])?;
+                    crypto_spake2.set_L(&v[CRYPTO_GROUP_SIZE_BYTES..])?;
+                }
+            }
         }
-
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Init);
         Ok(())
     }
@@ -164,6 +231,7 @@ impl Spake2P {
                 Spake2P::get_Ke_and_cAcB(&TT, pA, pB, &mut self.Ke, &mut self.cA, cB)?;
             }
         }
+
         // We are finished with using the crypto_spake2 now
         self.crypto_spake2 = None;
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation);

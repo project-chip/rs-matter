@@ -15,27 +15,105 @@
  *    limitations under the License.
  */
 
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
+};
 
 use super::{
     common::{create_sc_status_report, SCStatusCodes},
-    spake2p::Spake2P,
+    spake2p::{Spake2P, VerifierData},
 };
 use crate::{
     crypto,
     error::Error,
-    sys::SPAKE2_ITERATION_COUNT,
+    mdns::{self, Mdns},
+    secure_channel::common::OpCode,
+    sys::SysMdnsService,
     tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV},
     transport::{
         exchange::ExchangeCtx,
         network::Address,
-        proto_demux::ProtoCtx,
+        proto_demux::{ProtoCtx, ResponseRequired},
         queue::{Msg, WorkQ},
         session::{CloneData, SessionMode},
     },
 };
 use log::{error, info};
 use rand::prelude::*;
+
+enum PaseMgrState {
+    Enabled(PAKE, SysMdnsService),
+    Disabled,
+}
+
+pub struct PaseMgrInternal {
+    state: PaseMgrState,
+}
+
+#[derive(Clone)]
+// Could this lock be avoided?
+pub struct PaseMgr(Arc<Mutex<PaseMgrInternal>>);
+
+impl PaseMgr {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(PaseMgrInternal {
+            state: PaseMgrState::Disabled,
+        })))
+    }
+
+    pub fn enable_pase_session(
+        &mut self,
+        verifier: VerifierData,
+        discriminator: u16,
+    ) -> Result<(), Error> {
+        let mut s = self.0.lock().unwrap();
+        let name: u64 = rand::thread_rng().gen_range(0..0xFFFFFFFFFFFFFFFF);
+        let name = format!("{:016X}", name);
+        let mdns = Mdns::get()?
+            .publish_service(&name, mdns::ServiceMode::Commissionable(discriminator))?;
+        s.state = PaseMgrState::Enabled(PAKE::new(verifier), mdns);
+        Ok(())
+    }
+
+    pub fn disable_pase_session(&mut self) {
+        let mut s = self.0.lock().unwrap();
+        s.state = PaseMgrState::Disabled;
+    }
+
+    /// If the PASE Session is enabled, execute the closure,
+    /// if not enabled, generate SC Status Report
+    fn if_enabled<F>(&mut self, ctx: &mut ProtoCtx, f: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut PAKE, &mut ProtoCtx) -> Result<(), Error>,
+    {
+        let mut s = self.0.lock().unwrap();
+        if let PaseMgrState::Enabled(pake, _) = &mut s.state {
+            f(pake, ctx)
+        } else {
+            error!("PASE Not enabled");
+            create_sc_status_report(&mut ctx.tx, SCStatusCodes::InvalidParameter, None)
+        }
+    }
+
+    pub fn pbkdfparamreq_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        ctx.tx.set_proto_opcode(OpCode::PBKDFParamResponse as u8);
+        self.if_enabled(ctx, |pake, ctx| pake.handle_pbkdfparamrequest(ctx))?;
+        Ok(ResponseRequired::Yes)
+    }
+
+    pub fn pasepake1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        ctx.tx.set_proto_opcode(OpCode::PASEPake2 as u8);
+        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake1(ctx))?;
+        Ok(ResponseRequired::Yes)
+    }
+
+    pub fn pasepake3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
+        self.disable_pase_session();
+        Ok(ResponseRequired::Yes)
+    }
+}
 
 // This file basically deals with the handlers for the PASE secure channel protocol
 // TLV extraction and encoding is done in this file.
@@ -111,20 +189,17 @@ impl Default for PakeState {
     }
 }
 
-#[derive(Default)]
 pub struct PAKE {
-    salt: [u8; 16],
-    passwd: u32,
+    pub verifier: VerifierData,
     state: PakeState,
 }
 
 impl PAKE {
-    pub fn new(salt: &[u8; 16], passwd: u32) -> Self {
+    pub fn new(verifier: VerifierData) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         PAKE {
-            passwd,
-            salt: *salt,
-            ..Default::default()
+            verifier,
+            state: Default::default(),
         }
     }
 
@@ -176,8 +251,7 @@ impl PAKE {
         let pA = extract_pasepake_1_or_3_params(ctx.rx.as_borrow_slice())?;
         let mut pB: [u8; 65] = [0; 65];
         let mut cB: [u8; 32] = [0; 32];
-        sd.spake2p
-            .start_verifier(self.passwd, SPAKE2_ITERATION_COUNT, &self.salt)?;
+        sd.spake2p.start_verifier(&self.verifier)?;
         sd.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
 
         let mut tw = TLVWriter::new(ctx.tx.get_writebuf()?);
@@ -231,8 +305,8 @@ impl PAKE {
         };
         if !a.has_params {
             let params_resp = PBKDFParamRespParams {
-                count: SPAKE2_ITERATION_COUNT,
-                salt: OctetStr(&self.salt),
+                count: self.verifier.count,
+                salt: OctetStr(&self.verifier.salt),
             };
             resp.params = Some(params_resp);
         }

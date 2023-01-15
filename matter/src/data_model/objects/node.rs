@@ -23,6 +23,8 @@ use crate::{
 };
 use std::fmt;
 
+use super::DeviceType;
+
 pub trait ChangeConsumer {
     fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error>;
 }
@@ -59,13 +61,13 @@ impl Node {
         self.changes_cb = Some(consumer);
     }
 
-    pub fn add_endpoint(&mut self) -> Result<u32, Error> {
+    pub fn add_endpoint(&mut self, dev_type: DeviceType) -> Result<u32, Error> {
         let index = self
             .endpoints
             .iter()
             .position(|x| x.is_none())
             .ok_or(Error::NoSpace)?;
-        let mut endpoint = Endpoint::new()?;
+        let mut endpoint = Endpoint::new(dev_type)?;
         if let Some(cb) = &self.changes_cb {
             cb.endpoint_added(index as u16, &mut endpoint)?;
         }

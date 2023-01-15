@@ -204,10 +204,10 @@ fn read_cluster_id_write_attr(im: &ImEngine, endpoint: u16) -> AttrValue {
     let node = im.dm.node.read().unwrap();
     let echo = node.get_cluster(endpoint, echo_cluster::ID).unwrap();
 
-    *echo
-        .base()
+    echo.base()
         .read_attribute_raw(echo_cluster::Attributes::AttWrite as u16)
         .unwrap()
+        .clone()
 }
 
 fn read_cluster_id_data_ver(im: &ImEngine, endpoint: u16) -> u32 {

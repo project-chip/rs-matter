@@ -27,7 +27,7 @@
 //! use matter::{Matter, CommissioningData};
 //! use matter::data_model::device_types::device_type_add_on_off_light;
 //! use matter::data_model::cluster_basic_information::BasicInfoConfig;
-//! use rand::prelude::*;
+//! use matter::secure_channel::spake2p::VerifierData;
 //!
 //! # use matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
 //! # use matter::error::Error;
@@ -38,12 +38,11 @@
 //! # let dev_att = Box::new(DevAtt{});
 //!
 //! /// The commissioning data for this device
-//! let mut comm_data = CommissioningData {
-//!     passwd: 123456,
+//! let comm_data = CommissioningData {
+//!     verifier: VerifierData::new_with_pw(123456),
 //!     discriminator: 250,
-//!     ..Default::default()
+//!     
 //! };
-//! rand::thread_rng().fill_bytes(&mut comm_data.salt);
 //!
 //! /// The basic information about this device
 //! let dev_info = BasicInfoConfig {
@@ -51,11 +50,12 @@
 //!     pid: 0xFFF1,
 //!     hw_ver: 2,
 //!     sw_ver: 1,
+//!     serial_no: "aabbcc".to_string(),
 //! };
 //!
 //! /// Get the Matter Object
 //! /// The dev_att is an object that implements the DevAttDataFetcher trait.
-//! let mut matter = Matter::new(&dev_info, dev_att, &comm_data).unwrap();
+//! let mut matter = Matter::new(dev_info, dev_att, comm_data).unwrap();
 //! let dm = matter.get_data_model();
 //! {
 //!     let mut node = dm.node.write().unwrap();
