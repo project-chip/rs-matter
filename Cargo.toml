@@ -1,0 +1,4 @@
+[workspace]
+members = ["matter", "matter_macro_derive", "boxslab", "tools/tlv_tool"]
+
+exclude = ["examples/*"]
