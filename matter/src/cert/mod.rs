@@ -268,6 +268,22 @@ const MAX_DN_ENTRIES: usize = 5;
 
 #[derive(FromPrimitive, Copy, Clone)]
 enum DnTags {
+    CommonName = 1,
+    Surname = 2,
+    SerialNum = 3,
+    CountryName = 4,
+    LocalityName = 5,
+    StateName = 6,
+    OrgName = 7,
+    OrgUnitName = 8,
+    Title = 9,
+    Name = 10,
+    GivenName = 11,
+    Intials = 12,
+    GenQalifier = 13,
+    DnQualifier = 14,
+    Pseudonym = 15,
+    DomainComponent = 16,
     NodeId = 17,
     FirmwareSignId = 18,
     IcaId = 19,
@@ -276,11 +292,17 @@ enum DnTags {
     NocCat = 22,
 }
 
+enum DistNameValue {
+    Uint(u64),
+    Utf8Str(Vec<u8>),
+    PrintableStr(Vec<u8>),
+}
+
 #[derive(Default)]
 struct DistNames {
     // The order in which the DNs arrive is important, as the signing
     // requires that the ASN1 notation retains the same order
-    dn: Vec<(u8, u64)>,
+    dn: Vec<(u8, DistNameValue)>,
 }
 
 impl DistNames {
@@ -288,9 +310,17 @@ impl DistNames {
         self.dn
             .iter()
             .find(|(id, _)| *id == match_id as u8)
-            .map(|(_, value)| *value)
+            .and_then(|(_, value)| {
+                if let DistNameValue::Uint(u) = *value {
+                    Some(u)
+                } else {
+                    None
+                }
+            })
     }
 }
+
+const PRINTABLE_STR_THRESHOLD: u8 = 0x80;
 
 impl<'a> FromTLV<'a> for DistNames {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
@@ -300,12 +330,18 @@ impl<'a> FromTLV<'a> for DistNames {
         let iter = t.confirm_list()?.enter().ok_or(Error::Invalid)?;
         for t in iter {
             if let TagType::Context(tag) = t.get_tag() {
-                let value = t.u64().map_err(|e| {
-                    // Non-integer DNs not yet supported
-                    error!("This DN is not yet supported{}", tag);
-                    e
-                })?;
-                d.dn.push((tag, value));
+                if let Ok(value) = t.u64() {
+                    d.dn.push((tag, DistNameValue::Uint(value)));
+                } else if let Ok(value) = t.slice() {
+                    if tag > PRINTABLE_STR_THRESHOLD {
+                        d.dn.push((
+                            tag - PRINTABLE_STR_THRESHOLD,
+                            DistNameValue::PrintableStr(value.to_vec()),
+                        ));
+                    } else {
+                        d.dn.push((tag, DistNameValue::Utf8Str(value.to_vec())));
+                    }
+                }
             }
         }
         Ok(d)
@@ -316,7 +352,14 @@ impl ToTLV for DistNames {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.start_list(tag)?;
         for (name, value) in &self.dn {
-            tw.u64(TagType::Context(*name), *value)?;
+            match value {
+                DistNameValue::Uint(v) => tw.u64(TagType::Context(*name), *v)?,
+                DistNameValue::Utf8Str(v) => tw.utf8(TagType::Context(*name), v.as_slice())?,
+                DistNameValue::PrintableStr(v) => tw.utf8(
+                    TagType::Context(*name + PRINTABLE_STR_THRESHOLD),
+                    v.as_slice(),
+                )?,
+            }
         }
         tw.end_container()
     }
@@ -324,43 +367,106 @@ impl ToTLV for DistNames {
 
 impl DistNames {
     fn encode(&self, tag: &str, w: &mut dyn CertConsumer) -> Result<(), Error> {
-        const OID_MATTER_NODE_ID: [u8; 10] =
-            [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x01];
-        const OID_MATTER_FW_SIGN_ID: [u8; 10] =
-            [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x02];
-        const OID_MATTER_ICA_ID: [u8; 10] =
-            [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x03];
-        const OID_MATTER_ROOT_CA_ID: [u8; 10] =
-            [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x04];
-        const OID_MATTER_FABRIC_ID: [u8; 10] =
-            [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x05];
-        const OID_MATTER_NOC_CAT_ID: [u8; 10] =
-            [0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x06];
+        const OID_COMMON_NAME: [u8; 3] = [0x55_u8, 0x04, 0x03];
+        const OID_SURNAME: [u8; 3] = [0x55_u8, 0x04, 0x04];
+        const OID_SERIAL_NUMBER: [u8; 3] = [0x55_u8, 0x04, 0x05];
+        const OID_COUNTRY_NAME: [u8; 3] = [0x55_u8, 0x04, 0x06];
+        const OID_LOCALITY_NAME: [u8; 3] = [0x55_u8, 0x04, 0x07];
+        const OID_STATE_NAME: [u8; 3] = [0x55_u8, 0x04, 0x08];
+        const OID_ORGANIZATION_NAME: [u8; 3] = [0x55_u8, 0x04, 0x0A];
+        const OID_ORGANIZATIONAL_UNIT_NAME: [u8; 3] = [0x55_u8, 0x04, 0x0B];
+        const OID_TITLE: [u8; 3] = [0x55_u8, 0x04, 0x0C];
+        const OID_NAME: [u8; 3] = [0x55_u8, 0x04, 0x29];
+        const OID_GIVEN_NAME: [u8; 3] = [0x55_u8, 0x04, 0x2A];
+        const OID_INITIALS: [u8; 3] = [0x55_u8, 0x04, 0x2B];
+        const OID_GENERATION_QUALIFIER: [u8; 3] = [0x55_u8, 0x04, 0x2C];
+        const OID_DN_QUALIFIER: [u8; 3] = [0x55_u8, 0x04, 0x2E];
+        const OID_PSEUDONYM: [u8; 3] = [0x55_u8, 0x04, 0x41];
+        const OID_DOMAIN_COMPONENT: [u8; 10] = [
+            0x09_u8, 0x92, 0x26, 0x89, 0x93, 0xF2, 0x2C, 0x64, 0x01, 0x19,
+        ];
+        const OID_MATTER_NODE_ID: [u8; 10] = [
+            0x2B_u8, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x01,
+        ];
+        const OID_MATTER_FW_SIGNING_ID: [u8; 10] = [
+            0x2B_u8, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x02,
+        ];
+        const OID_MATTER_ICAC_ID: [u8; 10] = [
+            0x2B_u8, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x03,
+        ];
+        const OID_MATTER_RCAC_ID: [u8; 10] = [
+            0x2B_u8, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x04,
+        ];
+        const OID_MATTER_FABRIC_ID: [u8; 10] = [
+            0x2B_u8, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x05,
+        ];
+        const OID_MATTER_CASE_AUTH_TAG: [u8; 10] = [
+            0x2B_u8, 0x06, 0x01, 0x04, 0x01, 0x82, 0xA2, 0x7C, 0x01, 0x06,
+        ];
 
-        let dn_encoding = [
-            ("Chip Node Id:", &OID_MATTER_NODE_ID),
-            ("Chip Firmware Signing Id:", &OID_MATTER_FW_SIGN_ID),
-            ("Chip ICA Id:", &OID_MATTER_ICA_ID),
-            ("Chip Root CA Id:", &OID_MATTER_ROOT_CA_ID),
-            ("Chip Fabric Id:", &OID_MATTER_FABRIC_ID),
+        const DN_ENCODING: [(&str, &[u8], Option<IntToStringLen>); 22] = [
+            ("Common Name:", &OID_COMMON_NAME, None),
+            ("Surname:", &OID_SURNAME, None),
+            ("Serial Number", &OID_SERIAL_NUMBER, None),
+            ("Country Name", &OID_COUNTRY_NAME, None),
+            ("Locality name", &OID_LOCALITY_NAME, None),
+            ("State Name", &OID_STATE_NAME, None),
+            ("Org Name", &OID_ORGANIZATION_NAME, None),
+            ("OU Name", &OID_ORGANIZATIONAL_UNIT_NAME, None),
+            ("Title", &OID_TITLE, None),
+            ("Name", &OID_NAME, None),
+            ("Given Name", &OID_GIVEN_NAME, None),
+            ("Initials", &OID_INITIALS, None),
+            ("Gen Qualifier", &OID_GENERATION_QUALIFIER, None),
+            ("DN Qualifier", &OID_DN_QUALIFIER, None),
+            ("Pseudonym", &OID_PSEUDONYM, None),
+            ("Domain Component", &OID_DOMAIN_COMPONENT, None),
+            (
+                "Chip Node Id:",
+                &OID_MATTER_NODE_ID,
+                Some(IntToStringLen::Len16),
+            ),
+            (
+                "Chip Firmware Signing Id:",
+                &OID_MATTER_FW_SIGNING_ID,
+                Some(IntToStringLen::Len16),
+            ),
+            (
+                "Chip ICA Id:",
+                &OID_MATTER_ICAC_ID,
+                Some(IntToStringLen::Len16),
+            ),
+            (
+                "Chip Root CA Id:",
+                &OID_MATTER_RCAC_ID,
+                Some(IntToStringLen::Len16),
+            ),
+            (
+                "Chip Fabric Id:",
+                &OID_MATTER_FABRIC_ID,
+                Some(IntToStringLen::Len16),
+            ),
+            (
+                "Chip NOC CAT Id:",
+                &OID_MATTER_CASE_AUTH_TAG,
+                Some(IntToStringLen::Len8),
+            ),
         ];
 
         w.start_seq(tag)?;
         for (id, value) in &self.dn {
-            if let Ok(tag) = num::FromPrimitive::from_u8(*id).ok_or(Error::InvalidData) {
-                if let DnTags::NocCat = tag {
-                    w.start_set("")?;
-                    w.start_seq("")?;
-                    w.oid("Chip NOC CAT Id:", &OID_MATTER_NOC_CAT_ID)?;
-                    w.utf8str("", format!("{:08X}", value).as_str())?;
-                    w.end_seq()?;
-                    w.end_set()?;
+            let tag: Option<DnTags> = num::FromPrimitive::from_u8(*id);
+            if tag.is_some() {
+                let index = (id - 1) as usize;
+                if index <= DN_ENCODING.len() {
+                    let this = &DN_ENCODING[index];
+                    encode_dn_value(value, this.0, this.1, w, this.2)?;
                 } else {
-                    let index: usize = (*id as usize) - (DnTags::NodeId as usize);
-                    let this = &dn_encoding[index];
-                    encode_u64_dn(*value, this.0, this.1, w)?;
+                    // Non Matter DNs are encoded as
+                    error!("Invalid DN, too high {}", id);
                 }
             } else {
+                // Non Matter DNs are encoded as
                 error!("Non Matter DNs are not yet supported {}", id);
             }
         }
@@ -369,16 +475,42 @@ impl DistNames {
     }
 }
 
-fn encode_u64_dn(
-    value: u64,
+#[derive(Copy, Clone)]
+/// Describes the expected string length while encoding an integer as a string
+enum IntToStringLen {
+    Len16,
+    Len8,
+}
+
+fn encode_dn_value(
+    value: &DistNameValue,
     name: &str,
     oid: &[u8],
     w: &mut dyn CertConsumer,
+    // Only applicable for integer values
+    expected_len: Option<IntToStringLen>,
 ) -> Result<(), Error> {
     w.start_set("")?;
     w.start_seq("")?;
     w.oid(name, oid)?;
-    w.utf8str("", format!("{:016X}", value).as_str())?;
+    match value {
+        DistNameValue::Uint(v) => match expected_len {
+            Some(IntToStringLen::Len16) => w.utf8str("", format!("{:016X}", v).as_str())?,
+            Some(IntToStringLen::Len8) => w.utf8str("", format!("{:08X}", v).as_str())?,
+            _ => {
+                error!("Invalid encoding");
+                return Err(Error::Invalid);
+            }
+        },
+        DistNameValue::Utf8Str(v) => {
+            let str = String::from_utf8(v.to_vec())?;
+            w.utf8str("", &str)?;
+        }
+        DistNameValue::PrintableStr(v) => {
+            let str = String::from_utf8(v.to_vec())?;
+            w.printstr("", &str)?;
+        }
+    }
     w.end_seq()?;
     w.end_set()
 }
@@ -557,6 +689,7 @@ pub trait CertConsumer {
     fn start_seq(&mut self, tag: &str) -> Result<(), Error>;
     fn end_seq(&mut self) -> Result<(), Error>;
     fn integer(&mut self, tag: &str, i: &[u8]) -> Result<(), Error>;
+    fn printstr(&mut self, tag: &str, s: &str) -> Result<(), Error>;
     fn utf8str(&mut self, tag: &str, s: &str) -> Result<(), Error>;
     fn bitstr(&mut self, tag: &str, truncate: bool, s: &[u8]) -> Result<(), Error>;
     fn ostr(&mut self, tag: &str, s: &[u8]) -> Result<(), Error>;
@@ -589,14 +722,14 @@ mod tests {
     fn test_asn1_encode_success() {
         {
             let mut asn1_buf = [0u8; 1000];
-            let c = Cert::new(&test_vectors::ASN1_INPUT1).unwrap();
+            let c = Cert::new(&test_vectors::CHIP_CERT_INPUT1).unwrap();
             let len = c.as_asn1(&mut asn1_buf).unwrap();
             assert_eq!(&test_vectors::ASN1_OUTPUT1, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
-            let c = Cert::new(&test_vectors::ASN1_INPUT2).unwrap();
+            let c = Cert::new(&test_vectors::CHIP_CERT_INPUT2).unwrap();
             let len = c.as_asn1(&mut asn1_buf).unwrap();
             assert_eq!(&test_vectors::ASN1_OUTPUT2, &asn1_buf[..len]);
         }
@@ -759,7 +892,7 @@ mod tests {
             0x93, 0xd3, 0x7c, 0x4, 0x0, 0xe4, 0xc7, 0x78, 0xe9, 0x83, 0x5b, 0xc, 0x33, 0x61, 0x5c,
             0x2e, 0x18,
         ];
-        pub const ASN1_INPUT1: [u8; 237] = [
+        pub const CHIP_CERT_INPUT1: [u8; 237] = [
             0x15, 0x30, 0x01, 0x01, 0x00, 0x24, 0x02, 0x01, 0x37, 0x03, 0x24, 0x14, 0x00, 0x24,
             0x15, 0x03, 0x18, 0x26, 0x04, 0x80, 0x22, 0x81, 0x27, 0x26, 0x05, 0x80, 0x25, 0x4d,
             0x3a, 0x37, 0x06, 0x24, 0x13, 0x01, 0x24, 0x15, 0x03, 0x18, 0x24, 0x07, 0x01, 0x24,
@@ -778,7 +911,7 @@ mod tests {
             0xaa, 0xab, 0xa0, 0xdb, 0xb4, 0x79, 0x63, 0xfc, 0x02, 0x03, 0x27, 0x25, 0xac, 0x21,
             0x6f, 0xef, 0x27, 0xab, 0x0f, 0x90, 0x09, 0x99, 0x05, 0xa8, 0x60, 0xd8, 0x18,
         ];
-        pub const ASN1_INPUT2: [u8; 247] = [
+        pub const CHIP_CERT_INPUT2: [u8; 247] = [
             0x15, 0x30, 0x01, 0x01, 0x01, 0x24, 0x02, 0x01, 0x37, 0x03, 0x24, 0x13, 0x01, 0x24,
             0x15, 0x03, 0x18, 0x26, 0x04, 0x80, 0x22, 0x81, 0x27, 0x26, 0x05, 0x80, 0x25, 0x4d,
             0x3a, 0x37, 0x06, 0x26, 0x11, 0x69, 0xb6, 0x01, 0x00, 0x24, 0x15, 0x03, 0x18, 0x24,

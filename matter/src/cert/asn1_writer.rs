@@ -180,13 +180,18 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
         self.write_str(0x02, i)
     }
 
+    fn printstr(&mut self, _tag: &str, s: &str) -> Result<(), Error> {
+        // Note: ASN1 has multiple strings, this is PrintableString
+        self.write_str(0x13, s.as_bytes())
+    }
+
     fn utf8str(&mut self, _tag: &str, s: &str) -> Result<(), Error> {
-        // Note: ASN1 has 3 string, this is UTF8String
+        // Note: ASN1 has multiple strings, this is UTF8String
         self.write_str(0x0c, s.as_bytes())
     }
 
     fn bitstr(&mut self, _tag: &str, truncate: bool, s: &[u8]) -> Result<(), Error> {
-        // Note: ASN1 has 3 string, this is BIT String
+        // Note: ASN1 has multiple strings, this is BIT String
 
         // Strip off the end zeroes
         let mut last_byte = s.len() - 1;
@@ -208,7 +213,7 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
     }
 
     fn ostr(&mut self, _tag: &str, s: &[u8]) -> Result<(), Error> {
-        // Note: ASN1 has 3 string, this is Octet String
+        // Note: ASN1 has multiple strings, this is Octet String
         self.write_str(0x04, s)
     }
 

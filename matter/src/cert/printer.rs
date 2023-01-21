@@ -61,6 +61,10 @@ impl<'a, 'b> CertConsumer for CertPrinter<'a, 'b> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, i);
         Ok(())
     }
+    fn printstr(&mut self, tag: &str, s: &str) -> Result<(), Error> {
+        let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, s);
+        Ok(())
+    }
     fn utf8str(&mut self, tag: &str, s: &str) -> Result<(), Error> {
         let _ = writeln!(self.f, "{} {} {:x?}", SPACE[self.level], tag, s);
         Ok(())
