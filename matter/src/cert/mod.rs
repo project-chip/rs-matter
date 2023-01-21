@@ -180,10 +180,10 @@ impl BasicConstraints {
         w.start_seq("")?;
         if self.is_ca {
             // Encode CA only if true
-            w.bool("CA:", true)?
+            w.bool("CA:", true)?;
         }
-        if self.path.is_some() {
-            error!("Path Len is not yet implemented");
+        if let Some(len) = self.path {
+            w.integer("Path Len Constraint", &[len])?;
         }
         w.end_seq()
     }
