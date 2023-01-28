@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-use std::{array::TryFromSliceError, fmt, sync::PoisonError, time::SystemTimeError};
+use std::{
+    array::TryFromSliceError, fmt, string::FromUtf8Error, sync::PoisonError, time::SystemTimeError,
+};
 
 use async_channel::{SendError, TryRecvError};
 use log::error;
@@ -65,6 +67,7 @@ pub enum Error {
     TLVNotFound,
     TLVTypeMismatch,
     TruncatedPacket,
+    Utf8Fail,
 }
 
 impl From<std::io::Error> for Error {
@@ -112,6 +115,12 @@ impl<T> From<SendError<T>> for Error {
     fn from(e: SendError<T>) -> Self {
         error!("Error in channel send {}", e);
         Self::Invalid
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(_e: FromUtf8Error) -> Self {
+        Self::Utf8Fail
     }
 }
 

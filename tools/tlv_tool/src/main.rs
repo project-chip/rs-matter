@@ -47,7 +47,12 @@ fn main() {
         .arg(
             Arg::with_name("cert")
                 .long("cert")
-                .help("The input is a Matter-encoded Certificate"),
+                .help("Decode a Matter-encoded Certificate"),
+        )
+        .arg(
+            Arg::with_name("as-asn1")
+                .long("as-asn1")
+                .help("Decode a Matter-encoded Certificate and encode as ASN1"),
         )
         .arg(Arg::with_name("tlvs").help("List of TLVs").required(true))
         .get_matches();
@@ -88,6 +93,11 @@ fn main() {
     if m.is_present("cert") {
         let cert = cert::Cert::new(&tlv_list[..index]).unwrap();
         println!("{}", cert);
+    } else if m.is_present("as-asn1") {
+        let mut asn1_cert = [0_u8; 1024];
+        let cert = cert::Cert::new(&tlv_list[..index]).unwrap();
+        let len = cert.as_asn1(&mut asn1_cert).unwrap();
+        println!("{:02x?}", &asn1_cert[..len]);
     } else {
         tlv::print_tlv_list(&tlv_list[..index]);
     }
