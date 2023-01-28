@@ -30,7 +30,7 @@ use std::fmt::{self, Debug};
 
 use super::Encoder;
 
-pub const ATTRS_PER_CLUSTER: usize = 8;
+pub const ATTRS_PER_CLUSTER: usize = 10;
 pub const CMDS_PER_CLUSTER: usize = 8;
 
 #[derive(FromPrimitive, Debug)]
@@ -130,6 +130,15 @@ impl Cluster {
             Access::RV,
             Quality::NONE,
         )?)
+    }
+
+    pub fn add_attributes(&mut self, attrs: &[Attribute]) -> Result<(), Error> {
+        if self.attributes.len() + attrs.len() <= self.attributes.capacity() {
+            self.attributes.extend_from_slice(attrs);
+            Ok(())
+        } else {
+            Err(Error::NoSpace)
+        }
     }
 
     pub fn add_attribute(&mut self, attr: Attribute) -> Result<(), Error> {

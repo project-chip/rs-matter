@@ -364,6 +364,17 @@ impl FabricMgr {
         true
     }
 
+    pub fn used_count(&self) -> usize {
+        let mgr = self.inner.read().unwrap();
+        let mut count = 0;
+        for i in 1..MAX_SUPPORTED_FABRICS {
+            if mgr.fabrics[i].is_some() {
+                count += 1;
+            }
+        }
+        count
+    }
+
     // Parameters to T are the Fabric and its Fabric Index
     pub fn for_each<T>(&self, mut f: T) -> Result<(), Error>
     where

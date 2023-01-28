@@ -23,7 +23,7 @@ use crate::cert::Cert;
 use crate::crypto::{self, CryptoKeyPair, KeyPair};
 use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
-use crate::fabric::{Fabric, FabricMgr};
+use crate::fabric::{Fabric, FabricMgr, MAX_SUPPORTED_FABRICS};
 use crate::interaction_model::command::CommandReq;
 use crate::interaction_model::core::IMStatusCode;
 use crate::interaction_model::messages::ib;
@@ -125,8 +125,33 @@ impl NocCluster {
             failsafe,
             base: Cluster::new(ID)?,
         });
-        c.base.add_attribute(attr_currfabindex_new()?)?;
-        c.base.add_attribute(attr_fabrics_new()?)?;
+        let attrs = [
+            Attribute::new(
+                Attributes::CurrentFabricIndex as u16,
+                AttrValue::Custom,
+                Access::RV,
+                Quality::NONE,
+            )?,
+            Attribute::new(
+                Attributes::Fabrics as u16,
+                AttrValue::Custom,
+                Access::RV | Access::FAB_SCOPED,
+                Quality::NONE,
+            )?,
+            Attribute::new(
+                Attributes::SupportedFabrics as u16,
+                AttrValue::Uint8(MAX_SUPPORTED_FABRICS as u8),
+                Access::RV,
+                Quality::FIXED,
+            )?,
+            Attribute::new(
+                Attributes::CommissionedFabrics as u16,
+                AttrValue::Custom,
+                Access::RV,
+                Quality::NONE,
+            )?,
+        ];
+        c.base.add_attributes(&attrs[..])?;
         Ok(c)
     }
 
@@ -389,24 +414,6 @@ impl NocCluster {
     }
 }
 
-fn attr_currfabindex_new() -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::CurrentFabricIndex as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NONE,
-    )
-}
-
-fn attr_fabrics_new() -> Result<Attribute, Error> {
-    Attribute::new(
-        Attributes::Fabrics as u16,
-        AttrValue::Custom,
-        Access::RV | Access::FAB_SCOPED,
-        Quality::NONE,
-    )
-}
-
 impl ClusterType for NocCluster {
     fn base(&self) -> &Cluster {
         &self.base
@@ -450,6 +457,10 @@ impl ClusterType for NocCluster {
                 });
                 let _ = tw.end_container();
             })),
+            Some(Attributes::CommissionedFabrics) => {
+                let count = self.fabric_mgr.used_count() as u8;
+                encoder.encode(EncodeValue::Value(&count))
+            }
             _ => {
                 error!("Attribute not supported: this shouldn't happen");
             }
