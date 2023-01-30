@@ -56,6 +56,12 @@ qrcode = { version = "0.12", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = "0.3"
 
+# MDNS support
+[target.'cfg(target_os = "linux")'.dependencies]
+lazy_static = "1.4.0"
+# Patched copy of libmdns
+libmdns = { git = "https://github.com/angelybo/libmdns.git", branch = "return_all_on_query" }
+
 [[example]]
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
