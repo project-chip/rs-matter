@@ -17,6 +17,10 @@
 
 //! Base38 encoding and decoding functions.
 
+extern crate alloc;
+
+use alloc::{string::String, vec::Vec};
+
 use crate::error::Error;
 
 const BASE38_CHARS: [char; 38] = [
@@ -97,7 +101,7 @@ pub fn encode(bytes: &[u8], length: Option<usize>) -> String {
     while offset < length {
         let remaining = length - offset;
         match remaining.cmp(&2) {
-            std::cmp::Ordering::Greater => {
+            core::cmp::Ordering::Greater => {
                 result.push_str(&encode_base38(
                     ((bytes[offset + 2] as u32) << 16)
                         | ((bytes[offset + 1] as u32) << 8)
@@ -106,14 +110,14 @@ pub fn encode(bytes: &[u8], length: Option<usize>) -> String {
                 ));
                 offset += 3;
             }
-            std::cmp::Ordering::Equal => {
+            core::cmp::Ordering::Equal => {
                 result.push_str(&encode_base38(
                     ((bytes[offset + 1] as u32) << 8) | (bytes[offset] as u32),
                     4,
                 ));
                 break;
             }
-            std::cmp::Ordering::Less => {
+            core::cmp::Ordering::Less => {
                 result.push_str(&encode_base38(bytes[offset] as u32, 2));
                 break;
             }

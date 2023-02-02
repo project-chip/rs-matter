@@ -15,21 +15,19 @@
  *    limitations under the License.
  */
 
+use core::{borrow::Borrow, cell::RefCell};
+
 use crate::{
     acl::AclMgr,
-    data_model::{
-        cluster_basic_information::BasicInfoConfig, core::DataModel,
-        sdm::dev_att::DevAttDataFetcher,
-    },
+    data_model::{cluster_basic_information::BasicInfoConfig, sdm::failsafe::FailSafe},
     error::*,
     fabric::FabricMgr,
-    interaction_model::InteractionModel,
-    mdns::Mdns,
+    mdns::{Mdns, MdnsMgr},
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
-    secure_channel::{core::SecureChannel, pake::PaseMgr, spake2p::VerifierData},
-    transport,
+    secure_channel::{pake::PaseMgr, spake2p::VerifierData},
+    transport::udp::MATTER_PORT,
+    utils::{epoch::Epoch, rand::Rand},
 };
-use std::sync::Arc;
 
 /// Device Commissioning Data
 pub struct CommissioningData {
@@ -40,13 +38,18 @@ pub struct CommissioningData {
 }
 
 /// The primary Matter Object
-pub struct Matter {
-    transport_mgr: transport::mgr::Mgr,
-    data_model: DataModel,
-    fabric_mgr: Arc<FabricMgr>,
+pub struct Matter<'a> {
+    pub fabric_mgr: RefCell<FabricMgr>,
+    pub acl_mgr: RefCell<AclMgr>,
+    pub pase_mgr: RefCell<PaseMgr>,
+    pub failsafe: RefCell<FailSafe>,
+    pub mdns_mgr: RefCell<MdnsMgr<'a>>,
+    pub epoch: Epoch,
+    pub rand: Rand,
+    pub dev_det: &'a BasicInfoConfig<'a>,
 }
 
-impl Matter {
+impl<'a> Matter<'a> {
     /// Creates a new Matter object
     ///
     /// # Parameters
@@ -54,57 +57,87 @@ impl Matter {
     /// requires a set of device attestation certificates and keys. It is the responsibility of
     /// this object to return the device attestation details when queried upon.
     pub fn new(
-        dev_det: BasicInfoConfig,
-        dev_att: Box<dyn DevAttDataFetcher>,
-        dev_comm: CommissioningData,
-    ) -> Result<Box<Matter>, Error> {
-        let mdns = Mdns::get()?;
-        mdns.set_values(dev_det.vid, dev_det.pid, &dev_det.device_name);
-
-        let fabric_mgr = Arc::new(FabricMgr::new()?);
-        let open_comm_window = fabric_mgr.is_empty();
-        if open_comm_window {
-            print_pairing_code_and_qr(&dev_det, &dev_comm, DiscoveryCapabilities::default());
+        dev_det: &'a BasicInfoConfig,
+        mdns: &'a mut dyn Mdns,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> Self {
+        Self {
+            fabric_mgr: RefCell::new(FabricMgr::new()),
+            acl_mgr: RefCell::new(AclMgr::new()),
+            pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
+            failsafe: RefCell::new(FailSafe::new()),
+            mdns_mgr: RefCell::new(MdnsMgr::new(
+                dev_det.vid,
+                dev_det.pid,
+                dev_det.device_name,
+                MATTER_PORT,
+                mdns,
+            )),
+            epoch,
+            rand,
+            dev_det,
         }
-
-        let acl_mgr = Arc::new(AclMgr::new()?);
-        let mut pase = PaseMgr::new();
-        let data_model =
-            DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr, pase.clone())?;
-        let mut matter = Box::new(Matter {
-            transport_mgr: transport::mgr::Mgr::new()?,
-            data_model,
-            fabric_mgr,
-        });
-        let interaction_model =
-            Box::new(InteractionModel::new(Box::new(matter.data_model.clone())));
-        matter.transport_mgr.register_protocol(interaction_model)?;
-
-        if open_comm_window {
-            pase.enable_pase_session(dev_comm.verifier, dev_comm.discriminator)?;
-        }
-
-        let secure_channel = Box::new(SecureChannel::new(pase, matter.fabric_mgr.clone()));
-        matter.transport_mgr.register_protocol(secure_channel)?;
-        Ok(matter)
     }
 
-    /// Returns an Arc to [DataModel]
-    ///
-    /// The Data Model is where you express what is the type of your device. Typically
-    /// once you gets this reference, you acquire the write lock and add your device
-    /// types, clusters, attributes, commands to the data model.
-    pub fn get_data_model(&self) -> DataModel {
-        self.data_model.clone()
+    pub fn dev_det(&self) -> &BasicInfoConfig {
+        self.dev_det
     }
 
-    /// Starts the Matter daemon
-    ///
-    /// This call does NOT return
-    ///
-    /// This call starts the Matter daemon that starts communication with other Matter
-    /// devices on the network.
-    pub fn start_daemon(&mut self) -> Result<(), Error> {
-        self.transport_mgr.start()
+    pub fn start(&mut self, dev_comm: CommissioningData) -> Result<(), Error> {
+        let open_comm_window = self.fabric_mgr.borrow().is_empty();
+        if open_comm_window {
+            print_pairing_code_and_qr(self.dev_det, &dev_comm, DiscoveryCapabilities::default());
+
+            self.pase_mgr.borrow_mut().enable_pase_session(
+                dev_comm.verifier,
+                dev_comm.discriminator,
+                &mut self.mdns_mgr.borrow_mut(),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<'a> Borrow<RefCell<FabricMgr>> for Matter<'a> {
+    fn borrow(&self) -> &RefCell<FabricMgr> {
+        &self.fabric_mgr
+    }
+}
+
+impl<'a> Borrow<RefCell<AclMgr>> for Matter<'a> {
+    fn borrow(&self) -> &RefCell<AclMgr> {
+        &self.acl_mgr
+    }
+}
+
+impl<'a> Borrow<RefCell<PaseMgr>> for Matter<'a> {
+    fn borrow(&self) -> &RefCell<PaseMgr> {
+        &self.pase_mgr
+    }
+}
+
+impl<'a> Borrow<RefCell<FailSafe>> for Matter<'a> {
+    fn borrow(&self) -> &RefCell<FailSafe> {
+        &self.failsafe
+    }
+}
+
+impl<'a> Borrow<RefCell<MdnsMgr<'a>>> for Matter<'a> {
+    fn borrow(&self) -> &RefCell<MdnsMgr<'a>> {
+        &self.mdns_mgr
+    }
+}
+
+impl<'a> Borrow<Epoch> for Matter<'a> {
+    fn borrow(&self) -> &Epoch {
+        &self.epoch
+    }
+}
+
+impl<'a> Borrow<Rand> for Matter<'a> {
+    fn borrow(&self) -> &Rand {
+        &self.rand
     }
 }

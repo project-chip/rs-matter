@@ -76,7 +76,7 @@ macro_rules! echo_req {
             CmdPath::new(
                 Some($endpoint),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Commands::EchoReq as u16),
+                Some(echo_cluster::Commands::EchoReq as u32),
             ),
             EncodeValue::Value(&($data as u32)),
         )
@@ -90,7 +90,7 @@ macro_rules! echo_resp {
             CmdPath::new(
                 Some($endpoint),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Commands::EchoResp as u16),
+                Some(echo_cluster::RespCommands::EchoResp as u32),
             ),
             $data,
         )

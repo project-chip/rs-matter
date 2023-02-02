@@ -15,30 +15,90 @@
  *    limitations under the License.
  */
 
-use std::sync::{Arc, Mutex, Once};
+use std::{
+    convert::TryInto,
+    sync::{Arc, Mutex, Once},
+};
 
 use matter::{
+    attribute_enum, command_enum,
     data_model::objects::{
-        Access, AttrDetails, AttrValue, Attribute, Cluster, ClusterType, EncodeValue, Encoder,
-        Quality,
+        Access, AttrData, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute,
+        Cluster, CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, Quality,
+        ATTRIBUTE_LIST, FEATURE_MAP,
     },
     error::Error,
     interaction_model::{
-        command::CommandReq,
-        core::IMStatusCode,
-        messages::ib::{self, attr_list_write, ListOperation},
+        core::Transaction,
+        messages::ib::{attr_list_write, ListOperation},
     },
-    tlv::{TLVElement, TLVWriter, TagType, ToTLV},
+    tlv::{TLVElement, TagType},
+    utils::rand::Rand,
 };
 use num_derive::FromPrimitive;
+use strum::{EnumDiscriminants, FromRepr};
 
 pub const ID: u32 = 0xABCD;
 
-#[derive(FromPrimitive)]
+#[derive(FromRepr, EnumDiscriminants)]
+#[repr(u16)]
+pub enum Attributes {
+    Att1(AttrType<u16>) = 0,
+    Att2(AttrType<u16>) = 1,
+    AttWrite(AttrType<u16>) = 2,
+    AttCustom(AttrType<u32>) = 3,
+    AttWriteList(()) = 4,
+}
+
+attribute_enum!(Attributes);
+
+#[derive(FromRepr)]
+#[repr(u32)]
 pub enum Commands {
     EchoReq = 0x00,
+}
+
+command_enum!(Commands);
+
+#[derive(FromPrimitive)]
+pub enum RespCommands {
     EchoResp = 0x01,
 }
+
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID,
+    feature_map: 0,
+    attributes: &[
+        FEATURE_MAP,
+        ATTRIBUTE_LIST,
+        Attribute::new(
+            AttributesDiscriminants::Att1 as u16,
+            Access::RV,
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::Att2 as u16,
+            Access::RV,
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::AttWrite as u16,
+            Access::WRITE.union(Access::NEED_ADMIN),
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::AttCustom as u16,
+            Access::READ.union(Access::NEED_VIEW),
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::AttWriteList as u16,
+            Access::WRITE.union(Access::NEED_ADMIN),
+            Quality::NONE,
+        ),
+    ],
+    commands: &[Commands::EchoReq as _],
+};
 
 /// This is used in the tests to validate any settings that may have happened
 /// to the custom data parts of the cluster
@@ -68,167 +128,122 @@ impl TestChecker {
 }
 
 pub const WRITE_LIST_MAX: usize = 5;
+
 pub struct EchoCluster {
-    pub base: Cluster,
+    pub data_ver: Dataver,
     pub multiplier: u8,
-}
-
-#[derive(FromPrimitive)]
-pub enum Attributes {
-    Att1 = 0,
-    Att2 = 1,
-    AttWrite = 2,
-    AttCustom = 3,
-    AttWriteList = 4,
-}
-
-pub const ATTR_CUSTOM_VALUE: u32 = 0xcafebeef;
-pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
-
-impl ClusterType for EchoCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
-    }
-
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
-    }
-
-    fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
-        match num::FromPrimitive::from_u16(attr.attr_id) {
-            Some(Attributes::AttCustom) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                let _ = tw.u32(tag, ATTR_CUSTOM_VALUE);
-            })),
-            Some(Attributes::AttWriteList) => {
-                let tc_handle = TestChecker::get().unwrap();
-                let tc = tc_handle.lock().unwrap();
-                encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                    let _ = tw.start_array(tag);
-                    for i in tc.write_list.iter().flatten() {
-                        let _ = tw.u16(TagType::Anonymous, *i);
-                    }
-                    let _ = tw.end_container();
-                }))
-            }
-            _ => (),
-        }
-    }
-
-    fn write_attribute(
-        &mut self,
-        attr: &AttrDetails,
-        data: &TLVElement,
-    ) -> Result<(), IMStatusCode> {
-        match num::FromPrimitive::from_u16(attr.attr_id) {
-            Some(Attributes::AttWriteList) => {
-                attr_list_write(attr, data, |op, data| self.write_attr_list(&op, data))
-            }
-            _ => self.base.write_attribute_from_tlv(attr.attr_id, data),
-        }
-    }
-
-    fn handle_command(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
-        let cmd = cmd_req
-            .cmd
-            .path
-            .leaf
-            .map(num::FromPrimitive::from_u32)
-            .ok_or(IMStatusCode::UnsupportedCommand)?
-            .ok_or(IMStatusCode::UnsupportedCommand)?;
-        match cmd {
-            // This will generate an echo response on the same endpoint
-            // with data multiplied by the multiplier
-            Commands::EchoReq => {
-                let a = cmd_req.data.u8().unwrap();
-                let mut echo_response = cmd_req.cmd;
-                echo_response.path.leaf = Some(Commands::EchoResp as u32);
-
-                let cmd_data = |tag: TagType, t: &mut TLVWriter| {
-                    let _ = t.start_struct(tag);
-                    // Echo = input * self.multiplier
-                    let _ = t.u8(TagType::Context(0), a * self.multiplier);
-                    let _ = t.end_container();
-                };
-
-                let invoke_resp = ib::InvResp::Cmd(ib::CmdData::new(
-                    echo_response,
-                    EncodeValue::Closure(&cmd_data),
-                ));
-                let _ = invoke_resp.to_tlv(cmd_req.resp, TagType::Anonymous);
-                cmd_req.trans.complete();
-            }
-            _ => {
-                return Err(IMStatusCode::UnsupportedCommand);
-            }
-        }
-        Ok(())
-    }
+    pub att1: u16,
+    pub att2: u16,
+    pub att_write: u16,
+    pub att_custom: u32,
 }
 
 impl EchoCluster {
-    pub fn new(multiplier: u8) -> Result<Box<Self>, Error> {
-        let mut c = Box::new(Self {
-            base: Cluster::new(ID)?,
+    pub fn new(multiplier: u8, rand: Rand) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
             multiplier,
-        });
-        c.base.add_attribute(Attribute::new(
-            Attributes::Att1 as u16,
-            AttrValue::Uint16(0x1234),
-            Access::RV,
-            Quality::NONE,
-        ))?;
-        c.base.add_attribute(Attribute::new(
-            Attributes::Att2 as u16,
-            AttrValue::Uint16(0x5678),
-            Access::RV,
-            Quality::NONE,
-        ))?;
-        c.base.add_attribute(Attribute::new(
-            Attributes::AttWrite as u16,
-            AttrValue::Uint16(ATTR_WRITE_DEFAULT_VALUE),
-            Access::WRITE | Access::NEED_ADMIN,
-            Quality::NONE,
-        ))?;
-        c.base.add_attribute(Attribute::new(
-            Attributes::AttCustom as u16,
-            AttrValue::Custom,
-            Access::READ | Access::NEED_VIEW,
-            Quality::NONE,
-        ))?;
-        c.base.add_attribute(Attribute::new(
-            Attributes::AttWriteList as u16,
-            AttrValue::Custom,
-            Access::WRITE | Access::NEED_ADMIN,
-            Quality::NONE,
-        ))?;
-        Ok(c)
+            att1: 0x1234,
+            att2: 0x5678,
+            att_write: ATTR_WRITE_DEFAULT_VALUE,
+            att_custom: ATTR_CUSTOM_VALUE,
+        }
     }
 
-    fn write_attr_list(
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::Att1(codec) => codec.encode(writer, 0x1234),
+                    Attributes::Att2(codec) => codec.encode(writer, 0x5678),
+                    Attributes::AttWrite(codec) => codec.encode(writer, ATTR_WRITE_DEFAULT_VALUE),
+                    Attributes::AttCustom(codec) => codec.encode(writer, ATTR_CUSTOM_VALUE),
+                    Attributes::AttWriteList(_) => {
+                        let tc_handle = TestChecker::get().unwrap();
+                        let tc = tc_handle.lock().unwrap();
+
+                        writer.start_array(AttrDataWriter::TAG)?;
+                        for i in tc.write_list.iter().flatten() {
+                            writer.u16(TagType::Anonymous, *i)?;
+                        }
+                        writer.end_container()?;
+
+                        writer.complete()
+                    }
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        let data = data.with_dataver(self.data_ver.get())?;
+
+        match attr.attr_id.try_into()? {
+            Attributes::Att1(codec) => self.att1 = codec.decode(data)?,
+            Attributes::Att2(codec) => self.att2 = codec.decode(data)?,
+            Attributes::AttWrite(codec) => self.att_write = codec.decode(data)?,
+            Attributes::AttCustom(codec) => self.att_custom = codec.decode(data)?,
+            Attributes::AttWriteList(_) => {
+                attr_list_write(attr, data, |op, data| self.write_attr_list(&op, data))?
+            }
+        }
+
+        self.data_ver.changed();
+
+        Ok(())
+    }
+
+    pub fn invoke(
         &mut self,
-        op: &ListOperation,
+        _transaction: &mut Transaction,
+        cmd: &CmdDetails,
         data: &TLVElement,
-    ) -> Result<(), IMStatusCode> {
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        match cmd.cmd_id.try_into()? {
+            // This will generate an echo response on the same endpoint
+            // with data multiplied by the multiplier
+            Commands::EchoReq => {
+                let a = data.u8()?;
+
+                let mut writer = encoder.with_command(RespCommands::EchoResp as _)?;
+
+                writer.start_struct(CmdDataWriter::TAG)?;
+                // Echo = input * self.multiplier
+                writer.u8(TagType::Context(0), a * self.multiplier)?;
+                writer.end_container()?;
+
+                writer.complete()
+            }
+        }
+    }
+
+    fn write_attr_list(&mut self, op: &ListOperation, data: &TLVElement) -> Result<(), Error> {
         let tc_handle = TestChecker::get().unwrap();
         let mut tc = tc_handle.lock().unwrap();
         match op {
             ListOperation::AddItem => {
-                let data = data.u16().map_err(|_| IMStatusCode::Failure)?;
+                let data = data.u16()?;
                 for i in 0..WRITE_LIST_MAX {
                     if tc.write_list[i].is_none() {
                         tc.write_list[i] = Some(data);
                         return Ok(());
                     }
                 }
-                Err(IMStatusCode::ResourceExhausted)
+
+                Err(Error::ResourceExhausted)
             }
             ListOperation::EditItem(index) => {
-                let data = data.u16().map_err(|_| IMStatusCode::Failure)?;
+                let data = data.u16()?;
                 if tc.write_list[*index as usize].is_some() {
                     tc.write_list[*index as usize] = Some(data);
                     Ok(())
                 } else {
-                    Err(IMStatusCode::InvalidAction)
+                    Err(Error::InvalidAction)
                 }
             }
             ListOperation::DeleteItem(index) => {
@@ -236,7 +251,7 @@ impl EchoCluster {
                     tc.write_list[*index as usize] = None;
                     Ok(())
                 } else {
-                    Err(IMStatusCode::InvalidAction)
+                    Err(Error::InvalidAction)
                 }
             }
             ListOperation::DeleteList => {
@@ -246,5 +261,28 @@ impl EchoCluster {
                 Ok(())
             }
         }
+    }
+}
+
+pub const ATTR_CUSTOM_VALUE: u32 = 0xcafebeef;
+pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
+
+impl Handler for EchoCluster {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        EchoCluster::read(self, attr, encoder)
+    }
+
+    fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        EchoCluster::write(self, attr, data)
+    }
+
+    fn invoke(
+        &mut self,
+        transaction: &mut Transaction,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        EchoCluster::invoke(self, transaction, cmd, data, encoder)
     }
 }

@@ -18,8 +18,8 @@
 use crate::error::Error;
 
 use byteorder::{ByteOrder, LittleEndian};
+use core::fmt;
 use log::{error, info};
-use std::fmt;
 
 use super::{TagType, MAX_TAG_INDEX, TAG_MASK, TAG_SHIFT_BITS, TAG_SIZE_MAP, TYPE_MASK};
 
@@ -318,7 +318,7 @@ impl<'a> PartialEq for TLVElement<'a> {
                 loop {
                     let ours = our_iter.next();
                     let theirs = their.next();
-                    if std::mem::discriminant(&ours) != std::mem::discriminant(&theirs) {
+                    if core::mem::discriminant(&ours) != core::mem::discriminant(&theirs) {
                         // One of us reached end of list, but the other didn't, that's a mismatch
                         return false;
                     }
@@ -341,8 +341,8 @@ impl<'a> PartialEq for TLVElement<'a> {
                             // Only compare the discriminants in case of array/list/structures,
                             // instead of actual element values. Those will be subsets within this same
                             // list that will get validated anyway
-                            if std::mem::discriminant(&ours.element_type)
-                                != std::mem::discriminant(&theirs.element_type)
+                            if core::mem::discriminant(&ours.element_type)
+                                != core::mem::discriminant(&theirs.element_type)
                             {
                                 return false;
                             }
@@ -438,6 +438,18 @@ impl<'a> TLVElement<'a> {
         }
     }
 
+    pub fn str(&self) -> Result<&'a str, Error> {
+        match self.element_type {
+            ElementType::Str8l(s)
+            | ElementType::Utf8l(s)
+            | ElementType::Str16l(s)
+            | ElementType::Utf16l(s) => {
+                Ok(core::str::from_utf8(s).map_err(|_| Error::InvalidData)?)
+            }
+            _ => Err(Error::TLVTypeMismatch),
+        }
+    }
+
     pub fn bool(&self) -> Result<bool, Error> {
         match self.element_type {
             ElementType::False => Ok(false),
@@ -522,7 +534,7 @@ impl<'a> fmt::Display for TLVElement<'a> {
             | ElementType::Utf8l(a)
             | ElementType::Str16l(a)
             | ElementType::Utf16l(a) => {
-                if let Ok(s) = std::str::from_utf8(a) {
+                if let Ok(s) = core::str::from_utf8(a) {
                     write!(f, "len[{}]\"{}\"", s.len(), s)
                 } else {
                     write!(f, "len[{}]{:x?}", a.len(), a)
@@ -752,7 +764,7 @@ pub fn print_tlv_list(b: &[u8]) {
         match a.element_type {
             ElementType::Struct(_) => {
                 if index < MAX_DEPTH {
-                    println!("{}{}", space[index], a);
+                    info!("{}{}", space[index], a);
                     stack[index] = '}';
                     index += 1;
                 } else {
@@ -761,7 +773,7 @@ pub fn print_tlv_list(b: &[u8]) {
             }
             ElementType::Array(_) | ElementType::List(_) => {
                 if index < MAX_DEPTH {
-                    println!("{}{}", space[index], a);
+                    info!("{}{}", space[index], a);
                     stack[index] = ']';
                     index += 1;
                 } else {
@@ -771,19 +783,21 @@ pub fn print_tlv_list(b: &[u8]) {
             ElementType::EndCnt => {
                 if index > 0 {
                     index -= 1;
-                    println!("{}{}", space[index], stack[index]);
+                    info!("{}{}", space[index], stack[index]);
                 } else {
                     error!("Incorrect TLV List");
                 }
             }
-            _ => println!("{}{}", space[index], a),
+            _ => info!("{}{}", space[index], a),
         }
     }
-    println!("---------");
+    info!("---------");
 }
 
 #[cfg(test)]
 mod tests {
+    use log::info;
+
     use super::{
         get_root_node_list, get_root_node_struct, ElementType, Pointer, TLVElement, TLVList,
         TagType,
@@ -1105,7 +1119,7 @@ mod tests {
             .unwrap()
             .enter()
             .unwrap();
-        println!("Command list iterator: {:?}", cmd_list_iter);
+        info!("Command list iterator: {:?}", cmd_list_iter);
 
         // This is an array of CommandDataIB, but we'll only use the first element
         let cmd_data_ib = cmd_list_iter.next().unwrap();
@@ -1203,8 +1217,8 @@ mod tests {
                 Some(a) => {
                     assert_eq!(a.tag_type, verify_matrix[index].0);
                     assert_eq!(
-                        std::mem::discriminant(&a.element_type),
-                        std::mem::discriminant(&verify_matrix[index].1)
+                        core::mem::discriminant(&a.element_type),
+                        core::mem::discriminant(&verify_matrix[index].1)
                     );
                 }
             }

@@ -15,11 +15,14 @@
  *    limitations under the License.
  */
 
+use crate::data_model::sdm::noc::NocData;
+use crate::utils::epoch::Epoch;
+use crate::utils::rand::Rand;
 use core::fmt;
-use std::{
+use core::time::Duration;
+use core::{
     any::Any,
     ops::{Deref, DerefMut},
-    time::SystemTime,
 };
 
 use crate::{
@@ -27,16 +30,10 @@ use crate::{
     transport::{plain_hdr, proto_hdr},
     utils::writebuf::WriteBuf,
 };
-use boxslab::{BoxSlab, Slab};
-use colored::*;
 use log::{info, trace};
-use rand::Rng;
 
-use super::{
-    dedup::RxCtrState,
-    network::{Address, NetworkInterface},
-    packet::{Packet, PacketPool},
-};
+use super::dedup::RxCtrState;
+use super::{network::Address, packet::Packet};
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
@@ -58,21 +55,15 @@ impl CaseDetails {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Default)]
 pub enum SessionMode {
     // The Case session will capture the local fabric index
     Case(CaseDetails),
     Pase,
+    #[default]
     PlainText,
 }
 
-impl Default for SessionMode {
-    fn default() -> Self {
-        SessionMode::PlainText
-    }
-}
-
-#[derive(Debug)]
 pub struct Session {
     peer_addr: Address,
     local_nodeid: u64,
@@ -87,8 +78,8 @@ pub struct Session {
     msg_ctr: u32,
     rx_ctr_state: RxCtrState,
     mode: SessionMode,
-    data: Option<Box<dyn Any>>,
-    last_use: SystemTime,
+    data: Option<NocData>,
+    last_use: Duration,
 }
 
 #[derive(Debug)]
@@ -103,6 +94,7 @@ pub struct CloneData {
     peer_addr: Address,
     mode: SessionMode,
 }
+
 impl CloneData {
     pub fn new(
         local_nodeid: u64,
@@ -129,8 +121,8 @@ impl CloneData {
 const MATTER_MSG_CTR_RANGE: u32 = 0x0fffffff;
 
 impl Session {
-    pub fn new(peer_addr: Address, peer_nodeid: Option<u64>) -> Session {
-        Session {
+    pub fn new(peer_addr: Address, peer_nodeid: Option<u64>, epoch: Epoch, rand: Rand) -> Self {
+        Self {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
@@ -139,16 +131,16 @@ impl Session {
             att_challenge: [0; MATTER_AES128_KEY_SIZE],
             peer_sess_id: 0,
             local_sess_id: 0,
-            msg_ctr: rand::thread_rng().gen_range(0..MATTER_MSG_CTR_RANGE),
+            msg_ctr: Self::rand_msg_ctr(rand),
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
             data: None,
-            last_use: SystemTime::now(),
+            last_use: epoch(),
         }
     }
 
     // A new encrypted session always clones from a previous 'new' session
-    pub fn clone(clone_from: &CloneData) -> Session {
+    pub fn clone(clone_from: &CloneData, epoch: Epoch, rand: Rand) -> Session {
         Session {
             peer_addr: clone_from.peer_addr,
             local_nodeid: clone_from.local_nodeid,
@@ -158,28 +150,28 @@ impl Session {
             att_challenge: clone_from.att_challenge,
             local_sess_id: clone_from.local_sess_id,
             peer_sess_id: clone_from.peer_sess_id,
-            msg_ctr: rand::thread_rng().gen_range(0..MATTER_MSG_CTR_RANGE),
+            msg_ctr: Self::rand_msg_ctr(rand),
             rx_ctr_state: RxCtrState::new(0),
             mode: clone_from.mode,
             data: None,
-            last_use: SystemTime::now(),
+            last_use: epoch(),
         }
     }
 
-    pub fn set_data(&mut self, data: Box<dyn Any>) {
+    pub fn set_noc_data(&mut self, data: NocData) {
         self.data = Some(data);
     }
 
-    pub fn clear_data(&mut self) {
+    pub fn clear_noc_data(&mut self) {
         self.data = None;
     }
 
-    pub fn get_data<T: Any>(&mut self) -> Option<&mut T> {
-        self.data.as_mut()?.downcast_mut::<T>()
+    pub fn get_noc_data<T: Any>(&mut self) -> Option<&mut NocData> {
+        self.data.as_mut()
     }
 
-    pub fn take_data<T: Any>(&mut self) -> Option<Box<T>> {
-        self.data.take()?.downcast::<T>().ok()
+    pub fn take_noc_data(&mut self) -> Option<NocData> {
+        self.data.take()
     }
 
     pub fn get_local_sess_id(&self) -> u16 {
@@ -252,58 +244,64 @@ impl Session {
         &self.att_challenge
     }
 
-    pub fn recv(&mut self, proto_rx: &mut Packet) -> Result<(), Error> {
-        self.last_use = SystemTime::now();
-        proto_rx.proto_decode(self.peer_nodeid.unwrap_or_default(), self.get_dec_key())
+    pub fn recv(&mut self, epoch: Epoch, rx: &mut Packet) -> Result<(), Error> {
+        self.last_use = epoch();
+        rx.proto_decode(self.peer_nodeid.unwrap_or_default(), self.get_dec_key())
     }
 
-    pub fn pre_send(&mut self, proto_tx: &mut Packet) -> Result<(), Error> {
-        proto_tx.plain.sess_id = self.get_peer_sess_id();
-        proto_tx.plain.ctr = self.get_msg_ctr();
+    pub fn pre_send(&mut self, tx: &mut Packet) -> Result<(), Error> {
+        tx.plain.sess_id = self.get_peer_sess_id();
+        tx.plain.ctr = self.get_msg_ctr();
         if self.is_encrypted() {
-            proto_tx.plain.sess_type = plain_hdr::SessionType::Encrypted;
+            tx.plain.sess_type = plain_hdr::SessionType::Encrypted;
         }
         Ok(())
     }
 
     // TODO: Most of this can now be moved into the 'Packet' module
-    fn do_send(&mut self, proto_tx: &mut Packet) -> Result<(), Error> {
-        self.last_use = SystemTime::now();
-        proto_tx.peer = self.peer_addr;
+    fn do_send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
+        self.last_use = epoch();
+        tx.peer = self.peer_addr;
 
         // Generate encrypted header
-        let mut tmp_buf: [u8; proto_hdr::max_proto_hdr_len()] = [0; proto_hdr::max_proto_hdr_len()];
-        let mut write_buf = WriteBuf::new(&mut tmp_buf[..], proto_hdr::max_proto_hdr_len());
-        proto_tx.proto.encode(&mut write_buf)?;
-        proto_tx.get_writebuf()?.prepend(write_buf.as_slice())?;
+        let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        tx.proto.encode(&mut write_buf)?;
+        tx.get_writebuf()?.prepend(write_buf.into_slice())?;
 
         // Generate plain-text header
         if self.mode == SessionMode::PlainText {
             if let Some(d) = self.peer_nodeid {
-                proto_tx.plain.set_dest_u64(d);
+                tx.plain.set_dest_u64(d);
             }
         }
-        let mut tmp_buf: [u8; plain_hdr::max_plain_hdr_len()] = [0; plain_hdr::max_plain_hdr_len()];
-        let mut write_buf = WriteBuf::new(&mut tmp_buf[..], plain_hdr::max_plain_hdr_len());
-        proto_tx.plain.encode(&mut write_buf)?;
-        let plain_hdr_bytes = write_buf.as_slice();
+        let mut tmp_buf = [0_u8; plain_hdr::max_plain_hdr_len()];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        tx.plain.encode(&mut write_buf)?;
+        let plain_hdr_bytes = write_buf.into_slice();
 
-        trace!("unencrypted packet: {:x?}", proto_tx.as_borrow_slice());
-        let ctr = proto_tx.plain.ctr;
+        trace!("unencrypted packet: {:x?}", tx.as_mut_slice());
+        let ctr = tx.plain.ctr;
         let enc_key = self.get_enc_key();
         if let Some(e) = enc_key {
             proto_hdr::encrypt_in_place(
                 ctr,
                 self.local_nodeid,
                 plain_hdr_bytes,
-                proto_tx.get_writebuf()?,
+                tx.get_writebuf()?,
                 e,
             )?;
         }
 
-        proto_tx.get_writebuf()?.prepend(plain_hdr_bytes)?;
-        trace!("Full encrypted packet: {:x?}", proto_tx.as_borrow_slice());
+        tx.get_writebuf()?.prepend(plain_hdr_bytes)?;
+        trace!("Full encrypted packet: {:x?}", tx.as_mut_slice());
         Ok(())
+    }
+
+    fn rand_msg_ctr(rand: Rand) -> u32 {
+        let mut buf = [0; 4];
+        rand(&mut buf);
+        u32::from_be_bytes(buf) & MATTER_MSG_CTR_RANGE
     }
 }
 
@@ -324,36 +322,23 @@ impl fmt::Display for Session {
 }
 
 pub const MAX_SESSIONS: usize = 16;
+
 pub struct SessionMgr {
     next_sess_id: u16,
     sessions: [Option<Session>; MAX_SESSIONS],
-    network: Option<Box<dyn NetworkInterface>>,
-}
-
-impl Default for SessionMgr {
-    fn default() -> Self {
-        Self::new()
-    }
+    epoch: Epoch,
+    rand: Rand,
 }
 
 impl SessionMgr {
-    pub fn new() -> SessionMgr {
-        SessionMgr {
-            sessions: Default::default(),
-            next_sess_id: 1,
-            network: None,
-        }
-    }
+    pub fn new(epoch: Epoch, rand: Rand) -> Self {
+        const INIT: Option<Session> = None;
 
-    pub fn add_network_interface(
-        &mut self,
-        interface: Box<dyn NetworkInterface>,
-    ) -> Result<(), Error> {
-        if self.network.is_none() {
-            self.network = Some(interface);
-            Ok(())
-        } else {
-            Err(Error::Invalid)
+        Self {
+            sessions: [INIT; MAX_SESSIONS],
+            next_sess_id: 1,
+            epoch,
+            rand,
         }
     }
 
@@ -380,13 +365,21 @@ impl SessionMgr {
         next_sess_id
     }
 
+    pub fn get_session_for_eviction(&self) -> Option<usize> {
+        if self.get_empty_slot().is_none() {
+            Some(self.get_lru())
+        } else {
+            None
+        }
+    }
+
     fn get_empty_slot(&self) -> Option<usize> {
         self.sessions.iter().position(|x| x.is_none())
     }
 
-    pub fn get_lru(&mut self) -> usize {
+    fn get_lru(&self) -> usize {
         let mut lru_index = 0;
-        let mut lru_ts = SystemTime::now();
+        let mut lru_ts = (self.epoch)();
         for i in 0..MAX_SESSIONS {
             if let Some(s) = &self.sessions[i] {
                 if s.last_use < lru_ts {
@@ -399,7 +392,7 @@ impl SessionMgr {
     }
 
     pub fn add(&mut self, peer_addr: Address, peer_nodeid: Option<u64>) -> Result<usize, Error> {
-        let session = Session::new(peer_addr, peer_nodeid);
+        let session = Session::new(peer_addr, peer_nodeid, self.epoch, self.rand);
         self.add_session(session)
     }
 
@@ -422,7 +415,7 @@ impl SessionMgr {
     }
 
     pub fn clone_session(&mut self, clone_data: &CloneData) -> Result<usize, Error> {
-        let session = Session::clone(clone_data);
+        let session = Session::clone(clone_data, self.epoch, self.rand);
         self.add_session(session)
     }
 
@@ -478,68 +471,50 @@ impl SessionMgr {
 
     // We will try to get a session for this Packet. If no session exists, we will try to add one
     // If the session list is full we will return a None
-    pub fn post_recv(&mut self, rx: &Packet) -> Result<Option<usize>, Error> {
-        let sess_index = match self.get_or_add(
+    pub fn post_recv(&mut self, rx: &Packet) -> Result<usize, Error> {
+        let sess_index = self.get_or_add(
             rx.plain.sess_id,
             rx.peer,
             rx.plain.get_src_u64(),
             rx.plain.is_encrypted(),
-        ) {
-            Ok(s) => {
-                let session = self.sessions[s].as_mut().unwrap();
-                let is_encrypted = session.is_encrypted();
-                let duplicate = session.rx_ctr_state.recv(rx.plain.ctr, is_encrypted);
-                if duplicate {
-                    info!("Dropping duplicate packet");
-                    return Err(Error::Duplicate);
-                } else {
-                    Some(s)
-                }
-            }
-            Err(Error::NoSpace) => None,
-            Err(e) => {
-                return Err(e);
-            }
-        };
-        Ok(sess_index)
+        )?;
+
+        let session = self.sessions[sess_index].as_mut().unwrap();
+        let is_encrypted = session.is_encrypted();
+        let duplicate = session.rx_ctr_state.recv(rx.plain.ctr, is_encrypted);
+        if duplicate {
+            info!("Dropping duplicate packet");
+            Err(Error::Duplicate)
+        } else {
+            Ok(sess_index)
+        }
     }
 
-    pub fn recv(&mut self) -> Result<(BoxSlab<PacketPool>, Option<usize>), Error> {
-        let mut rx =
-            Slab::<PacketPool>::try_new(Packet::new_rx()?).ok_or(Error::PacketPoolExhaust)?;
+    pub fn decode(&mut self, rx: &mut Packet) -> Result<(), Error> {
+        // let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
 
-        let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
+        // let (len, src) = network.recv(rx.as_borrow_slice()).await?;
+        // rx.get_parsebuf()?.set_len(len);
+        // rx.peer = src;
 
-        let (len, src) = network.recv(rx.as_borrow_slice())?;
-        rx.get_parsebuf()?.set_len(len);
-        rx.peer = src;
-
-        info!("{} from src: {}", "Received".blue(), src);
-        trace!("payload: {:x?}", rx.as_borrow_slice());
+        // info!("{} from src: {}", "Received".blue(), src);
+        // trace!("payload: {:x?}", rx.as_borrow_slice());
 
         // Read unencrypted packet header
-        rx.plain_hdr_decode()?;
-
-        // Get session
-        let sess_handle = self.post_recv(&rx)?;
-
-        Ok((rx, sess_handle))
+        rx.plain_hdr_decode()
     }
 
-    pub fn send(
-        &mut self,
-        sess_idx: usize,
-        mut proto_tx: BoxSlab<PacketPool>,
-    ) -> Result<(), Error> {
+    pub fn send(&mut self, sess_idx: usize, tx: &mut Packet) -> Result<(), Error> {
         self.sessions[sess_idx]
             .as_mut()
             .ok_or(Error::NoSession)?
-            .do_send(&mut proto_tx)?;
+            .do_send(self.epoch, tx)?;
 
-        let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
-        let peer = proto_tx.peer;
-        network.send(proto_tx.as_borrow_slice(), peer)?;
-        println!("Message Sent to {}", peer);
+        // let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
+        // let peer = proto_tx.peer;
+        // network.send(proto_tx.as_borrow_slice(), peer).await?;
+        // info!("Message Sent to {}", peer);
+
         Ok(())
     }
 
@@ -568,40 +543,52 @@ pub struct SessionHandle<'a> {
 }
 
 impl<'a> SessionHandle<'a> {
+    pub fn session(&self) -> &Session {
+        self.sess_mgr.sessions[self.sess_idx].as_ref().unwrap()
+    }
+
+    pub fn session_mut(&mut self) -> &mut Session {
+        self.sess_mgr.sessions[self.sess_idx].as_mut().unwrap()
+    }
+
     pub fn reserve_new_sess_id(&mut self) -> u16 {
         self.sess_mgr.get_next_sess_id()
     }
 
-    pub fn send(&mut self, proto_tx: BoxSlab<PacketPool>) -> Result<(), Error> {
-        self.sess_mgr.send(self.sess_idx, proto_tx)
+    pub fn send(&mut self, tx: &mut Packet) -> Result<(), Error> {
+        self.sess_mgr.send(self.sess_idx, tx)
     }
 }
 
 impl<'a> Deref for SessionHandle<'a> {
     type Target = Session;
+
     fn deref(&self) -> &Self::Target {
         // There is no other option but to panic if this is None
-        self.sess_mgr.sessions[self.sess_idx].as_ref().unwrap()
+        self.session()
     }
 }
 
 impl<'a> DerefMut for SessionHandle<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // There is no other option but to panic if this is None
-        self.sess_mgr.sessions[self.sess_idx].as_mut().unwrap()
+        self.session_mut()
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::transport::network::Address;
+    use crate::{
+        transport::network::Address,
+        utils::{epoch::dummy_epoch, rand::dummy_rand},
+    };
 
     use super::SessionMgr;
 
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
-        let mut sm = SessionMgr::new();
+        let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
         let sess_idx = sm.add(Address::default(), None).unwrap();
         let mut sess = sm.get_session_handle(sess_idx);
         sess.set_local_sess_id(1);
@@ -615,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_next_sess_id_overflows() {
-        let mut sm = SessionMgr::new();
+        let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
         let sess_idx = sm.add(Address::default(), None).unwrap();
         let mut sess = sm.get_session_handle(sess_idx);
         sess.set_local_sess_id(1);

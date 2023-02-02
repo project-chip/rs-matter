@@ -16,7 +16,7 @@
  */
 
 use bitflags::bitflags;
-use std::fmt;
+use core::fmt;
 
 use crate::transport::plain_hdr;
 use crate::utils::parsebuf::ParseBuf;
@@ -117,7 +117,7 @@ impl ProtoHdr {
         if self.is_ack() {
             self.ack_msg_ctr = Some(parsebuf.le_u32()?);
         }
-        trace!("[rx payload]: {:x?}", parsebuf.as_borrow_slice());
+        trace!("[rx payload]: {:x?}", parsebuf.as_mut_slice());
         Ok(())
     }
 
@@ -139,21 +139,21 @@ impl ProtoHdr {
 
 impl fmt::Display for ProtoHdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut flag_str: String = "".to_owned();
+        let mut flag_str = heapless::String::<16>::new();
         if self.is_vendor() {
-            flag_str.push_str("V|");
+            flag_str.push_str("V|").unwrap();
         }
         if self.is_security_ext() {
-            flag_str.push_str("SX|");
+            flag_str.push_str("SX|").unwrap();
         }
         if self.is_reliable() {
-            flag_str.push_str("R|");
+            flag_str.push_str("R|").unwrap();
         }
         if self.is_ack() {
-            flag_str.push_str("A|");
+            flag_str.push_str("A|").unwrap();
         }
         if self.is_initiator() {
-            flag_str.push_str("I|");
+            flag_str.push_str("I|").unwrap();
         }
         write!(
             f,
@@ -165,7 +165,7 @@ impl fmt::Display for ProtoHdr {
 
 fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut [u8]) -> Result<(), Error> {
     // The IV is the source address (64-bit) followed by the message counter (32-bit)
-    let mut write_buf = WriteBuf::new(iv, iv.len());
+    let mut write_buf = WriteBuf::new(iv);
     // For some reason, this is 0 in the 'bypass' mode
     write_buf.le_u8(0)?;
     write_buf.le_u32(recvd_ctr)?;
@@ -224,7 +224,7 @@ fn decrypt_in_place(
     let mut iv = [0_u8; crypto::AEAD_NONCE_LEN_BYTES];
     get_iv(recvd_ctr, peer_nodeid, &mut iv)?;
 
-    let cipher_text = parsebuf.as_borrow_slice();
+    let cipher_text = parsebuf.as_mut_slice();
     //println!("AAD: {:x?}", aad);
     //println!("Cipher Text: {:x?}", cipher_text);
     //println!("IV: {:x?}", iv);
@@ -266,8 +266,7 @@ mod tests {
             0x1f, 0xb0, 0x5e, 0xbe, 0xb5, 0x10, 0xad, 0xc6, 0x78, 0x94, 0x50, 0xe5, 0xd2, 0xe0,
             0x80, 0xef, 0xa8, 0x3a, 0xf0, 0xa6, 0xaf, 0x1b, 0x2, 0x35, 0xa7, 0xd1, 0xc6, 0x32,
         ];
-        let input_buf_len = input_buf.len();
-        let mut parsebuf = ParseBuf::new(&mut input_buf, input_buf_len);
+        let mut parsebuf = ParseBuf::new(&mut input_buf);
         let key = [
             0x66, 0x63, 0x31, 0x97, 0x43, 0x9c, 0x17, 0xb9, 0x7e, 0x10, 0xee, 0x47, 0xc8, 0x8,
             0x80, 0x4a,
@@ -279,7 +278,7 @@ mod tests {
 
         decrypt_in_place(recvd_ctr, 0, &mut parsebuf, &key).unwrap();
         assert_eq!(
-            parsebuf.as_slice(),
+            parsebuf.into_slice(),
             [
                 0x5, 0x8, 0x70, 0x0, 0x1, 0x0, 0x15, 0x28, 0x0, 0x28, 0x1, 0x36, 0x2, 0x15, 0x37,
                 0x0, 0x24, 0x0, 0x0, 0x24, 0x1, 0x30, 0x24, 0x2, 0x2, 0x18, 0x35, 0x1, 0x24, 0x0,
@@ -295,8 +294,7 @@ mod tests {
         let send_ctr = 41;
 
         let mut main_buf: [u8; 52] = [0; 52];
-        let main_buf_len = main_buf.len();
-        let mut writebuf = WriteBuf::new(&mut main_buf, main_buf_len);
+        let mut writebuf = WriteBuf::new(&mut main_buf);
 
         let plain_hdr: [u8; 8] = [0x0, 0x11, 0x0, 0x0, 0x29, 0x0, 0x0, 0x0];
 
@@ -313,7 +311,7 @@ mod tests {
 
         encrypt_in_place(send_ctr, 0, &plain_hdr, &mut writebuf, &key).unwrap();
         assert_eq!(
-            writebuf.as_slice(),
+            writebuf.into_slice(),
             [
                 189, 83, 250, 121, 38, 87, 97, 17, 153, 78, 243, 20, 36, 11, 131, 142, 136, 165,
                 227, 107, 204, 129, 193, 153, 42, 131, 138, 254, 22, 190, 76, 244, 116, 45, 156,

@@ -15,8 +15,8 @@
  *    limitations under the License.
  */
 
-use std::time::Duration;
-use std::time::SystemTime;
+use crate::utils::epoch::Epoch;
+use core::time::Duration;
 
 use crate::{error::*, secure_channel, transport::packet::Packet};
 use log::error;
@@ -46,13 +46,13 @@ pub struct AckEntry {
     // The msg counter that we should acknowledge
     msg_ctr: u32,
     // The max time after which this entry must be ACK
-    ack_timeout: SystemTime,
+    ack_timeout: Duration,
 }
 
 impl AckEntry {
-    pub fn new(msg_ctr: u32) -> Result<Self, Error> {
+    pub fn new(msg_ctr: u32, epoch: Epoch) -> Result<Self, Error> {
         if let Some(ack_timeout) =
-            SystemTime::now().checked_add(Duration::from_millis(MRP_STANDALONE_ACK_TIMEOUT))
+            epoch().checked_add(Duration::from_millis(MRP_STANDALONE_ACK_TIMEOUT))
         {
             Ok(Self {
                 msg_ctr,
@@ -67,8 +67,8 @@ impl AckEntry {
         self.msg_ctr
     }
 
-    pub fn has_timed_out(&self) -> bool {
-        self.ack_timeout > SystemTime::now()
+    pub fn has_timed_out(&self, epoch: Epoch) -> bool {
+        self.ack_timeout > epoch()
     }
 }
 
@@ -90,10 +90,10 @@ impl ReliableMessage {
     }
 
     // Check any pending acknowledgements / retransmissions and take action
-    pub fn is_ack_ready(&self) -> bool {
+    pub fn is_ack_ready(&self, epoch: Epoch) -> bool {
         // Acknowledgements
         if let Some(ack_entry) = self.ack {
-            ack_entry.has_timed_out()
+            ack_entry.has_timed_out(epoch)
         } else {
             false
         }
@@ -132,7 +132,7 @@ impl ReliableMessage {
      * -  there can be only one pending retransmission per exchange (so this is per-exchange)
      * -  duplicate detection should happen per session (obviously), so that part is per-session
      */
-    pub fn recv(&mut self, proto_rx: &Packet) -> Result<(), Error> {
+    pub fn recv(&mut self, proto_rx: &Packet, epoch: Epoch) -> Result<(), Error> {
         if proto_rx.proto.is_ack() {
             // Handle received Acks
             let ack_msg_ctr = proto_rx.proto.get_ack_msg_ctr().ok_or(Error::Invalid)?;
@@ -153,7 +153,7 @@ impl ReliableMessage {
                 return Err(Error::Invalid);
             }
 
-            self.ack = Some(AckEntry::new(proto_rx.plain.ctr)?);
+            self.ack = Some(AckEntry::new(proto_rx.plain.ctr, epoch)?);
         }
         Ok(())
     }

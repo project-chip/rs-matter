@@ -15,34 +15,58 @@
  *    limitations under the License.
  */
 
-use std::sync::{Arc, Mutex, Once};
+use core::fmt::Write;
 
-use crate::{
-    error::Error,
-    sys::{sys_publish_service, SysMdnsService},
-    transport::udp::MATTER_PORT,
-};
+use crate::error::Error;
 
-#[derive(Default)]
-/// The mDNS service handler
-pub struct MdnsInner {
-    /// Vendor ID
-    vid: u16,
-    /// Product ID
-    pid: u16,
-    /// Device name
-    device_name: String,
+pub trait Mdns {
+    fn add(
+        &mut self,
+        name: &str,
+        service_type: &str,
+        port: u16,
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error>;
+
+    fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error>;
 }
 
-pub struct Mdns {
-    inner: Mutex<MdnsInner>,
+impl<T> Mdns for &mut T
+where
+    T: Mdns,
+{
+    fn add(
+        &mut self,
+        name: &str,
+        service_type: &str,
+        port: u16,
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        (**self).add(name, service_type, port, txt_kvs)
+    }
+
+    fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        (**self).remove(name, service_type, port)
+    }
 }
 
-const SHORT_DISCRIMINATOR_MASK: u16 = 0xF00;
-const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
+pub struct DummyMdns;
 
-static mut G_MDNS: Option<Arc<Mdns>> = None;
-static INIT: Once = Once::new();
+impl Mdns for DummyMdns {
+    fn add(
+        &mut self,
+        _name: &str,
+        _service_type: &str,
+        _port: u16,
+        _txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn remove(&mut self, _name: &str, _service_type: &str, _port: u16) -> Result<(), Error> {
+        Ok(())
+    }
+}
 
 pub enum ServiceMode {
     /// The commissioned state
@@ -51,68 +75,108 @@ pub enum ServiceMode {
     Commissionable(u16),
 }
 
-impl Mdns {
-    fn new() -> Self {
+/// The mDNS service handler
+pub struct MdnsMgr<'a> {
+    /// Vendor ID
+    vid: u16,
+    /// Product ID
+    pid: u16,
+    /// Device name
+    device_name: heapless::String<32>,
+    /// Matter port
+    matter_port: u16,
+    /// mDns service
+    mdns: &'a mut dyn Mdns,
+}
+
+impl<'a> MdnsMgr<'a> {
+    pub fn new(
+        vid: u16,
+        pid: u16,
+        device_name: &str,
+        matter_port: u16,
+        mdns: &'a mut dyn Mdns,
+    ) -> Self {
         Self {
-            inner: Mutex::new(MdnsInner {
-                ..Default::default()
-            }),
+            vid,
+            pid,
+            device_name: device_name.chars().take(32).collect(),
+            matter_port,
+            mdns,
         }
     }
 
-    /// Get a handle to the globally unique mDNS instance
-    pub fn get() -> Result<Arc<Self>, Error> {
-        unsafe {
-            INIT.call_once(|| {
-                G_MDNS = Some(Arc::new(Mdns::new()));
-            });
-            Ok(G_MDNS.as_ref().ok_or(Error::Invalid)?.clone())
-        }
-    }
-
-    /// Set mDNS service specific values
-    /// Values like vid, pid, discriminator etc
-    // TODO: More things like device-type etc can be added here
-    pub fn set_values(&self, vid: u16, pid: u16, device_name: &str) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.vid = vid;
-        inner.pid = pid;
-        inner.device_name = device_name.chars().take(32).collect();
-    }
-
-    /// Publish a mDNS service
+    /// Publish an mDNS service
     /// name - is the service name (comma separated subtypes may follow)
     /// mode - the current service mode
     #[allow(clippy::needless_pass_by_value)]
-    pub fn publish_service(&self, name: &str, mode: ServiceMode) -> Result<SysMdnsService, Error> {
+    pub fn publish_service(&mut self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         match mode {
-            ServiceMode::Commissioned => {
-                sys_publish_service(name, "_matter._tcp", MATTER_PORT, &[])
-            }
+            ServiceMode::Commissioned => self.mdns.add(name, "_matter._tcp", self.matter_port, &[]),
             ServiceMode::Commissionable(discriminator) => {
-                let inner = self.inner.lock().unwrap();
-                let short = compute_short_discriminator(discriminator);
-                let serv_type = format!("_matterc._udp,_S{},_L{}", short, discriminator);
+                let discriminator_str = Self::get_discriminator_str(discriminator);
 
-                let str_discriminator = format!("{}", discriminator);
+                let serv_type = self.get_service_type(discriminator);
+                let vp = self.get_vp();
+
                 let txt_kvs = [
-                    ["D", &str_discriminator],
-                    ["CM", "1"],
-                    ["DN", &inner.device_name],
-                    ["VP", &format!("{}+{}", inner.vid, inner.pid)],
-                    ["SII", "5000"], /* Sleepy Idle Interval */
-                    ["SAI", "300"],  /* Sleepy Active Interval */
-                    ["PH", "33"],    /* Pairing Hint */
-                    ["PI", ""],      /* Pairing Instruction */
+                    ("D", discriminator_str.as_str()),
+                    ("CM", "1"),
+                    ("DN", self.device_name.as_str()),
+                    ("VP", &vp),
+                    ("SII", "5000"), /* Sleepy Idle Interval */
+                    ("SAI", "300"),  /* Sleepy Active Interval */
+                    ("PH", "33"),    /* Pairing Hint */
+                    ("PI", ""),      /* Pairing Instruction */
                 ];
-                sys_publish_service(name, &serv_type, MATTER_PORT, &txt_kvs)
+                self.mdns.add(name, &serv_type, self.matter_port, &txt_kvs)
             }
         }
     }
-}
 
-fn compute_short_discriminator(discriminator: u16) -> u16 {
-    (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT
+    pub fn unpublish_service(&mut self, name: &str, mode: ServiceMode) -> Result<(), Error> {
+        match mode {
+            ServiceMode::Commissioned => self.mdns.remove(name, "_matter._tcp", self.matter_port),
+            ServiceMode::Commissionable(discriminator) => {
+                let serv_type = self.get_service_type(discriminator);
+
+                self.mdns.remove(name, &serv_type, self.matter_port)
+            }
+        }
+    }
+
+    fn get_service_type(&self, discriminator: u16) -> heapless::String<32> {
+        let short = Self::compute_short_discriminator(discriminator);
+        let mut serv_type = heapless::String::new();
+
+        write!(
+            &mut serv_type,
+            "_matterc._udp,_S{},_L{}",
+            short, discriminator
+        )
+        .unwrap();
+
+        serv_type
+    }
+
+    fn get_vp(&self) -> heapless::String<11> {
+        let mut vp = heapless::String::new();
+
+        write!(&mut vp, "{}+{}", self.vid, self.pid).unwrap();
+
+        vp
+    }
+
+    fn get_discriminator_str(discriminator: u16) -> heapless::String<5> {
+        discriminator.into()
+    }
+
+    fn compute_short_discriminator(discriminator: u16) -> u16 {
+        const SHORT_DISCRIMINATOR_MASK: u16 = 0xF00;
+        const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
+
+        (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT
+    }
 }
 
 #[cfg(test)]
@@ -122,11 +186,11 @@ mod tests {
     #[test]
     fn can_compute_short_discriminator() {
         let discriminator: u16 = 0b0000_1111_0000_0000;
-        let short = compute_short_discriminator(discriminator);
+        let short = MdnsMgr::compute_short_discriminator(discriminator);
         assert_eq!(short, 0b1111);
 
         let discriminator: u16 = 840;
-        let short = compute_short_discriminator(discriminator);
+        let short = MdnsMgr::compute_short_discriminator(discriminator);
         assert_eq!(short, 3);
     }
 }

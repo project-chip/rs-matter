@@ -25,11 +25,13 @@ pub struct ParseBuf<'a> {
 }
 
 impl<'a> ParseBuf<'a> {
-    pub fn new(buf: &'a mut [u8], len: usize) -> ParseBuf<'a> {
-        ParseBuf {
-            buf: &mut buf[..len],
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        let left = buf.len();
+
+        Self {
+            buf,
             read_off: 0,
-            left: len,
+            left,
         }
     }
 
@@ -38,12 +40,17 @@ impl<'a> ParseBuf<'a> {
     }
 
     // Return the data that is valid as a slice, consume self
-    pub fn as_slice(self) -> &'a mut [u8] {
+    pub fn into_slice(self) -> &'a mut [u8] {
         &mut self.buf[self.read_off..(self.read_off + self.left)]
     }
 
     // Return the data that is valid as a slice
-    pub fn as_borrow_slice(&mut self) -> &mut [u8] {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buf[self.read_off..(self.read_off + self.left)]
+    }
+
+    // Return the data that is valid as a slice
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.buf[self.read_off..(self.read_off + self.left)]
     }
 
@@ -101,19 +108,19 @@ mod tests {
 
     #[test]
     fn test_parse_with_success() {
-        let mut test_slice: [u8; 11] = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
-        let mut buf = ParseBuf::new(&mut test_slice, 11);
+        let mut test_slice = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
+        let mut buf = ParseBuf::new(&mut test_slice);
 
         assert_eq!(buf.le_u8().unwrap(), 0x01);
         assert_eq!(buf.le_u16().unwrap(), 65);
         assert_eq!(buf.le_u32().unwrap(), 0xcafebabe);
-        assert_eq!(buf.as_slice(), [0xa, 0xb, 0xc, 0xd]);
+        assert_eq!(buf.into_slice(), [0xa, 0xb, 0xc, 0xd]);
     }
 
     #[test]
     fn test_parse_with_overrun() {
-        let mut test_slice: [u8; 2] = [0x01, 65];
-        let mut buf = ParseBuf::new(&mut test_slice, 2);
+        let mut test_slice = [0x01, 65];
+        let mut buf = ParseBuf::new(&mut test_slice);
 
         assert_eq!(buf.le_u8().unwrap(), 0x01);
 
@@ -131,29 +138,29 @@ mod tests {
         if buf.le_u8().is_ok() {
             panic!("This should have returned error")
         }
-        assert_eq!(buf.as_slice(), []);
+        assert_eq!(buf.into_slice(), []);
     }
 
     #[test]
     fn test_tail_with_success() {
-        let mut test_slice: [u8; 11] = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
-        let mut buf = ParseBuf::new(&mut test_slice, 11);
+        let mut test_slice = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
+        let mut buf = ParseBuf::new(&mut test_slice);
 
         assert_eq!(buf.le_u8().unwrap(), 0x01);
         assert_eq!(buf.le_u16().unwrap(), 65);
         assert_eq!(buf.le_u32().unwrap(), 0xcafebabe);
 
         assert_eq!(buf.tail(2).unwrap(), [0xc, 0xd]);
-        assert_eq!(buf.as_borrow_slice(), [0xa, 0xb]);
+        assert_eq!(buf.as_mut_slice(), [0xa, 0xb]);
 
         assert_eq!(buf.tail(2).unwrap(), [0xa, 0xb]);
-        assert_eq!(buf.as_slice(), []);
+        assert_eq!(buf.into_slice(), []);
     }
 
     #[test]
     fn test_tail_with_overrun() {
-        let mut test_slice: [u8; 11] = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
-        let mut buf = ParseBuf::new(&mut test_slice, 11);
+        let mut test_slice = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
+        let mut buf = ParseBuf::new(&mut test_slice);
 
         assert_eq!(buf.le_u8().unwrap(), 0x01);
         assert_eq!(buf.le_u16().unwrap(), 65);
@@ -166,8 +173,8 @@ mod tests {
 
     #[test]
     fn test_parsed_as_slice() {
-        let mut test_slice: [u8; 11] = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
-        let mut buf = ParseBuf::new(&mut test_slice, 11);
+        let mut test_slice = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
+        let mut buf = ParseBuf::new(&mut test_slice);
 
         assert_eq!(buf.parsed_as_slice(), []);
         assert_eq!(buf.le_u8().unwrap(), 0x1);

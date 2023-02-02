@@ -15,27 +15,25 @@
  *    limitations under the License.
  */
 
-use std::sync::Arc;
+use core::cell::RefCell;
 
 use log::{error, trace};
-use owning_ref::RwLockReadGuardRef;
-use rand::prelude::*;
 
 use crate::{
     cert::Cert,
-    crypto::{self, CryptoKeyPair, KeyPair, Sha256},
+    crypto::{self, KeyPair, Sha256},
     error::Error,
-    fabric::{Fabric, FabricMgr, FabricMgrInner},
+    fabric::{Fabric, FabricMgr},
     secure_channel::common::SCStatusCodes,
     secure_channel::common::{self, OpCode},
     tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType},
     transport::{
         network::Address,
-        proto_demux::{ProtoCtx, ResponseRequired},
+        proto_ctx::ProtoCtx,
         queue::{Msg, WorkQ},
         session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
-    utils::writebuf::WriteBuf,
+    utils::{rand::Rand, writebuf::WriteBuf},
 };
 
 #[derive(PartialEq)]
@@ -54,6 +52,7 @@ pub struct CaseSession {
     peer_pub_key: [u8; crypto::EC_POINT_LEN_BYTES],
     local_fabric_idx: usize,
 }
+
 impl CaseSession {
     pub fn new(peer_sessid: u16, local_sessid: u16) -> Result<Self, Error> {
         Ok(Self {
@@ -69,40 +68,43 @@ impl CaseSession {
     }
 }
 
-pub struct Case {
-    fabric_mgr: Arc<FabricMgr>,
+pub struct Case<'a> {
+    fabric_mgr: &'a RefCell<FabricMgr>,
+    rand: Rand,
 }
 
-impl Case {
-    pub fn new(fabric_mgr: Arc<FabricMgr>) -> Self {
-        Self { fabric_mgr }
+impl<'a> Case<'a> {
+    pub fn new(fabric_mgr: &'a RefCell<FabricMgr>, rand: Rand) -> Self {
+        Self { fabric_mgr, rand }
     }
 
-    pub fn casesigma3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+    pub fn casesigma3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
         let mut case_session = ctx
             .exch_ctx
             .exch
-            .take_data_boxed::<CaseSession>()
+            .take_case_session::<CaseSession>()
             .ok_or(Error::InvalidState)?;
         if case_session.state != State::Sigma1Rx {
             return Err(Error::Invalid);
         }
         case_session.state = State::Sigma3Rx;
 
-        let fabric = self.fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
+        let fabric_mgr = self.fabric_mgr.borrow();
+
+        let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
         if fabric.is_none() {
             common::create_sc_status_report(
-                &mut ctx.tx,
+                ctx.tx,
                 common::SCStatusCodes::NoSharedTrustRoots,
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(ResponseRequired::Yes);
+            return Ok(true);
         }
         // Safe to unwrap here
-        let fabric = fabric.as_ref().as_ref().unwrap();
+        let fabric = fabric.unwrap();
 
-        let root = get_root_node_struct(ctx.rx.as_borrow_slice())?;
+        let root = get_root_node_struct(ctx.rx.as_slice())?;
         let encrypted = root.find_tag(1)?.slice()?;
 
         let mut decrypted: [u8; 800] = [0; 800];
@@ -126,13 +128,9 @@ impl Case {
         }
         if let Err(e) = Case::validate_certs(fabric, &initiator_noc, &initiator_icac) {
             error!("Certificate Chain doesn't match: {}", e);
-            common::create_sc_status_report(
-                &mut ctx.tx,
-                common::SCStatusCodes::InvalidParameter,
-                None,
-            )?;
+            common::create_sc_status_report(ctx.tx, common::SCStatusCodes::InvalidParameter, None)?;
             ctx.exch_ctx.exch.close();
-            return Ok(ResponseRequired::Yes);
+            return Ok(true);
         }
 
         if Case::validate_sigma3_sign(
@@ -145,19 +143,15 @@ impl Case {
         .is_err()
         {
             error!("Sigma3 Signature doesn't match");
-            common::create_sc_status_report(
-                &mut ctx.tx,
-                common::SCStatusCodes::InvalidParameter,
-                None,
-            )?;
+            common::create_sc_status_report(ctx.tx, common::SCStatusCodes::InvalidParameter, None)?;
             ctx.exch_ctx.exch.close();
-            return Ok(ResponseRequired::Yes);
+            return Ok(true);
         }
 
         // Only now do we add this message to the TT Hash
         let mut peer_catids: NocCatIds = Default::default();
         initiator_noc.get_cat_ids(&mut peer_catids);
-        case_session.tt_hash.update(ctx.rx.as_borrow_slice())?;
+        case_session.tt_hash.update(ctx.rx.as_slice())?;
         let clone_data = Case::get_session_clone_data(
             fabric.ipk.op_key(),
             fabric.get_node_id(),
@@ -169,40 +163,36 @@ impl Case {
         // Queue a transport mgr request to add a new session
         WorkQ::get()?.sync_send(Msg::NewSession(clone_data))?;
 
-        common::create_sc_status_report(
-            &mut ctx.tx,
-            SCStatusCodes::SessionEstablishmentSuccess,
-            None,
-        )?;
-        ctx.exch_ctx.exch.clear_data_boxed();
+        common::create_sc_status_report(ctx.tx, SCStatusCodes::SessionEstablishmentSuccess, None)?;
+        ctx.exch_ctx.exch.clear_data();
         ctx.exch_ctx.exch.close();
-
-        Ok(ResponseRequired::Yes)
+        Ok(true)
     }
 
-    pub fn casesigma1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
+    pub fn casesigma1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
         ctx.tx.set_proto_opcode(OpCode::CASESigma2 as u8);
 
-        let rx_buf = ctx.rx.as_borrow_slice();
+        let rx_buf = ctx.rx.as_slice();
         let root = get_root_node_struct(rx_buf)?;
         let r = Sigma1Req::from_tlv(&root)?;
 
         let local_fabric_idx = self
             .fabric_mgr
+            .borrow_mut()
             .match_dest_id(r.initiator_random.0, r.dest_id.0);
         if local_fabric_idx.is_err() {
             error!("Fabric Index mismatch");
             common::create_sc_status_report(
-                &mut ctx.tx,
+                ctx.tx,
                 common::SCStatusCodes::NoSharedTrustRoots,
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(ResponseRequired::Yes);
+            return Ok(true);
         }
 
         let local_sessid = ctx.exch_ctx.sess.reserve_new_sess_id();
-        let mut case_session = Box::new(CaseSession::new(r.initiator_sessid, local_sessid)?);
+        let mut case_session = CaseSession::new(r.initiator_sessid, local_sessid)?;
         case_session.tt_hash.update(rx_buf)?;
         case_session.local_fabric_idx = local_fabric_idx?;
         if r.peer_pub_key.0.len() != crypto::EC_POINT_LEN_BYTES {
@@ -228,7 +218,7 @@ impl Case {
         //        println!("Derived secret: {:x?} len: {}", secret, len);
 
         let mut our_random: [u8; 32] = [0; 32];
-        rand::thread_rng().fill_bytes(&mut our_random);
+        (self.rand)(&mut our_random);
 
         // Derive the Encrypted Part
         const MAX_ENCRYPTED_SIZE: usize = 800;
@@ -236,19 +226,21 @@ impl Case {
         let mut encrypted: [u8; MAX_ENCRYPTED_SIZE] = [0; MAX_ENCRYPTED_SIZE];
         let encrypted_len = {
             let mut signature = [0u8; crypto::EC_SIGNATURE_LEN_BYTES];
-            let fabric = self.fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
+            let fabric_mgr = self.fabric_mgr.borrow();
+
+            let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
             if fabric.is_none() {
                 common::create_sc_status_report(
-                    &mut ctx.tx,
+                    ctx.tx,
                     common::SCStatusCodes::NoSharedTrustRoots,
                     None,
                 )?;
                 ctx.exch_ctx.exch.close();
-                return Ok(ResponseRequired::Yes);
+                return Ok(true);
             }
 
             let sign_len = Case::get_sigma2_sign(
-                &fabric,
+                fabric.unwrap(),
                 &case_session.our_pub_key,
                 &case_session.peer_pub_key,
                 &mut signature,
@@ -256,7 +248,8 @@ impl Case {
             let signature = &signature[..sign_len];
 
             Case::get_sigma2_encryption(
-                &fabric,
+                fabric.unwrap(),
+                self.rand,
                 &our_random,
                 &mut case_session,
                 signature,
@@ -273,9 +266,9 @@ impl Case {
         tw.str8(TagType::Context(3), &case_session.our_pub_key)?;
         tw.str16(TagType::Context(4), encrypted)?;
         tw.end_container()?;
-        case_session.tt_hash.update(ctx.tx.as_borrow_slice())?;
-        ctx.exch_ctx.exch.set_data_boxed(case_session);
-        Ok(ResponseRequired::Yes)
+        case_session.tt_hash.update(ctx.tx.as_mut_slice())?;
+        ctx.exch_ctx.exch.set_case_session(case_session);
+        Ok(true)
     }
 
     fn get_session_clone_data(
@@ -322,8 +315,8 @@ impl Case {
         case_session: &CaseSession,
     ) -> Result<(), Error> {
         const MAX_TBS_SIZE: usize = 800;
-        let mut buf: [u8; MAX_TBS_SIZE] = [0; MAX_TBS_SIZE];
-        let mut write_buf = WriteBuf::new(&mut buf, MAX_TBS_SIZE);
+        let mut buf = [0; MAX_TBS_SIZE];
+        let mut write_buf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
         tw.str16(TagType::Context(1), initiator_noc)?;
@@ -335,7 +328,7 @@ impl Case {
         tw.end_container()?;
 
         let key = KeyPair::new_from_public(initiator_noc_cert.get_pubkey())?;
-        key.verify_msg(write_buf.as_slice(), sign)?;
+        key.verify_msg(write_buf.into_slice(), sign)?;
         Ok(())
     }
 
@@ -372,12 +365,12 @@ impl Case {
         if key.len() < 48 {
             return Err(Error::NoSpace);
         }
-        let mut salt = Vec::<u8>::with_capacity(256);
-        salt.extend_from_slice(ipk);
+        let mut salt = heapless::Vec::<u8, 256>::new();
+        salt.extend_from_slice(ipk).unwrap();
         let tt = tt.clone();
         let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
         tt.finish(&mut tt_hash)?;
-        salt.extend_from_slice(&tt_hash);
+        salt.extend_from_slice(&tt_hash).unwrap();
         //        println!("Session Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &SEKEYS_INFO, key)
@@ -420,14 +413,14 @@ impl Case {
         if key.len() < 16 {
             return Err(Error::NoSpace);
         }
-        let mut salt = Vec::<u8>::with_capacity(256);
-        salt.extend_from_slice(ipk);
+        let mut salt = heapless::Vec::<u8, 256>::new();
+        salt.extend_from_slice(ipk).unwrap();
 
         let tt = tt.clone();
 
         let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
         tt.finish(&mut tt_hash)?;
-        salt.extend_from_slice(&tt_hash);
+        salt.extend_from_slice(&tt_hash).unwrap();
         //        println!("Sigma3Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &S3K_INFO, key)
@@ -447,16 +440,16 @@ impl Case {
         if key.len() < 16 {
             return Err(Error::NoSpace);
         }
-        let mut salt = Vec::<u8>::with_capacity(256);
-        salt.extend_from_slice(ipk);
-        salt.extend_from_slice(our_random);
-        salt.extend_from_slice(&case_session.our_pub_key);
+        let mut salt = heapless::Vec::<u8, 256>::new();
+        salt.extend_from_slice(ipk).unwrap();
+        salt.extend_from_slice(our_random).unwrap();
+        salt.extend_from_slice(&case_session.our_pub_key).unwrap();
 
         let tt = case_session.tt_hash.clone();
 
         let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
         tt.finish(&mut tt_hash)?;
-        salt.extend_from_slice(&tt_hash);
+        salt.extend_from_slice(&tt_hash).unwrap();
         //        println!("Sigma2Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), &case_session.shared_secret, &S2K_INFO, key)
@@ -467,17 +460,15 @@ impl Case {
     }
 
     fn get_sigma2_encryption(
-        fabric: &RwLockReadGuardRef<FabricMgrInner, Option<Fabric>>,
+        fabric: &Fabric,
+        rand: Rand,
         our_random: &[u8],
         case_session: &mut CaseSession,
         signature: &[u8],
         out: &mut [u8],
     ) -> Result<usize, Error> {
         let mut resumption_id: [u8; 16] = [0; 16];
-        rand::thread_rng().fill_bytes(&mut resumption_id);
-
-        // We are guaranteed this unwrap will work
-        let fabric = fabric.as_ref().as_ref().unwrap();
+        rand(&mut resumption_id);
 
         let mut sigma2_key = [0_u8; crypto::SYMM_KEY_LEN_BYTES];
         Case::get_sigma2_key(
@@ -487,7 +478,7 @@ impl Case {
             &mut sigma2_key,
         )?;
 
-        let mut write_buf = WriteBuf::new(out, out.len());
+        let mut write_buf = WriteBuf::new(out);
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
         tw.str16_as(TagType::Context(1), |buf| fabric.noc.as_tlv(buf))?;
@@ -517,20 +508,19 @@ impl Case {
             cipher_text,
             cipher_text.len() - TAG_LEN,
         )?;
-        Ok(write_buf.as_slice().len())
+        Ok(write_buf.into_slice().len())
     }
 
     fn get_sigma2_sign(
-        fabric: &RwLockReadGuardRef<FabricMgrInner, Option<Fabric>>,
+        fabric: &Fabric,
         our_pub_key: &[u8],
         peer_pub_key: &[u8],
         signature: &mut [u8],
     ) -> Result<usize, Error> {
         // We are guaranteed this unwrap will work
-        let fabric = fabric.as_ref().as_ref().unwrap();
         const MAX_TBS_SIZE: usize = 800;
-        let mut buf: [u8; MAX_TBS_SIZE] = [0; MAX_TBS_SIZE];
-        let mut write_buf = WriteBuf::new(&mut buf, MAX_TBS_SIZE);
+        let mut buf = [0; MAX_TBS_SIZE];
+        let mut write_buf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
         tw.str16_as(TagType::Context(1), |buf| fabric.noc.as_tlv(buf))?;
@@ -541,7 +531,7 @@ impl Case {
         tw.str8(TagType::Context(4), peer_pub_key)?;
         tw.end_container()?;
         //println!("TBS is {:x?}", write_buf.as_borrow_slice());
-        fabric.sign_msg(write_buf.as_slice(), signature)
+        fabric.sign_msg(write_buf.into_slice(), signature)
     }
 }
 

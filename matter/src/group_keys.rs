@@ -15,9 +15,12 @@
  *    limitations under the License.
  */
 
-use std::sync::{Arc, Mutex, Once};
+use alloc::sync::Arc;
+use std::sync::{Mutex, Once};
 
 use crate::{crypto, error::Error};
+
+extern crate alloc;
 
 // This is just makeshift implementation for now, not used anywhere
 pub struct GroupKeys {}

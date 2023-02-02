@@ -15,100 +15,129 @@
  *    limitations under the License.
  */
 
+use core::convert::TryInto;
+
 use super::objects::*;
-use crate::error::*;
-use num_derive::FromPrimitive;
+use crate::{attribute_enum, error::Error, utils::rand::Rand};
+use strum::{EnumDiscriminants, FromRepr};
 
 pub const ID: u32 = 0x0028;
 
-#[derive(FromPrimitive)]
+#[derive(Clone, Copy, Debug, FromRepr, EnumDiscriminants)]
+#[repr(u16)]
 pub enum Attributes {
-    DMRevision = 0,
-    VendorId = 2,
-    ProductId = 4,
-    HwVer = 7,
-    SwVer = 9,
-    SwVerString = 0xa,
-    SerialNo = 0x0f,
+    DMRevision(AttrType<u8>) = 0,
+    VendorId(AttrType<u16>) = 2,
+    ProductId(AttrType<u16>) = 4,
+    HwVer(AttrType<u16>) = 7,
+    SwVer(AttrType<u32>) = 9,
+    SwVerString(AttrUtfType) = 0xa,
+    SerialNo(AttrUtfType) = 0x0f,
 }
 
+attribute_enum!(Attributes);
+
 #[derive(Default)]
-pub struct BasicInfoConfig {
+pub struct BasicInfoConfig<'a> {
     pub vid: u16,
     pub pid: u16,
     pub hw_ver: u16,
     pub sw_ver: u32,
-    pub sw_ver_str: String,
-    pub serial_no: String,
+    pub sw_ver_str: &'a str,
+    pub serial_no: &'a str,
     /// Device name; up to 32 characters
-    pub device_name: String,
+    pub device_name: &'a str,
 }
 
-pub struct BasicInfoCluster {
-    base: Cluster,
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID as _,
+    feature_map: 0,
+    attributes: &[
+        FEATURE_MAP,
+        ATTRIBUTE_LIST,
+        Attribute::new(
+            AttributesDiscriminants::DMRevision as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::VendorId as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::ProductId as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::HwVer as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::SwVer as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::SwVerString as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::SerialNo as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+    ],
+    commands: &[],
+};
+
+pub struct BasicInfoCluster<'a> {
+    data_ver: Dataver,
+    cfg: &'a BasicInfoConfig<'a>,
 }
 
-impl BasicInfoCluster {
-    pub fn new(cfg: BasicInfoConfig) -> Result<Box<Self>, Error> {
-        let mut cluster = Box::new(BasicInfoCluster {
-            base: Cluster::new(ID)?,
-        });
+impl<'a> BasicInfoCluster<'a> {
+    pub fn new(cfg: &'a BasicInfoConfig<'a>, rand: Rand) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
+            cfg,
+        }
+    }
 
-        let attrs = [
-            Attribute::new(
-                Attributes::DMRevision as u16,
-                AttrValue::Uint8(1),
-                Access::RV,
-                Quality::FIXED,
-            ),
-            Attribute::new(
-                Attributes::VendorId as u16,
-                AttrValue::Uint16(cfg.vid),
-                Access::RV,
-                Quality::FIXED,
-            ),
-            Attribute::new(
-                Attributes::ProductId as u16,
-                AttrValue::Uint16(cfg.pid),
-                Access::RV,
-                Quality::FIXED,
-            ),
-            Attribute::new(
-                Attributes::HwVer as u16,
-                AttrValue::Uint16(cfg.hw_ver),
-                Access::RV,
-                Quality::FIXED,
-            ),
-            Attribute::new(
-                Attributes::SwVer as u16,
-                AttrValue::Uint32(cfg.sw_ver),
-                Access::RV,
-                Quality::FIXED,
-            ),
-            Attribute::new(
-                Attributes::SwVerString as u16,
-                AttrValue::Utf8(cfg.sw_ver_str),
-                Access::RV,
-                Quality::FIXED,
-            ),
-            Attribute::new(
-                Attributes::SerialNo as u16,
-                AttrValue::Utf8(cfg.serial_no),
-                Access::RV,
-                Quality::FIXED,
-            ),
-        ];
-        cluster.base.add_attributes(&attrs[..])?;
-
-        Ok(cluster)
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::DMRevision(codec) => codec.encode(writer, 1),
+                    Attributes::VendorId(codec) => codec.encode(writer, self.cfg.vid),
+                    Attributes::ProductId(codec) => codec.encode(writer, self.cfg.pid),
+                    Attributes::HwVer(codec) => codec.encode(writer, self.cfg.hw_ver),
+                    Attributes::SwVer(codec) => codec.encode(writer, self.cfg.sw_ver),
+                    Attributes::SwVerString(codec) => codec.encode(writer, self.cfg.sw_ver_str),
+                    Attributes::SerialNo(codec) => codec.encode(writer, self.cfg.serial_no),
+                }
+            }
+        } else {
+            Ok(())
+        }
     }
 }
 
-impl ClusterType for BasicInfoCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
+impl<'a> Handler for BasicInfoCluster<'a> {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        BasicInfoCluster::read(self, attr, encoder)
     }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
+}
+
+impl<'a> NonBlockingHandler for BasicInfoCluster<'a> {}
+
+impl<'a> ChangeNotifier<()> for BasicInfoCluster<'a> {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
     }
 }

@@ -17,9 +17,13 @@
 
 use super::{ElementType, TLVContainerIterator, TLVElement, TLVWriter, TagType};
 use crate::error::Error;
+use alloc::borrow::ToOwned;
+use alloc::{string::String, vec::Vec};
+use core::fmt::Debug;
 use core::slice::Iter;
 use log::error;
-use std::fmt::Debug;
+
+extern crate alloc;
 
 pub trait FromTLV<'a> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error>
@@ -76,6 +80,15 @@ pub trait ToTLV {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error>;
 }
 
+impl<T> ToTLV for &T
+where
+    T: ToTLV,
+{
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        (**self).to_tlv(tw, tag)
+    }
+}
+
 macro_rules! totlv_for {
     ($($t:ident)*) => {
         $(
@@ -116,8 +129,12 @@ totlv_for!(i8 u8 u16 u32 u64 bool);
 pub struct UtfStr<'a>(pub &'a [u8]);
 
 impl<'a> UtfStr<'a> {
-    pub fn new(str: &'a [u8]) -> Self {
+    pub const fn new(str: &'a [u8]) -> Self {
         Self(str)
+    }
+
+    pub fn as_str(&self) -> Result<&str, Error> {
+        core::str::from_utf8(self.0).map_err(|_| Error::Invalid)
     }
 
     pub fn to_string(self) -> Result<String, Error> {
@@ -396,7 +413,7 @@ impl<'a, T> FromTLV<'a> for TLVArray<'a, T> {
 }
 
 impl<'a, T: Debug + ToTLV + FromTLV<'a> + Copy> Debug for TLVArray<'a, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for i in self.iter() {
             writeln!(f, "{:?}", i)?;
         }
@@ -442,9 +459,8 @@ mod tests {
     }
     #[test]
     fn test_derive_totlv() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         let abc = TestDerive {
@@ -525,9 +541,8 @@ mod tests {
 
     #[test]
     fn test_derive_totlv_fab_scoped() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         let abc = TestDeriveFabScoped { a: 20, fab_idx: 3 };
@@ -557,9 +572,8 @@ mod tests {
         enum_val = TestDeriveEnum::ValueB(10);
 
         // Test ToTLV
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         enum_val.to_tlv(&mut tw, TagType::Anonymous).unwrap();

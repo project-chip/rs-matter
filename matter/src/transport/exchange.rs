@@ -15,43 +15,46 @@
  *    limitations under the License.
  */
 
-use boxslab::{BoxSlab, Slab};
 use colored::*;
+use core::any::Any;
+use core::fmt;
+use core::time::Duration;
 use log::{error, info, trace};
-use std::any::Any;
-use std::fmt;
-use std::time::SystemTime;
 
 use crate::error::Error;
 use crate::secure_channel;
+use crate::secure_channel::case::CaseSession;
+use crate::utils::epoch::Epoch;
+use crate::utils::rand::Rand;
 
 use heapless::LinearMap;
 
-use super::packet::PacketPool;
 use super::session::CloneData;
 use super::{mrp::ReliableMessage, packet::Packet, session::SessionHandle, session::SessionMgr};
 
 pub struct ExchangeCtx<'a> {
     pub exch: &'a mut Exchange,
     pub sess: SessionHandle<'a>,
+    pub epoch: Epoch,
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+impl<'a> ExchangeCtx<'a> {
+    pub fn send(&mut self, tx: &mut Packet) -> Result<(), Error> {
+        self.exch.send(tx, &mut self.sess)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 pub enum Role {
+    #[default]
     Initiator = 0,
     Responder = 1,
 }
 
-impl Default for Role {
-    fn default() -> Self {
-        Role::Initiator
-    }
-}
-
-/// State of the exchange
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 enum State {
     /// The exchange is open and active
+    #[default]
     Open,
     /// The exchange is closed, but keys are active since retransmissions/acks may be pending
     Close,
@@ -59,28 +62,17 @@ enum State {
     Terminate,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        State::Open
-    }
-}
-
 // Instead of just doing an Option<>, we create some special handling
 // where the commonly used higher layer data store does't have to do a Box
-#[derive(Debug)]
+#[derive(Default)]
 pub enum DataOption {
-    Boxed(Box<dyn Any>),
-    Time(SystemTime),
+    CaseSession(CaseSession),
+    Time(Duration),
+    #[default]
     None,
 }
 
-impl Default for DataOption {
-    fn default() -> Self {
-        DataOption::None
-    }
-}
-
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Exchange {
     id: u16,
     sess_idx: usize,
@@ -136,48 +128,48 @@ impl Exchange {
         matches!(self.data, DataOption::None)
     }
 
-    pub fn set_data_boxed(&mut self, data: Box<dyn Any>) {
-        self.data = DataOption::Boxed(data);
+    pub fn set_case_session(&mut self, session: CaseSession) {
+        self.data = DataOption::CaseSession(session);
     }
 
-    pub fn clear_data_boxed(&mut self) {
+    pub fn clear_data(&mut self) {
         self.data = DataOption::None;
     }
 
-    pub fn get_data_boxed<T: Any>(&mut self) -> Option<&mut T> {
-        if let DataOption::Boxed(a) = &mut self.data {
-            a.downcast_mut::<T>()
+    pub fn get_case_session(&mut self) -> Option<&mut CaseSession> {
+        if let DataOption::CaseSession(session) = &mut self.data {
+            Some(session)
         } else {
             None
         }
     }
 
-    pub fn take_data_boxed<T: Any>(&mut self) -> Option<Box<T>> {
-        let old = std::mem::replace(&mut self.data, DataOption::None);
-        if let DataOption::Boxed(d) = old {
-            d.downcast::<T>().ok()
+    pub fn take_case_session<T: Any>(&mut self) -> Option<CaseSession> {
+        let old = core::mem::replace(&mut self.data, DataOption::None);
+        if let DataOption::CaseSession(session) = old {
+            Some(session)
         } else {
             self.data = old;
             None
         }
     }
 
-    pub fn set_data_time(&mut self, expiry_ts: Option<SystemTime>) {
+    pub fn set_data_time(&mut self, expiry_ts: Option<Duration>) {
         if let Some(t) = expiry_ts {
             self.data = DataOption::Time(t);
         }
     }
 
-    pub fn get_data_time(&self) -> Option<SystemTime> {
+    pub fn get_data_time(&self) -> Option<Duration> {
         match self.data {
             DataOption::Time(t) => Some(t),
             _ => None,
         }
     }
 
-    pub fn send(
+    pub(crate) fn send(
         &mut self,
-        mut proto_tx: BoxSlab<PacketPool>,
+        tx: &mut Packet,
         session: &mut SessionHandle,
     ) -> Result<(), Error> {
         if self.state == State::Terminate {
@@ -185,22 +177,22 @@ impl Exchange {
             return Ok(());
         }
 
-        trace!("payload: {:x?}", proto_tx.as_borrow_slice());
+        trace!("payload: {:x?}", tx.as_mut_slice());
         info!(
             "{} with proto id: {} opcode: {}",
             "Sending".blue(),
-            proto_tx.get_proto_id(),
-            proto_tx.get_proto_opcode(),
+            tx.get_proto_id(),
+            tx.get_proto_opcode(),
         );
 
-        proto_tx.proto.exch_id = self.id;
+        tx.proto.exch_id = self.id;
         if self.role == Role::Initiator {
-            proto_tx.proto.set_initiator();
+            tx.proto.set_initiator();
         }
 
-        session.pre_send(&mut proto_tx)?;
-        self.mrp.pre_send(&mut proto_tx)?;
-        session.send(proto_tx)
+        session.pre_send(tx)?;
+        self.mrp.pre_send(tx)?;
+        session.send(tx)
     }
 }
 
@@ -208,8 +200,8 @@ impl fmt::Display for Exchange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "exch_id: {:?}, sess_index: {}, role: {:?}, data: {:?}, mrp: {:?}, state: {:?}",
-            self.id, self.sess_idx, self.role, self.data, self.mrp, self.state
+            "exch_id: {:?}, sess_index: {}, role: {:?}, mrp: {:?}, state: {:?}",
+            self.id, self.sess_idx, self.role, self.mrp, self.state
         )
     }
 }
@@ -232,20 +224,21 @@ pub fn get_complementary_role(is_initiator: bool) -> Role {
 
 const MAX_EXCHANGES: usize = 8;
 
-#[derive(Default)]
 pub struct ExchangeMgr {
     // keys: exch-id
     exchanges: LinearMap<u16, Exchange, MAX_EXCHANGES>,
     sess_mgr: SessionMgr,
+    epoch: Epoch,
 }
 
 pub const MAX_MRP_ENTRIES: usize = 4;
 
 impl ExchangeMgr {
-    pub fn new(sess_mgr: SessionMgr) -> Self {
+    pub fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
-            sess_mgr,
-            exchanges: Default::default(),
+            sess_mgr: SessionMgr::new(epoch, rand),
+            exchanges: LinearMap::new(),
+            epoch,
         }
     }
 
@@ -300,45 +293,33 @@ impl ExchangeMgr {
     }
 
     /// The Exchange Mgr receive is like a big processing function
-    pub fn recv(&mut self) -> Result<Option<(BoxSlab<PacketPool>, ExchangeCtx)>, Error> {
+    pub fn recv(&mut self, rx: &mut Packet) -> Result<Option<ExchangeCtx>, Error> {
         // Get the session
-        let (mut proto_rx, index) = self.sess_mgr.recv()?;
-
-        let index = if let Some(s) = index {
-            s
-        } else {
-            // The sessions were full, evict one session, and re-perform post-recv
-            let evict_index = self.sess_mgr.get_lru();
-            self.evict_session(evict_index)?;
-            info!("Reattempting session creation");
-            self.sess_mgr.post_recv(&proto_rx)?.ok_or(Error::Invalid)?
-        };
+        let index = self.sess_mgr.post_recv(rx)?;
         let mut session = self.sess_mgr.get_session_handle(index);
 
         // Decrypt the message
-        session.recv(&mut proto_rx)?;
+        session.recv(self.epoch, rx)?;
 
         // Get the exchange
         let exch = ExchangeMgr::_get(
             &mut self.exchanges,
             index,
-            proto_rx.proto.exch_id,
-            get_complementary_role(proto_rx.proto.is_initiator()),
+            rx.proto.exch_id,
+            get_complementary_role(rx.proto.is_initiator()),
             // We create a new exchange, only if the peer is the initiator
-            proto_rx.proto.is_initiator(),
+            rx.proto.is_initiator(),
         )?;
 
         // Message Reliability Protocol
-        exch.mrp.recv(&proto_rx)?;
+        exch.mrp.recv(rx, self.epoch)?;
 
         if exch.is_state_open() {
-            Ok(Some((
-                proto_rx,
-                ExchangeCtx {
-                    exch,
-                    sess: session,
-                },
-            )))
+            Ok(Some(ExchangeCtx {
+                exch,
+                sess: session,
+                epoch: self.epoch,
+            }))
         } else {
             // Instead of an error, we send None here, because it is likely that
             // we just processed an acknowledgement that cleared the exchange
@@ -346,11 +327,11 @@ impl ExchangeMgr {
         }
     }
 
-    pub fn send(&mut self, exch_id: u16, proto_tx: BoxSlab<PacketPool>) -> Result<(), Error> {
+    pub fn send(&mut self, exch_id: u16, tx: &mut Packet) -> Result<(), Error> {
         let exchange =
             ExchangeMgr::_get_with_id(&mut self.exchanges, exch_id).ok_or(Error::NoExchange)?;
         let mut session = self.sess_mgr.get_session_handle(exchange.sess_idx);
-        exchange.send(proto_tx, &mut session)
+        exchange.send(tx, &mut session)
     }
 
     pub fn purge(&mut self) {
@@ -366,70 +347,66 @@ impl ExchangeMgr {
         }
     }
 
-    pub fn pending_acks(&mut self, expired_entries: &mut LinearMap<u16, (), MAX_MRP_ENTRIES>) {
-        for (exch_id, exchange) in self.exchanges.iter() {
-            if exchange.mrp.is_ack_ready() {
-                expired_entries.insert(*exch_id, ()).unwrap();
-            }
-        }
+    pub fn pending_ack(&mut self) -> Option<u16> {
+        self.exchanges
+            .iter()
+            .find(|(_, exchange)| exchange.mrp.is_ack_ready(self.epoch))
+            .map(|(exch_id, _)| *exch_id)
     }
 
-    pub fn evict_session(&mut self, index: usize) -> Result<(), Error> {
-        info!("Sessions full, vacating session with index: {}", index);
-        // If we enter here, we have an LRU session that needs to be reclaimed
-        // As per the spec, we need to send a CLOSE here
+    pub fn evict_session(&mut self, tx: &mut Packet) -> Result<bool, Error> {
+        if let Some(index) = self.sess_mgr.get_session_for_eviction() {
+            info!("Sessions full, vacating session with index: {}", index);
+            // If we enter here, we have an LRU session that needs to be reclaimed
+            // As per the spec, we need to send a CLOSE here
 
-        let mut session = self.sess_mgr.get_session_handle(index);
-        let mut tx = Slab::<PacketPool>::try_new(Packet::new_tx()?).ok_or(Error::NoSpace)?;
-        secure_channel::common::create_sc_status_report(
-            &mut tx,
-            secure_channel::common::SCStatusCodes::CloseSession,
-            None,
-        )?;
+            let mut session = self.sess_mgr.get_session_handle(index);
+            secure_channel::common::create_sc_status_report(
+                tx,
+                secure_channel::common::SCStatusCodes::CloseSession,
+                None,
+            )?;
 
-        if let Some((_, exchange)) = self.exchanges.iter_mut().find(|(_, e)| e.sess_idx == index) {
-            // Send Close_session on this exchange, and then close the session
-            // Should this be done for all exchanges?
-            error!("Sending Close Session");
-            exchange.send(tx, &mut session)?;
-            // TODO: This wouldn't actually send it out, because 'transport' isn't owned yet.
+            if let Some((_, exchange)) =
+                self.exchanges.iter_mut().find(|(_, e)| e.sess_idx == index)
+            {
+                // Send Close_session on this exchange, and then close the session
+                // Should this be done for all exchanges?
+                error!("Sending Close Session");
+                exchange.send(tx, &mut session)?;
+                // TODO: This wouldn't actually send it out, because 'transport' isn't owned yet.
+            }
+
+            let remove_exchanges: heapless::Vec<u16, MAX_EXCHANGES> = self
+                .exchanges
+                .iter()
+                .filter_map(|(eid, e)| {
+                    if e.sess_idx == index {
+                        Some(*eid)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            info!(
+                "Terminating the following exchanges: {:?}",
+                remove_exchanges
+            );
+            for exch_id in remove_exchanges {
+                // Remove from exchange list
+                self.exchanges.remove(&exch_id);
+            }
+            self.sess_mgr.remove(index);
+
+            Ok(true)
+        } else {
+            Ok(false)
         }
-
-        let remove_exchanges: Vec<u16> = self
-            .exchanges
-            .iter()
-            .filter_map(|(eid, e)| {
-                if e.sess_idx == index {
-                    Some(*eid)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        info!(
-            "Terminating the following exchanges: {:?}",
-            remove_exchanges
-        );
-        for exch_id in remove_exchanges {
-            // Remove from exchange list
-            self.exchanges.remove(&exch_id);
-        }
-        self.sess_mgr.remove(index);
-        Ok(())
     }
 
     pub fn add_session(&mut self, clone_data: &CloneData) -> Result<SessionHandle, Error> {
-        let sess_idx = match self.sess_mgr.clone_session(clone_data) {
-            Ok(idx) => idx,
-            Err(Error::NoSpace) => {
-                let evict_index = self.sess_mgr.get_lru();
-                self.evict_session(evict_index)?;
-                self.sess_mgr.clone_session(clone_data)?
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        };
+        let sess_idx = self.sess_mgr.clone_session(clone_data)?;
+
         Ok(self.sess_mgr.get_session_handle(sess_idx))
     }
 }
@@ -449,12 +426,16 @@ impl fmt::Display for ExchangeMgr {
 #[cfg(test)]
 #[allow(clippy::bool_assert_comparison)]
 mod tests {
-
     use crate::{
         error::Error,
         transport::{
-            network::{Address, NetworkInterface},
-            session::{CloneData, SessionMgr, SessionMode, MAX_SESSIONS},
+            network::Address,
+            packet::Packet,
+            session::{CloneData, SessionMode, MAX_SESSIONS},
+        },
+        utils::{
+            epoch::{dummy_epoch, sys_epoch},
+            rand::dummy_rand,
         },
     };
 
@@ -462,8 +443,7 @@ mod tests {
 
     #[test]
     fn test_purge() {
-        let sess_mgr = SessionMgr::new();
-        let mut mgr = ExchangeMgr::new(sess_mgr);
+        let mut mgr = ExchangeMgr::new(dummy_epoch, dummy_rand);
         let _ = ExchangeMgr::_get(&mut mgr.exchanges, 1, 2, Role::Responder, true).unwrap();
         let _ = ExchangeMgr::_get(&mut mgr.exchanges, 1, 3, Role::Responder, true).unwrap();
 
@@ -519,33 +499,13 @@ mod tests {
         }
     }
 
-    pub struct DummyNetwork;
-    impl DummyNetwork {
-        pub fn new() -> Self {
-            Self {}
-        }
-    }
-
-    impl NetworkInterface for DummyNetwork {
-        fn recv(&self, _in_buf: &mut [u8]) -> Result<(usize, Address), Error> {
-            Ok((0, Address::default()))
-        }
-
-        fn send(&self, _out_buf: &[u8], _addr: Address) -> Result<usize, Error> {
-            Ok(0)
-        }
-    }
-
     #[test]
     /// We purposefuly overflow the sessions
     /// and when the overflow happens, we confirm that
     /// - The sessions are evicted in LRU
     /// - The exchanges associated with those sessions are evicted too
     fn test_sess_evict() {
-        let mut sess_mgr = SessionMgr::new();
-        let transport = Box::new(DummyNetwork::new());
-        sess_mgr.add_network_interface(transport).unwrap();
-        let mut mgr = ExchangeMgr::new(sess_mgr);
+        let mut mgr = ExchangeMgr::new(sys_epoch, dummy_rand); // TODO
 
         fill_sessions(&mut mgr, MAX_SESSIONS + 1);
         // Sessions are now full from local session id 1 to 16
@@ -568,6 +528,14 @@ mod tests {
 
         for i in 1..(MAX_SESSIONS + 1) {
             // Now purposefully overflow the sessions by adding another session
+            let result = mgr.add_session(&get_clone_data(new_peer_sess_id, new_local_sess_id));
+            assert!(matches!(result, Err(Error::NoSpace)));
+
+            let mut buf = [0; 1500];
+            let tx = &mut Packet::new_tx(&mut buf);
+            let evicted = mgr.evict_session(tx).unwrap();
+            assert!(evicted);
+
             let session = mgr
                 .add_session(&get_clone_data(new_peer_sess_id, new_local_sess_id))
                 .unwrap();

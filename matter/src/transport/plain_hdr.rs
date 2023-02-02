@@ -21,16 +21,11 @@ use crate::utils::writebuf::WriteBuf;
 use bitflags::bitflags;
 use log::info;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub enum SessionType {
+    #[default]
     None,
     Encrypted,
-}
-
-impl Default for SessionType {
-    fn default() -> SessionType {
-        SessionType::None
-    }
 }
 
 bitflags! {

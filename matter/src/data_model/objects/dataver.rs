@@ -15,32 +15,41 @@
  *    limitations under the License.
  */
 
-use core::fmt::{Debug, Display};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use crate::utils::rand::Rand;
 
-#[derive(PartialEq, Copy, Clone)]
-pub enum Address {
-    Udp(SocketAddr),
+pub struct Dataver {
+    ver: u32,
+    changed: bool,
 }
 
-impl Default for Address {
-    fn default() -> Self {
-        Address::Udp(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080))
-    }
-}
+impl Dataver {
+    pub fn new(rand: Rand) -> Self {
+        let mut buf = [0; 4];
+        rand(&mut buf);
 
-impl Display for Address {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Address::Udp(addr) => writeln!(f, "{}", addr),
+        Self {
+            ver: u32::from_be_bytes(buf),
+            changed: false,
         }
     }
-}
 
-impl Debug for Address {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Address::Udp(addr) => writeln!(f, "{}", addr),
+    pub fn get(&self) -> u32 {
+        self.ver
+    }
+
+    pub fn changed(&mut self) -> u32 {
+        (self.ver, _) = self.ver.overflowing_add(1);
+        self.changed = true;
+
+        self.get()
+    }
+
+    pub fn consume_change<T>(&mut self, change: T) -> Option<T> {
+        if self.changed {
+            self.changed = false;
+            Some(change)
+        } else {
+            None
         }
     }
 }

@@ -115,8 +115,7 @@ impl TLVHolder {
             buf: [0; 100],
             used_len: 0,
         };
-        let buf_len = s.buf.len();
-        let mut wb = WriteBuf::new(&mut s.buf, buf_len);
+        let mut wb = WriteBuf::new(&mut s.buf);
         let mut tw = TLVWriter::new(&mut wb);
         let _ = tw.start_array(TagType::Context(ctx_tag));
         for e in data {

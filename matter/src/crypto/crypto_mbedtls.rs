@@ -15,9 +15,11 @@
  *    limitations under the License.
  */
 
-use std::sync::Arc;
+extern crate alloc;
 
-use log::error;
+use alloc::sync::Arc;
+
+use log::{error, info};
 use mbedtls::{
     bignum::Mpi,
     cipher::{Authenticated, Cipher},
@@ -28,7 +30,6 @@ use mbedtls::{
     x509,
 };
 
-use super::CryptoKeyPair;
 use crate::{
     // TODO: We should move ASN1Writer out of Cert,
     // so Crypto doesn't have to depend on Cert
@@ -85,10 +86,8 @@ impl KeyPair {
             key: Pk::public_from_ec_components(group, pub_key)?,
         })
     }
-}
 
-impl CryptoKeyPair for KeyPair {
-    fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         let tmp_priv = self.key.ec_private()?;
         let mut tmp_key =
             Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_priv)?;
@@ -112,7 +111,7 @@ impl CryptoKeyPair for KeyPair {
         }
     }
 
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
         let public_key = self.key.ec_public()?;
         let group = EcGroup::new(EcGroupId::SecP256R1)?;
         let vec = public_key.to_binary(&group, false)?;
@@ -122,7 +121,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
         let priv_key_mpi = self.key.ec_private()?;
         let vec = priv_key_mpi.to_binary()?;
 
@@ -131,7 +130,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
+    pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
 
@@ -149,7 +148,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
+    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
         let tmp_key = self.key.ec_private()?;
@@ -175,7 +174,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
+    pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
         let tmp_key = self.key.ec_public()?;
@@ -192,7 +191,7 @@ impl CryptoKeyPair for KeyPair {
         let mbedtls_sign = &mbedtls_sign[..len];
 
         if let Err(e) = tmp_key.verify(hash::Type::Sha256, &msg_hash, mbedtls_sign) {
-            println!("The error is {}", e);
+            info!("The error is {}", e);
             Err(Error::InvalidSignature)
         } else {
             Ok(())

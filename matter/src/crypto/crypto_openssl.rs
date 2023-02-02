@@ -17,7 +17,6 @@
 
 use crate::error::Error;
 
-use super::CryptoKeyPair;
 use foreign_types::ForeignTypeRef;
 use log::error;
 use openssl::asn1::Asn1Type;
@@ -112,10 +111,8 @@ impl KeyPair {
             KeyType::Private(k) => Ok(&k),
         }
     }
-}
 
-impl CryptoKeyPair for KeyPair {
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
         let mut bn_ctx = BigNumContext::new()?;
         let s = self.public_key_point().to_bytes(
@@ -128,14 +125,14 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
         let s = self.private_key()?.private_key().to_vec();
         let len = s.len();
         priv_key[..len].copy_from_slice(s.as_slice());
         Ok(len)
     }
 
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
+    pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
         let self_pkey = PKey::from_ec_key(self.private_key()?.clone())?;
 
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
@@ -149,7 +146,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(deriver.derive(secret)?)
     }
 
-    fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut builder = X509ReqBuilder::new()?;
         builder.set_version(0)?;
 
@@ -174,7 +171,7 @@ impl CryptoKeyPair for KeyPair {
         }
     }
 
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
+    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
         // First get the SHA256 of the message
         let mut h = Hasher::new(MessageDigest::sha256())?;
         h.update(msg)?;
@@ -193,7 +190,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(64)
     }
 
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
+    pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
         // First get the SHA256 of the message
         let mut h = Hasher::new(MessageDigest::sha256())?;
         h.update(msg)?;

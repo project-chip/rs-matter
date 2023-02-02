@@ -18,4 +18,5 @@
 pub mod attributes;
 pub mod commands;
 pub mod echo_cluster;
+pub mod handlers;
 pub mod im_engine;
