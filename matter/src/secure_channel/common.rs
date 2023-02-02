@@ -15,23 +15,14 @@
  *    limitations under the License.
  */
 
-use boxslab::Slab;
-use log::info;
 use num_derive::FromPrimitive;
 
-use crate::{
-    error::Error,
-    transport::{
-        exchange::Exchange,
-        packet::{Packet, PacketPool},
-        session::SessionHandle,
-    },
-};
+use crate::{error::Error, transport::packet::Packet};
 
 use super::status_report::{create_status_report, GeneralCode};
 
 /* Interaction Model ID as per the Matter Spec */
-pub const PROTO_ID_SECURE_CHANNEL: usize = 0x00;
+pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
 
 #[derive(FromPrimitive, Debug)]
 pub enum OpCode {
@@ -88,14 +79,15 @@ pub fn create_sc_status_report(
 }
 
 pub fn create_mrp_standalone_ack(proto_tx: &mut Packet) {
-    proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL as u16);
+    proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
     proto_tx.set_proto_opcode(OpCode::MRPStandAloneAck as u8);
     proto_tx.unset_reliable();
 }
 
-pub fn send_mrp_standalone_ack(exch: &mut Exchange, sess: &mut SessionHandle) -> Result<(), Error> {
-    info!("Sending standalone ACK");
-    let mut ack_packet = Slab::<PacketPool>::try_new(Packet::new_tx()?).ok_or(Error::NoMemory)?;
-    create_mrp_standalone_ack(&mut ack_packet);
-    exch.send(ack_packet, sess)
-}
+// TODO
+// pub fn send_mrp_standalone_ack(exch: &mut Exchange, sess: &mut SessionHandle) -> Result<(), Error> {
+//     info!("Sending standalone ACK");
+//     let mut ack_packet = Slab::<PacketPool>::try_new(Packet::new_tx()?).ok_or(Error::NoMemory)?;
+//     create_mrp_standalone_ack(&mut ack_packet);
+//     exch.send(ack_packet, sess)
+// }

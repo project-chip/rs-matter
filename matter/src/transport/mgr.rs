@@ -15,161 +15,210 @@
  *    limitations under the License.
  */
 
-use async_channel::Receiver;
-use boxslab::{BoxSlab, Slab};
-use heapless::LinearMap;
-use log::{debug, error, info};
+use core::borrow::Borrow;
+use core::cell::RefCell;
+
+use log::info;
 
 use crate::error::*;
+use crate::fabric::FabricMgr;
+use crate::mdns::MdnsMgr;
+use crate::secure_channel::pake::PaseMgr;
 
+use crate::secure_channel::common::PROTO_ID_SECURE_CHANNEL;
+use crate::secure_channel::core::SecureChannel;
 use crate::transport::mrp::ReliableMessage;
-use crate::transport::packet::PacketPool;
-use crate::transport::{exchange, packet::Packet, proto_demux, queue, session, udp};
+use crate::transport::{exchange, packet::Packet};
+use crate::utils::epoch::Epoch;
+use crate::utils::rand::Rand;
 
-use super::proto_demux::ProtoCtx;
-use super::queue::Msg;
+use super::proto_ctx::ProtoCtx;
 
-pub struct Mgr {
-    exch_mgr: exchange::ExchangeMgr,
-    proto_demux: proto_demux::ProtoDemux,
-    rx_q: Receiver<Msg>,
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum RecvState {
+    New,
+    OpenExchange,
+    EvictSession,
+    Ack,
 }
 
-impl Mgr {
-    pub fn new() -> Result<Mgr, Error> {
-        let mut sess_mgr = session::SessionMgr::new();
-        let udp_transport = Box::new(udp::UdpListener::new()?);
-        sess_mgr.add_network_interface(udp_transport)?;
-        Ok(Mgr {
-            proto_demux: proto_demux::ProtoDemux::new(),
-            exch_mgr: exchange::ExchangeMgr::new(sess_mgr),
-            rx_q: queue::WorkQ::init()?,
-        })
-    }
+pub enum RecvAction<'r, 'p> {
+    Send(&'r [u8]),
+    Interact(ProtoCtx<'r, 'p>),
+}
 
-    // Allows registration of different protocols with the Transport/Protocol Demux
-    pub fn register_protocol(
-        &mut self,
-        proto_id_handle: Box<dyn proto_demux::HandleProto>,
-    ) -> Result<(), Error> {
-        self.proto_demux.register(proto_id_handle)
-    }
+pub struct RecvCompletion<'r, 'a, 'p> {
+    mgr: &'r mut TransportMgr<'a>,
+    rx: &'r mut Packet<'p>,
+    tx: &'r mut Packet<'p>,
+    state: RecvState,
+}
 
-    fn send_to_exchange(
-        &mut self,
-        exch_id: u16,
-        proto_tx: BoxSlab<PacketPool>,
-    ) -> Result<(), Error> {
-        self.exch_mgr.send(exch_id, proto_tx)
-    }
-
-    fn handle_rxtx(&mut self) -> Result<(), Error> {
-        let result = self.exch_mgr.recv().map_err(|e| {
-            error!("Error in recv: {:?}", e);
-            e
-        })?;
-
-        if result.is_none() {
-            // Nothing to process, return quietly
-            return Ok(());
-        }
-        // result contains something worth processing, we can safely unwrap
-        // as we already checked for none above
-        let (rx, exch_ctx) = result.unwrap();
-
-        debug!("Exchange is {:?}", exch_ctx.exch);
-        let tx = Self::new_tx()?;
-
-        let mut proto_ctx = ProtoCtx::new(exch_ctx, rx, tx);
-        // Proto Dispatch
-        match self.proto_demux.handle(&mut proto_ctx) {
-            Ok(r) => {
-                if let proto_demux::ResponseRequired::No = r {
-                    // We need to send the Ack if reliability is enabled, in this case
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                error!("Error in proto_demux {:?}", e);
-                return Err(e);
-            }
-        }
-
-        let ProtoCtx {
-            exch_ctx,
-            rx: _,
-            tx,
-        } = proto_ctx;
-
-        // tx_ctx now contains the response payload, send the packet
-        let exch_id = exch_ctx.exch.get_id();
-        self.send_to_exchange(exch_id, tx).map_err(|e| {
-            error!("Error in sending msg {:?}", e);
-            e
-        })?;
-
-        Ok(())
-    }
-
-    fn handle_queue_msgs(&mut self) -> Result<(), Error> {
-        if let Ok(msg) = self.rx_q.try_recv() {
-            match msg {
-                Msg::NewSession(clone_data) => {
-                    // If a new session was created, add it
-                    let _ = self
-                        .exch_mgr
-                        .add_session(&clone_data)
-                        .map_err(|e| error!("Error adding new session {:?}", e));
-                }
-                _ => {
-                    error!("Queue Message Type not yet handled {:?}", msg);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn start(&mut self) -> Result<(), Error> {
+impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
+    pub fn next_action(&mut self) -> Result<Option<RecvAction<'_, 'p>>, Error> {
         loop {
-            // Handle network operations
-            if self.handle_rxtx().is_err() {
-                error!("Error in handle_rxtx");
-                continue;
+            // Polonius will remove the need for unsafe one day
+            let this = unsafe { (self as *mut RecvCompletion).as_mut().unwrap() };
+
+            if let Some(action) = this.maybe_next_action()? {
+                return Ok(action);
             }
-
-            if self.handle_queue_msgs().is_err() {
-                error!("Error in handle_queue_msg");
-                continue;
-            }
-
-            // Handle any pending acknowledgement send
-            let mut acks_to_send: LinearMap<u16, (), { exchange::MAX_MRP_ENTRIES }> =
-                LinearMap::new();
-            self.exch_mgr.pending_acks(&mut acks_to_send);
-            for exch_id in acks_to_send.keys() {
-                info!("Sending MRP Standalone ACK for  exch {}", exch_id);
-                let mut proto_tx = match Self::new_tx() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        error!("Error creating proto_tx {:?}", e);
-                        break;
-                    }
-                };
-                ReliableMessage::prepare_ack(*exch_id, &mut proto_tx);
-                if let Err(e) = self.send_to_exchange(*exch_id, proto_tx) {
-                    error!("Error in sending Ack {:?}", e);
-                }
-            }
-
-            // Handle exchange purging
-            //    This need not be done in each turn of the loop, maybe once in 5 times or so?
-            self.exch_mgr.purge();
-
-            info!("Exchange Mgr: {}", self.exch_mgr);
         }
     }
 
-    fn new_tx() -> Result<BoxSlab<PacketPool>, Error> {
-        Slab::<PacketPool>::try_new(Packet::new_tx()?).ok_or(Error::PacketPoolExhaust)
+    fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'p>>>, Error> {
+        self.mgr.exch_mgr.purge();
+
+        match self.state {
+            RecvState::New => {
+                self.mgr.exch_mgr.get_sess_mgr().decode(self.rx)?;
+                self.state = RecvState::OpenExchange;
+                Ok(None)
+            }
+            RecvState::OpenExchange => match self.mgr.exch_mgr.recv(self.rx) {
+                Ok(Some(exch_ctx)) => {
+                    if self.rx.get_proto_id() == PROTO_ID_SECURE_CHANNEL {
+                        let mut proto_ctx = ProtoCtx::new(exch_ctx, self.rx, self.tx);
+
+                        if self.mgr.secure_channel.handle(&mut proto_ctx)? {
+                            proto_ctx.send()?;
+
+                            self.state = RecvState::Ack;
+                            Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                        } else {
+                            self.state = RecvState::Ack;
+                            Ok(None)
+                        }
+                    } else {
+                        let proto_ctx = ProtoCtx::new(exch_ctx, self.rx, self.tx);
+                        self.state = RecvState::Ack;
+
+                        Ok(Some(Some(RecvAction::Interact(proto_ctx))))
+                    }
+                }
+                Ok(None) => {
+                    self.state = RecvState::Ack;
+                    Ok(None)
+                }
+                Err(Error::NoSpace) => {
+                    self.state = RecvState::EvictSession;
+                    Ok(None)
+                }
+                Err(err) => Err(err),
+            },
+            RecvState::EvictSession => {
+                self.mgr.exch_mgr.evict_session(self.tx)?;
+                self.state = RecvState::OpenExchange;
+                Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+            }
+            RecvState::Ack => {
+                if let Some(exch_id) = self.mgr.exch_mgr.pending_ack() {
+                    info!("Sending MRP Standalone ACK for  exch {}", exch_id);
+
+                    ReliableMessage::prepare_ack(exch_id, self.tx);
+
+                    self.mgr.exch_mgr.send(exch_id, self.tx)?;
+                    Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                } else {
+                    Ok(Some(None))
+                }
+            }
+        }
     }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum NotifyState {}
+
+pub enum NotifyAction<'r, 'p> {
+    Send(&'r [u8]),
+    Notify(ProtoCtx<'r, 'p>),
+}
+
+pub struct NotifyCompletion<'r, 'a, 'p> {
+    // TODO
+    _mgr: &'r mut TransportMgr<'a>,
+    _rx: &'r mut Packet<'p>,
+    _tx: &'r mut Packet<'p>,
+    _state: NotifyState,
+}
+
+impl<'r, 'a, 'p> NotifyCompletion<'r, 'a, 'p> {
+    pub fn next_action(&mut self) -> Result<Option<NotifyAction<'_, 'p>>, Error> {
+        loop {
+            // Polonius will remove the need for unsafe one day
+            let this = unsafe { (self as *mut NotifyCompletion).as_mut().unwrap() };
+
+            if let Some(action) = this.maybe_next_action()? {
+                return Ok(action);
+            }
+        }
+    }
+
+    fn maybe_next_action(&mut self) -> Result<Option<Option<NotifyAction<'_, 'p>>>, Error> {
+        Ok(Some(None)) // TODO: Future
+    }
+}
+
+pub struct TransportMgr<'a> {
+    exch_mgr: exchange::ExchangeMgr,
+    secure_channel: SecureChannel<'a>,
+}
+
+impl<'a> TransportMgr<'a> {
+    pub fn new<
+        T: Borrow<RefCell<FabricMgr>> + Borrow<RefCell<PaseMgr>> + Borrow<Epoch> + Borrow<Rand>,
+    >(
+        matter: &'a T,
+        mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+    ) -> Self {
+        Self::wrap(
+            SecureChannel::new(matter.borrow(), matter.borrow(), mdns_mgr, *matter.borrow()),
+            *matter.borrow(),
+            *matter.borrow(),
+        )
+    }
+
+    pub fn wrap(secure_channel: SecureChannel<'a>, epoch: Epoch, rand: Rand) -> Self {
+        Self {
+            exch_mgr: exchange::ExchangeMgr::new(epoch, rand),
+            secure_channel,
+        }
+    }
+
+    pub fn recv<'r, 'p>(
+        &'r mut self,
+        rx: &'r mut Packet<'p>,
+        tx: &'r mut Packet<'p>,
+    ) -> RecvCompletion<'r, 'a, 'p> {
+        RecvCompletion {
+            mgr: self,
+            rx,
+            tx,
+            state: RecvState::New,
+        }
+    }
+
+    pub fn notify(&mut self, _tx: &mut Packet) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    // async fn handle_queue_msgs(&mut self) -> Result<(), Error> {
+    //     if let Ok(msg) = self.rx_q.try_recv() {
+    //         match msg {
+    //             Msg::NewSession(clone_data) => {
+    //                 // If a new session was created, add it
+    //                 let _ = self
+    //                     .exch_mgr
+    //                     .add_session(&clone_data)
+    //                     .await
+    //                     .map_err(|e| error!("Error adding new session {:?}", e));
+    //             }
+    //             _ => {
+    //                 error!("Queue Message Type not yet handled {:?}", msg);
+    //             }
+    //         }
+    //     }
+    //     Ok(())
+    // }
 }

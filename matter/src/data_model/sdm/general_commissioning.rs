@@ -15,16 +15,19 @@
  *    limitations under the License.
  */
 
-use crate::cmd_enter;
+use core::cell::RefCell;
+use core::convert::TryInto;
+
 use crate::data_model::objects::*;
 use crate::data_model::sdm::failsafe::FailSafe;
-use crate::interaction_model::core::IMStatusCode;
-use crate::interaction_model::messages::ib;
-use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
-use crate::{error::*, interaction_model::command::CommandReq};
-use log::{error, info};
-use num_derive::FromPrimitive;
-use std::sync::Arc;
+use crate::interaction_model::core::Transaction;
+use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
+use crate::transport::session::Session;
+use crate::utils::rand::Rand;
+use crate::{attribute_enum, cmd_enter};
+use crate::{command_enum, error::*};
+use log::info;
+use strum::{EnumDiscriminants, FromRepr};
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -38,22 +41,39 @@ enum CommissioningError {
 
 pub const ID: u32 = 0x0030;
 
-#[derive(FromPrimitive)]
+#[derive(FromRepr, EnumDiscriminants)]
+#[repr(u16)]
 pub enum Attributes {
-    BreadCrumb = 0,
-    BasicCommissioningInfo = 1,
-    RegConfig = 2,
-    LocationCapability = 3,
+    BreadCrumb(AttrType<u64>) = 0,
+    BasicCommissioningInfo(()) = 1,
+    RegConfig(AttrType<u8>) = 2,
+    LocationCapability(AttrType<u8>) = 3,
 }
 
-#[derive(FromPrimitive)]
+attribute_enum!(Attributes);
+
+#[derive(FromRepr)]
+#[repr(u32)]
 pub enum Commands {
     ArmFailsafe = 0x00,
-    ArmFailsafeResp = 0x01,
     SetRegulatoryConfig = 0x02,
-    SetRegulatoryConfigResp = 0x03,
     CommissioningComplete = 0x04,
+}
+
+command_enum!(Commands);
+
+#[repr(u16)]
+pub enum RespCommands {
+    ArmFailsafeResp = 0x01,
+    SetRegulatoryConfigResp = 0x03,
     CommissioningCompleteResp = 0x05,
+}
+
+#[derive(FromTLV, ToTLV)]
+#[tlvargs(lifetime = "'a")]
+struct CommonResponse<'a> {
+    error_code: u8,
+    debug_txt: UtfStr<'a>,
 }
 
 pub enum RegLocationType {
@@ -62,41 +82,39 @@ pub enum RegLocationType {
     IndoorOutdoor = 2,
 }
 
-fn attr_bread_crumb_new(bread_crumb: u64) -> Attribute {
-    Attribute::new(
-        Attributes::BreadCrumb as u16,
-        AttrValue::Uint64(bread_crumb),
-        Access::READ | Access::WRITE | Access::NEED_ADMIN,
-        Quality::NONE,
-    )
-}
-
-fn attr_reg_config_new(reg_config: RegLocationType) -> Attribute {
-    Attribute::new(
-        Attributes::RegConfig as u16,
-        AttrValue::Uint8(reg_config as u8),
-        Access::RV,
-        Quality::NONE,
-    )
-}
-
-fn attr_location_capability_new(reg_config: RegLocationType) -> Attribute {
-    Attribute::new(
-        Attributes::LocationCapability as u16,
-        AttrValue::Uint8(reg_config as u8),
-        Access::RV,
-        Quality::FIXED,
-    )
-}
-
-fn attr_comm_info_new() -> Attribute {
-    Attribute::new(
-        Attributes::BasicCommissioningInfo as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::FIXED,
-    )
-}
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID as _,
+    feature_map: 0,
+    attributes: &[
+        FEATURE_MAP,
+        ATTRIBUTE_LIST,
+        Attribute::new(
+            AttributesDiscriminants::BreadCrumb as u16,
+            Access::READ.union(Access::WRITE).union(Access::NEED_ADMIN),
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::RegConfig as u16,
+            Access::RV,
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::LocationCapability as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::BasicCommissioningInfo as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+    ],
+    commands: &[
+        Commands::ArmFailsafe as _,
+        Commands::SetRegulatoryConfig as _,
+        Commands::CommissioningComplete as _,
+    ],
+};
 
 #[derive(FromTLV, ToTLV)]
 struct FailSafeParams {
@@ -105,143 +123,134 @@ struct FailSafeParams {
 }
 
 pub struct GenCommCluster {
+    data_ver: Dataver,
     expiry_len: u16,
-    failsafe: Arc<FailSafe>,
-    base: Cluster,
-}
-
-impl ClusterType for GenCommCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
-    }
-
-    fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
-        match num::FromPrimitive::from_u16(attr.attr_id) {
-            Some(Attributes::BasicCommissioningInfo) => {
-                encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                    let _ = tw.start_struct(tag);
-                    let _ = tw.u16(TagType::Context(0), self.expiry_len);
-                    let _ = tw.end_container();
-                }))
-            }
-            _ => {
-                error!("Unsupported Attribute: this shouldn't happen");
-            }
-        }
-    }
-
-    fn handle_command(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
-        let cmd = cmd_req
-            .cmd
-            .path
-            .leaf
-            .map(num::FromPrimitive::from_u32)
-            .ok_or(IMStatusCode::UnsupportedCommand)?
-            .ok_or(IMStatusCode::UnsupportedCommand)?;
-        match cmd {
-            Commands::ArmFailsafe => self.handle_command_armfailsafe(cmd_req),
-            Commands::SetRegulatoryConfig => self.handle_command_setregulatoryconfig(cmd_req),
-            Commands::CommissioningComplete => self.handle_command_commissioningcomplete(cmd_req),
-            _ => Err(IMStatusCode::UnsupportedCommand),
-        }
-    }
+    failsafe: RefCell<FailSafe>,
 }
 
 impl GenCommCluster {
-    pub fn new() -> Result<Box<Self>, Error> {
-        let failsafe = Arc::new(FailSafe::new());
-
-        let mut c = Box::new(GenCommCluster {
+    pub fn new(rand: Rand) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
+            failsafe: RefCell::new(FailSafe::new()),
             // TODO: Arch-Specific
             expiry_len: 120,
-            failsafe,
-            base: Cluster::new(ID)?,
-        });
-        c.base.add_attribute(attr_bread_crumb_new(0))?;
-        // TODO: Arch-Specific
-        c.base
-            .add_attribute(attr_reg_config_new(RegLocationType::IndoorOutdoor))?;
-        // TODO: Arch-Specific
-        c.base
-            .add_attribute(attr_location_capability_new(RegLocationType::IndoorOutdoor))?;
-        c.base.add_attribute(attr_comm_info_new())?;
-
-        Ok(c)
+        }
     }
 
-    pub fn failsafe(&self) -> Arc<FailSafe> {
-        self.failsafe.clone()
+    pub fn failsafe(&self) -> &RefCell<FailSafe> {
+        &self.failsafe
     }
 
-    fn handle_command_armfailsafe(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
-        cmd_enter!("ARM Fail Safe");
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::BreadCrumb(codec) => codec.encode(writer, 0),
+                    // TODO: Arch-Specific
+                    Attributes::RegConfig(codec) => {
+                        codec.encode(writer, RegLocationType::IndoorOutdoor as _)
+                    }
+                    // TODO: Arch-Specific
+                    Attributes::LocationCapability(codec) => {
+                        codec.encode(writer, RegLocationType::IndoorOutdoor as _)
+                    }
+                    Attributes::BasicCommissioningInfo(_) => {
+                        writer.start_struct(AttrDataWriter::TAG)?;
+                        writer.u16(TagType::Context(0), self.expiry_len)?;
+                        writer.end_container()?;
 
-        let p = FailSafeParams::from_tlv(&cmd_req.data)?;
-        let mut status = CommissioningError::Ok as u8;
+                        writer.complete()
+                    }
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
 
-        if self
-            .failsafe
-            .arm(p.expiry_len, cmd_req.trans.session.get_session_mode())
-            .is_err()
-        {
-            status = CommissioningError::ErrBusyWithOtherAdmin as u8;
+    pub fn invoke(
+        &mut self,
+        session: &mut Session,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        match cmd.cmd_id.try_into()? {
+            Commands::ArmFailsafe => self.handle_command_armfailsafe(session, data, encoder)?,
+            Commands::SetRegulatoryConfig => {
+                self.handle_command_setregulatoryconfig(data, encoder)?
+            }
+            Commands::CommissioningComplete => {
+                self.handle_command_commissioningcomplete(session, encoder)?;
+            }
         }
 
-        let cmd_data = CommonResponse {
-            error_code: status,
-            debug_txt: "".to_owned(),
-        };
-        let resp = ib::InvResp::cmd_new(
-            0,
-            ID,
-            Commands::ArmFailsafeResp as u16,
-            EncodeValue::Value(&cmd_data),
-        );
-        let _ = resp.to_tlv(cmd_req.resp, TagType::Anonymous);
-        cmd_req.trans.complete();
+        self.data_ver.changed();
+
         Ok(())
+    }
+
+    fn handle_command_armfailsafe(
+        &mut self,
+        session: &Session,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        cmd_enter!("ARM Fail Safe");
+
+        let p = FailSafeParams::from_tlv(data)?;
+
+        self.failsafe
+            .borrow_mut()
+            .arm(p.expiry_len, session.get_session_mode())
+            .map_err(|e| e.remap(|_| true, Error::Busy))?;
+
+        let cmd_data = CommonResponse {
+            error_code: CommissioningError::ErrBusyWithOtherAdmin as u8,
+            debug_txt: UtfStr::new(b""),
+        };
+
+        encoder
+            .with_command(RespCommands::ArmFailsafeResp as _)?
+            .set(&cmd_data)
     }
 
     fn handle_command_setregulatoryconfig(
         &mut self,
-        cmd_req: &mut CommandReq,
-    ) -> Result<(), IMStatusCode> {
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
         cmd_enter!("Set Regulatory Config");
-        let country_code = cmd_req
-            .data
+        let country_code = data
             .find_tag(1)
-            .map_err(|_| IMStatusCode::InvalidCommand)?
+            .map_err(|_| Error::InvalidCommand)?
             .slice()
-            .map_err(|_| IMStatusCode::InvalidCommand)?;
+            .map_err(|_| Error::InvalidCommand)?;
         info!("Received country code: {:?}", country_code);
 
         let cmd_data = CommonResponse {
             error_code: 0,
-            debug_txt: "".to_owned(),
+            debug_txt: UtfStr::new(b""),
         };
-        let resp = ib::InvResp::cmd_new(
-            0,
-            ID,
-            Commands::SetRegulatoryConfigResp as u16,
-            EncodeValue::Value(&cmd_data),
-        );
-        let _ = resp.to_tlv(cmd_req.resp, TagType::Anonymous);
-        cmd_req.trans.complete();
-        Ok(())
+
+        encoder
+            .with_command(RespCommands::SetRegulatoryConfigResp as _)?
+            .set(&cmd_data)
     }
 
     fn handle_command_commissioningcomplete(
         &mut self,
-        cmd_req: &mut CommandReq,
-    ) -> Result<(), IMStatusCode> {
+        session: &Session,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
         cmd_enter!("Commissioning Complete");
         let mut status: u8 = CommissioningError::Ok as u8;
 
         // Has to be a Case Session
-        if cmd_req.trans.session.get_local_fabric_idx().is_none() {
+        if session.get_local_fabric_idx().is_none() {
             status = CommissioningError::ErrInvalidAuth as u8;
         }
 
@@ -249,7 +258,8 @@ impl GenCommCluster {
         // scope that is for this session
         if self
             .failsafe
-            .disarm(cmd_req.trans.session.get_session_mode())
+            .borrow_mut()
+            .disarm(session.get_session_mode())
             .is_err()
         {
             status = CommissioningError::ErrInvalidAuth as u8;
@@ -257,22 +267,35 @@ impl GenCommCluster {
 
         let cmd_data = CommonResponse {
             error_code: status,
-            debug_txt: "".to_owned(),
+            debug_txt: UtfStr::new(b""),
         };
-        let resp = ib::InvResp::cmd_new(
-            0,
-            ID,
-            Commands::CommissioningCompleteResp as u16,
-            EncodeValue::Value(&cmd_data),
-        );
-        let _ = resp.to_tlv(cmd_req.resp, TagType::Anonymous);
-        cmd_req.trans.complete();
-        Ok(())
+
+        encoder
+            .with_command(RespCommands::CommissioningCompleteResp as _)?
+            .set(&cmd_data)
     }
 }
 
-#[derive(FromTLV, ToTLV)]
-struct CommonResponse {
-    error_code: u8,
-    debug_txt: String,
+impl Handler for GenCommCluster {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        GenCommCluster::read(self, attr, encoder)
+    }
+
+    fn invoke(
+        &mut self,
+        transaction: &mut Transaction,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        GenCommCluster::invoke(self, transaction.session_mut(), cmd, data, encoder)
+    }
+}
+
+impl NonBlockingHandler for GenCommCluster {}
+
+impl ChangeNotifier<()> for GenCommCluster {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
+    }
 }

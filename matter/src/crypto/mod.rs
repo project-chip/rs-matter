@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
-
 pub const SYMM_KEY_LEN_BITS: usize = 128;
 pub const SYMM_KEY_LEN_BYTES: usize = SYMM_KEY_LEN_BITS / 8;
 
@@ -34,16 +32,6 @@ pub const EC_POINT_LEN_BYTES: usize = 65;
 pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
 
 pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
-
-// APIs particular to a KeyPair so a KeyPair object can be defined
-pub trait CryptoKeyPair {
-    fn get_csr<'a>(&self, csr: &'a mut [u8]) -> Result<&'a [u8], Error>;
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error>;
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error>;
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error>;
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error>;
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error>;
-}
 
 #[cfg(feature = "crypto_esp_mbedtls")]
 mod crypto_esp_mbedtls;
@@ -65,13 +53,26 @@ mod crypto_rustcrypto;
 #[cfg(feature = "crypto_rustcrypto")]
 pub use self::crypto_rustcrypto::*;
 
+#[cfg(not(any(
+    feature = "crypto_openssl",
+    feature = "crypto_mbedtls",
+    feature = "crypto_esp_mbedtls",
+    feature = "crypto_rustcrypto"
+)))]
 pub mod crypto_dummy;
+#[cfg(not(any(
+    feature = "crypto_openssl",
+    feature = "crypto_mbedtls",
+    feature = "crypto_esp_mbedtls",
+    feature = "crypto_rustcrypto"
+)))]
+pub use self::crypto_dummy::*;
 
 #[cfg(test)]
 mod tests {
     use crate::error::Error;
 
-    use super::{CryptoKeyPair, KeyPair};
+    use super::KeyPair;
 
     #[test]
     fn test_verify_msg_success() {

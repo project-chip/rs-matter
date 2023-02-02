@@ -18,8 +18,8 @@
 use super::{CertConsumer, MAX_DEPTH};
 use crate::error::Error;
 use chrono::{TimeZone, Utc};
+use core::fmt;
 use log::warn;
-use std::fmt;
 
 pub struct CertPrinter<'a, 'b> {
     level: usize,

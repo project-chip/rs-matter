@@ -15,104 +15,91 @@
  *    limitations under the License.
  */
 
-use crate::{data_model::objects::ClusterType, error::*, interaction_model::core::IMStatusCode};
+use crate::{acl::Accessor, interaction_model::core::IMStatusCode};
 
-use std::fmt;
+use core::fmt;
 
-use super::{ClusterId, DeviceType};
+use super::{AttrId, Cluster, ClusterId, CmdId, DeviceType, EndptId};
 
-pub const CLUSTERS_PER_ENDPT: usize = 9;
-
-pub struct Endpoint {
-    dev_type: DeviceType,
-    clusters: Vec<Box<dyn ClusterType>>,
+#[derive(Debug, Clone)]
+pub struct Endpoint<'a> {
+    pub id: EndptId,
+    pub device_type: DeviceType,
+    pub clusters: &'a [Cluster<'a>],
 }
 
-pub type BoxedClusters = [Box<dyn ClusterType>];
-
-impl Endpoint {
-    pub fn new(dev_type: DeviceType) -> Result<Box<Endpoint>, Error> {
-        Ok(Box::new(Endpoint {
-            dev_type,
-            clusters: Vec::with_capacity(CLUSTERS_PER_ENDPT),
-        }))
+impl<'a> Endpoint<'a> {
+    pub(crate) fn match_attributes<'m>(
+        &'m self,
+        accessor: &'m Accessor<'m>,
+        cl: Option<ClusterId>,
+        attr: Option<AttrId>,
+        write: bool,
+    ) -> impl Iterator<Item = (ClusterId, AttrId)> + 'm {
+        self.match_clusters(cl).flat_map(move |cluster| {
+            cluster
+                .match_attributes(accessor, self.id, attr, write)
+                .map(move |attr| (cluster.id, attr))
+        })
     }
 
-    pub fn add_cluster(&mut self, cluster: Box<dyn ClusterType>) -> Result<(), Error> {
-        if self.clusters.len() < self.clusters.capacity() {
-            self.clusters.push(cluster);
-            Ok(())
-        } else {
-            Err(Error::NoSpace)
-        }
+    pub(crate) fn match_commands<'m>(
+        &'m self,
+        accessor: &'m Accessor<'m>,
+        cl: Option<ClusterId>,
+        cmd: Option<CmdId>,
+    ) -> impl Iterator<Item = (ClusterId, CmdId)> + 'm {
+        self.match_clusters(cl).flat_map(move |cluster| {
+            cluster
+                .match_commands(accessor, self.id, cmd)
+                .map(move |cmd| (cluster.id, cmd))
+        })
     }
 
-    pub fn get_dev_type(&self) -> &DeviceType {
-        &self.dev_type
-    }
-
-    fn get_cluster_index(&self, cluster_id: ClusterId) -> Option<usize> {
-        self.clusters.iter().position(|c| c.base().id == cluster_id)
-    }
-
-    pub fn get_cluster(&self, cluster_id: ClusterId) -> Result<&dyn ClusterType, Error> {
-        let index = self
-            .get_cluster_index(cluster_id)
-            .ok_or(Error::ClusterNotFound)?;
-        Ok(self.clusters[index].as_ref())
-    }
-
-    pub fn get_cluster_mut(
-        &mut self,
-        cluster_id: ClusterId,
-    ) -> Result<&mut dyn ClusterType, Error> {
-        let index = self
-            .get_cluster_index(cluster_id)
-            .ok_or(Error::ClusterNotFound)?;
-        Ok(self.clusters[index].as_mut())
-    }
-
-    // Returns a slice of clusters, with either a single cluster or all (wildcard)
-    pub fn get_wildcard_clusters(
+    pub(crate) fn check_attribute(
         &self,
-        cluster: Option<ClusterId>,
-    ) -> Result<(&BoxedClusters, bool), IMStatusCode> {
-        if let Some(c) = cluster {
-            if let Some(i) = self.get_cluster_index(c) {
-                Ok((&self.clusters[i..i + 1], false))
-            } else {
-                Err(IMStatusCode::UnsupportedCluster)
-            }
-        } else {
-            Ok((self.clusters.as_slice(), true))
-        }
+        accessor: &Accessor,
+        cl: ClusterId,
+        attr: AttrId,
+        write: bool,
+    ) -> Result<(), IMStatusCode> {
+        self.check_cluster(cl)
+            .and_then(|cluster| cluster.check_attribute(accessor, self.id, attr, write))
     }
 
-    // Returns a slice of clusters, with either a single cluster or all (wildcard)
-    pub fn get_wildcard_clusters_mut(
-        &mut self,
-        cluster: Option<ClusterId>,
-    ) -> Result<(&mut BoxedClusters, bool), IMStatusCode> {
-        if let Some(c) = cluster {
-            if let Some(i) = self.get_cluster_index(c) {
-                Ok((&mut self.clusters[i..i + 1], false))
-            } else {
-                Err(IMStatusCode::UnsupportedCluster)
-            }
-        } else {
-            Ok((&mut self.clusters[..], true))
-        }
+    pub(crate) fn check_command(
+        &self,
+        accessor: &Accessor,
+        cl: ClusterId,
+        cmd: CmdId,
+    ) -> Result<(), IMStatusCode> {
+        self.check_cluster(cl)
+            .and_then(|cluster| cluster.check_command(accessor, self.id, cmd))
+    }
+
+    fn match_clusters(&self, cl: Option<ClusterId>) -> impl Iterator<Item = &Cluster> + '_ {
+        self.clusters
+            .iter()
+            .filter(move |cluster| cl.map(|id| id == cluster.id).unwrap_or(true))
+    }
+
+    fn check_cluster(&self, cl: ClusterId) -> Result<&Cluster, IMStatusCode> {
+        self.clusters
+            .iter()
+            .find(|cluster| cluster.id == cl)
+            .ok_or(IMStatusCode::UnsupportedCluster)
     }
 }
 
-impl std::fmt::Display for Endpoint {
+impl<'a> core::fmt::Display for Endpoint<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "clusters:[")?;
         let mut comma = "";
-        for element in self.clusters.iter() {
-            write!(f, "{} {{ {} }}", comma, element.base())?;
+        for cluster in self.clusters {
+            write!(f, "{} {{ {} }}", comma, cluster)?;
             comma = ", ";
         }
+
         write!(f, "]")
     }
 }

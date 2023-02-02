@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use std::collections::BTreeMap;
+use heapless::FnvIndexMap;
 
 use crate::{
     tlv::{TLVWriter, TagType},
@@ -55,7 +55,7 @@ const SERIAL_NUMBER_TAG: u8 = 0x00;
 // const COMMISSIONING_TIMEOUT_TAG: u8 = 0x04;
 
 pub enum QRCodeInfoType {
-    String(String),
+    String(heapless::String<128>), // TODO: Big enough?
     Int32(i32),
     Int64(i64),
     UInt32(u32),
@@ -63,7 +63,7 @@ pub enum QRCodeInfoType {
 }
 
 pub enum SerialNumber {
-    String(String),
+    String(heapless::String<128>),
     UInt32(u32),
 }
 
@@ -78,10 +78,10 @@ pub struct QrSetupPayload<'data> {
     version: u8,
     flow_type: CommissionningFlowType,
     discovery_capabilities: DiscoveryCapabilities,
-    dev_det: &'data BasicInfoConfig,
+    dev_det: &'data BasicInfoConfig<'data>,
     comm_data: &'data CommissioningData,
     // we use a BTreeMap to keep the order of the optional data stable
-    optional_data: BTreeMap<u8, OptionalQRCodeInfo>,
+    optional_data: heapless::FnvIndexMap<u8, OptionalQRCodeInfo, 16>,
 }
 
 impl<'data> QrSetupPayload<'data> {
@@ -98,11 +98,11 @@ impl<'data> QrSetupPayload<'data> {
             discovery_capabilities,
             dev_det,
             comm_data,
-            optional_data: BTreeMap::new(),
+            optional_data: FnvIndexMap::new(),
         };
 
         if !dev_det.serial_no.is_empty() {
-            result.add_serial_number(SerialNumber::String(dev_det.serial_no.clone()));
+            result.add_serial_number(SerialNumber::String(dev_det.serial_no.into()));
         }
 
         result
@@ -137,7 +137,9 @@ impl<'data> QrSetupPayload<'data> {
         }
 
         self.optional_data
-            .insert(tag, OptionalQRCodeInfo { tag, data });
+            .insert(tag, OptionalQRCodeInfo { tag, data })
+            .map_err(|_| Error::NoSpace)?;
+
         Ok(())
     }
 
@@ -155,11 +157,13 @@ impl<'data> QrSetupPayload<'data> {
         }
 
         self.optional_data
-            .insert(tag, OptionalQRCodeInfo { tag, data });
+            .insert(tag, OptionalQRCodeInfo { tag, data })
+            .map_err(|_| Error::NoSpace)?;
+
         Ok(())
     }
 
-    pub fn get_all_optional_data(&self) -> &BTreeMap<u8, OptionalQRCodeInfo> {
+    pub fn get_all_optional_data(&self) -> &FnvIndexMap<u8, OptionalQRCodeInfo, 16> {
         &self.optional_data
     }
 
@@ -388,7 +392,7 @@ fn generate_tlv_from_optional_data(
 ) -> Result<(), Error> {
     let size_needed = tlv_data.max_data_length_in_bytes as usize;
     let mut tlv_buffer = vec![0u8; size_needed];
-    let mut wb = WriteBuf::new(&mut tlv_buffer, size_needed);
+    let mut wb = WriteBuf::new(&mut tlv_buffer);
     let mut tw = TLVWriter::new(&mut wb);
 
     tw.start_struct(TagType::Anonymous)?;
@@ -532,16 +536,15 @@ fn is_common_tag(tag: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::secure_channel::spake2p::VerifierData;
+    use crate::{secure_channel::spake2p::VerifierData, utils::rand::dummy_rand};
 
     #[test]
     fn can_base38_encode() {
         const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
 
         let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(34567890),
+            verifier: VerifierData::new_with_pw(34567890, dummy_rand),
             discriminator: 2976,
         };
         let dev_det = BasicInfoConfig {
@@ -561,13 +564,13 @@ mod tests {
         const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
 
         let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(20202021),
+            verifier: VerifierData::new_with_pw(20202021, dummy_rand),
             discriminator: 3840,
         };
         let dev_det = BasicInfoConfig {
             vid: 65521,
             pid: 32769,
-            serial_no: "1234567890".to_string(),
+            serial_no: "1234567890",
             ..Default::default()
         };
 
@@ -588,13 +591,13 @@ mod tests {
         const OPTIONAL_DEFAULT_INT_VALUE: i32 = 65550;
 
         let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(20202021),
+            verifier: VerifierData::new_with_pw(20202021, dummy_rand),
             discriminator: 3840,
         };
         let dev_det = BasicInfoConfig {
             vid: 65521,
             pid: 32769,
-            serial_no: "1234567890".to_string(),
+            serial_no: "1234567890",
             ..Default::default()
         };
 
@@ -604,7 +607,7 @@ mod tests {
         qr_code_data
             .add_optional_vendor_data(
                 OPTIONAL_DEFAULT_STRING_TAG,
-                QRCodeInfoType::String(OPTIONAL_DEFAULT_STRING_VALUE.to_string()),
+                QRCodeInfoType::String(OPTIONAL_DEFAULT_STRING_VALUE.into()),
             )
             .expect("Failed to add optional data");
 

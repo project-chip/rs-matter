@@ -17,7 +17,6 @@
 
 use crate::error::Error;
 
-use super::crypto::CryptoSpake2;
 use byteorder::{ByteOrder, LittleEndian};
 use log::error;
 use openssl::{
@@ -44,7 +43,7 @@ const MATTER_N_BIN: [u8; 65] = [
 
 #[allow(non_snake_case)]
 
-pub struct CryptoOpenSSL {
+pub struct CryptoSpake2 {
     group: EcGroup,
     bn_ctx: BigNumContext,
     // Stores the randomly generated x or y depending upon who we are
@@ -58,9 +57,9 @@ pub struct CryptoOpenSSL {
     order: BigNum,
 }
 
-impl CryptoSpake2 for CryptoOpenSSL {
+impl CryptoSpake2 {
     #[allow(non_snake_case)]
-    fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
         let mut bn_ctx = BigNumContext::new()?;
         let M = EcPoint::from_bytes(&group, &MATTER_M_BIN, &mut bn_ctx)?;
@@ -70,7 +69,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
         let mut order = BigNum::new()?;
         group.as_ref().order(&mut order, &mut bn_ctx)?;
 
-        Ok(CryptoOpenSSL {
+        Ok(Self {
             group,
             bn_ctx,
             xy: BigNum::new()?,
@@ -85,7 +84,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
     }
 
     // Computes w0 from w0s respectively
-    fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error> {
+    pub fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error> {
         // From the Matter Spec,
         //         w0 = w0s mod p
         //   where p is the order of the curve
@@ -96,7 +95,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
         Ok(())
     }
 
-    fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    pub fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter Spec,
         //         w1 = w1s mod p
         //   where p is the order of the curve
@@ -107,24 +106,24 @@ impl CryptoSpake2 for CryptoOpenSSL {
         Ok(())
     }
 
-    fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
+    pub fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
         self.w0 = BigNum::from_slice(w0)?;
         Ok(())
     }
 
-    fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
+    pub fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
         self.w1 = BigNum::from_slice(w1)?;
         Ok(())
     }
 
-    fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
+    pub fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
         self.L = EcPoint::from_bytes(&self.group, l, &mut self.bn_ctx)?;
         Ok(())
     }
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
-    fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    pub fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
@@ -135,7 +134,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
     }
 
     #[allow(non_snake_case)]
-    fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
+    pub fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
@@ -143,7 +142,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
         //   - pB = Y
         self.order.rand_range(&mut self.xy)?;
         let P = self.group.generator();
-        self.pB = CryptoOpenSSL::do_add_mul(
+        self.pB = Self::do_add_mul(
             P,
             &self.xy,
             &self.N,
@@ -166,7 +165,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
     }
 
     #[allow(non_snake_case)]
-    fn get_TT_as_verifier(
+    pub fn get_TT_as_verifier(
         &mut self,
         context: &[u8],
         pA: &[u8],
@@ -175,21 +174,21 @@ impl CryptoSpake2 for CryptoOpenSSL {
     ) -> Result<(), Error> {
         let mut TT = Hasher::new(MessageDigest::sha256())?;
         // context
-        CryptoOpenSSL::add_to_tt(&mut TT, context)?;
+        Self::add_to_tt(&mut TT, context)?;
         // 2 empty identifiers
-        CryptoOpenSSL::add_to_tt(&mut TT, &[])?;
-        CryptoOpenSSL::add_to_tt(&mut TT, &[])?;
+        Self::add_to_tt(&mut TT, &[])?;
+        Self::add_to_tt(&mut TT, &[])?;
         // M
-        CryptoOpenSSL::add_to_tt(&mut TT, &MATTER_M_BIN)?;
+        Self::add_to_tt(&mut TT, &MATTER_M_BIN)?;
         // N
-        CryptoOpenSSL::add_to_tt(&mut TT, &MATTER_N_BIN)?;
+        Self::add_to_tt(&mut TT, &MATTER_N_BIN)?;
         // X = pA
-        CryptoOpenSSL::add_to_tt(&mut TT, pA)?;
+        Self::add_to_tt(&mut TT, pA)?;
         // Y = pB
-        CryptoOpenSSL::add_to_tt(&mut TT, pB)?;
+        Self::add_to_tt(&mut TT, pB)?;
 
         let X = EcPoint::from_bytes(&self.group, pA, &mut self.bn_ctx)?;
-        let (Z, V) = CryptoOpenSSL::get_ZV_as_verifier(
+        let (Z, V) = Self::get_ZV_as_verifier(
             &self.w0,
             &self.L,
             &mut self.M,
@@ -207,7 +206,7 @@ impl CryptoSpake2 for CryptoOpenSSL {
             &mut self.bn_ctx,
         )?;
         let tmp = tmp.as_slice();
-        CryptoOpenSSL::add_to_tt(&mut TT, tmp)?;
+        Self::add_to_tt(&mut TT, tmp)?;
 
         // V
         let tmp = V.to_bytes(
@@ -216,20 +215,18 @@ impl CryptoSpake2 for CryptoOpenSSL {
             &mut self.bn_ctx,
         )?;
         let tmp = tmp.as_slice();
-        CryptoOpenSSL::add_to_tt(&mut TT, tmp)?;
+        Self::add_to_tt(&mut TT, tmp)?;
 
         // w0
         let tmp = self.w0.to_vec();
         let tmp = tmp.as_slice();
-        CryptoOpenSSL::add_to_tt(&mut TT, tmp)?;
+        Self::add_to_tt(&mut TT, tmp)?;
 
         let h = TT.finish()?;
         TT_hash.copy_from_slice(h.as_ref());
         Ok(())
     }
-}
 
-impl CryptoOpenSSL {
     fn add_to_tt(tt: &mut Hasher, buf: &[u8]) -> Result<(), Error> {
         let mut len_buf: [u8; 8] = [0; 8];
         LittleEndian::write_u64(&mut len_buf, buf.len() as u64);
@@ -286,11 +283,11 @@ impl CryptoOpenSSL {
         let mut tmp = BigNum::new()?;
         tmp.mod_mul(x, w0, order, bn_ctx)?;
         N.invert(group, bn_ctx)?;
-        let Z = CryptoOpenSSL::do_add_mul(Y, x, N, &tmp, group, bn_ctx)?;
+        let Z = Self::do_add_mul(Y, x, N, &tmp, group, bn_ctx)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
         tmp.mod_mul(w1, w0, order, bn_ctx)?;
-        let V = CryptoOpenSSL::do_add_mul(Y, w1, N, &tmp, group, bn_ctx)?;
+        let V = Self::do_add_mul(Y, w1, N, &tmp, group, bn_ctx)?;
         Ok((Z, V))
     }
 
@@ -321,7 +318,7 @@ impl CryptoOpenSSL {
         let mut tmp = BigNum::new()?;
         tmp.mod_mul(y, w0, order, bn_ctx)?;
         M.invert(group, bn_ctx)?;
-        let Z = CryptoOpenSSL::do_add_mul(X, y, M, &tmp, group, bn_ctx)?;
+        let Z = Self::do_add_mul(X, y, M, &tmp, group, bn_ctx)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
         let mut V = EcPoint::new(group)?;
@@ -333,7 +330,7 @@ impl CryptoOpenSSL {
 #[cfg(test)]
 mod tests {
 
-    use super::CryptoOpenSSL;
+    use super::CryptoSpake2;
     use crate::secure_channel::crypto::CryptoSpake2;
     use crate::secure_channel::spake2p_test_vectors::test_vectors::*;
     use openssl::bn::BigNum;
@@ -343,12 +340,12 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_X() {
         for t in RFC_T {
-            let mut c = CryptoOpenSSL::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let x = BigNum::from_slice(&t.x).unwrap();
             c.set_w0(&t.w0).unwrap();
             let P = c.group.generator();
 
-            let r = CryptoOpenSSL::do_add_mul(P, &x, &c.M, &c.w0, &c.group, &mut c.bn_ctx).unwrap();
+            let r = CryptoSpake2::do_add_mul(P, &x, &c.M, &c.w0, &c.group, &mut c.bn_ctx).unwrap();
             assert_eq!(
                 t.X,
                 r.to_bytes(&c.group, PointConversionForm::UNCOMPRESSED, &mut c.bn_ctx)
@@ -362,11 +359,11 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_Y() {
         for t in RFC_T {
-            let mut c = CryptoOpenSSL::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let y = BigNum::from_slice(&t.y).unwrap();
             c.set_w0(&t.w0).unwrap();
             let P = c.group.generator();
-            let r = CryptoOpenSSL::do_add_mul(P, &y, &c.N, &c.w0, &c.group, &mut c.bn_ctx).unwrap();
+            let r = CryptoSpake2::do_add_mul(P, &y, &c.N, &c.w0, &c.group, &mut c.bn_ctx).unwrap();
             assert_eq!(
                 t.Y,
                 r.to_bytes(&c.group, PointConversionForm::UNCOMPRESSED, &mut c.bn_ctx)
@@ -380,12 +377,12 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_prover() {
         for t in RFC_T {
-            let mut c = CryptoOpenSSL::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let x = BigNum::from_slice(&t.x).unwrap();
             c.set_w0(&t.w0).unwrap();
             c.set_w1(&t.w1).unwrap();
             let Y = EcPoint::from_bytes(&c.group, &t.Y, &mut c.bn_ctx).unwrap();
-            let (Z, V) = CryptoOpenSSL::get_ZV_as_prover(
+            let (Z, V) = CryptoSpake2::get_ZV_as_prover(
                 &c.w0,
                 &c.w1,
                 &mut c.N,
@@ -416,12 +413,12 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_verifier() {
         for t in RFC_T {
-            let mut c = CryptoOpenSSL::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let y = BigNum::from_slice(&t.y).unwrap();
             c.set_w0(&t.w0).unwrap();
             let X = EcPoint::from_bytes(&c.group, &t.X, &mut c.bn_ctx).unwrap();
             let L = EcPoint::from_bytes(&c.group, &t.L, &mut c.bn_ctx).unwrap();
-            let (Z, V) = CryptoOpenSSL::get_ZV_as_verifier(
+            let (Z, V) = CryptoSpake2::get_ZV_as_verifier(
                 &c.w0,
                 &L,
                 &mut c.M,

@@ -18,52 +18,25 @@
 use matter::{
     data_model::{
         cluster_on_off,
-        core::DataModel,
-        objects::{AttrValue, EncodeValue, GlobalElements},
+        objects::{EncodeValue, GlobalElements},
     },
     interaction_model::{
-        core::{IMStatusCode, OpCode},
+        core::IMStatusCode,
+        messages::ib::{AttrData, AttrPath, AttrResp, AttrStatus},
         messages::GenericPath,
-        messages::{
-            ib::{AttrData, AttrPath, AttrResp, AttrStatus},
-            msg::{ReadReq, ReportDataMsg, WriteReq, WriteResp},
-        },
     },
-    tlv::{self, ElementType, FromTLV, TLVElement, TLVWriter, TagType},
+    mdns::DummyMdns,
+    tlv::{ElementType, TLVElement, TLVWriter, TagType},
 };
 
 use crate::{
     attr_data, attr_data_path, attr_status,
-    common::{attributes::*, echo_cluster, im_engine::im_engine},
+    common::{
+        attributes::*,
+        echo_cluster,
+        im_engine::{matter, ImEngine},
+    },
 };
-
-fn handle_read_reqs(input: &[AttrPath], expected: &[AttrResp]) {
-    let mut out_buf = [0u8; 400];
-    let received = gen_read_reqs_output(input, &mut out_buf);
-    assert_attr_report(&received, expected)
-}
-
-// Helper for handling Read Req sequences
-fn gen_read_reqs_output<'a>(input: &[AttrPath], out_buf: &'a mut [u8]) -> ReportDataMsg<'a> {
-    let read_req = ReadReq::new(true).set_attr_requests(input);
-    let (_, _, out_buf) = im_engine(OpCode::ReadRequest, &read_req, out_buf);
-    tlv::print_tlv_list(out_buf);
-    let root = tlv::get_root_node_struct(out_buf).unwrap();
-    ReportDataMsg::from_tlv(&root).unwrap()
-}
-
-// Helper for handling Write Attribute sequences
-fn handle_write_reqs(input: &[AttrData], expected: &[AttrStatus]) -> DataModel {
-    let mut out_buf = [0u8; 400];
-    let write_req = WriteReq::new(false, input);
-
-    let (dm, _, out_buf) = im_engine(OpCode::WriteRequest, &write_req, &mut out_buf);
-    let root = tlv::get_root_node_struct(out_buf).unwrap();
-    let response = WriteResp::from_tlv(&root).unwrap();
-    assert_eq!(response.write_responses, expected);
-
-    dm
-}
 
 #[test]
 fn test_read_success() {
@@ -76,17 +49,17 @@ fn test_read_success() {
     let ep0_att1 = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::Att1 as u32),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
     let ep1_att2 = GenericPath::new(
         Some(1),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::Att2 as u32),
+        Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
     );
     let ep1_attcustom = GenericPath::new(
         Some(1),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttCustom as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
     );
     let input = &[
         AttrPath::new(&ep0_att1),
@@ -101,7 +74,7 @@ fn test_read_success() {
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
     ];
-    handle_read_reqs(input, expected);
+    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
 }
 
 #[test]
@@ -118,17 +91,17 @@ fn test_read_unsupported_fields() {
     let invalid_endpoint = GenericPath::new(
         Some(2),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::Att1 as u32),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
     let invalid_cluster = GenericPath::new(
         Some(0),
         Some(0x1234),
-        Some(echo_cluster::Attributes::Att1 as u32),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
     let invalid_cluster_wc_endpoint = GenericPath::new(
         None,
         Some(0x1234),
-        Some(echo_cluster::Attributes::AttCustom as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
     );
     let invalid_attribute = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(0x1234));
     let invalid_attribute_wc_endpoint =
@@ -148,7 +121,7 @@ fn test_read_unsupported_fields() {
         attr_status!(&invalid_cluster, IMStatusCode::UnsupportedCluster),
         attr_status!(&invalid_attribute, IMStatusCode::UnsupportedAttribute),
     ];
-    handle_read_reqs(input, expected);
+    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
 }
 
 #[test]
@@ -161,7 +134,7 @@ fn test_read_wc_endpoint_all_have_clusters() {
     let wc_ep_att1 = GenericPath::new(
         None,
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::Att1 as u32),
+        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
     let input = &[AttrPath::new(&wc_ep_att1)];
 
@@ -169,17 +142,17 @@ fn test_read_wc_endpoint_all_have_clusters() {
         attr_data!(
             0,
             echo_cluster::ID,
-            echo_cluster::Attributes::Att1,
+            echo_cluster::AttributesDiscriminants::Att1,
             ElementType::U16(0x1234)
         ),
         attr_data!(
             1,
             echo_cluster::ID,
-            echo_cluster::Attributes::Att1,
+            echo_cluster::AttributesDiscriminants::Att1,
             ElementType::U16(0x1234)
         ),
     ];
-    handle_read_reqs(input, expected);
+    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
 }
 
 #[test]
@@ -192,7 +165,7 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
     let wc_ep_onoff = GenericPath::new(
         None,
         Some(cluster_on_off::ID),
-        Some(cluster_on_off::Attributes::OnOff as u32),
+        Some(cluster_on_off::AttributesDiscriminants::OnOff as u32),
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
@@ -200,11 +173,11 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
         GenericPath::new(
             Some(1),
             Some(cluster_on_off::ID),
-            Some(cluster_on_off::Attributes::OnOff as u32)
+            Some(cluster_on_off::AttributesDiscriminants::OnOff as u32)
         ),
         ElementType::False
     )];
-    handle_read_reqs(input, expected);
+    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
 }
 
 #[test]
@@ -221,10 +194,10 @@ fn test_read_wc_endpoint_wc_attribute() {
         &[
             GlobalElements::FeatureMap as u16,
             GlobalElements::AttributeList as u16,
-            echo_cluster::Attributes::Att1 as u16,
-            echo_cluster::Attributes::Att2 as u16,
-            echo_cluster::Attributes::AttWrite as u16,
-            echo_cluster::Attributes::AttCustom as u16,
+            echo_cluster::AttributesDiscriminants::Att1 as u16,
+            echo_cluster::AttributesDiscriminants::Att2 as u16,
+            echo_cluster::AttributesDiscriminants::AttWrite as u16,
+            echo_cluster::AttributesDiscriminants::AttCustom as u16,
         ],
     );
     let attr_list_tlv = attr_list.to_tlv();
@@ -250,7 +223,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::Att1 as u32),
+                Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
             ),
             ElementType::U16(0x1234)
         ),
@@ -258,7 +231,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::Att2 as u32),
+                Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
             ),
             ElementType::U16(0x5678)
         ),
@@ -266,7 +239,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::AttCustom as u32),
+                Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
             ),
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
@@ -290,7 +263,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::Att1 as u32),
+                Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
             ),
             ElementType::U16(0x1234)
         ),
@@ -298,7 +271,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::Att2 as u32),
+                Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
             ),
             ElementType::U16(0x5678)
         ),
@@ -306,12 +279,12 @@ fn test_read_wc_endpoint_wc_attribute() {
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::AttCustom as u32),
+                Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
             ),
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
     ];
-    handle_read_reqs(input, expected);
+    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
 }
 
 #[test]
@@ -332,12 +305,12 @@ fn test_write_success() {
     let ep0_att = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let ep1_att = GenericPath::new(
         Some(1),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
 
     let input = &[
@@ -357,24 +330,11 @@ fn test_write_success() {
         AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
-    let dm = handle_write_reqs(input, expected);
-    let node = dm.node.read().unwrap();
-    let echo = node.get_cluster(0, echo_cluster::ID).unwrap();
-    assert_eq!(
-        AttrValue::Uint16(val0),
-        *echo
-            .base()
-            .read_attribute_raw(echo_cluster::Attributes::AttWrite as u16)
-            .unwrap()
-    );
-    let echo = node.get_cluster(1, echo_cluster::ID).unwrap();
-    assert_eq!(
-        AttrValue::Uint16(val1),
-        *echo
-            .base()
-            .read_attribute_raw(echo_cluster::Attributes::AttWrite as u16)
-            .unwrap()
-    );
+    let mut mdns = DummyMdns;
+    let matter = matter(&mut mdns);
+    let im = ImEngine::new_with_write_reqs(&matter, input, expected);
+    assert_eq!(val0, im.echo_cluster(0).att_write);
+    assert_eq!(val1, im.echo_cluster(1).att_write);
 }
 
 #[test]
@@ -390,7 +350,7 @@ fn test_write_wc_endpoint() {
     let ep_att = GenericPath::new(
         None,
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let input = &[AttrData::new(
         None,
@@ -401,38 +361,23 @@ fn test_write_wc_endpoint() {
     let ep0_att = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
 
     let ep1_att = GenericPath::new(
         Some(1),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let expected = &[
         AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
         AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
-    let dm = handle_write_reqs(input, expected);
-    assert_eq!(
-        AttrValue::Uint16(val0),
-        dm.read_attribute_raw(
-            0,
-            echo_cluster::ID,
-            echo_cluster::Attributes::AttWrite as u16
-        )
-        .unwrap()
-    );
-    assert_eq!(
-        AttrValue::Uint16(val0),
-        dm.read_attribute_raw(
-            0,
-            echo_cluster::ID,
-            echo_cluster::Attributes::AttWrite as u16
-        )
-        .unwrap()
-    );
+    let mut mdns = DummyMdns;
+    let matter = matter(&mut mdns);
+    let im = ImEngine::new_with_write_reqs(&matter, input, expected);
+    assert_eq!(val0, im.echo_cluster(0).att_write);
 }
 
 #[test]
@@ -455,25 +400,25 @@ fn test_write_unsupported_fields() {
     let invalid_endpoint = GenericPath::new(
         Some(4),
         Some(echo_cluster::ID),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let invalid_cluster = GenericPath::new(
         Some(0),
         Some(0x1234),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let invalid_attribute = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(0x1234));
     let wc_endpoint_invalid_cluster = GenericPath::new(
         None,
         Some(0x1234),
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let wc_endpoint_invalid_attribute =
         GenericPath::new(None, Some(echo_cluster::ID), Some(0x1234));
     let wc_cluster = GenericPath::new(
         Some(0),
         None,
-        Some(echo_cluster::Attributes::AttWrite as u32),
+        Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let wc_attribute = GenericPath::new(Some(0), Some(echo_cluster::ID), None);
 
@@ -521,14 +466,11 @@ fn test_write_unsupported_fields() {
         AttrStatus::new(&wc_cluster, IMStatusCode::UnsupportedCluster, 0),
         AttrStatus::new(&wc_attribute, IMStatusCode::UnsupportedAttribute, 0),
     ];
-    let dm = handle_write_reqs(input, expected);
+    let mut mdns = DummyMdns;
+    let matter = matter(&mut mdns);
+    let im = ImEngine::new_with_write_reqs(&matter, input, expected);
     assert_eq!(
-        AttrValue::Uint16(echo_cluster::ATTR_WRITE_DEFAULT_VALUE),
-        dm.read_attribute_raw(
-            0,
-            echo_cluster::ID,
-            echo_cluster::Attributes::AttWrite as u16
-        )
-        .unwrap()
+        echo_cluster::ATTR_WRITE_DEFAULT_VALUE,
+        im.echo_cluster(0).att_write
     );
 }

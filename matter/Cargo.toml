@@ -15,7 +15,9 @@ name = "matter"
 path = "src/lib.rs"
 
 [features]
-default = ["crypto_mbedtls"]
+default = ["std", "crypto_mbedtls"]
+std = []
+nightly = []
 crypto_openssl = ["openssl", "foreign-types", "hmac", "sha2"]
 crypto_mbedtls = ["mbedtls"]
 crypto_esp_mbedtls = ["esp-idf-sys"]
@@ -34,7 +36,7 @@ num-traits = "0.2.15"
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_debug"] }
 env_logger = { version = "0.10.0", default-features = false, features = [] }
 rand = "0.8.5"
-esp-idf-sys = { version = "0.32", features = ["binstart"], optional = true }
+esp-idf-sys = { version = "0.32", optional = true }
 subtle = "2.4.1"
 colored = "2.0.0"
 smol = "1.3.0"
@@ -42,6 +44,7 @@ owning_ref = "0.4.1"
 safemem = "0.3.3"
 chrono = { version = "0.4.23", default-features = false, features = ["clock", "std"] }
 async-channel = "1.8"
+strum = { version = "0.24", features = ["derive"], no-default-feature = true }
 
 # crypto
 openssl = { git = "https://github.com/sfackler/rust-openssl", optional = true }

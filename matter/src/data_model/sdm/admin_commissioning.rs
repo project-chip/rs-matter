@@ -15,15 +15,21 @@
  *    limitations under the License.
  */
 
-use crate::cmd_enter;
+use core::cell::RefCell;
+use core::convert::TryInto;
+
 use crate::data_model::objects::*;
-use crate::interaction_model::core::IMStatusCode;
+use crate::interaction_model::core::Transaction;
+use crate::mdns::MdnsMgr;
 use crate::secure_channel::pake::PaseMgr;
 use crate::secure_channel::spake2p::VerifierData;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
-use crate::{error::*, interaction_model::command::CommandReq};
-use log::{error, info};
+use crate::utils::rand::Rand;
+use crate::{attribute_enum, cmd_enter};
+use crate::{command_enum, error::*};
+use log::info;
 use num_derive::FromPrimitive;
+use strum::{EnumDiscriminants, FromRepr};
 
 pub const ID: u32 = 0x003C;
 
@@ -34,120 +40,54 @@ pub enum WindowStatus {
     BasicWindowOpen = 2,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Copy, Clone, Debug, FromRepr, EnumDiscriminants)]
+#[repr(u16)]
 pub enum Attributes {
-    WindowStatus = 0,
-    AdminFabricIndex = 1,
-    AdminVendorId = 2,
+    WindowStatus(AttrType<u8>) = 0,
+    AdminFabricIndex(AttrType<Nullable<u8>>) = 1,
+    AdminVendorId(AttrType<Nullable<u8>>) = 2,
 }
 
-#[derive(FromPrimitive)]
+attribute_enum!(Attributes);
+
+#[derive(FromRepr)]
+#[repr(u32)]
 pub enum Commands {
     OpenCommWindow = 0x00,
     OpenBasicCommWindow = 0x01,
     RevokeComm = 0x02,
 }
 
-fn attr_window_status_new() -> Attribute {
-    Attribute::new(
-        Attributes::WindowStatus as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NONE,
-    )
-}
+command_enum!(Commands);
 
-fn attr_admin_fabid_new() -> Attribute {
-    Attribute::new(
-        Attributes::AdminFabricIndex as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NULLABLE,
-    )
-}
-
-fn attr_admin_vid_new() -> Attribute {
-    Attribute::new(
-        Attributes::AdminVendorId as u16,
-        AttrValue::Custom,
-        Access::RV,
-        Quality::NULLABLE,
-    )
-}
-
-pub struct AdminCommCluster {
-    pase_mgr: PaseMgr,
-    base: Cluster,
-}
-
-impl ClusterType for AdminCommCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
-    }
-
-    fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
-        match num::FromPrimitive::from_u16(attr.attr_id) {
-            Some(Attributes::WindowStatus) => {
-                let status = 1_u8;
-                encoder.encode(EncodeValue::Value(&status))
-            }
-            Some(Attributes::AdminVendorId) => {
-                let vid = Nullable::NotNull(1_u8);
-
-                encoder.encode(EncodeValue::Value(&vid))
-            }
-            Some(Attributes::AdminFabricIndex) => {
-                let vid = Nullable::NotNull(1_u8);
-                encoder.encode(EncodeValue::Value(&vid))
-            }
-            _ => {
-                error!("Unsupported Attribute: this shouldn't happen");
-            }
-        }
-    }
-    fn handle_command(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
-        let cmd = cmd_req
-            .cmd
-            .path
-            .leaf
-            .map(num::FromPrimitive::from_u32)
-            .ok_or(IMStatusCode::UnsupportedCommand)?
-            .ok_or(IMStatusCode::UnsupportedCommand)?;
-        match cmd {
-            Commands::OpenCommWindow => self.handle_command_opencomm_win(cmd_req),
-            _ => Err(IMStatusCode::UnsupportedCommand),
-        }
-    }
-}
-
-impl AdminCommCluster {
-    pub fn new(pase_mgr: PaseMgr) -> Result<Box<Self>, Error> {
-        let mut c = Box::new(AdminCommCluster {
-            pase_mgr,
-            base: Cluster::new(ID)?,
-        });
-        c.base.add_attribute(attr_window_status_new())?;
-        c.base.add_attribute(attr_admin_fabid_new())?;
-        c.base.add_attribute(attr_admin_vid_new())?;
-        Ok(c)
-    }
-
-    fn handle_command_opencomm_win(
-        &mut self,
-        cmd_req: &mut CommandReq,
-    ) -> Result<(), IMStatusCode> {
-        cmd_enter!("Open Commissioning Window");
-        let req =
-            OpenCommWindowReq::from_tlv(&cmd_req.data).map_err(|_| IMStatusCode::InvalidCommand)?;
-        let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
-        self.pase_mgr
-            .enable_pase_session(verifier, req.discriminator)?;
-        Err(IMStatusCode::Success)
-    }
-}
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID as _,
+    feature_map: 0,
+    attributes: &[
+        FEATURE_MAP,
+        ATTRIBUTE_LIST,
+        Attribute::new(
+            AttributesDiscriminants::WindowStatus as u16,
+            Access::RV,
+            Quality::NONE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::AdminFabricIndex as u16,
+            Access::RV,
+            Quality::NULLABLE,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::AdminVendorId as u16,
+            Access::RV,
+            Quality::NULLABLE,
+        ),
+    ],
+    commands: &[
+        Commands::OpenCommWindow as _,
+        Commands::OpenBasicCommWindow as _,
+        Commands::RevokeComm as _,
+    ],
+};
 
 #[derive(FromTLV)]
 #[tlvargs(lifetime = "'a")]
@@ -157,4 +97,95 @@ pub struct OpenCommWindowReq<'a> {
     discriminator: u16,
     iterations: u32,
     salt: OctetStr<'a>,
+}
+
+pub struct AdminCommCluster<'a> {
+    data_ver: Dataver,
+    pase_mgr: &'a RefCell<PaseMgr>,
+    mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+}
+
+impl<'a> AdminCommCluster<'a> {
+    pub fn new(
+        pase_mgr: &'a RefCell<PaseMgr>,
+        mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+        rand: Rand,
+    ) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
+            pase_mgr,
+            mdns_mgr,
+        }
+    }
+
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::WindowStatus(codec) => codec.encode(writer, 1),
+                    Attributes::AdminVendorId(codec) => codec.encode(writer, Nullable::NotNull(1)),
+                    Attributes::AdminFabricIndex(codec) => {
+                        codec.encode(writer, Nullable::NotNull(1))
+                    }
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn invoke(
+        &mut self,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        _encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        match cmd.cmd_id.try_into()? {
+            Commands::OpenCommWindow => self.handle_command_opencomm_win(data)?,
+            _ => Err(Error::CommandNotFound)?,
+        }
+
+        self.data_ver.changed();
+
+        Ok(())
+    }
+
+    fn handle_command_opencomm_win(&mut self, data: &TLVElement) -> Result<(), Error> {
+        cmd_enter!("Open Commissioning Window");
+        let req = OpenCommWindowReq::from_tlv(data)?;
+        let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
+        self.pase_mgr.borrow_mut().enable_pase_session(
+            verifier,
+            req.discriminator,
+            &mut self.mdns_mgr.borrow_mut(),
+        )?;
+
+        Ok(())
+    }
+}
+
+impl<'a> Handler for AdminCommCluster<'a> {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        AdminCommCluster::read(self, attr, encoder)
+    }
+
+    fn invoke(
+        &mut self,
+        _transaction: &mut Transaction,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        AdminCommCluster::invoke(self, cmd, data, encoder)
+    }
+}
+
+impl<'a> NonBlockingHandler for AdminCommCluster<'a> {}
+
+impl<'a> ChangeNotifier<()> for AdminCommCluster<'a> {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
+    }
 }

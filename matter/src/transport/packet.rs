@@ -99,46 +99,46 @@ pub struct Packet<'a> {
     pub proto: ProtoHdr,
     pub peer: Address,
     data: Direction<'a>,
-    buffer_index: usize,
 }
 
 impl<'a> Packet<'a> {
     const HDR_RESERVE: usize = plain_hdr::max_plain_hdr_len() + proto_hdr::max_proto_hdr_len();
 
-    pub fn new_rx() -> Result<Self, Error> {
-        let (buffer_index, buffer) = BufferPool::alloc().ok_or(Error::NoSpace)?;
-        let buf_len = buffer.len();
-        Ok(Self {
+    pub fn new_rx(buf: &'a mut [u8]) -> Self {
+        Self {
             plain: Default::default(),
             proto: Default::default(),
-            buffer_index,
             peer: Address::default(),
-            data: Direction::Rx(ParseBuf::new(buffer, buf_len), RxState::Uninit),
-        })
+            data: Direction::Rx(ParseBuf::new(buf), RxState::Uninit),
+        }
     }
 
-    pub fn new_tx() -> Result<Self, Error> {
-        let (buffer_index, buffer) = BufferPool::alloc().ok_or(Error::NoSpace)?;
-        let buf_len = buffer.len();
+    pub fn new_tx(buf: &'a mut [u8]) -> Self {
+        let mut wb = WriteBuf::new(buf);
+        wb.reserve(Packet::HDR_RESERVE).unwrap();
 
-        let mut wb = WriteBuf::new(buffer, buf_len);
-        wb.reserve(Packet::HDR_RESERVE)?;
+        // Reliability on by default
+        let mut proto: ProtoHdr = Default::default();
+        proto.set_reliable();
 
-        let mut p = Self {
+        Self {
             plain: Default::default(),
-            proto: Default::default(),
-            buffer_index,
+            proto,
             peer: Address::default(),
             data: Direction::Tx(wb),
-        };
-        // Reliability on by default
-        p.proto.set_reliable();
-        Ok(p)
+        }
     }
 
-    pub fn as_borrow_slice(&mut self) -> &mut [u8] {
+    pub fn as_slice(&self) -> &[u8] {
+        match &self.data {
+            Direction::Rx(pb, _) => pb.as_slice(),
+            Direction::Tx(wb) => wb.as_slice(),
+        }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match &mut self.data {
-            Direction::Rx(pb, _) => pb.as_borrow_slice(),
+            Direction::Rx(pb, _) => pb.as_mut_slice(),
             Direction::Tx(wb) => wb.as_mut_slice(),
         }
     }
@@ -226,13 +226,6 @@ impl<'a> Packet<'a> {
             }
             _ => Err(Error::InvalidState),
         }
-    }
-}
-
-impl<'a> Drop for Packet<'a> {
-    fn drop(&mut self) {
-        BufferPool::free(self.buffer_index);
-        trace!("Dropping Packet......");
     }
 }
 

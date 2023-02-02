@@ -53,9 +53,9 @@ pub struct WriteBuf<'a> {
 }
 
 impl<'a> WriteBuf<'a> {
-    pub fn new(buf: &'a mut [u8], len: usize) -> WriteBuf<'a> {
-        WriteBuf {
-            buf: &mut buf[..len],
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        Self {
+            buf,
             start: 0,
             end: 0,
         }
@@ -73,11 +73,11 @@ impl<'a> WriteBuf<'a> {
         self.end += new_offset
     }
 
-    pub fn as_borrow_slice(&self) -> &[u8] {
+    pub fn into_slice(self) -> &'a [u8] {
         &self.buf[self.start..self.end]
     }
 
-    pub fn as_slice(self) -> &'a [u8] {
+    pub fn as_slice(&self) -> &[u8] {
         &self.buf[self.start..self.end]
     }
 
@@ -201,9 +201,8 @@ mod tests {
 
     #[test]
     fn test_append_le_with_success() {
-        let mut test_slice: [u8; 22] = [0; 22];
-        let test_slice_len = test_slice.len();
-        let mut buf = WriteBuf::new(&mut test_slice, test_slice_len);
+        let mut test_slice = [0; 22];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u8(1).unwrap();
@@ -222,8 +221,8 @@ mod tests {
 
     #[test]
     fn test_len_param() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 5);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice[..5]);
         buf.reserve(5).unwrap();
 
         let _ = buf.le_u8(1);
@@ -236,8 +235,8 @@ mod tests {
 
     #[test]
     fn test_overrun() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(4).unwrap();
         buf.le_u64(0xcafebabecafebabe).unwrap();
         buf.le_u64(0xcafebabecafebabe).unwrap();
@@ -262,8 +261,8 @@ mod tests {
 
     #[test]
     fn test_as_slice() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u8(1).unwrap();
@@ -275,7 +274,7 @@ mod tests {
         buf.prepend(&new_slice).unwrap();
 
         assert_eq!(
-            buf.as_slice(),
+            buf.into_slice(),
             [
                 0xa, 0xb, 0xc, 1, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xbe, 0xba, 0xfe, 0xca, 0xbe,
                 0xba, 0xfe, 0xca
@@ -285,8 +284,8 @@ mod tests {
 
     #[test]
     fn test_copy_as_slice() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -301,8 +300,8 @@ mod tests {
 
     #[test]
     fn test_copy_as_slice_overrun() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 7);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice[..7]);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -314,8 +313,8 @@ mod tests {
 
     #[test]
     fn test_prepend() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -329,8 +328,8 @@ mod tests {
 
     #[test]
     fn test_prepend_overrun() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -342,8 +341,8 @@ mod tests {
 
     #[test]
     fn test_rewind_tail() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -352,13 +351,10 @@ mod tests {
 
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
         buf.copy_from_slice(&new_slice).unwrap();
-        assert_eq!(
-            buf.as_borrow_slice(),
-            [65, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,]
-        );
+        assert_eq!(buf.as_slice(), [65, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,]);
 
         buf.rewind_tail_to(anchor);
         buf.le_u16(66).unwrap();
-        assert_eq!(buf.as_borrow_slice(), [65, 0, 66, 0,]);
+        assert_eq!(buf.as_slice(), [65, 0, 66, 0,]);
     }
 }

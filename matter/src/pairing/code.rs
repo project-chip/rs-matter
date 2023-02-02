@@ -15,56 +15,66 @@
  *    limitations under the License.
  */
 
+use core::fmt::Write;
+
 use super::*;
 
-pub(super) fn compute_pairing_code(comm_data: &CommissioningData) -> String {
+pub(super) fn compute_pairing_code(comm_data: &CommissioningData) -> heapless::String<32> {
     // 0: no Vendor ID and Product ID present in Manual Pairing Code
     const VID_PID_PRESENT: u8 = 0;
 
     let passwd = passwd_from_comm_data(comm_data);
     let CommissioningData { discriminator, .. } = comm_data;
 
-    let mut digits = String::new();
-    digits.push_str(&((VID_PID_PRESENT << 2) | (discriminator >> 10) as u8).to_string());
-    digits.push_str(&format!(
-        "{:0>5}",
-        ((discriminator & 0x300) << 6) | (passwd & 0x3FFF) as u16
-    ));
-    digits.push_str(&format!("{:0>4}", passwd >> 14));
+    let mut digits = heapless::String::<32>::new();
+    write!(
+        &mut digits,
+        "{}{:0>5}{:0>4}",
+        (VID_PID_PRESENT << 2) | (discriminator >> 10) as u8,
+        ((discriminator & 0x300) << 6) | (passwd & 0x3FFF) as u16,
+        passwd >> 14
+    )
+    .unwrap();
 
-    let check_digit = digits.calculate_verhoeff_check_digit();
-    digits.push_str(&check_digit.to_string());
+    let mut final_digits = heapless::String::<32>::new();
+    write!(
+        &mut final_digits,
+        "{}{}",
+        digits,
+        digits.calculate_verhoeff_check_digit()
+    )
+    .unwrap();
 
-    digits
+    final_digits
 }
 
 pub(super) fn pretty_print_pairing_code(pairing_code: &str) {
     assert!(pairing_code.len() == 11);
-    let mut pretty = String::new();
-    pretty.push_str(&pairing_code[..4]);
-    pretty.push('-');
-    pretty.push_str(&pairing_code[4..8]);
-    pretty.push('-');
-    pretty.push_str(&pairing_code[8..]);
+    let mut pretty = heapless::String::<32>::new();
+    pretty.push_str(&pairing_code[..4]).unwrap();
+    pretty.push('-').unwrap();
+    pretty.push_str(&pairing_code[4..8]).unwrap();
+    pretty.push('-').unwrap();
+    pretty.push_str(&pairing_code[8..]).unwrap();
     info!("Pairing Code: {}", pretty);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::secure_channel::spake2p::VerifierData;
+    use crate::{secure_channel::spake2p::VerifierData, utils::rand::dummy_rand};
 
     #[test]
     fn can_compute_pairing_code() {
         let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(123456),
+            verifier: VerifierData::new_with_pw(123456, dummy_rand),
             discriminator: 250,
         };
         let pairing_code = compute_pairing_code(&comm_data);
         assert_eq!(pairing_code, "00876800071");
 
         let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(34567890),
+            verifier: VerifierData::new_with_pw(34567890, dummy_rand),
             discriminator: 2976,
         };
         let pairing_code = compute_pairing_code(&comm_data);

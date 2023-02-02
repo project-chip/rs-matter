@@ -15,29 +15,33 @@
  *    limitations under the License.
  */
 
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use core::fmt::Write;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use log::{error, info};
-use owning_ref::RwLockReadGuardRef;
 
 use crate::{
     cert::Cert,
-    crypto::{self, crypto_dummy::KeyPairDummy, hkdf_sha256, CryptoKeyPair, HmacSha256, KeyPair},
+    crypto::{self, hkdf_sha256, HmacSha256, KeyPair},
     error::Error,
     group_keys::KeySet,
-    mdns::{self, Mdns},
-    sys::{Psm, SysMdnsService},
+    mdns::{MdnsMgr, ServiceMode},
+    persist::Psm,
     tlv::{OctetStr, TLVWriter, TagType, ToTLV, UtfStr},
 };
 
-const MAX_CERT_TLV_LEN: usize = 350;
+const MAX_CERT_TLV_LEN: usize = 300;
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
 macro_rules! fb_key {
-    ($index:ident, $key:ident) => {
-        &format!("fb{}{}", $index, $key)
-    };
+    ($index:ident, $key:ident, $buf:expr) => {{
+        use core::fmt::Write;
+
+        $buf = "".into();
+        write!(&mut $buf, "fb{}{}", $index, $key).unwrap();
+
+        &$buf
+    }};
 }
 
 const ST_VID: &str = "vid";
@@ -50,20 +54,6 @@ const ST_PBKEY: &str = "pubkey";
 const ST_PRKEY: &str = "privkey";
 
 #[allow(dead_code)]
-pub struct Fabric {
-    node_id: u64,
-    fabric_id: u64,
-    vendor_id: u16,
-    key_pair: Box<dyn CryptoKeyPair>,
-    pub root_ca: Cert,
-    pub icac: Option<Cert>,
-    pub noc: Cert,
-    pub ipk: KeySet,
-    label: String,
-    compressed_id: [u8; COMPRESSED_FABRIC_ID_LEN],
-    mdns_service: Option<SysMdnsService>,
-}
-
 #[derive(ToTLV)]
 #[tlvargs(lifetime = "'a", start = 1)]
 pub struct FabricDescriptor<'a> {
@@ -77,6 +67,19 @@ pub struct FabricDescriptor<'a> {
     pub fab_idx: Option<u8>,
 }
 
+pub struct Fabric {
+    node_id: u64,
+    fabric_id: u64,
+    vendor_id: u16,
+    key_pair: KeyPair,
+    pub root_ca: Cert,
+    pub icac: Option<Cert>,
+    pub noc: Cert,
+    pub ipk: KeySet,
+    label: heapless::String<32>,
+    mdns_service_name: heapless::String<33>,
+}
+
 impl Fabric {
     pub fn new(
         key_pair: KeyPair,
@@ -85,56 +88,43 @@ impl Fabric {
         noc: Cert,
         ipk: &[u8],
         vendor_id: u16,
+        label: &str,
     ) -> Result<Self, Error> {
         let node_id = noc.get_node_id()?;
         let fabric_id = noc.get_fabric_id()?;
 
-        let mut f = Self {
-            node_id,
-            fabric_id,
-            vendor_id,
-            key_pair: Box::new(key_pair),
-            root_ca,
-            icac,
-            noc,
-            ipk: KeySet::default(),
-            compressed_id: [0; COMPRESSED_FABRIC_ID_LEN],
-            label: "".into(),
-            mdns_service: None,
-        };
-        Fabric::get_compressed_id(f.root_ca.get_pubkey(), fabric_id, &mut f.compressed_id)?;
-        f.ipk = KeySet::new(ipk, &f.compressed_id)?;
+        let mut compressed_id = [0_u8; COMPRESSED_FABRIC_ID_LEN];
 
-        let mut mdns_service_name = String::with_capacity(33);
-        for c in f.compressed_id {
-            mdns_service_name.push_str(&format!("{:02X}", c));
+        Fabric::get_compressed_id(root_ca.get_pubkey(), fabric_id, &mut compressed_id)?;
+        let ipk = KeySet::new(ipk, &compressed_id)?;
+
+        let mut mdns_service_name = heapless::String::<33>::new();
+        for c in compressed_id {
+            let mut hex = heapless::String::<4>::new();
+            write!(&mut hex, "{:02X}", c).unwrap();
+            mdns_service_name.push_str(&hex).unwrap();
         }
-        mdns_service_name.push('-');
+        mdns_service_name.push('-').unwrap();
         let mut node_id_be: [u8; 8] = [0; 8];
         BigEndian::write_u64(&mut node_id_be, node_id);
         for c in node_id_be {
-            mdns_service_name.push_str(&format!("{:02X}", c));
+            let mut hex = heapless::String::<4>::new();
+            write!(&mut hex, "{:02X}", c).unwrap();
+            mdns_service_name.push_str(&hex).unwrap();
         }
         info!("MDNS Service Name: {}", mdns_service_name);
-        f.mdns_service = Some(
-            Mdns::get()?.publish_service(&mdns_service_name, mdns::ServiceMode::Commissioned)?,
-        );
-        Ok(f)
-    }
 
-    pub fn dummy() -> Result<Self, Error> {
         Ok(Self {
-            node_id: 0,
-            fabric_id: 0,
-            vendor_id: 0,
-            key_pair: Box::new(KeyPairDummy::new()?),
-            root_ca: Cert::default(),
-            icac: Some(Cert::default()),
-            noc: Cert::default(),
-            ipk: KeySet::default(),
-            label: "".into(),
-            compressed_id: [0; COMPRESSED_FABRIC_ID_LEN],
-            mdns_service: None,
+            node_id,
+            fabric_id,
+            vendor_id,
+            key_pair,
+            root_ca,
+            icac,
+            noc,
+            ipk,
+            label: label.into(),
+            mdns_service_name,
         })
     }
 
@@ -195,164 +185,362 @@ impl Fabric {
         }
     }
 
-    fn rm_store(&self, index: usize, psm: &MutexGuard<Psm>) {
-        psm.rm(fb_key!(index, ST_RCA));
-        psm.rm(fb_key!(index, ST_ICA));
-        psm.rm(fb_key!(index, ST_NOC));
-        psm.rm(fb_key!(index, ST_IPK));
-        psm.rm(fb_key!(index, ST_LBL));
-        psm.rm(fb_key!(index, ST_PBKEY));
-        psm.rm(fb_key!(index, ST_PRKEY));
-        psm.rm(fb_key!(index, ST_VID));
-    }
+    fn store<T>(&self, index: usize, mut psm: T) -> Result<(), Error>
+    where
+        T: Psm,
+    {
+        let mut _kb = heapless::String::<32>::new();
 
-    fn store(&self, index: usize, psm: &MutexGuard<Psm>) -> Result<(), Error> {
-        let mut key = [0u8; MAX_CERT_TLV_LEN];
-        let len = self.root_ca.as_tlv(&mut key)?;
-        psm.set_kv_slice(fb_key!(index, ST_RCA), &key[..len])?;
+        let mut buf = [0u8; MAX_CERT_TLV_LEN];
+        let len = self.root_ca.as_tlv(&mut buf)?;
+        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &buf[..len])?;
 
         let len = if let Some(icac) = &self.icac {
-            icac.as_tlv(&mut key)?
+            icac.as_tlv(&mut buf)?
         } else {
             0
         };
-        psm.set_kv_slice(fb_key!(index, ST_ICA), &key[..len])?;
+        psm.set_kv_slice(fb_key!(index, ST_ICA, _kb), &buf[..len])?;
 
-        let len = self.noc.as_tlv(&mut key)?;
-        psm.set_kv_slice(fb_key!(index, ST_NOC), &key[..len])?;
-        psm.set_kv_slice(fb_key!(index, ST_IPK), self.ipk.epoch_key())?;
-        psm.set_kv_slice(fb_key!(index, ST_LBL), self.label.as_bytes())?;
+        let len = self.noc.as_tlv(&mut buf)?;
+        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &buf[..len])?;
+        psm.set_kv_slice(fb_key!(index, ST_IPK, _kb), self.ipk.epoch_key())?;
+        psm.set_kv_slice(fb_key!(index, ST_LBL, _kb), self.label.as_bytes())?;
 
-        let mut key = [0_u8; crypto::EC_POINT_LEN_BYTES];
-        let len = self.key_pair.get_public_key(&mut key)?;
-        let key = &key[..len];
-        psm.set_kv_slice(fb_key!(index, ST_PBKEY), key)?;
+        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
+        let len = self.key_pair.get_public_key(&mut buf)?;
+        let key = &buf[..len];
+        psm.set_kv_slice(fb_key!(index, ST_PBKEY, _kb), key)?;
 
-        let mut key = [0_u8; crypto::BIGNUM_LEN_BYTES];
-        let len = self.key_pair.get_private_key(&mut key)?;
-        let key = &key[..len];
-        psm.set_kv_slice(fb_key!(index, ST_PRKEY), key)?;
+        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
+        let len = self.key_pair.get_private_key(&mut buf)?;
+        let key = &buf[..len];
+        psm.set_kv_slice(fb_key!(index, ST_PRKEY, _kb), key)?;
 
-        psm.set_kv_u64(fb_key!(index, ST_VID), self.vendor_id.into())?;
+        psm.set_kv_u64(fb_key!(index, ST_VID, _kb), self.vendor_id.into())?;
         Ok(())
     }
 
-    fn load(index: usize, psm: &MutexGuard<Psm>) -> Result<Self, Error> {
-        let mut root_ca = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_RCA), &mut root_ca)?;
-        let root_ca = Cert::new(root_ca.as_slice())?;
+    fn load<T>(index: usize, psm: T) -> Result<Self, Error>
+    where
+        T: Psm,
+    {
+        let mut _kb = heapless::String::<32>::new();
 
-        let mut icac = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_ICA), &mut icac)?;
+        let mut buf = [0u8; MAX_CERT_TLV_LEN];
+        let root_ca = psm.get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)?;
+        let root_ca = Cert::new(root_ca)?;
+
+        let icac = psm.get_kv_slice(fb_key!(index, ST_ICA, _kb), &mut buf)?;
         let icac = if !icac.is_empty() {
-            Some(Cert::new(icac.as_slice())?)
+            Some(Cert::new(icac)?)
         } else {
             None
         };
 
-        let mut noc = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_NOC), &mut noc)?;
-        let noc = Cert::new(noc.as_slice())?;
+        let noc = psm.get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)?;
+        let noc = Cert::new(noc)?;
 
-        let mut ipk = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_IPK), &mut ipk)?;
+        let label = psm.get_kv_slice(fb_key!(index, ST_LBL, _kb), &mut buf)?;
+        let label: heapless::String<32> = core::str::from_utf8(label)
+            .map_err(|_| {
+                error!("Couldn't read label");
+                Error::Invalid
+            })?
+            .into();
 
-        let mut label = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_LBL), &mut label)?;
-        let label = String::from_utf8(label).map_err(|_| {
-            error!("Couldn't read label");
-            Error::Invalid
-        })?;
+        let ipk = psm.get_kv_slice(fb_key!(index, ST_IPK, _kb), &mut buf)?;
 
-        let mut pub_key = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_PBKEY), &mut pub_key)?;
-        let mut priv_key = Vec::new();
-        psm.get_kv_slice(fb_key!(index, ST_PRKEY), &mut priv_key)?;
-        let keypair = KeyPair::new_from_components(pub_key.as_slice(), priv_key.as_slice())?;
+        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
+        let pub_key = psm.get_kv_slice(fb_key!(index, ST_PBKEY, _kb), &mut buf)?;
 
-        let mut vendor_id = 0;
-        psm.get_kv_u64(fb_key!(index, ST_VID), &mut vendor_id)?;
+        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
+        let priv_key = psm.get_kv_slice(fb_key!(index, ST_PRKEY, _kb), &mut buf)?;
+        let keypair = KeyPair::new_from_components(pub_key, priv_key)?;
 
-        let f = Fabric::new(
-            keypair,
-            root_ca,
-            icac,
-            noc,
-            ipk.as_slice(),
-            vendor_id as u16,
-        );
-        f.map(|mut f| {
-            f.label = label;
-            f
-        })
+        let vendor_id = psm.get_kv_u64(fb_key!(index, ST_VID, _kb))?;
+
+        Fabric::new(keypair, root_ca, icac, noc, ipk, vendor_id as u16, &label)
+    }
+
+    fn remove<T>(index: usize, mut psm: T) -> Result<(), Error>
+    where
+        T: Psm,
+    {
+        let mut _kb = heapless::String::<32>::new();
+
+        psm.remove(fb_key!(index, ST_RCA, _kb))?;
+        psm.remove(fb_key!(index, ST_ICA, _kb))?;
+
+        psm.remove(fb_key!(index, ST_NOC, _kb))?;
+
+        psm.remove(fb_key!(index, ST_LBL, _kb))?;
+
+        psm.remove(fb_key!(index, ST_IPK, _kb))?;
+
+        psm.remove(fb_key!(index, ST_PBKEY, _kb))?;
+        psm.remove(fb_key!(index, ST_PRKEY, _kb))?;
+
+        psm.remove(fb_key!(index, ST_VID, _kb))?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "nightly")]
+    async fn store_async<T>(&self, index: usize, mut psm: T) -> Result<(), Error>
+    where
+        T: crate::persist::asynch::AsyncPsm,
+    {
+        let mut _kb = heapless::String::<32>::new();
+
+        let mut buf = [0u8; MAX_CERT_TLV_LEN];
+        let len = self.root_ca.as_tlv(&mut buf)?;
+        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &buf[..len])
+            .await?;
+
+        let len = if let Some(icac) = &self.icac {
+            icac.as_tlv(&mut buf)?
+        } else {
+            0
+        };
+        psm.set_kv_slice(fb_key!(index, ST_ICA, _kb), &buf[..len])
+            .await?;
+
+        let len = self.noc.as_tlv(&mut buf)?;
+        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &buf[..len])
+            .await?;
+        psm.set_kv_slice(fb_key!(index, ST_IPK, _kb), self.ipk.epoch_key())
+            .await?;
+        psm.set_kv_slice(fb_key!(index, ST_LBL, _kb), self.label.as_bytes())
+            .await?;
+
+        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
+        let len = self.key_pair.get_public_key(&mut buf)?;
+        let key = &buf[..len];
+        psm.set_kv_slice(fb_key!(index, ST_PBKEY, _kb), key).await?;
+
+        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
+        let len = self.key_pair.get_private_key(&mut buf)?;
+        let key = &buf[..len];
+        psm.set_kv_slice(fb_key!(index, ST_PRKEY, _kb), key).await?;
+
+        psm.set_kv_u64(fb_key!(index, ST_VID, _kb), self.vendor_id.into())
+            .await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "nightly")]
+    async fn load_async<T>(index: usize, psm: T) -> Result<Self, Error>
+    where
+        T: crate::persist::asynch::AsyncPsm,
+    {
+        let mut _kb = heapless::String::<32>::new();
+
+        let mut buf = [0u8; MAX_CERT_TLV_LEN];
+        let root_ca = psm
+            .get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)
+            .await?;
+        let root_ca = Cert::new(root_ca)?;
+
+        let icac = psm
+            .get_kv_slice(fb_key!(index, ST_ICA, _kb), &mut buf)
+            .await?;
+        let icac = if !icac.is_empty() {
+            Some(Cert::new(icac)?)
+        } else {
+            None
+        };
+
+        let noc = psm
+            .get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)
+            .await?;
+        let noc = Cert::new(noc)?;
+
+        let label = psm
+            .get_kv_slice(fb_key!(index, ST_LBL, _kb), &mut buf)
+            .await?;
+        let label: heapless::String<32> = core::str::from_utf8(label)
+            .map_err(|_| {
+                error!("Couldn't read label");
+                Error::Invalid
+            })?
+            .into();
+
+        let ipk = psm
+            .get_kv_slice(fb_key!(index, ST_IPK, _kb), &mut buf)
+            .await?;
+
+        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
+        let pub_key = psm
+            .get_kv_slice(fb_key!(index, ST_PBKEY, _kb), &mut buf)
+            .await?;
+
+        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
+        let priv_key = psm
+            .get_kv_slice(fb_key!(index, ST_PRKEY, _kb), &mut buf)
+            .await?;
+        let keypair = KeyPair::new_from_components(pub_key, priv_key)?;
+
+        let vendor_id = psm.get_kv_u64(fb_key!(index, ST_VID, _kb)).await?;
+
+        Fabric::new(keypair, root_ca, icac, noc, ipk, vendor_id as u16, &label)
+    }
+
+    #[cfg(feature = "nightly")]
+    async fn remove_async<T>(index: usize, mut psm: T) -> Result<(), Error>
+    where
+        T: crate::persist::asynch::AsyncPsm,
+    {
+        let mut _kb = heapless::String::<32>::new();
+
+        psm.remove(fb_key!(index, ST_RCA, _kb)).await?;
+        psm.remove(fb_key!(index, ST_ICA, _kb)).await?;
+
+        psm.remove(fb_key!(index, ST_NOC, _kb)).await?;
+
+        psm.remove(fb_key!(index, ST_LBL, _kb)).await?;
+
+        psm.remove(fb_key!(index, ST_IPK, _kb)).await?;
+
+        psm.remove(fb_key!(index, ST_PBKEY, _kb)).await?;
+        psm.remove(fb_key!(index, ST_PRKEY, _kb)).await?;
+
+        psm.remove(fb_key!(index, ST_VID, _kb)).await?;
+
+        Ok(())
     }
 }
 
 pub const MAX_SUPPORTED_FABRICS: usize = 3;
-#[derive(Default)]
-pub struct FabricMgrInner {
-    // The outside world expects Fabric Index to be one more than the actual one
-    // since 0 is not allowed. Need to handle this cleanly somehow
-    pub fabrics: [Option<Fabric>; MAX_SUPPORTED_FABRICS],
-}
 
 pub struct FabricMgr {
-    inner: RwLock<FabricMgrInner>,
-    psm: Arc<Mutex<Psm>>,
+    // The outside world expects Fabric Index to be one more than the actual one
+    // since 0 is not allowed. Need to handle this cleanly somehow
+    fabrics: [Option<Fabric>; MAX_SUPPORTED_FABRICS],
+    changed: bool,
 }
 
 impl FabricMgr {
-    pub fn new() -> Result<Self, Error> {
-        let dummy_fabric = Fabric::dummy()?;
-        let mut mgr = FabricMgrInner::default();
-        mgr.fabrics[0] = Some(dummy_fabric);
-        let mut fm = Self {
-            inner: RwLock::new(mgr),
-            psm: Psm::get()?,
-        };
-        fm.load()?;
-        Ok(fm)
-    }
+    pub const fn new() -> Self {
+        const INIT: Option<Fabric> = None;
 
-    fn store(&self, index: usize, fabric: &Fabric) -> Result<(), Error> {
-        let psm = self.psm.lock().unwrap();
-        fabric.store(index, &psm)
-    }
-
-    fn load(&mut self) -> Result<(), Error> {
-        let mut mgr = self.inner.write()?;
-        let psm = self.psm.lock().unwrap();
-        for i in 0..MAX_SUPPORTED_FABRICS {
-            let result = Fabric::load(i, &psm);
-            if let Ok(fabric) = result {
-                info!("Adding new fabric at index {}", i);
-                mgr.fabrics[i] = Some(fabric);
-            }
+        Self {
+            fabrics: [INIT; MAX_SUPPORTED_FABRICS],
+            changed: false,
         }
+    }
+
+    pub fn store<T>(&mut self, mut psm: T) -> Result<(), Error>
+    where
+        T: Psm,
+    {
+        if self.changed {
+            for i in 1..MAX_SUPPORTED_FABRICS {
+                if let Some(fabric) = self.fabrics[i].as_mut() {
+                    info!("Storing fabric at index {}", i);
+                    fabric.store(i, &mut psm)?;
+                } else {
+                    let _ = Fabric::remove(i, &mut psm);
+                }
+            }
+
+            self.changed = false;
+        }
+
         Ok(())
     }
 
-    pub fn add(&self, f: Fabric) -> Result<u8, Error> {
-        let mut mgr = self.inner.write()?;
-        let index = mgr
+    pub fn load<T>(&mut self, mut psm: T, mdns_mgr: &mut MdnsMgr) -> Result<(), Error>
+    where
+        T: Psm,
+    {
+        for i in 1..MAX_SUPPORTED_FABRICS {
+            let result = Fabric::load(i, &mut psm);
+            if let Ok(fabric) = result {
+                info!("Adding new fabric at index {}", i);
+                self.fabrics[i] = Some(fabric);
+                mdns_mgr.publish_service(
+                    &self.fabrics[i].as_ref().unwrap().mdns_service_name,
+                    ServiceMode::Commissioned,
+                )?;
+            } else {
+                self.fabrics[i] = None;
+            }
+        }
+
+        self.changed = false;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "nightly")]
+    pub async fn store_async<T>(&mut self, mut psm: T) -> Result<(), Error>
+    where
+        T: crate::persist::asynch::AsyncPsm,
+    {
+        if self.changed {
+            for i in 1..MAX_SUPPORTED_FABRICS {
+                if let Some(fabric) = self.fabrics[i].as_mut() {
+                    info!("Storing fabric at index {}", i);
+                    fabric.store_async(i, &mut psm).await?;
+                } else {
+                    let _ = Fabric::remove_async(i, &mut psm).await;
+                }
+            }
+
+            self.changed = false;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "nightly")]
+    pub async fn load_async<T>(&mut self, mut psm: T, mdns_mgr: &mut MdnsMgr) -> Result<(), Error>
+    where
+        T: crate::persist::asynch::AsyncPsm,
+    {
+        for i in 1..MAX_SUPPORTED_FABRICS {
+            let result = Fabric::load_async(i, &mut psm).await;
+            if let Ok(fabric) = result {
+                info!("Adding new fabric at index {}", i);
+                self.fabrics[i] = Some(fabric);
+                mdns_mgr.publish_service(
+                    &self.fabrics[i].as_ref().unwrap().mdns_service_name,
+                    ServiceMode::Commissioned,
+                )?;
+            } else {
+                self.fabrics[i] = None;
+            }
+        }
+
+        self.changed = false;
+
+        Ok(())
+    }
+
+    pub fn add(&mut self, f: Fabric, mdns_mgr: &mut MdnsMgr) -> Result<u8, Error> {
+        let index = self
             .fabrics
             .iter()
+            .skip(1)
             .position(|f| f.is_none())
             .ok_or(Error::NoSpace)?;
 
-        self.store(index, &f)?;
+        self.fabrics[index] = Some(f);
+        mdns_mgr.publish_service(
+            &self.fabrics[index].as_ref().unwrap().mdns_service_name,
+            ServiceMode::Commissioned,
+        )?;
 
-        mgr.fabrics[index] = Some(f);
+        self.changed = true;
+
         Ok(index as u8)
     }
 
-    pub fn remove(&self, fab_idx: u8) -> Result<(), Error> {
-        let fab_idx = fab_idx as usize;
-        let mut mgr = self.inner.write().unwrap();
-        let psm = self.psm.lock().unwrap();
-        if let Some(f) = &mgr.fabrics[fab_idx] {
-            f.rm_store(fab_idx, &psm);
-            mgr.fabrics[fab_idx] = None;
+    pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
+        if let Some(f) = self.fabrics[fab_idx as usize].take() {
+            mdns_mgr.unpublish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+            self.changed = true;
             Ok(())
         } else {
             Err(Error::NotFound)
@@ -360,9 +548,8 @@ impl FabricMgr {
     }
 
     pub fn match_dest_id(&self, random: &[u8], target: &[u8]) -> Result<usize, Error> {
-        let mgr = self.inner.read()?;
-        for i in 0..MAX_SUPPORTED_FABRICS {
-            if let Some(fabric) = &mgr.fabrics[i] {
+        for i in 1..MAX_SUPPORTED_FABRICS {
+            if let Some(fabric) = &self.fabrics[i] {
                 if fabric.match_dest_id(random, target).is_ok() {
                     return Ok(i);
                 }
@@ -371,17 +558,13 @@ impl FabricMgr {
         Err(Error::NotFound)
     }
 
-    pub fn get_fabric<'ret, 'me: 'ret>(
-        &'me self,
-        idx: usize,
-    ) -> Result<RwLockReadGuardRef<'ret, FabricMgrInner, Option<Fabric>>, Error> {
-        Ok(RwLockReadGuardRef::new(self.inner.read()?).map(|fm| &fm.fabrics[idx]))
+    pub fn get_fabric(&self, idx: usize) -> Result<Option<&Fabric>, Error> {
+        Ok(self.fabrics[idx].as_ref())
     }
 
     pub fn is_empty(&self) -> bool {
-        let mgr = self.inner.read().unwrap();
         for i in 1..MAX_SUPPORTED_FABRICS {
-            if mgr.fabrics[i].is_some() {
+            if self.fabrics[i].is_some() {
                 return false;
             }
         }
@@ -389,10 +572,9 @@ impl FabricMgr {
     }
 
     pub fn used_count(&self) -> usize {
-        let mgr = self.inner.read().unwrap();
         let mut count = 0;
         for i in 1..MAX_SUPPORTED_FABRICS {
-            if mgr.fabrics[i].is_some() {
+            if self.fabrics[i].is_some() {
                 count += 1;
             }
         }
@@ -402,37 +584,30 @@ impl FabricMgr {
     // Parameters to T are the Fabric and its Fabric Index
     pub fn for_each<T>(&self, mut f: T) -> Result<(), Error>
     where
-        T: FnMut(&Fabric, u8),
+        T: FnMut(&Fabric, u8) -> Result<(), Error>,
     {
-        let mgr = self.inner.read().unwrap();
         for i in 1..MAX_SUPPORTED_FABRICS {
-            if let Some(fabric) = &mgr.fabrics[i] {
-                f(fabric, i as u8)
+            if let Some(fabric) = &self.fabrics[i] {
+                f(fabric, i as u8)?;
             }
         }
         Ok(())
     }
 
-    pub fn set_label(&self, index: u8, label: String) -> Result<(), Error> {
+    pub fn set_label(&mut self, index: u8, label: &str) -> Result<(), Error> {
         let index = index as usize;
-        let mut mgr = self.inner.write()?;
         if !label.is_empty() {
             for i in 1..MAX_SUPPORTED_FABRICS {
-                if let Some(fabric) = &mgr.fabrics[i] {
+                if let Some(fabric) = &self.fabrics[i] {
                     if fabric.label == label {
                         return Err(Error::Invalid);
                     }
                 }
             }
         }
-        if let Some(fabric) = &mut mgr.fabrics[index] {
-            let old = fabric.label.clone();
-            fabric.label = label;
-            let psm = self.psm.lock().unwrap();
-            if fabric.store(index, &psm).is_err() {
-                fabric.label = old;
-                return Err(Error::StdIoError);
-            }
+        if let Some(fabric) = &mut self.fabrics[index] {
+            fabric.label = label.into();
+            self.changed = true;
         }
         Ok(())
     }

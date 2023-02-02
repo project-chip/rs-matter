@@ -15,12 +15,13 @@
  *    limitations under the License.
  */
 
-use std::{
-    array::TryFromSliceError, fmt, string::FromUtf8Error, sync::PoisonError, time::SystemTimeError,
-};
+use alloc::string::FromUtf8Error;
+use core::{array::TryFromSliceError, fmt};
 
 use async_channel::{SendError, TryRecvError};
 use log::error;
+
+extern crate alloc;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Error {
@@ -31,6 +32,13 @@ pub enum Error {
     CommandNotFound,
     Duplicate,
     EndpointNotFound,
+    InvalidAction,
+    InvalidCommand,
+    InvalidDataType,
+    UnsupportedAccess,
+    ResourceExhausted,
+    Busy,
+    DataVersionMismatch,
     Crypto,
     TLSStack,
     MdnsError,
@@ -71,6 +79,36 @@ pub enum Error {
     Utf8Fail,
 }
 
+impl Error {
+    pub fn remap<F>(self, matcher: F, to: Self) -> Self
+    where
+        F: FnOnce(&Self) -> bool,
+    {
+        if matcher(&self) {
+            to
+        } else {
+            self
+        }
+    }
+
+    pub fn map_invalid(self, to: Self) -> Self {
+        self.remap(|e| matches!(e, Self::Invalid | Self::InvalidData), to)
+    }
+
+    pub fn map_invalid_command(self) -> Self {
+        self.map_invalid(Error::InvalidCommand)
+    }
+
+    pub fn map_invalid_action(self) -> Self {
+        self.map_invalid(Error::InvalidAction)
+    }
+
+    pub fn map_invalid_data_type(self) -> Self {
+        self.map_invalid(Error::InvalidDataType)
+    }
+}
+
+#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(_e: std::io::Error) -> Self {
         // Keep things simple for now
@@ -78,8 +116,9 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl<T> From<PoisonError<T>> for Error {
-    fn from(_e: PoisonError<T>) -> Self {
+#[cfg(feature = "std")]
+impl<T> From<std::sync::PoisonError<T>> for Error {
+    fn from(_e: std::sync::PoisonError<T>) -> Self {
         Self::RwLock
     }
 }
@@ -107,8 +146,9 @@ impl From<ccm::aead::Error> for Error {
     }
 }
 
-impl From<SystemTimeError> for Error {
-    fn from(_e: SystemTimeError) -> Self {
+#[cfg(feature = "std")]
+impl From<std::time::SystemTimeError> for Error {
+    fn from(_e: std::time::SystemTimeError) -> Self {
         Self::SysTimeFail
     }
 }

@@ -16,24 +16,15 @@
  */
 
 use crate::{
-    data_model::objects::{Cluster, ClusterType},
+    data_model::objects::{
+        AttrDataEncoder, AttrDetails, ChangeNotifier, Cluster, Dataver, Handler,
+        NonBlockingHandler, ATTRIBUTE_LIST, FEATURE_MAP,
+    },
     error::Error,
+    utils::rand::Rand,
 };
 
 pub const ID: u32 = 0x0031;
-
-pub struct NwCommCluster {
-    base: Cluster,
-}
-
-impl ClusterType for NwCommCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
-    }
-}
 
 enum FeatureMap {
     _Wifi = 0x01,
@@ -41,13 +32,35 @@ enum FeatureMap {
     Ethernet = 0x04,
 }
 
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID as _,
+    feature_map: FeatureMap::Ethernet as _,
+    attributes: &[FEATURE_MAP, ATTRIBUTE_LIST],
+    commands: &[],
+};
+
+pub struct NwCommCluster {
+    data_ver: Dataver,
+}
+
 impl NwCommCluster {
-    pub fn new() -> Result<Box<Self>, Error> {
-        let mut c = Box::new(Self {
-            base: Cluster::new(ID)?,
-        });
-        // TODO: Arch-Specific
-        c.base.set_feature_map(FeatureMap::Ethernet as u32)?;
-        Ok(c)
+    pub fn new(rand: Rand) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
+        }
+    }
+}
+
+impl Handler for NwCommCluster {
+    fn read(&self, _attr: &AttrDetails, _encoder: AttrDataEncoder) -> Result<(), Error> {
+        Err(Error::AttributeNotFound)
+    }
+}
+
+impl NonBlockingHandler for NwCommCluster {}
+
+impl ChangeNotifier<()> for NwCommCluster {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
     }
 }

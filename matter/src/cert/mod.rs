@@ -15,14 +15,17 @@
  *    limitations under the License.
  */
 
-use std::fmt;
+use core::fmt;
+
+extern crate alloc;
 
 use crate::{
-    crypto::{CryptoKeyPair, KeyPair},
+    crypto::KeyPair,
     error::Error,
     tlv::{self, FromTLV, TLVArrayOwned, TLVElement, TLVWriter, TagType, ToTLV},
     utils::writebuf::WriteBuf,
 };
+use alloc::{format, string::String, vec::Vec};
 use log::error;
 use num_derive::FromPrimitive;
 
@@ -591,10 +594,10 @@ impl Cert {
     }
 
     pub fn as_tlv(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf, buf.len());
+        let mut wb = WriteBuf::new(buf);
         let mut tw = TLVWriter::new(&mut wb);
         self.to_tlv(&mut tw, TagType::Anonymous)?;
-        Ok(wb.as_slice().len())
+        Ok(wb.into_slice().len())
     }
 
     pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
@@ -731,6 +734,8 @@ mod printer;
 
 #[cfg(test)]
 mod tests {
+    use log::info;
+
     use crate::cert::Cert;
     use crate::error::Error;
     use crate::tlv::{self, FromTLV, TLVWriter, TagType, ToTLV};
@@ -811,15 +816,14 @@ mod tests {
         ];
 
         for input in test_input.iter() {
-            println!("Testing next input...");
+            info!("Testing next input...");
             let root = tlv::get_root_node(input).unwrap();
             let cert = Cert::from_tlv(&root).unwrap();
             let mut buf = [0u8; 1024];
-            let buf_len = buf.len();
-            let mut wb = WriteBuf::new(&mut buf, buf_len);
+            let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
             cert.to_tlv(&mut tw, TagType::Anonymous).unwrap();
-            assert_eq!(*input, wb.as_slice());
+            assert_eq!(*input, wb.into_slice());
         }
     }
 
