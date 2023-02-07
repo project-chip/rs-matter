@@ -88,7 +88,7 @@ bitflags! {
  * - instead of arrays, can use linked-lists to conserve space and avoid the internal fragmentation
  */
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, PartialOrd, Clone)]
 pub enum AttrValue {
     Int64(i64),
     Uint8(u8),
