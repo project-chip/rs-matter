@@ -45,7 +45,7 @@
 //!
 //! /// The basic information about this device
 //! let dev_info = BasicInfoConfig {
-//!     vid: 0x8002,
+//!     vid: 0x8000,
 //!     pid: 0xFFF1,
 //!     hw_ver: 2,
 //!     sw_ver: 1,
