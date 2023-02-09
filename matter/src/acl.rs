@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::{
+    fmt::Display,
+    sync::{Arc, Mutex, MutexGuard, RwLock},
+};
 
 use crate::{
     data_model::objects::{Access, Privilege},
@@ -24,6 +27,7 @@ use crate::{
     interaction_model::messages::GenericPath,
     sys::Psm,
     tlv::{FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
+    transport::session::MAX_CAT_IDS_PER_NOC,
     utils::writebuf::WriteBuf,
 };
 use log::error;
@@ -67,12 +71,94 @@ impl ToTLV for AuthMode {
     }
 }
 
+/// An accessor can have as many identities: one node id and Upto MAX_CAT_IDS_PER_NOC
+const MAX_ACCESSOR_SUBJECTS: usize = 1 + MAX_CAT_IDS_PER_NOC;
+/// The CAT Prefix used in Subjects
+pub const NOC_CAT_SUBJECT_PREFIX: u64 = 0xFFFF_FFFD_0000_0000;
+const NOC_CAT_ID_MASK: u64 = 0xFFFF_0000;
+const NOC_CAT_VERSION_MASK: u64 = 0xFFFF;
+
+fn is_noc_cat(id: u64) -> bool {
+    (id & NOC_CAT_SUBJECT_PREFIX) == NOC_CAT_SUBJECT_PREFIX
+}
+
+fn get_noc_cat_id(id: u64) -> u64 {
+    (id & NOC_CAT_ID_MASK) >> 16
+}
+
+fn get_noc_cat_version(id: u64) -> u64 {
+    id & NOC_CAT_VERSION_MASK
+}
+
+pub fn gen_noc_cat(id: u16, version: u16) -> u64 {
+    NOC_CAT_SUBJECT_PREFIX | ((id as u64) << 16) | version as u64
+}
+
+pub struct AccessorSubjects([u64; MAX_ACCESSOR_SUBJECTS]);
+
+impl AccessorSubjects {
+    pub fn new(id: u64) -> Self {
+        let mut a = Self(Default::default());
+        a.0[0] = id;
+        a
+    }
+
+    pub fn add(&mut self, subject: u64) -> Result<(), Error> {
+        for (i, val) in self.0.iter().enumerate() {
+            if *val == 0 {
+                self.0[i] = subject;
+                return Ok(());
+            }
+        }
+        Err(Error::NoSpace)
+    }
+
+    /// Match the match_subject with any of the current subjects
+    /// If a NOC CAT is specified, CAT aware matching is also performed
+    pub fn matches(&self, acl_subject: u64) -> bool {
+        for v in self.0.iter() {
+            if *v == 0 {
+                continue;
+            }
+
+            if *v == acl_subject {
+                return true;
+            } else {
+                // NOC CAT match
+                if is_noc_cat(*v)
+                    && is_noc_cat(acl_subject)
+                    && (get_noc_cat_id(*v) == get_noc_cat_id(acl_subject))
+                    && (get_noc_cat_version(*v) >= get_noc_cat_version(acl_subject))
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+impl Display for AccessorSubjects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(f, "[")?;
+        for i in self.0 {
+            if is_noc_cat(i) {
+                write!(f, "CAT({} - {})", get_noc_cat_id(i), get_noc_cat_version(i))?;
+            } else if i != 0 {
+                write!(f, "{}, ", i)?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+
 /// The Accessor Object
 pub struct Accessor {
     /// The fabric index of the accessor
     pub fab_idx: u8,
-    /// Accessor's identified: could be node-id, NoC CAT, group id
-    id: u64,
+    /// Accessor's subject: could be node-id, NoC CAT, group id
+    subjects: AccessorSubjects,
     /// The Authmode of this session
     auth_mode: AuthMode,
     // TODO: Is this the right place for this though, or should we just use a global-acl-handle-get
@@ -80,10 +166,15 @@ pub struct Accessor {
 }
 
 impl Accessor {
-    pub fn new(fab_idx: u8, id: u64, auth_mode: AuthMode, acl_mgr: Arc<AclMgr>) -> Self {
+    pub fn new(
+        fab_idx: u8,
+        subjects: AccessorSubjects,
+        auth_mode: AuthMode,
+        acl_mgr: Arc<AclMgr>,
+    ) -> Self {
         Self {
             fab_idx,
-            id,
+            subjects,
             auth_mode,
             acl_mgr,
         }
@@ -215,7 +306,7 @@ impl AclEntry {
         let mut entries_exist = false;
         for i in self.subjects.iter().flatten() {
             entries_exist = true;
-            if accessor.id == *i {
+            if accessor.subjects.matches(*i) {
                 allow = true;
             }
         }
@@ -467,8 +558,8 @@ impl AclMgr {
             }
         }
         error!(
-            "ACL Disallow for src id {} fab idx {}",
-            req.accessor.id, req.accessor.fab_idx
+            "ACL Disallow for subjects {} fab idx {}",
+            req.accessor.subjects, req.accessor.fab_idx
         );
         error!("{}", self);
         false
@@ -490,6 +581,7 @@ impl std::fmt::Display for AclMgr {
 #[allow(clippy::bool_assert_comparison)]
 mod tests {
     use crate::{
+        acl::{gen_noc_cat, AccessorSubjects},
         data_model::objects::{Access, Privilege},
         interaction_model::messages::GenericPath,
     };
@@ -501,7 +593,7 @@ mod tests {
     fn test_basic_empty_subject_target() {
         let am = Arc::new(AclMgr::new_with(false).unwrap());
         am.erase_all();
-        let accessor = Accessor::new(2, 112233, AuthMode::Case, am.clone());
+        let accessor = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, am.clone());
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, &path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -529,7 +621,7 @@ mod tests {
     fn test_subject() {
         let am = Arc::new(AclMgr::new_with(false).unwrap());
         am.erase_all();
-        let accessor = Accessor::new(2, 112233, AuthMode::Case, am.clone());
+        let accessor = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, am.clone());
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, &path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -548,10 +640,78 @@ mod tests {
     }
 
     #[test]
+    fn test_cat() {
+        let am = Arc::new(AclMgr::new_with(false).unwrap());
+        am.erase_all();
+
+        let allow_cat = 0xABCD;
+        let disallow_cat = 0xCAFE;
+        let v2 = 2;
+        let v3 = 3;
+        // Accessor has nodeif and CAT 0xABCD_0002
+        let mut subjects = AccessorSubjects::new(112233);
+        subjects.add(gen_noc_cat(allow_cat, v2)).unwrap();
+
+        let accessor = Accessor::new(2, subjects, AuthMode::Case, am.clone());
+        let path = GenericPath::new(Some(1), Some(1234), None);
+        let mut req = AccessReq::new(&accessor, &path, Access::READ);
+        req.set_target_perms(Access::RWVA);
+
+        // Deny for CAT id mismatch
+        let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(gen_noc_cat(disallow_cat, v2)).unwrap();
+        am.add(new).unwrap();
+        assert_eq!(req.allow(), false);
+
+        // Deny of CAT version mismatch
+        let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(gen_noc_cat(allow_cat, v3)).unwrap();
+        am.add(new).unwrap();
+        assert_eq!(req.allow(), false);
+
+        // Allow for CAT match
+        let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(gen_noc_cat(allow_cat, v2)).unwrap();
+        am.add(new).unwrap();
+        assert_eq!(req.allow(), true);
+    }
+
+    #[test]
+    fn test_cat_version() {
+        let am = Arc::new(AclMgr::new_with(false).unwrap());
+        am.erase_all();
+
+        let allow_cat = 0xABCD;
+        let disallow_cat = 0xCAFE;
+        let v2 = 2;
+        let v3 = 3;
+        // Accessor has nodeif and CAT 0xABCD_0003
+        let mut subjects = AccessorSubjects::new(112233);
+        subjects.add(gen_noc_cat(allow_cat, v3)).unwrap();
+
+        let accessor = Accessor::new(2, subjects, AuthMode::Case, am.clone());
+        let path = GenericPath::new(Some(1), Some(1234), None);
+        let mut req = AccessReq::new(&accessor, &path, Access::READ);
+        req.set_target_perms(Access::RWVA);
+
+        // Deny for CAT id mismatch
+        let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(gen_noc_cat(disallow_cat, v2)).unwrap();
+        am.add(new).unwrap();
+        assert_eq!(req.allow(), false);
+
+        // Allow for CAT match and version more than ACL version
+        let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(gen_noc_cat(allow_cat, v2)).unwrap();
+        am.add(new).unwrap();
+        assert_eq!(req.allow(), true);
+    }
+
+    #[test]
     fn test_target() {
         let am = Arc::new(AclMgr::new_with(false).unwrap());
         am.erase_all();
-        let accessor = Accessor::new(2, 112233, AuthMode::Case, am.clone());
+        let accessor = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, am.clone());
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, &path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -612,7 +772,8 @@ mod tests {
     fn test_privilege() {
         let am = Arc::new(AclMgr::new_with(false).unwrap());
         am.erase_all();
-        let accessor = Accessor::new(2, 112233, AuthMode::Case, am.clone());
+
+        let accessor = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, am.clone());
         let path = GenericPath::new(Some(1), Some(1234), None);
 
         // Create an Exact Match ACL with View privilege
