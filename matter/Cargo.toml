@@ -15,10 +15,11 @@ name = "matter"
 path = "src/lib.rs"
 
 [features]
-default = ["crypto_mbedtls"]
+default = ["crypto_mbedtls" ]
 crypto_openssl = ["openssl", "foreign-types", "hmac", "sha2"]
 crypto_mbedtls = ["mbedtls"]
 crypto_esp_mbedtls = ["esp-idf-sys"]
+state_hooks = []
 
 [dependencies]
 boxslab = { path = "../boxslab" }

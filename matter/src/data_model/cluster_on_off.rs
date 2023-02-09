@@ -47,17 +47,48 @@ fn attr_on_off_new() -> Result<Attribute, Error> {
     )
 }
 
+#[cfg(feature = "state_hooks")]
+pub struct OnOffCallbacks {
+    pub on_callback: Box<dyn Fn() >,
+    pub off_callback: Box<dyn Fn() >,
+    pub toggle_callback: Box<dyn Fn() >,
+}
+
+#[cfg(feature = "state_hooks")]
+impl Default for OnOffCallbacks {
+    fn default() -> Self {
+        let foo = || {  };
+        Self { 
+            on_callback: Box::new(foo),
+            off_callback: Box::new(foo),
+            toggle_callback: Box::new(foo) 
+        }
+    }
+}
+
 pub struct OnOffCluster {
     base: Cluster,
+
+    // Allow callbacks to the outside world
+    #[cfg(feature = "state_hooks")]
+    pub callbacks: OnOffCallbacks
 }
 
 impl OnOffCluster {
     pub fn new() -> Result<Box<Self>, Error> {
         let mut cluster = Box::new(OnOffCluster {
             base: Cluster::new(ID)?,
+
+            #[cfg(feature = "state_hooks")]
+            callbacks: OnOffCallbacks::default()
         });
         cluster.base.add_attribute(attr_on_off_new()?)?;
         Ok(cluster)
+    }
+
+    #[cfg(feature = "state_hooks")]
+    pub fn set_callbacks(&mut self, new_callbacks: OnOffCallbacks) {
+        self.callbacks = new_callbacks;
     }
 }
 
@@ -90,6 +121,10 @@ impl ClusterType for OnOffCluster {
                         .map_err(|_| IMStatusCode::Failure)?;
                 }
                 cmd_req.trans.complete();
+
+                #[cfg(feature = "state_hooks")]
+                (self.callbacks.off_callback)();
+
                 Err(IMStatusCode::Sucess)
             }
             Commands::On => {
@@ -105,6 +140,10 @@ impl ClusterType for OnOffCluster {
                 }
 
                 cmd_req.trans.complete();
+
+                #[cfg(feature = "state_hooks")]
+                (self.callbacks.on_callback)();
+
                 Err(IMStatusCode::Sucess)
             }
             Commands::Toggle => {
@@ -121,6 +160,11 @@ impl ClusterType for OnOffCluster {
                     .write_attribute_raw(Attributes::OnOff as u16, AttrValue::Bool(!value))
                     .map_err(|_| IMStatusCode::Failure)?;
                 cmd_req.trans.complete();
+
+
+                #[cfg(feature = "state_hooks")]
+                (self.callbacks.toggle_callback)();
+
                 Err(IMStatusCode::Sucess)
             }
         }
