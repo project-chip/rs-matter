@@ -48,20 +48,20 @@ fn attr_on_off_new() -> Result<Attribute, Error> {
 }
 
 #[cfg(feature = "state_hooks")]
-pub struct OnOffCallbacks {
-    pub on_callback: Box<dyn Fn() >,
-    pub off_callback: Box<dyn Fn() >,
-    pub toggle_callback: Box<dyn Fn() >,
+pub struct OnOffHooks {
+    pub on_hook: Box<dyn Fn() >,
+    pub off_hook: Box<dyn Fn() >,
+    pub toggle_hook: Box<dyn Fn() >,
 }
 
 #[cfg(feature = "state_hooks")]
-impl Default for OnOffCallbacks {
+impl Default for OnOffHooks {
     fn default() -> Self {
         let foo = || {  };
         Self { 
-            on_callback: Box::new(foo),
-            off_callback: Box::new(foo),
-            toggle_callback: Box::new(foo) 
+            on_hook: Box::new(foo),
+            off_hook: Box::new(foo),
+            toggle_hook: Box::new(foo) 
         }
     }
 }
@@ -71,7 +71,7 @@ pub struct OnOffCluster {
 
     // Allow callbacks to the outside world
     #[cfg(feature = "state_hooks")]
-    pub callbacks: OnOffCallbacks
+    pub hooks: OnOffHooks
 }
 
 impl OnOffCluster {
@@ -80,15 +80,15 @@ impl OnOffCluster {
             base: Cluster::new(ID)?,
 
             #[cfg(feature = "state_hooks")]
-            callbacks: OnOffCallbacks::default()
+            hooks: OnOffHooks::default()
         });
         cluster.base.add_attribute(attr_on_off_new()?)?;
         Ok(cluster)
     }
 
     #[cfg(feature = "state_hooks")]
-    pub fn set_callbacks(&mut self, new_callbacks: OnOffCallbacks) {
-        self.callbacks = new_callbacks;
+    pub fn set_hooks(&mut self, new_hooks: OnOffHooks) {
+        self.hooks = new_hooks;
     }
 }
 
@@ -123,7 +123,7 @@ impl ClusterType for OnOffCluster {
                 cmd_req.trans.complete();
 
                 #[cfg(feature = "state_hooks")]
-                (self.callbacks.off_callback)();
+                (self.hooks.off_hook)();
 
                 Err(IMStatusCode::Sucess)
             }
@@ -142,7 +142,7 @@ impl ClusterType for OnOffCluster {
                 cmd_req.trans.complete();
 
                 #[cfg(feature = "state_hooks")]
-                (self.callbacks.on_callback)();
+                (self.hooks.on_hook)();
 
                 Err(IMStatusCode::Sucess)
             }
@@ -163,7 +163,7 @@ impl ClusterType for OnOffCluster {
 
 
                 #[cfg(feature = "state_hooks")]
-                (self.callbacks.toggle_callback)();
+                (self.hooks.toggle_hook)();
 
                 Err(IMStatusCode::Sucess)
             }

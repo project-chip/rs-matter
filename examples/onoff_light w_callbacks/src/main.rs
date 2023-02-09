@@ -22,9 +22,9 @@ use matter::data_model::device_types::device_type_add_on_off_light;
 use matter::secure_channel::spake2p::VerifierData;
 
 #[cfg(feature = "state_hooks")]
-use matter::data_model::cluster_on_off::OnOffCallbacks;
+use matter::data_model::cluster_on_off::OnOffHooks;
 #[cfg(feature = "state_hooks")]
-use matter::data_model::device_types::device_type_add_on_off_light_w_callbacks;
+use matter::data_model::device_types::device_type_add_on_off_light_w_hooks;
 
 
 fn main() {
@@ -60,8 +60,8 @@ fn main() {
             let on_callback = Box::new(on);
             let off_callback = Box::new(off);
             let toggle_callback = Box::new(toggle);
-            let state_hooks = OnOffCallbacks { on_callback: on_callback, off_callback: off_callback, toggle_callback: toggle_callback };
-            let endpoint = device_type_add_on_off_light_w_callbacks(&mut node, state_hooks).unwrap();    
+            let state_hooks = OnOffHooks { on_callback: on_callback, off_callback: off_callback, toggle_callback: toggle_callback };
+            let endpoint = device_type_add_on_off_light_w_hooks(&mut node, state_hooks).unwrap();    
             println!("Added OnOff Light Device type at endpoint id: {}", endpoint);
             println!("Data Model now is: {}", node);    
         }

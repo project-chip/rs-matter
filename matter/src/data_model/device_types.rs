@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::RwLockWriteGuard;
 
 #[cfg(feature = "state_hooks")]
-use super::cluster_on_off::OnOffCallbacks;
+use super::cluster_on_off::OnOffHooks;
 
 
 pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
@@ -84,11 +84,11 @@ pub fn device_type_add_on_off_light(node: &mut WriteNode) -> Result<u32, Error> 
 }
 
 #[cfg(feature = "state_hooks")]
-pub fn device_type_add_on_off_light_w_callbacks(node: &mut WriteNode, state_hooks: OnOffCallbacks) -> Result<u32, Error> {
+pub fn device_type_add_on_off_light_w_hooks(node: &mut WriteNode, state_hooks: OnOffHooks) -> Result<u32, Error> {
     let endpoint = node.add_endpoint(DEV_TYPE_ON_OFF_LIGHT)?;
 
     let mut cluster = OnOffCluster::new()?;
-    cluster.set_callbacks(state_hooks);
+    cluster.set_hooks(state_hooks);
     node.add_cluster(endpoint, cluster)?;
     Ok(endpoint)
 }
