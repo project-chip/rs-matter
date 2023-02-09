@@ -32,7 +32,6 @@ use matter::{
     secure_channel::pake::PaseMgr,
     tlv::{TLVWriter, TagType, ToTLV},
     transport::packet::Packet,
-    transport::proto_demux::HandleProto,
     transport::{
         exchange::{self, Exchange, ExchangeCtx},
         network::Address,
@@ -40,6 +39,7 @@ use matter::{
         proto_demux::ProtoCtx,
         session::{CloneData, SessionMgr, SessionMode},
     },
+    transport::{proto_demux::HandleProto, session::CaseDetails},
     utils::writebuf::WriteBuf,
 };
 use std::{
@@ -146,7 +146,7 @@ impl ImEngine {
                 std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 5542,
             )),
-            SessionMode::Case(1),
+            SessionMode::Case(CaseDetails::new(1, &Default::default())),
         );
         let sess_idx = sess_mgr.clone_session(&clone_data).unwrap();
         let sess = sess_mgr.get_session_handle(sess_idx);

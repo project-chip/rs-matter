@@ -221,7 +221,7 @@ impl DataModel {
         match sess.get_session_mode() {
             SessionMode::Case(c) => {
                 let subject = AccessorSubjects::new(sess.get_peer_node_id().unwrap_or_default());
-                Accessor::new(c, subject, AuthMode::Case, self.acl_mgr.clone())
+                Accessor::new(c.fab_idx, subject, AuthMode::Case, self.acl_mgr.clone())
             }
             SessionMode::Pase => Accessor::new(
                 0,

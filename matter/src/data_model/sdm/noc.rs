@@ -248,11 +248,11 @@ impl NocCluster {
             .map_err(|_| IMStatusCode::InvalidDataType)?;
 
         let (result, fab_idx) =
-            if let SessionMode::Case(fab_idx) = cmd_req.trans.session.get_session_mode() {
-                if self.fabric_mgr.set_label(fab_idx, label).is_err() {
-                    (NocStatus::LabelConflict, fab_idx)
+            if let SessionMode::Case(c) = cmd_req.trans.session.get_session_mode() {
+                if self.fabric_mgr.set_label(c.fab_idx, label).is_err() {
+                    (NocStatus::LabelConflict, c.fab_idx)
                 } else {
-                    (NocStatus::Ok, fab_idx)
+                    (NocStatus::Ok, c.fab_idx)
                 }
             } else {
                 // Update Fabric Label not allowed

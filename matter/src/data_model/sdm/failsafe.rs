@@ -89,10 +89,15 @@ impl FailSafe {
                 match c.noc_state {
                     NocState::NocNotRecvd => return Err(Error::Invalid),
                     NocState::AddNocRecvd(idx) | NocState::UpdateNocRecvd(idx) => {
-                        if SessionMode::Case(idx) != session_mode {
-                            error!(
-                                "Received disarm in separate session from previous Add/Update NOC"
-                            );
+                        if let SessionMode::Case(c) = session_mode {
+                            if c.fab_idx != idx {
+                                error!(
+                                    "Received disarm in separate session from previous Add/Update NOC"
+                                );
+                                return Err(Error::Invalid);
+                            }
+                        } else {
+                            error!("Received disarm in a non-CASE session");
                             return Err(Error::Invalid);
                         }
                     }
