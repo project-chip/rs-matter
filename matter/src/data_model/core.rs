@@ -220,7 +220,13 @@ impl DataModel {
     fn sess_to_accessor(&self, sess: &Session) -> Accessor {
         match sess.get_session_mode() {
             SessionMode::Case(c) => {
-                let subject = AccessorSubjects::new(sess.get_peer_node_id().unwrap_or_default());
+                let mut subject =
+                    AccessorSubjects::new(sess.get_peer_node_id().unwrap_or_default());
+                for i in c.cat_ids {
+                    if i != 0 {
+                        let _ = subject.add(i);
+                    }
+                }
                 Accessor::new(c.fab_idx, subject, AuthMode::Case, self.acl_mgr.clone())
             }
             SessionMode::Pase => Accessor::new(

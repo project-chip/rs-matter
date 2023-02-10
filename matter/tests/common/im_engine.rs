@@ -37,7 +37,7 @@ use matter::{
         network::Address,
         packet::PacketPool,
         proto_demux::ProtoCtx,
-        session::{CloneData, SessionMgr, SessionMode},
+        session::{CloneData, NocCatIds, SessionMgr, SessionMode},
     },
     transport::{proto_demux::HandleProto, session::CaseDetails},
     utils::writebuf::WriteBuf,
@@ -69,6 +69,7 @@ pub struct ImInput<'a> {
     action: OpCode,
     data: &'a dyn ToTLV,
     peer_id: u64,
+    cat_ids: NocCatIds,
 }
 
 pub const IM_ENGINE_PEER_ID: u64 = 445566;
@@ -78,11 +79,16 @@ impl<'a> ImInput<'a> {
             action,
             data,
             peer_id: IM_ENGINE_PEER_ID,
+            cat_ids: Default::default(),
         }
     }
 
     pub fn set_peer_node_id(&mut self, peer: u64) {
         self.peer_id = peer;
+    }
+
+    pub fn set_cat_ids(&mut self, cat_ids: &NocCatIds) {
+        self.cat_ids = *cat_ids;
     }
 }
 
@@ -146,7 +152,7 @@ impl ImEngine {
                 std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 5542,
             )),
-            SessionMode::Case(CaseDetails::new(1, &Default::default())),
+            SessionMode::Case(CaseDetails::new(1, &input.cat_ids)),
         );
         let sess_idx = sess_mgr.clone_session(&clone_data).unwrap();
         let sess = sess_mgr.get_session_handle(sess_idx);
