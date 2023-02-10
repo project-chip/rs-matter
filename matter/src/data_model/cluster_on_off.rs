@@ -49,19 +49,19 @@ fn attr_on_off_new() -> Result<Attribute, Error> {
 
 #[cfg(feature = "state_hooks")]
 pub struct OnOffHooks {
-    pub on_hook: Box<dyn Fn() >,
-    pub off_hook: Box<dyn Fn() >,
-    pub toggle_hook: Box<dyn Fn() >,
+    pub on_hook: Box<dyn Fn()>,
+    pub off_hook: Box<dyn Fn()>,
+    pub toggle_hook: Box<dyn Fn()>,
 }
 
 #[cfg(feature = "state_hooks")]
 impl Default for OnOffHooks {
     fn default() -> Self {
-        let foo = || {  };
-        Self { 
+        let foo = || {};
+        Self {
             on_hook: Box::new(foo),
             off_hook: Box::new(foo),
-            toggle_hook: Box::new(foo) 
+            toggle_hook: Box::new(foo),
         }
     }
 }
@@ -71,7 +71,7 @@ pub struct OnOffCluster {
 
     // Allow callbacks to the outside world
     #[cfg(feature = "state_hooks")]
-    pub hooks: OnOffHooks
+    pub hooks: OnOffHooks,
 }
 
 impl OnOffCluster {
@@ -80,7 +80,7 @@ impl OnOffCluster {
             base: Cluster::new(ID)?,
 
             #[cfg(feature = "state_hooks")]
-            hooks: OnOffHooks::default()
+            hooks: OnOffHooks::default(),
         });
         cluster.base.add_attribute(attr_on_off_new()?)?;
         Ok(cluster)
@@ -160,7 +160,6 @@ impl ClusterType for OnOffCluster {
                     .write_attribute_raw(Attributes::OnOff as u16, AttrValue::Bool(!value))
                     .map_err(|_| IMStatusCode::Failure)?;
                 cmd_req.trans.complete();
-
 
                 #[cfg(feature = "state_hooks")]
                 (self.hooks.toggle_hook)();

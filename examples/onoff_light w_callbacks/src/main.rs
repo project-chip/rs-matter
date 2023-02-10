@@ -26,7 +26,6 @@ use matter::data_model::cluster_on_off::OnOffHooks;
 #[cfg(feature = "state_hooks")]
 use matter::data_model::device_types::device_type_add_on_off_light_w_hooks;
 
-
 fn main() {
     env_logger::init();
     let comm_data = CommissioningData {
@@ -51,23 +50,27 @@ fn main() {
     let dm = matter.get_data_model();
     {
         let mut node = dm.node.write().unwrap();
-        #[cfg(feature="state_hooks")]
+        #[cfg(feature = "state_hooks")]
         {
-            let on = || { println!("[CALLBACK] On callback called!") };
-            let off = || { println!("[CALLBACK] Off callback called!") };
-            let toggle = || { println!("[CALLBACK] Toggle callback called!") };
-    
+            let on = || println!("[CALLBACK] On callback called!");
+            let off = || println!("[CALLBACK] Off callback called!");
+            let toggle = || println!("[CALLBACK] Toggle callback called!");
+
             let on_callback = Box::new(on);
             let off_callback = Box::new(off);
             let toggle_callback = Box::new(toggle);
-            let state_hooks = OnOffHooks { on_callback: on_callback, off_callback: off_callback, toggle_callback: toggle_callback };
-            let endpoint = device_type_add_on_off_light_w_hooks(&mut node, state_hooks).unwrap();    
+            let state_hooks = OnOffHooks {
+                on_callback: on_callback,
+                off_callback: off_callback,
+                toggle_callback: toggle_callback,
+            };
+            let endpoint = device_type_add_on_off_light_w_hooks(&mut node, state_hooks).unwrap();
             println!("Added OnOff Light Device type at endpoint id: {}", endpoint);
-            println!("Data Model now is: {}", node);    
+            println!("Data Model now is: {}", node);
         }
         #[cfg(not(feature = "state_hooks"))]
         {
-            let endpoint = device_type_add_on_off_light(&mut node).unwrap();    
+            let endpoint = device_type_add_on_off_light(&mut node).unwrap();
             println!("Added OnOff Light Device type at endpoint id: {}", endpoint);
             println!("Data Model now is: {}", node);
         }
