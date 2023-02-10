@@ -59,8 +59,7 @@ astro-dnssd = "0.3"
 # MDNS support
 [target.'cfg(target_os = "linux")'.dependencies]
 lazy_static = "1.4.0"
-# Patched copy of libmdns
-libmdns = { git = "https://github.com/angelybo/libmdns.git", branch = "return_all_on_query" }
+libmdns = { version = "0.7.4" }
 
 [[example]]
 name = "onoff_light"
