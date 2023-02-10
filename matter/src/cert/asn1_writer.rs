@@ -17,7 +17,7 @@
 
 use super::{CertConsumer, MAX_DEPTH};
 use crate::error::Error;
-use chrono::{TimeZone, Utc};
+use chrono::{Datelike, TimeZone, Utc};
 use log::warn;
 
 #[derive(Debug)]
@@ -277,7 +277,13 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
             }
         };
 
-        let time_str = format!("{}Z", dt.format("%y%m%d%H%M%S"));
-        self.write_str(0x17, time_str.as_bytes())
+        if dt.year() >= 2050 {
+            // If year is >= 2050, ASN.1 requires it to be Generalised Time
+            let time_str = format!("{}Z", dt.format("%Y%m%d%H%M%S"));
+            self.write_str(0x18, time_str.as_bytes())
+        } else {
+            let time_str = format!("{}Z", dt.format("%y%m%d%H%M%S"));
+            self.write_str(0x17, time_str.as_bytes())
+        }
     }
 }

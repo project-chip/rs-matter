@@ -31,7 +31,7 @@ use crate::{
     tlv::{OctetStr, TLVWriter, TagType, ToTLV, UtfStr},
 };
 
-const MAX_CERT_TLV_LEN: usize = 300;
+const MAX_CERT_TLV_LEN: usize = 350;
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
 macro_rules! fb_key {
