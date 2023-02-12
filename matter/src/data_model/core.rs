@@ -23,7 +23,7 @@ use super::{
     system_model::descriptor::DescriptorCluster,
 };
 use crate::{
-    acl::{AccessReq, Accessor, AclMgr, AuthMode},
+    acl::{AccessReq, Accessor, AccessorSubjects, AclMgr, AuthMode},
     error::*,
     fabric::FabricMgr,
     interaction_model::{
@@ -219,14 +219,29 @@ impl DataModel {
 
     fn sess_to_accessor(&self, sess: &Session) -> Accessor {
         match sess.get_session_mode() {
-            SessionMode::Case(c) => Accessor::new(
-                c,
-                sess.get_peer_node_id().unwrap_or_default(),
-                AuthMode::Case,
+            SessionMode::Case(c) => {
+                let mut subject =
+                    AccessorSubjects::new(sess.get_peer_node_id().unwrap_or_default());
+                for i in c.cat_ids {
+                    if i != 0 {
+                        let _ = subject.add_catid(i);
+                    }
+                }
+                Accessor::new(c.fab_idx, subject, AuthMode::Case, self.acl_mgr.clone())
+            }
+            SessionMode::Pase => Accessor::new(
+                0,
+                AccessorSubjects::new(1),
+                AuthMode::Pase,
                 self.acl_mgr.clone(),
             ),
-            SessionMode::Pase => Accessor::new(0, 1, AuthMode::Pase, self.acl_mgr.clone()),
-            SessionMode::PlainText => Accessor::new(0, 1, AuthMode::Invalid, self.acl_mgr.clone()),
+
+            SessionMode::PlainText => Accessor::new(
+                0,
+                AccessorSubjects::new(1),
+                AuthMode::Invalid,
+                self.acl_mgr.clone(),
+            ),
         }
     }
 

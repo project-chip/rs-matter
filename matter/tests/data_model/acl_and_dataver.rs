@@ -16,7 +16,7 @@
  */
 
 use matter::{
-    acl::{AclEntry, AuthMode, Target},
+    acl::{gen_noc_cat, AclEntry, AuthMode, Target},
     data_model::{
         objects::{AttrValue, EncodeValue, Privilege},
         system_model::access_control,
@@ -30,6 +30,7 @@ use matter::{
         messages::{msg, GenericPath},
     },
     tlv::{self, ElementType, FromTLV, TLVArray, TLVElement, TLVWriter, TagType},
+    transport::session::NocCatIds,
 };
 
 use crate::{
@@ -77,6 +78,7 @@ fn gen_read_reqs_output<'a>(
 fn handle_write_reqs(
     im: &mut ImEngine,
     peer_node_id: u64,
+    peer_cat_ids: Option<&NocCatIds>,
     input: &[AttrData],
     expected: &[AttrStatus],
 ) {
@@ -85,6 +87,9 @@ fn handle_write_reqs(
 
     let mut input = ImInput::new(OpCode::WriteRequest, &write_req);
     input.set_peer_node_id(peer_node_id);
+    if let Some(cat_ids) = peer_cat_ids {
+        input.set_cat_ids(cat_ids);
+    }
     let (_, out_buf) = im.process(&input, &mut out_buf);
 
     tlv::print_tlv_list(out_buf);
@@ -263,7 +268,7 @@ fn wc_write_attribute() {
 
     // Test 1: Wildcard write to an attribute without permission should return
     // no error
-    handle_write_reqs(&mut im, peer, input0, &[]);
+    handle_write_reqs(&mut im, peer, None, input0, &[]);
     {
         let node = im.dm.node.read().unwrap();
         let echo = node.get_cluster(0, echo_cluster::ID).unwrap();
@@ -287,6 +292,7 @@ fn wc_write_attribute() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         input0,
         &[AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0)],
     );
@@ -307,6 +313,7 @@ fn wc_write_attribute() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         input1,
         &[
             AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0),
@@ -350,7 +357,7 @@ fn exact_write_attribute() {
 
     // Test 1: Exact write to an attribute without permission should return
     // Unsupported Access Error
-    handle_write_reqs(&mut im, peer, input, expected_fail);
+    handle_write_reqs(&mut im, peer, None, input, expected_fail);
     assert_eq!(
         AttrValue::Uint16(ATTR_WRITE_DEFAULT_VALUE),
         read_cluster_id_write_attr(&im, 0)
@@ -363,7 +370,62 @@ fn exact_write_attribute() {
 
     // Test 1: Exact write to an attribute with permission should grant
     // access
-    handle_write_reqs(&mut im, peer, input, expected_success);
+    handle_write_reqs(&mut im, peer, None, input, expected_success);
+    assert_eq!(AttrValue::Uint16(val0), read_cluster_id_write_attr(&im, 0));
+}
+
+#[test]
+/// Ensure that an write attribute without a wildcard returns an error when the
+/// ACL disallows the access, and returns success once access is granted to the CAT ID
+/// The Accessor CAT version is one more than that in the ACL
+fn exact_write_attribute_noc_cat() {
+    let _ = env_logger::try_init();
+    let val0 = 10;
+    let attr_data0 = |tag, t: &mut TLVWriter| {
+        let _ = t.u16(tag, val0);
+    };
+
+    let ep0_att = GenericPath::new(
+        Some(0),
+        Some(echo_cluster::ID),
+        Some(echo_cluster::Attributes::AttWrite as u32),
+    );
+
+    let input = &[AttrData::new(
+        None,
+        AttrPath::new(&ep0_att),
+        EncodeValue::Closure(&attr_data0),
+    )];
+    let expected_fail = &[AttrStatus::new(
+        &ep0_att,
+        IMStatusCode::UnsupportedAccess,
+        0,
+    )];
+    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0)];
+
+    let peer = 98765;
+    /* CAT in NOC is 1 more, in version, than that in ACL */
+    let noc_cat = gen_noc_cat(0xABCD, 2);
+    let cat_in_acl = gen_noc_cat(0xABCD, 1);
+    let cat_ids = [noc_cat, 0, 0];
+    let mut im = ImEngine::new();
+
+    // Test 1: Exact write to an attribute without permission should return
+    // Unsupported Access Error
+    handle_write_reqs(&mut im, peer, Some(&cat_ids), input, expected_fail);
+    assert_eq!(
+        AttrValue::Uint16(ATTR_WRITE_DEFAULT_VALUE),
+        read_cluster_id_write_attr(&im, 0)
+    );
+
+    // Add ACL to allow our peer to access any endpoint
+    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    acl.add_subject_catid(cat_in_acl).unwrap();
+    im.acl_mgr.add(acl).unwrap();
+
+    // Test 1: Exact write to an attribute with permission should grant
+    // access
+    handle_write_reqs(&mut im, peer, Some(&cat_ids), input, expected_success);
     assert_eq!(AttrValue::Uint16(val0), read_cluster_id_write_attr(&im, 0));
 }
 
@@ -399,6 +461,7 @@ fn insufficient_perms_write() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         input0,
         &[AttrStatus::new(
             &ep0_att,
@@ -466,6 +529,7 @@ fn write_with_runtime_acl_add() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         // write to echo-cluster attribute, write to acl attribute, write to echo-cluster attribute
         &[input0, acl_input, input0],
         &[
@@ -623,6 +687,7 @@ fn test_write_data_ver() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         input_correct_dataver,
         &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Sucess, 0)],
     );
@@ -638,6 +703,7 @@ fn test_write_data_ver() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         input_correct_dataver,
         &[AttrStatus::new(
             &ep0_attwrite,
@@ -660,6 +726,7 @@ fn test_write_data_ver() {
     handle_write_reqs(
         &mut im,
         peer,
+        None,
         input_correct_dataver,
         &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Sucess, 0)],
     );

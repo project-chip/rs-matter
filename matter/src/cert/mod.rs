@@ -318,6 +318,19 @@ impl DistNames {
                 }
             })
     }
+
+    fn u32_arr(&self, match_id: DnTags, output: &mut [u32]) {
+        let mut out_index = 0;
+        for (_, val) in self.dn.iter().filter(|(id, _)| *id == match_id as u8) {
+            if let DistNameValue::Uint(a) = val {
+                if out_index < output.len() {
+                    // CatIds are actually just 32-bit
+                    output[out_index] = *a as u32;
+                    out_index += 1;
+                }
+            }
+        }
+    }
 }
 
 const PRINTABLE_STR_THRESHOLD: u8 = 0x80;
@@ -541,6 +554,10 @@ impl Cert {
 
     pub fn get_node_id(&self) -> Result<u64, Error> {
         self.subject.u64(DnTags::NodeId).ok_or(Error::NoNodeId)
+    }
+
+    pub fn get_cat_ids(&self, output: &mut [u32]) {
+        self.subject.u32_arr(DnTags::NocCat, output)
     }
 
     pub fn get_fabric_id(&self) -> Result<u64, Error> {

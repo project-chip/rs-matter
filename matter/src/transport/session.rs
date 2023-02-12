@@ -37,12 +37,30 @@ use super::{
     packet::{Packet, PacketPool},
 };
 
+pub const MAX_CAT_IDS_PER_NOC: usize = 3;
+pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
+
 const MATTER_AES128_KEY_SIZE: usize = 16;
+
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
+pub struct CaseDetails {
+    pub fab_idx: u8,
+    pub cat_ids: NocCatIds,
+}
+
+impl CaseDetails {
+    pub fn new(fab_idx: u8, cat_ids: &NocCatIds) -> Self {
+        Self {
+            fab_idx,
+            cat_ids: *cat_ids,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum SessionMode {
     // The Case session will capture the local fabric index
-    Case(u8),
+    Case(CaseDetails),
     Pase,
     PlainText,
 }
@@ -188,9 +206,16 @@ impl Session {
         self.peer_nodeid
     }
 
+    pub fn get_peer_cat_ids(&self) -> Option<&NocCatIds> {
+        match &self.mode {
+            SessionMode::Case(a) => Some(&a.cat_ids),
+            _ => None,
+        }
+    }
+
     pub fn get_local_fabric_idx(&self) -> Option<u8> {
         match self.mode {
-            SessionMode::Case(a) => Some(a),
+            SessionMode::Case(a) => Some(a.fab_idx),
             _ => None,
         }
     }

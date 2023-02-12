@@ -33,7 +33,7 @@ use crate::{
         network::Address,
         proto_demux::{ProtoCtx, ResponseRequired},
         queue::{Msg, WorkQ},
-        session::{CloneData, SessionMode},
+        session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
     utils::writebuf::WriteBuf,
 };
@@ -155,6 +155,8 @@ impl Case {
         }
 
         // Only now do we add this message to the TT Hash
+        let mut peer_catids: NocCatIds = Default::default();
+        initiator_noc.get_cat_ids(&mut peer_catids);
         case_session.tt_hash.update(ctx.rx.as_borrow_slice())?;
         let clone_data = Case::get_session_clone_data(
             fabric.ipk.op_key(),
@@ -162,6 +164,7 @@ impl Case {
             initiator_noc.get_node_id()?,
             ctx.exch_ctx.sess.get_peer_addr(),
             &case_session,
+            &peer_catids,
         )?;
         // Queue a transport mgr request to add a new session
         WorkQ::get()?.sync_send(Msg::NewSession(clone_data))?;
@@ -281,6 +284,7 @@ impl Case {
         peer_nodeid: u64,
         peer_addr: Address,
         case_session: &CaseSession,
+        peer_catids: &NocCatIds,
     ) -> Result<CloneData, Error> {
         let mut session_keys = [0_u8; 3 * crypto::SYMM_KEY_LEN_BYTES];
         Case::get_session_keys(
@@ -296,7 +300,10 @@ impl Case {
             case_session.peer_sessid,
             case_session.local_sessid,
             peer_addr,
-            SessionMode::Case(case_session.local_fabric_idx as u8),
+            SessionMode::Case(CaseDetails::new(
+                case_session.local_fabric_idx as u8,
+                peer_catids,
+            )),
         );
 
         clone_data.dec_key.copy_from_slice(&session_keys[0..16]);
