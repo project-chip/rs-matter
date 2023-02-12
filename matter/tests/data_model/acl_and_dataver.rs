@@ -420,7 +420,7 @@ fn exact_write_attribute_noc_cat() {
 
     // Add ACL to allow our peer to access any endpoint
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(cat_in_acl).unwrap();
+    acl.add_subject_catid(cat_in_acl).unwrap();
     im.acl_mgr.add(acl).unwrap();
 
     // Test 1: Exact write to an attribute with permission should grant

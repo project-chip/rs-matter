@@ -90,8 +90,10 @@ fn get_noc_cat_version(id: u64) -> u64 {
     id & NOC_CAT_VERSION_MASK
 }
 
-pub fn gen_noc_cat(id: u16, version: u16) -> u64 {
-    NOC_CAT_SUBJECT_PREFIX | ((id as u64) << 16) | version as u64
+/// Generate CAT that is embeddedable in the NoC
+/// This only generates the 32-bit CAT ID
+pub fn gen_noc_cat(id: u16, version: u16) -> u32 {
+    ((id as u32) << 16) | version as u32
 }
 
 pub struct AccessorSubjects([u64; MAX_ACCESSOR_SUBJECTS]);
@@ -103,10 +105,10 @@ impl AccessorSubjects {
         a
     }
 
-    pub fn add(&mut self, subject: u64) -> Result<(), Error> {
+    pub fn add_catid(&mut self, subject: u32) -> Result<(), Error> {
         for (i, val) in self.0.iter().enumerate() {
             if *val == 0 {
-                self.0[i] = subject;
+                self.0[i] = NOC_CAT_SUBJECT_PREFIX | (subject as u64);
                 return Ok(());
             }
         }
@@ -285,6 +287,10 @@ impl AclEntry {
             .ok_or(Error::NoSpace)?;
         self.subjects[index] = Some(subject);
         Ok(())
+    }
+
+    pub fn add_subject_catid(&mut self, cat_id: u32) -> Result<(), Error> {
+        self.add_subject(NOC_CAT_SUBJECT_PREFIX | cat_id as u64)
     }
 
     pub fn add_target(&mut self, target: Target) -> Result<(), Error> {
@@ -650,7 +656,7 @@ mod tests {
         let v3 = 3;
         // Accessor has nodeif and CAT 0xABCD_0002
         let mut subjects = AccessorSubjects::new(112233);
-        subjects.add(gen_noc_cat(allow_cat, v2)).unwrap();
+        subjects.add_catid(gen_noc_cat(allow_cat, v2)).unwrap();
 
         let accessor = Accessor::new(2, subjects, AuthMode::Case, am.clone());
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -659,19 +665,20 @@ mod tests {
 
         // Deny for CAT id mismatch
         let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
-        new.add_subject(gen_noc_cat(disallow_cat, v2)).unwrap();
+        new.add_subject_catid(gen_noc_cat(disallow_cat, v2))
+            .unwrap();
         am.add(new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Deny of CAT version mismatch
         let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
-        new.add_subject(gen_noc_cat(allow_cat, v3)).unwrap();
+        new.add_subject_catid(gen_noc_cat(allow_cat, v3)).unwrap();
         am.add(new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for CAT match
         let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
-        new.add_subject(gen_noc_cat(allow_cat, v2)).unwrap();
+        new.add_subject_catid(gen_noc_cat(allow_cat, v2)).unwrap();
         am.add(new).unwrap();
         assert_eq!(req.allow(), true);
     }
@@ -687,7 +694,7 @@ mod tests {
         let v3 = 3;
         // Accessor has nodeif and CAT 0xABCD_0003
         let mut subjects = AccessorSubjects::new(112233);
-        subjects.add(gen_noc_cat(allow_cat, v3)).unwrap();
+        subjects.add_catid(gen_noc_cat(allow_cat, v3)).unwrap();
 
         let accessor = Accessor::new(2, subjects, AuthMode::Case, am.clone());
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -696,13 +703,14 @@ mod tests {
 
         // Deny for CAT id mismatch
         let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
-        new.add_subject(gen_noc_cat(disallow_cat, v2)).unwrap();
+        new.add_subject_catid(gen_noc_cat(disallow_cat, v2))
+            .unwrap();
         am.add(new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for CAT match and version more than ACL version
         let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
-        new.add_subject(gen_noc_cat(allow_cat, v2)).unwrap();
+        new.add_subject_catid(gen_noc_cat(allow_cat, v2)).unwrap();
         am.add(new).unwrap();
         assert_eq!(req.allow(), true);
     }

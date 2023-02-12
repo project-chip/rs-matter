@@ -224,7 +224,7 @@ impl DataModel {
                     AccessorSubjects::new(sess.get_peer_node_id().unwrap_or_default());
                 for i in c.cat_ids {
                     if i != 0 {
-                        let _ = subject.add(i);
+                        let _ = subject.add_catid(i);
                     }
                 }
                 Accessor::new(c.fab_idx, subject, AuthMode::Case, self.acl_mgr.clone())

@@ -38,16 +38,18 @@ use super::{
 };
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
+pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
+
 const MATTER_AES128_KEY_SIZE: usize = 16;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 pub struct CaseDetails {
     pub fab_idx: u8,
-    pub cat_ids: [u64; MAX_CAT_IDS_PER_NOC],
+    pub cat_ids: NocCatIds,
 }
 
 impl CaseDetails {
-    pub fn new(fab_idx: u8, cat_ids: &[u64; MAX_CAT_IDS_PER_NOC]) -> Self {
+    pub fn new(fab_idx: u8, cat_ids: &NocCatIds) -> Self {
         Self {
             fab_idx,
             cat_ids: *cat_ids,
@@ -68,8 +70,6 @@ impl Default for SessionMode {
         SessionMode::PlainText
     }
 }
-
-pub type NocCatIds = [u64; MAX_CAT_IDS_PER_NOC];
 
 #[derive(Debug)]
 pub struct Session {
