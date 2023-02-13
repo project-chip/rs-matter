@@ -29,7 +29,12 @@ use mbedtls::{
 };
 
 use super::CryptoKeyPair;
-use crate::error::Error;
+use crate::{
+    // TODO: We should move ASN1Writer out of Cert,
+    // so Crypto doesn't have to depend on Cert
+    cert::{ASN1Writer, CertConsumer},
+    error::Error,
+};
 
 pub struct HmacSha256 {
     inner: Hmac,
@@ -183,7 +188,7 @@ impl CryptoKeyPair for KeyPair {
 
         // current rust-mbedTLS APIs the signature to be in DER format
         let mut mbedtls_sign = [0u8; super::EC_SIGNATURE_LEN_BYTES * 3];
-        let len = convert_r_s_to_asn1_sign(signature, &mut mbedtls_sign);
+        let len = convert_r_s_to_asn1_sign(signature, &mut mbedtls_sign)?;
         let mbedtls_sign = &mbedtls_sign[..len];
 
         if let Err(e) = tmp_key.verify(hash::Type::Sha256, &msg_hash, mbedtls_sign) {
@@ -195,51 +200,16 @@ impl CryptoKeyPair for KeyPair {
     }
 }
 
-fn convert_r_s_to_asn1_sign(signature: &[u8], mbedtls_sign: &mut [u8]) -> usize {
-    let mut offset = 0;
-    mbedtls_sign[offset] = 0x30;
-    offset += 1;
-    let mut len = 68;
-    if (signature[0] & 0x80) == 0x80 {
-        len += 1;
-    }
-    if (signature[32] & 0x80) == 0x80 {
-        len += 1;
-    }
-    mbedtls_sign[offset] = len;
-    offset += 1;
-    mbedtls_sign[offset] = 0x02;
-    offset += 1;
-    if (signature[0] & 0x80) == 0x80 {
-        // It seems if topmost bit is 1, there is an extra 0
-        mbedtls_sign[offset] = 33;
-        offset += 1;
-        mbedtls_sign[offset] = 0;
-        offset += 1;
-    } else {
-        mbedtls_sign[offset] = 32;
-        offset += 1;
-    }
-    mbedtls_sign[offset..(offset + 32)].copy_from_slice(&signature[..32]);
-    offset += 32;
+fn convert_r_s_to_asn1_sign(signature: &[u8], mbedtls_sign: &mut [u8]) -> Result<usize, Error> {
+    let r = &signature[0..32];
+    let s = &signature[32..64];
 
-    mbedtls_sign[offset] = 0x02;
-    offset += 1;
-    if (signature[32] & 0x80) == 0x80 {
-        // It seems if topmost bit is 1, there is an extra 0
-        mbedtls_sign[offset] = 33;
-        offset += 1;
-        mbedtls_sign[offset] = 0;
-        offset += 1;
-    } else {
-        mbedtls_sign[offset] = 32;
-        offset += 1;
-    }
-
-    mbedtls_sign[offset..(offset + 32)].copy_from_slice(&signature[32..64]);
-    offset += 32;
-
-    offset
+    let mut wr = ASN1Writer::new(mbedtls_sign);
+    wr.start_seq("")?;
+    wr.integer("r", r)?;
+    wr.integer("s", s)?;
+    wr.end_seq()?;
+    Ok(wr.as_slice().len())
 }
 
 // mbedTLS sign() function directly encodes the signature in ASN1. The lower level function
