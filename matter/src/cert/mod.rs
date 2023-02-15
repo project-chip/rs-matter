@@ -26,7 +26,8 @@ use crate::{
 use log::error;
 use num_derive::FromPrimitive;
 
-use self::{asn1_writer::ASN1Writer, printer::CertPrinter};
+pub use self::asn1_writer::ASN1Writer;
+use self::printer::CertPrinter;
 
 // As per https://datatracker.ietf.org/doc/html/rfc5280
 

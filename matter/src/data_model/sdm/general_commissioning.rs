@@ -33,6 +33,7 @@ enum CommissioningError {
     ErrValueOutsideRange = 1,
     ErrInvalidAuth = 2,
     ErrNotCommissioning = 3,
+    ErrBusyWithOtherAdmin = 4,
 }
 
 pub const ID: u32 = 0x0030;
@@ -180,17 +181,18 @@ impl GenCommCluster {
         cmd_enter!("ARM Fail Safe");
 
         let p = FailSafeParams::from_tlv(&cmd_req.data)?;
+        let mut status = CommissioningError::Ok as u8;
 
         if self
             .failsafe
             .arm(p.expiry_len, cmd_req.trans.session.get_session_mode())
             .is_err()
         {
-            return Err(IMStatusCode::Busy);
+            status = CommissioningError::ErrBusyWithOtherAdmin as u8;
         }
 
         let cmd_data = CommonResponse {
-            error_code: CommissioningError::Ok as u8,
+            error_code: status,
             debug_txt: "".to_owned(),
         };
         let resp = ib::InvResp::cmd_new(
