@@ -91,10 +91,69 @@ pub enum Commands {
     MoveToClosestFrequency = 0x08,
 }
 
-pub struct LevelControlCluster {
-    base: Cluster
+struct UpdateData {
+    level: u8,
+    remaining_time: u16,
+    current_command: Option<Commands>,
+    is_running: bool
 }
 
+// let mut time_left = time;
+   
+fn move_lvl_down(event_loop: Arc<Mutex<UpdateData>>, rate: u8, min_level: u8, cur_level: u8) {
+    let update_interval = time::Duration::from_millis(100);
+    let loop_data = event_loop.lock().unwrap();
+
+    // Each 1/10th of a second wake up and update current volume and remaining time
+    loop {
+        thread::sleep(update_interval);
+        cur_level = match cur_level.checked_sub(rate) {
+            Some(t) => t,
+            None => min_level,
+        };
+
+        info!("Moving device level down by: {rate} to {cur_level}");
+        // End of command if we hit min level
+        if cur_level <= min_level {
+            loop_data.level = min_level;
+            info!("Device reached min level: {min_level}");
+            break;
+        } else {
+            loop_data.level = cur_level;
+        }
+    }
+}
+
+fn move_lvl_up(event_loop: Arc<Mutex<UpdateData>>, rate: u8, max_level: u8, cur_level: u8) {
+    let update_interval = time::Duration::from_millis(100);
+
+    let loop_data = event_loop.lock().unwrap();
+    // Each 1/10th of a second wake up and update current volume and remaining time
+    loop {
+        thread::sleep(update_interval);
+        cur_level = match cur_level.checked_sub(rate) {
+            Some(t) => t,
+            None => max_level,
+        };
+
+        info!("Moving device level up by: {rate} to {cur_level}");
+
+        // End of command if we hit max level
+        if cur_level >= max_level {
+            loop_data.level = max_level;
+            info!("Device reached min level: {max_level}");
+            break;
+        } else {
+            loop_data.level = cur_level;
+        }
+    }
+}
+
+
+pub struct LevelControlCluster {
+    base: Cluster,
+    event_loop: <Arc<Mutex<UpdateData>>>
+}
 
 impl LevelControlCluster {
 
@@ -192,6 +251,7 @@ impl LevelControlCluster {
     pub fn new() -> Result<Box<Self>, Error> {
         let mut cluster = Box::new(LevelControlCluster {
             base: Cluster::new(ID)?,
+            event_loop: Arc::new(Mutex::new(UpdateData{}))
         });
 
         let attrs = [
@@ -230,6 +290,13 @@ impl LevelControlCluster {
         cluster.base.add_attributes(&attrs)?;
         Ok(cluster)
     }
+  
+    fn update_from_loop(&mut self) {
+        let loop_data = self.event_loop.lock().unwrap();
+
+        self.set_current_level(loop_data.level);
+        self.set_remaining_time(loop_data.remaining_time);
+    }
 
     fn handle_move_to_lvl(&mut self, cmd_data: &TLVElement) -> Result<(), IMStatusCode> {
         let mut tlv_iterator = cmd_data.enter().ok_or(Error::Invalid)?;
@@ -244,20 +311,18 @@ impl LevelControlCluster {
         // let _options_mask = tlv_iterator.next().ok_or(IMStatusCode::InvalidDataType)?;
         // let _options_override = tlv_iterator.next().ok_or(IMStatusCode::InvalidDataType)?;
 
-        
         // TODO: Check if we are not above min/max level
         if cur_level > new_level && new_level > min_level{
             self.set_current_level(new_level);
         } else if cur_level > new_level {
             self.set_current_level(min_level);
-        } 
-        
-        else if cur_level < new_level && new_level < max_level{
+        } else if cur_level < new_level && new_level < max_level{
             self.set_current_level(new_level);
         } else if cur_level < new_level{
             self.set_current_level(max_level);
         }
 
+        // Do it in the background
         Err(IMStatusCode::Sucess)
     }
 
@@ -276,20 +341,28 @@ impl LevelControlCluster {
         
         match MoveMode::from_u8(move_mode) {
             MoveMode::Up => {
-                let new_level: u8 = match cur_level.checked_add(rate) {
-                    Some(t) => t,
-                    None => max_level
-                };        
-                self.set_current_level(new_level);
+                // let new_level: u8 = match cur_level.checked_add(rate) {
+                //     Some(t) => t,
+                //     None => max_level
+                // };        
+                // self.set_current_level(new_level);
+                thread::spawn(move || {
+                    move_lvl_up(self.event_loop, rate, max_level, cur_level);
+                });
             },
             MoveMode::Down => {
-                let new_level: u8 = match cur_level.checked_sub(rate) {
-                    Some(t) => t,
-                    None => min_level
-                };
-                self.set_current_level(new_level);
+                // let new_level: u8 = match cur_level.checked_sub(rate) {
+                //     Some(t) => t,
+                //     None => min_level
+                // };
+                // self.set_current_level(new_level);
+
+                thread::spawn(move || {
+                    move_lvl_down(self.event_loop, rate, min_level, cur_level);
+                });
             }
         };
+
 
         Err(IMStatusCode::Sucess)
     }
