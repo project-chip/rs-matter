@@ -100,6 +100,26 @@ impl InteractionModel {
         InteractionModel { consumer }
     }
 
+    pub fn handle_status_resp(
+        &mut self,
+        trans: &mut Transaction,
+        rx_buf: &[u8],
+        proto_tx: &mut Packet,
+    ) -> Result<ResponseRequired, Error> {
+        let root = get_root_node_struct(rx_buf)?;
+        let req = StatusResp::from_tlv(&root)?;
+
+        let mut handled = false;
+        let result = self.handle_subscription_confirm(trans, proto_tx, &mut handled);
+        if handled {
+            result
+        } else {
+            // Nothing to do for now
+            info!("Received status report with status {:?}", req.status);
+            Ok(ResponseRequired::No)
+        }
+    }
+
     pub fn handle_timed_req(
         &mut self,
         trans: &mut Transaction,
@@ -162,6 +182,8 @@ impl proto_demux::HandleProto for InteractionModel {
             OpCode::ReadRequest => self.handle_read_req(&mut trans, buf, &mut ctx.tx)?,
             OpCode::WriteRequest => self.handle_write_req(&mut trans, buf, &mut ctx.tx)?,
             OpCode::TimedRequest => self.handle_timed_req(&mut trans, buf, &mut ctx.tx)?,
+            OpCode::SubscribeRequest => self.handle_subscribe_req(&mut trans, buf, &mut ctx.tx)?,
+            OpCode::StatusResponse => self.handle_status_resp(&mut trans, buf, &mut ctx.tx)?,
             _ => {
                 error!("Opcode Not Handled: {:?}", proto_opcode);
                 return Err(Error::InvalidOpcode);
