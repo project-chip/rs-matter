@@ -154,9 +154,9 @@ impl AttrValue {
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub(super) id: u16,
-    pub(super) value: AttrValue,
+    pub value: AttrValue,
     pub(super) quality: Quality,
-    pub(super) access: Access,
+    pub access: Access,
 }
 
 impl Default for Attribute {

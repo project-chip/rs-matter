@@ -190,7 +190,7 @@ impl Cluster {
         self.attributes.iter().position(|c| c.id == attr_id)
     }
 
-    fn get_attribute(&self, attr_id: u16) -> Result<&Attribute, Error> {
+    pub fn get_attribute(&self, attr_id: u16) -> Result<&Attribute, Error> {
         let index = self
             .get_attribute_index(attr_id)
             .ok_or(Error::AttributeNotFound)?;
@@ -228,7 +228,7 @@ impl Cluster {
         let _ = tw.end_container();
     }
 
-    fn read_system_attribute(&self, encoder: &mut dyn Encoder, attr: &Attribute) {
+    pub fn read_system_attribute(&self, encoder: &mut dyn Encoder, attr: &Attribute) {
         let global_attr: Option<GlobalElements> = num::FromPrimitive::from_u16(attr.id);
         if let Some(global_attr) = global_attr {
             match global_attr {
