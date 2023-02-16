@@ -180,7 +180,7 @@ impl DataModel {
             // Set the cluster's data version
             attr_encoder.set_data_ver(cluster_data_ver);
             let mut access_req = AccessReq::new(accessor, path, Access::READ);
-            Cluster::read_attribute(c, &mut access_req, attr_encoder, attr_details);
+            c.read_attribute(&mut access_req, attr_encoder, &attr_details);
             Ok(())
         });
         if let Err(e) = result {

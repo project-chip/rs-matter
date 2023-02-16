@@ -82,6 +82,42 @@ pub trait ClusterType {
     ) -> Result<(), IMStatusCode> {
         self.base_mut().write_attribute_from_tlv(attr.attr_id, data)
     }
+
+    // If we have this as as a ClusterType fn we can have each cluster implement it's own version IF they require an event looped thing
+    fn read_attribute(
+        &self,
+        access_req: &mut AccessReq,
+        encoder: &mut dyn Encoder,
+        attr: &AttrDetails,
+    ) {
+        let mut error = IMStatusCode::Sucess;
+        let base = self.base();
+        let a = if let Ok(a) = base.get_attribute(attr.attr_id) {
+            a
+        } else {
+            encoder.encode_status(IMStatusCode::UnsupportedAttribute, 0);
+            return;
+        };
+
+        if !a.access.contains(Access::READ) {
+            error = IMStatusCode::UnsupportedRead;
+        }
+
+        access_req.set_target_perms(a.access);
+        if !access_req.allow() {
+            error = IMStatusCode::UnsupportedAccess;
+        }
+
+        if error != IMStatusCode::Sucess {
+            encoder.encode_status(error, 0);
+        } else if Attribute::is_system_attr(attr.attr_id) {
+            self.base().read_system_attribute(encoder, a)
+        } else if a.value != AttrValue::Custom {
+            encoder.encode(EncodeValue::Value(&a.value))
+        } else {
+            self.read_custom_attribute(encoder, attr)
+        }
+    }
 }
 
 pub struct Cluster {
@@ -181,41 +217,6 @@ impl Cluster {
             }
         } else {
             Ok((&self.attributes[..], true))
-        }
-    }
-
-    pub fn read_attribute(
-        c: &dyn ClusterType,
-        access_req: &mut AccessReq,
-        encoder: &mut dyn Encoder,
-        attr: &AttrDetails,
-    ) {
-        let mut error = IMStatusCode::Sucess;
-        let base = c.base();
-        let a = if let Ok(a) = base.get_attribute(attr.attr_id) {
-            a
-        } else {
-            encoder.encode_status(IMStatusCode::UnsupportedAttribute, 0);
-            return;
-        };
-
-        if !a.access.contains(Access::READ) {
-            error = IMStatusCode::UnsupportedRead;
-        }
-
-        access_req.set_target_perms(a.access);
-        if !access_req.allow() {
-            error = IMStatusCode::UnsupportedAccess;
-        }
-
-        if error != IMStatusCode::Sucess {
-            encoder.encode_status(error, 0);
-        } else if Attribute::is_system_attr(attr.attr_id) {
-            c.base().read_system_attribute(encoder, a)
-        } else if a.value != AttrValue::Custom {
-            encoder.encode(EncodeValue::Value(&a.value))
-        } else {
-            c.read_custom_attribute(encoder, attr)
         }
     }
 
