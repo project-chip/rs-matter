@@ -376,6 +376,7 @@ pub struct AttrReadEncoder<'a, 'b, 'c> {
     path: GenericPath,
     skip_error: bool,
     data_ver_filters: Option<&'a TLVArray<'a, DataVersionFilter>>,
+    is_buffer_full: bool,
 }
 
 impl<'a, 'b, 'c> AttrReadEncoder<'a, 'b, 'c> {
@@ -386,6 +387,7 @@ impl<'a, 'b, 'c> AttrReadEncoder<'a, 'b, 'c> {
             skip_error: false,
             path: Default::default(),
             data_ver_filters: None,
+            is_buffer_full: false,
         }
     }
 
@@ -404,6 +406,10 @@ impl<'a, 'b, 'c> AttrReadEncoder<'a, 'b, 'c> {
     pub fn set_path(&mut self, path: GenericPath) {
         self.path = path;
     }
+
+    pub fn is_buffer_full(&self) -> bool {
+        self.is_buffer_full
+    }
 }
 
 impl<'a, 'b, 'c> Encoder for AttrReadEncoder<'a, 'b, 'c> {
@@ -413,7 +419,12 @@ impl<'a, 'b, 'c> Encoder for AttrReadEncoder<'a, 'b, 'c> {
             ib::AttrPath::new(&self.path),
             value,
         ));
-        let _ = resp.to_tlv(self.tw, TagType::Anonymous);
+
+        let anchor = self.tw.get_tail();
+        if resp.to_tlv(self.tw, TagType::Anonymous).is_err() {
+            self.is_buffer_full = true;
+            self.tw.rewind_to(anchor);
+        }
     }
 
     fn encode_status(&mut self, status: IMStatusCode, cluster_status: u16) {
