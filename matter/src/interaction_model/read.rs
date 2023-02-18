@@ -20,12 +20,11 @@ use crate::{
     interaction_model::core::OpCode,
     tlv::{get_root_node_struct, FromTLV, TLVWriter, TagType},
     transport::{packet::Packet, proto_demux::ResponseRequired},
+    utils::writebuf::WriteBuf,
+    wb_shrink, wb_unshrink,
 };
 
-use super::{
-    messages::msg::{self, ReadReq},
-    InteractionModel, Transaction,
-};
+use super::{messages::msg::ReadReq, InteractionModel, Transaction};
 
 impl InteractionModel {
     pub fn handle_read_req(
@@ -35,21 +34,22 @@ impl InteractionModel {
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
         proto_tx.set_proto_opcode(OpCode::ReportData as u8);
-
-        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
+        // We have to do these gymnastics because we have to reserve some bytes towards the
+        // end of the slice for adding our terminating TLVs
+        const RESERVE_SIZE: usize = 8;
+        let proto_tx_wb = proto_tx.get_writebuf()?;
+        let mut child_wb = wb_shrink!(proto_tx_wb, RESERVE_SIZE);
+        let mut tw = TLVWriter::new(&mut child_wb);
         let root = get_root_node_struct(rx_buf)?;
         let read_req = ReadReq::from_tlv(&root)?;
 
         tw.start_struct(TagType::Anonymous)?;
         self.consumer.consume_read_attr(&read_req, trans, &mut tw)?;
-        // Supress response always true for read interaction
-        tw.bool(
-            TagType::Context(msg::ReportDataTag::SupressResponse as u8),
-            true,
-        )?;
-        tw.end_container()?;
 
-        trans.complete();
+        // Now that we have everything, start using the proto_tx_wb, by unshrinking it
+        wb_unshrink!(proto_tx_wb, child_wb);
+        let mut tw = TLVWriter::new(proto_tx_wb);
+        tw.end_container()?;
         Ok(ResponseRequired::Yes)
     }
 }

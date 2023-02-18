@@ -153,14 +153,21 @@ impl DataModel {
         }
     }
 
-    // Encode a read attribute from a path that may or may not be wildcard
+    /// Encode a read attribute from a path that may or may not be wildcard
+    ///
+    /// If the buffer gets full while generating the read response, we will return
+    /// an Err(path), where the path is the path that we should resume from, for the next chunk.
+    /// This facilitates chunk management
     fn handle_read_attr_path(
         node: &Node,
         accessor: &Accessor,
         attr_encoder: &mut AttrReadEncoder,
         attr_details: &mut AttrDetails,
-    ) {
+        resume_from: &mut Option<GenericPath>,
+    ) -> Result<(), GenericPath> {
+        let mut status = Ok(());
         let path = attr_encoder.path;
+
         // Skip error reporting for wildcard paths, don't for concrete paths
         attr_encoder.skip_error(path.is_wildcard());
 
@@ -174,6 +181,16 @@ impl DataModel {
                 return Ok(());
             }
 
+            if let Some(r) = resume_from {
+                // If resume_from is valid, and we haven't hit the resume_from yet, skip encoding
+                if r != path {
+                    return Ok(());
+                } else {
+                    // Else, wipe out the resume_from so subsequent paths can be encoded
+                    *resume_from = None;
+                }
+            }
+
             attr_details.attr_id = path.leaf.unwrap_or_default() as u16;
             // Overwrite the previous path with the concrete path
             attr_encoder.set_path(*path);
@@ -181,12 +198,17 @@ impl DataModel {
             attr_encoder.set_data_ver(cluster_data_ver);
             let mut access_req = AccessReq::new(accessor, path, Access::READ);
             Cluster::read_attribute(c, &mut access_req, attr_encoder, attr_details);
+            if attr_encoder.is_buffer_full() {
+                // Buffer is full, next time resume from this attribute
+                status = Err(*path);
+            }
             Ok(())
         });
         if let Err(e) = result {
             // We hit this only if this is a non-wildcard path
             attr_encoder.encode_status(e, 0);
         }
+        status
     }
 
     // Handle command from a path that may or may not be wildcard
@@ -320,19 +342,42 @@ impl InteractionConsumer for DataModel {
                 .tw
                 .start_array(TagType::Context(msg::ReportDataTag::AttributeReports as u8))?;
 
+            let mut result = Ok(());
+            let mut resume_from = None;
             for attr_path in attr_requests.iter() {
                 attr_encoder.set_path(attr_path.to_gp());
                 // Extract the attr_path fields into various structures
                 attr_details.list_index = attr_path.list_index;
                 attr_details.fab_idx = accessor.fab_idx;
-                DataModel::handle_read_attr_path(
+                result = DataModel::handle_read_attr_path(
                     &node,
                     &accessor,
                     &mut attr_encoder,
                     &mut attr_details,
+                    &mut resume_from,
                 );
+                if result.is_err() {
+                    break;
+                }
             }
             tw.end_container()?;
+            if let Err(path) = result {
+                // If there was an error, make a note of this 'path' to resume for the next chunk
+                tw.bool(
+                    TagType::Context(msg::ReportDataTag::MoreChunkedMsgs as u8),
+                    true,
+                )?;
+                tw.bool(
+                    TagType::Context(msg::ReportDataTag::SupressResponse as u8),
+                    false,
+                )?;
+            } else {
+                tw.bool(
+                    TagType::Context(msg::ReportDataTag::SupressResponse as u8),
+                    true,
+                )?;
+                trans.complete();
+            }
         }
         Ok(())
     }
