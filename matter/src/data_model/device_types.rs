@@ -73,6 +73,11 @@ const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
     drev: 2,
 };
 
+pub const DEV_TYPE_ON_SMART_SPEAKER: DeviceType = DeviceType {
+    dtype: 0x0022,
+    drev: 2,
+};
+
 pub fn device_type_add_on_off_light(node: &mut WriteNode) -> Result<u32, Error> {
     let endpoint = node.add_endpoint(DEV_TYPE_ON_OFF_LIGHT)?;
     node.add_cluster(endpoint, OnOffCluster::new()?)?;
