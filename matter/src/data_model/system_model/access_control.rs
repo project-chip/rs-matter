@@ -195,7 +195,7 @@ mod tests {
     use crate::{
         acl::{AclEntry, AclMgr, AuthMode},
         data_model::{
-            core::AttrReadEncoder,
+            core::read::AttrReadEncoder,
             objects::{AttrDetails, ClusterType, Privilege},
         },
         interaction_model::messages::ib::ListOperation,
