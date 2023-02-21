@@ -33,9 +33,9 @@ use log::{error, info};
 use num;
 use num_derive::FromPrimitive;
 
-use super::InteractionModel;
 use super::Transaction;
 use super::TransactionState;
+use super::{messages::msg::SubscribeReq, InteractionModel};
 use super::{messages::msg::TimedReq, InteractionConsumer};
 
 /* Handle messages related to the Interation Model
@@ -100,24 +100,33 @@ impl InteractionModel {
         InteractionModel { consumer }
     }
 
+    pub fn handle_subscribe_req(
+        &mut self,
+        trans: &mut Transaction,
+        rx_buf: &[u8],
+        proto_tx: &mut Packet,
+    ) -> Result<ResponseRequired, Error> {
+        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
+        let root = get_root_node_struct(rx_buf)?;
+        let req = SubscribeReq::from_tlv(&root)?;
+
+        let (opcode, resp) = self.consumer.consume_subscribe(&req, trans, &mut tw)?;
+        proto_tx.set_proto_opcode(opcode as u8);
+        Ok(resp)
+    }
+
     pub fn handle_status_resp(
         &mut self,
         trans: &mut Transaction,
         rx_buf: &[u8],
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
+        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
         let root = get_root_node_struct(rx_buf)?;
         let req = StatusResp::from_tlv(&root)?;
-
-        let mut handled = false;
-        let result = self.handle_subscription_confirm(trans, proto_tx, &mut handled);
-        if handled {
-            result
-        } else {
-            // Nothing to do for now
-            info!("Received status report with status {:?}", req.status);
-            Ok(ResponseRequired::No)
-        }
+        let (opcode, resp) = self.consumer.consume_status_report(&req, trans, &mut tw)?;
+        proto_tx.set_proto_opcode(opcode as u8);
+        Ok(resp)
     }
 
     pub fn handle_timed_req(

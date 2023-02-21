@@ -32,6 +32,7 @@ use matter::transport::packet::Packet;
 use matter::transport::packet::PacketPool;
 use matter::transport::proto_demux::HandleProto;
 use matter::transport::proto_demux::ProtoCtx;
+use matter::transport::proto_demux::ResponseRequired;
 use matter::transport::session::SessionMgr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
@@ -107,6 +108,24 @@ impl InteractionConsumer for DataModel {
         _tlvwriter: &mut TLVWriter,
     ) -> Result<(), Error> {
         Ok(())
+    }
+
+    fn consume_status_report(
+        &self,
+        _req: &matter::interaction_model::messages::msg::StatusResp,
+        _trans: &mut Transaction,
+        _tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        Ok((OpCode::StatusResponse, ResponseRequired::No))
+    }
+
+    fn consume_subscribe(
+        &self,
+        _req: &matter::interaction_model::messages::msg::SubscribeReq,
+        _trans: &mut Transaction,
+        _tw: &mut TLVWriter,
+    ) -> Result<(OpCode, matter::transport::proto_demux::ResponseRequired), Error> {
+        Ok((OpCode::StatusResponse, ResponseRequired::No))
     }
 }
 

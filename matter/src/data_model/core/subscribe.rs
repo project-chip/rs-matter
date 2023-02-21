@@ -19,33 +19,27 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{
     error::Error,
-    interaction_model::core::OpCode,
-    tlv::{get_root_node_struct, FromTLV, TLVWriter, TagType, ToTLV},
-    transport::{packet::Packet, proto_demux::ResponseRequired},
+    interaction_model::{
+        core::OpCode,
+        messages::msg::{self, SubscribeReq, SubscribeResp},
+    },
+    tlv::{TLVWriter, TagType, ToTLV},
+    transport::proto_demux::ResponseRequired,
 };
 
 use log::error;
 
-use super::{
-    messages::msg::{self, SubscribeReq, SubscribeResp},
-    InteractionModel, Transaction,
-};
+use super::{DataModel, Transaction};
 
 static SUBS_ID: AtomicU32 = AtomicU32::new(1);
 
-impl InteractionModel {
+impl DataModel {
     pub fn handle_subscribe_req(
-        &mut self,
+        &self,
+        req: &SubscribeReq,
         trans: &mut Transaction,
-        rx_buf: &[u8],
-        proto_tx: &mut Packet,
-    ) -> Result<ResponseRequired, Error> {
-        proto_tx.set_proto_opcode(OpCode::ReportData as u8);
-
-        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
-        let root = get_root_node_struct(rx_buf)?;
-        let req = SubscribeReq::from_tlv(&root)?;
-
+        tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
         let ctx = Box::new(SubsCtx {
             state: SubsState::Confirming,
             // TODO
@@ -58,11 +52,7 @@ impl InteractionModel {
             TagType::Context(msg::ReportDataTag::SubscriptionId as u8),
             ctx.id,
         )?;
-        self.consumer.consume_read_attr(&read_req, trans, &mut tw)?;
-        tw.bool(
-            TagType::Context(msg::ReportDataTag::SupressResponse as u8),
-            false,
-        )?;
+        self.handle_read_attr_array(&read_req, trans, tw)?;
         tw.end_container()?;
 
         if !trans.exch.is_data_none() {
@@ -71,15 +61,15 @@ impl InteractionModel {
         }
         trans.exch.set_data_boxed(ctx);
 
-        Ok(ResponseRequired::Yes)
+        Ok((OpCode::ReportData, ResponseRequired::Yes))
     }
 
     pub fn handle_subscription_confirm(
-        &mut self,
+        &self,
         trans: &mut Transaction,
-        proto_tx: &mut Packet,
+        tw: &mut TLVWriter,
         request_handled: &mut bool,
-    ) -> Result<ResponseRequired, Error> {
+    ) -> Result<(OpCode, ResponseRequired), Error> {
         *request_handled = false;
         if let Some(ctx) = trans.exch.get_data_boxed::<SubsCtx>() {
             if ctx.state != SubsState::Confirming {
@@ -88,14 +78,12 @@ impl InteractionModel {
             }
             *request_handled = true;
             ctx.state = SubsState::Confirmed;
-            proto_tx.set_proto_opcode(OpCode::SubscriptResponse as u8);
 
             // TODO
             let resp = SubscribeResp::new(ctx.id, 40);
-            let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
-            resp.to_tlv(&mut tw, TagType::Anonymous)?;
+            resp.to_tlv(tw, TagType::Anonymous)?;
             trans.complete();
-            Ok(ResponseRequired::Yes)
+            Ok((OpCode::SubscriptResponse, ResponseRequired::Yes))
         } else {
             trans.complete();
             Err(Error::Invalid)

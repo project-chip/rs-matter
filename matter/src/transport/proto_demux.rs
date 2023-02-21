@@ -24,7 +24,7 @@ use super::packet::PacketPool;
 
 const MAX_PROTOCOLS: usize = 4;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum ResponseRequired {
     Yes,
     No,

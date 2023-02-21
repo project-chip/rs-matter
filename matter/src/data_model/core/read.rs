@@ -23,7 +23,7 @@ use crate::{
         core::IMStatusCode,
         messages::{
             ib::{self, DataVersionFilter},
-            msg::{self, ReadReq, ReportDataTag::MoreChunkedMsgs, ReportDataTag::SupressResponse},
+            msg::{self, ReadReq, ReportDataTag::MoreChunkedMsgs},
             GenericPath,
         },
         Transaction,
@@ -191,12 +191,14 @@ impl DataModel {
     }
 
     /// Process an array of Attribute Read Requests
+    ///
+    /// This API returns whether the read response is chunked or not
     pub(super) fn handle_read_attr_array(
         &self,
         read_req: &ReadReq,
         trans: &mut Transaction,
         tw: &mut TLVWriter,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let mut resume_read_req: ResumeReadReq = Default::default();
 
         let mut attr_encoder = AttrReadEncoder::new(tw);
@@ -234,13 +236,9 @@ impl DataModel {
                 // If there was an error, indicate chunking. The resume_read_req would have been
                 // already populated from in the loop above.
                 tw.bool(TagType::Context(MoreChunkedMsgs as u8), true)?;
-                tw.bool(TagType::Context(SupressResponse as u8), false)?;
-                // Don't complete the transaction
-            } else {
-                tw.bool(TagType::Context(SupressResponse as u8), true)?;
-                trans.complete();
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 }

@@ -28,17 +28,20 @@ use crate::{
     fabric::FabricMgr,
     interaction_model::{
         command::CommandReq,
-        core::IMStatusCode,
+        core::{IMStatusCode, OpCode},
         messages::{
             ib::{self, AttrData, DataVersionFilter},
-            msg::{self, InvReq, ReadReq, WriteReq},
+            msg::{self, InvReq, ReadReq, ReportDataTag::SupressResponse, SubscribeReq, WriteReq},
             GenericPath,
         },
         InteractionConsumer, Transaction,
     },
     secure_channel::pake::PaseMgr,
     tlv::{TLVArray, TLVWriter, TagType, ToTLV},
-    transport::session::{Session, SessionMode},
+    transport::{
+        proto_demux::ResponseRequired,
+        session::{Session, SessionMode},
+    },
 };
 use log::{error, info};
 use std::sync::{Arc, RwLock};
@@ -220,6 +223,7 @@ impl DataModel {
 }
 
 pub mod read;
+pub mod subscribe;
 
 impl objects::ChangeConsumer for DataModel {
     fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error> {
@@ -253,7 +257,13 @@ impl InteractionConsumer for DataModel {
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
-        self.handle_read_attr_array(req, trans, tw)
+        let is_chunked = self.handle_read_attr_array(req, trans, tw)?;
+        if !is_chunked {
+            tw.bool(TagType::Context(SupressResponse as u8), true)?;
+            // Mark transaction complete, if not chunked
+            trans.complete();
+        }
+        Ok(())
     }
 
     fn consume_invoke_cmd(
@@ -285,6 +295,32 @@ impl InteractionConsumer for DataModel {
         }
 
         Ok(())
+    }
+
+    fn consume_status_report(
+        &self,
+        req: &msg::StatusResp,
+        trans: &mut Transaction,
+        tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        let mut handled = false;
+        let result = self.handle_subscription_confirm(trans, tw, &mut handled);
+        if handled {
+            result
+        } else {
+            // Nothing to do for now
+            info!("Received status report with status {:?}", req.status);
+            Ok((OpCode::StatusResponse, ResponseRequired::No))
+        }
+    }
+
+    fn consume_subscribe(
+        &self,
+        req: &SubscribeReq,
+        trans: &mut Transaction,
+        tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        self.handle_subscribe_req(req, trans, tw)
     }
 }
 
