@@ -27,8 +27,6 @@ use crate::{
     transport::proto_demux::ResponseRequired,
 };
 
-use log::error;
-
 use super::{DataModel, Transaction};
 
 static SUBS_ID: AtomicU32 = AtomicU32::new(1);
@@ -39,12 +37,12 @@ impl DataModel {
         req: &SubscribeReq,
         trans: &mut Transaction,
         tw: &mut TLVWriter,
-    ) -> Result<(OpCode, ResponseRequired), Error> {
-        let ctx = Box::new(SubsCtx {
+    ) -> Result<SubsCtx, Error> {
+        let ctx = SubsCtx {
             state: SubsState::Confirming,
             // TODO
             id: SUBS_ID.fetch_add(1, Ordering::SeqCst),
-        });
+        };
 
         let read_req = req.to_read_req();
         tw.start_struct(TagType::Anonymous)?;
@@ -55,49 +53,38 @@ impl DataModel {
         self.handle_read_attr_array(&read_req, trans, tw)?;
         tw.end_container()?;
 
-        if !trans.exch.is_data_none() {
-            error!("Exchange data already set!");
-            return Err(Error::InvalidState);
-        }
-        trans.exch.set_data_boxed(ctx);
-
-        Ok((OpCode::ReportData, ResponseRequired::Yes))
+        Ok(ctx)
     }
 
     pub fn handle_subscription_confirm(
         &self,
         trans: &mut Transaction,
         tw: &mut TLVWriter,
-        request_handled: &mut bool,
+        ctx: &mut SubsCtx,
     ) -> Result<(OpCode, ResponseRequired), Error> {
-        *request_handled = false;
-        if let Some(ctx) = trans.exch.get_data_boxed::<SubsCtx>() {
-            if ctx.state != SubsState::Confirming {
-                // Not relevant for us
-                return Err(Error::Invalid);
-            }
-            *request_handled = true;
-            ctx.state = SubsState::Confirmed;
-
-            // TODO
-            let resp = SubscribeResp::new(ctx.id, 40);
-            resp.to_tlv(tw, TagType::Anonymous)?;
+        if ctx.state != SubsState::Confirming {
+            // Not relevant for us
             trans.complete();
-            Ok((OpCode::SubscriptResponse, ResponseRequired::Yes))
-        } else {
-            trans.complete();
-            Err(Error::Invalid)
+            return Err(Error::Invalid);
         }
+        ctx.state = SubsState::Confirmed;
+
+        // TODO
+        let resp = SubscribeResp::new(ctx.id, 40);
+        resp.to_tlv(tw, TagType::Anonymous)?;
+        trans.complete();
+        Ok((OpCode::SubscriptResponse, ResponseRequired::Yes))
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum SubsState {
     Confirming,
     Confirmed,
 }
 
-struct SubsCtx {
+#[derive(Clone, Copy)]
+pub struct SubsCtx {
     state: SubsState,
     id: u32,
 }

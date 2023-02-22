@@ -225,6 +225,12 @@ impl DataModel {
 pub mod read;
 pub mod subscribe;
 
+/// Type of Resume Request
+enum ResumeReq {
+    Subscribe(subscribe::SubsCtx),
+    Read,
+}
+
 impl objects::ChangeConsumer for DataModel {
     fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error> {
         endpoint.add_cluster(DescriptorCluster::new(id, self.clone())?)?;
@@ -303,14 +309,20 @@ impl InteractionConsumer for DataModel {
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(OpCode, ResponseRequired), Error> {
-        let mut handled = false;
-        let result = self.handle_subscription_confirm(trans, tw, &mut handled);
-        if handled {
-            result
+        if let Some(resume) = trans.exch.take_data_boxed::<ResumeReq>() {
+            match *resume {
+                ResumeReq::Read => Ok((OpCode::Reserved, ResponseRequired::No)),
+                ResumeReq::Subscribe(mut ctx) => {
+                    let result = self.handle_subscription_confirm(trans, tw, &mut ctx)?;
+                    trans.exch.set_data_boxed(resume);
+                    Ok(result)
+                }
+            }
         } else {
             // Nothing to do for now
+            trans.complete();
             info!("Received status report with status {:?}", req.status);
-            Ok((OpCode::StatusResponse, ResponseRequired::No))
+            Ok((OpCode::Reserved, ResponseRequired::No))
         }
     }
 
@@ -320,7 +332,15 @@ impl InteractionConsumer for DataModel {
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(OpCode, ResponseRequired), Error> {
-        self.handle_subscribe_req(req, trans, tw)
+        if !trans.exch.is_data_none() {
+            error!("Exchange data already set!");
+            return Err(Error::InvalidState);
+        }
+        let ctx = self.handle_subscribe_req(req, trans, tw)?;
+        trans
+            .exch
+            .set_data_boxed(Box::new(ResumeReq::Subscribe(ctx)));
+        Ok((OpCode::ReportData, ResponseRequired::Yes))
     }
 }
 
