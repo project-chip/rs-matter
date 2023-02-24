@@ -228,7 +228,7 @@ pub mod subscribe;
 /// Type of Resume Request
 enum ResumeReq {
     Subscribe(subscribe::SubsCtx),
-    Read,
+    Read(read::ResumeReadReq),
 }
 
 impl objects::ChangeConsumer for DataModel {
@@ -263,8 +263,15 @@ impl InteractionConsumer for DataModel {
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
-        let is_chunked = self.handle_read_attr_array(req, trans, tw)?;
-        if !is_chunked {
+        let resume = self.handle_read_attr_array(req, trans, tw)?;
+        if let Some(resume) = resume {
+            // This is a multi-hop read transaction, remember this read request
+            if !trans.exch.is_data_none() {
+                error!("Exchange data already set, and multi-hop read");
+                return Err(Error::InvalidState);
+            }
+            trans.exch.set_data_boxed(Box::new(ResumeReq::Read(resume)));
+        } else {
             tw.bool(TagType::Context(SupressResponse as u8), true)?;
             // Mark transaction complete, if not chunked
             trans.complete();
@@ -311,7 +318,7 @@ impl InteractionConsumer for DataModel {
     ) -> Result<(OpCode, ResponseRequired), Error> {
         if let Some(resume) = trans.exch.take_data_boxed::<ResumeReq>() {
             match *resume {
-                ResumeReq::Read => Ok((OpCode::Reserved, ResponseRequired::No)),
+                ResumeReq::Read(_) => Ok((OpCode::Reserved, ResponseRequired::No)),
                 ResumeReq::Subscribe(mut ctx) => {
                     let result = self.handle_subscription_confirm(trans, tw, &mut ctx)?;
                     trans.exch.set_data_boxed(resume);
