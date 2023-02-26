@@ -16,8 +16,10 @@
  */
 
 use crate::data_model::{core::DataModel, objects::*};
+use crate::interaction_model::core::OpCode;
+use crate::tlv::FromTLV;
 use crate::transport::packet::Packet;
-use crate::utils::writebuf::WriteBuf;
+use crate::transport::proto_demux::ResponseRequired;
 use crate::{
     acl::{AccessReq, Accessor},
     error::*,
@@ -25,12 +27,12 @@ use crate::{
         core::IMStatusCode,
         messages::{
             ib::{self, DataVersionFilter},
-            msg::{self, ReadReq, ReportDataTag::MoreChunkedMsgs},
+            msg::{self, ReadReq, ReportDataTag::MoreChunkedMsgs, ReportDataTag::SupressResponse},
             GenericPath,
         },
         Transaction,
     },
-    tlv::{TLVArray, TLVWriter, TagType, ToTLV},
+    tlv::{self, TLVArray, TLVWriter, TagType, ToTLV},
 };
 
 /// Encoder for generating a response to a read request
@@ -112,7 +114,21 @@ pub struct ResumeReadReq {
     /// will start encoding from this attribute onwards.
     /// Note that given wildcard reads, one PendingPath in the member above can generated
     /// multiple encode paths. Hence this has to be maintained separately.
-    resume_encode: Option<GenericPath>,
+    resume_from: Option<GenericPath>,
+}
+impl ResumeReadReq {
+    pub fn new(rx_buf: &[u8], resume_from: &Option<GenericPath>) -> Result<Self, Error> {
+        let mut packet = Packet::new_rx()?;
+        let dst = packet.as_borrow_slice();
+
+        let src_len = rx_buf.len();
+        dst[..src_len].copy_from_slice(rx_buf);
+        packet.get_parsebuf()?.set_len(src_len);
+        Ok(ResumeReadReq {
+            pending_req: Some(packet),
+            resume_from: *resume_from,
+        })
+    }
 }
 
 impl DataModel {
@@ -195,9 +211,8 @@ impl DataModel {
         read_req: &ReadReq,
         trans: &mut Transaction,
         tw: &mut TLVWriter,
-    ) -> Result<Option<ResumeReadReq>, Error> {
-        let mut resume_read_req: ResumeReadReq = Default::default();
-
+        resume_from: &mut Option<GenericPath>,
+    ) -> Result<(), Error> {
         let mut attr_encoder = AttrReadEncoder::new(tw);
         if let Some(filters) = &read_req.dataver_filters {
             attr_encoder.set_data_ver_filters(filters);
@@ -221,7 +236,7 @@ impl DataModel {
                     &accessor,
                     &mut attr_encoder,
                     &mut attr_details,
-                    &mut resume_read_req.resume_encode,
+                    resume_from,
                 );
             }
             tw.end_container()?;
@@ -229,25 +244,35 @@ impl DataModel {
                 // If there was an error, indicate chunking. The resume_read_req would have been
                 // already populated from in the loop above.
                 tw.bool(TagType::Context(MoreChunkedMsgs as u8), true)?;
-                // Retain the entire request, because we need the data-filters, and subsequent attr-reads, if any
-                // when we resume this read in the next hop
-                resume_read_req.pending_req = Some(copy_read_req_to_packet(read_req)?);
-                return Ok(Some(resume_read_req));
+                return Ok(());
             }
         }
-        Ok(None)
+        // A None resume_from indicates no chunking
+        *resume_from = None;
+        Ok(())
     }
-}
 
-fn copy_read_req_to_packet(read_req: &ReadReq) -> Result<Packet<'static>, Error> {
-    let mut packet = Packet::new_rx()?;
-    let backup = packet.as_borrow_slice();
-    let backup_len = backup.len();
-    let mut wb = WriteBuf::new(backup, backup_len);
-    let mut tw = TLVWriter::new(&mut wb);
-    // TODO: This is unnecessarily wasteful, could directly copy &[u8] if accessible
-    read_req.to_tlv(&mut tw, TagType::Anonymous)?;
-    let data_len = wb.as_borrow_slice().len();
-    packet.get_parsebuf()?.set_len(data_len);
-    Ok(packet)
+    pub fn handle_resume_read(
+        &self,
+        resume_read_req: &mut ResumeReadReq,
+        trans: &mut Transaction,
+        tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        if let Some(packet) = resume_read_req.pending_req.as_mut() {
+            let rx_buf = packet.get_parsebuf()?.as_borrow_slice();
+            let root = tlv::get_root_node(rx_buf)?;
+            let req = ReadReq::from_tlv(&root)?;
+
+            tw.start_struct(TagType::Anonymous)?;
+            self.handle_read_attr_array(&req, trans, tw, &mut resume_read_req.resume_from)?;
+
+            if resume_read_req.resume_from.is_none() {
+                tw.bool(TagType::Context(SupressResponse as u8), true)?;
+                // Mark transaction complete, if not chunked
+                trans.complete();
+            }
+            tw.end_container()?;
+        }
+        Ok((OpCode::ReportData, ResponseRequired::Yes))
+    }
 }

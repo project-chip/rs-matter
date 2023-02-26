@@ -37,7 +37,7 @@ use crate::{
         InteractionConsumer, Transaction,
     },
     secure_channel::pake::PaseMgr,
-    tlv::{TLVArray, TLVWriter, TagType, ToTLV},
+    tlv::{self, FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
     transport::{
         proto_demux::ResponseRequired,
         session::{Session, SessionMode},
@@ -259,13 +259,17 @@ impl InteractionConsumer for DataModel {
 
     fn consume_read_attr(
         &self,
-        req: &ReadReq,
+        rx_buf: &[u8],
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
-        let resume = self.handle_read_attr_array(req, trans, tw)?;
-        if let Some(resume) = resume {
+        let mut resume_from = None;
+        let root = tlv::get_root_node(rx_buf)?;
+        let req = ReadReq::from_tlv(&root)?;
+        self.handle_read_attr_array(&req, trans, tw, &mut resume_from)?;
+        if resume_from.is_some() {
             // This is a multi-hop read transaction, remember this read request
+            let resume = read::ResumeReadReq::new(rx_buf, &resume_from)?;
             if !trans.exch.is_data_none() {
                 error!("Exchange data already set, and multi-hop read");
                 return Err(Error::InvalidState);
@@ -316,15 +320,16 @@ impl InteractionConsumer for DataModel {
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(OpCode, ResponseRequired), Error> {
-        if let Some(resume) = trans.exch.take_data_boxed::<ResumeReq>() {
-            match *resume {
-                ResumeReq::Read(_) => Ok((OpCode::Reserved, ResponseRequired::No)),
+        if let Some(mut resume) = trans.exch.take_data_boxed::<ResumeReq>() {
+            let result = match *resume {
+                ResumeReq::Read(ref mut read) => self.handle_resume_read(read, trans, tw)?,
+
                 ResumeReq::Subscribe(mut ctx) => {
-                    let result = self.handle_subscription_confirm(trans, tw, &mut ctx)?;
-                    trans.exch.set_data_boxed(resume);
-                    Ok(result)
+                    self.handle_subscription_confirm(trans, tw, &mut ctx)?
                 }
-            }
+            };
+            trans.exch.set_data_boxed(resume);
+            Ok(result)
         } else {
             // Nothing to do for now
             trans.complete();

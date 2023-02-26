@@ -23,7 +23,7 @@ use crate::{
 
 use self::{
     core::OpCode,
-    messages::msg::{InvReq, ReadReq, StatusResp, SubscribeReq, WriteReq},
+    messages::msg::{InvReq, StatusResp, SubscribeReq, WriteReq},
 };
 
 #[derive(PartialEq)]
@@ -47,7 +47,9 @@ pub trait InteractionConsumer {
 
     fn consume_read_attr(
         &self,
-        req: &ReadReq,
+        // TODO: This handling is different from the other APIs here, identify
+        // consistent options for this trait
+        req: &[u8],
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error>;

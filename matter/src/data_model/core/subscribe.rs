@@ -50,7 +50,8 @@ impl DataModel {
             TagType::Context(msg::ReportDataTag::SubscriptionId as u8),
             ctx.id,
         )?;
-        self.handle_read_attr_array(&read_req, trans, tw)?;
+        let mut resume_from = None;
+        self.handle_read_attr_array(&read_req, trans, tw, &mut resume_from)?;
         tw.end_container()?;
 
         Ok(ctx)

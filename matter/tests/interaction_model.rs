@@ -19,7 +19,6 @@ use boxslab::Slab;
 use matter::error::Error;
 use matter::interaction_model::core::OpCode;
 use matter::interaction_model::messages::msg::InvReq;
-use matter::interaction_model::messages::msg::ReadReq;
 use matter::interaction_model::messages::msg::WriteReq;
 use matter::interaction_model::InteractionConsumer;
 use matter::interaction_model::InteractionModel;
@@ -94,7 +93,7 @@ impl InteractionConsumer for DataModel {
 
     fn consume_read_attr(
         &self,
-        _req: &ReadReq,
+        _req: &[u8],
         _trans: &mut Transaction,
         _tlvwriter: &mut TLVWriter,
     ) -> Result<(), Error> {
