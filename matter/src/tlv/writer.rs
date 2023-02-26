@@ -264,6 +264,10 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
     pub fn rewind_to(&mut self, anchor: usize) {
         self.buf.rewind_tail_to(anchor);
     }
+
+    pub fn get_buf<'c>(&'c mut self) -> &'c mut WriteBuf<'a> {
+        self.buf
+    }
 }
 
 #[cfg(test)]

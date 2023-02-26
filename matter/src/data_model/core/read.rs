@@ -15,16 +15,12 @@
  *    limitations under the License.
  */
 
-use crate::data_model::{core::DataModel, objects::*};
-use crate::interaction_model::core::OpCode;
-use crate::tlv::FromTLV;
-use crate::transport::packet::Packet;
-use crate::transport::proto_demux::ResponseRequired;
 use crate::{
     acl::{AccessReq, Accessor},
+    data_model::{core::DataModel, objects::*},
     error::*,
     interaction_model::{
-        core::IMStatusCode,
+        core::{IMStatusCode, OpCode},
         messages::{
             ib::{self, DataVersionFilter},
             msg::{self, ReadReq, ReportDataTag::MoreChunkedMsgs, ReportDataTag::SupressResponse},
@@ -32,9 +28,12 @@ use crate::{
         },
         Transaction,
     },
-    tlv::{self, TLVArray, TLVWriter, TagType, ToTLV},
+    tlv::{self, FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
+    transport::{packet::Packet, proto_demux::ResponseRequired},
+    utils::writebuf::WriteBuf,
+    wb_shrink, wb_unshrink,
 };
-
+use log::error;
 /// Encoder for generating a response to a read request
 pub struct AttrReadEncoder<'a, 'b, 'c> {
     tw: &'a mut TLVWriter<'b, 'c>,
@@ -205,15 +204,27 @@ impl DataModel {
 
     /// Process an array of Attribute Read Requests
     ///
-    /// This API returns whether the read response is chunked or not
+    /// When the API returns the chunked read is on, if *resume_from is Some(x) otherwise
+    /// the read is complete
     pub(super) fn handle_read_attr_array(
         &self,
         read_req: &ReadReq,
         trans: &mut Transaction,
-        tw: &mut TLVWriter,
+        old_tw: &mut TLVWriter,
         resume_from: &mut Option<GenericPath>,
     ) -> Result<(), Error> {
-        let mut attr_encoder = AttrReadEncoder::new(tw);
+        let old_wb = old_tw.get_buf();
+        // Note, this function may be called from multiple places: a) an actual read
+        // request, a b) resumed read request, c) subscribe request or d) resumed subscribe
+        // request. Hopefully 18 is sufficient to address all those scenarios.
+        //
+        // This is the amount of space we reserve for other things to be attached towards
+        // the end
+        const RESERVE_SIZE: usize = 18;
+        let mut new_wb = wb_shrink!(old_wb, RESERVE_SIZE);
+        let mut tw = TLVWriter::new(&mut new_wb);
+
+        let mut attr_encoder = AttrReadEncoder::new(&mut tw);
         if let Some(filters) = &read_req.dataver_filters {
             attr_encoder.set_data_ver_filters(filters);
         }
@@ -238,20 +249,54 @@ impl DataModel {
                     &mut attr_details,
                     resume_from,
                 );
+                if result.is_err() {
+                    break;
+                }
             }
-            tw.end_container()?;
+            // Now that all the read reports are captured, let's use the old_tw that is
+            // the full writebuf, and hopefully as all the necessary space to store this
+            wb_unshrink!(old_wb, new_wb);
+            old_tw.end_container()?; // Finish the AttrReports
+
             if result.is_err() {
                 // If there was an error, indicate chunking. The resume_read_req would have been
-                // already populated from in the loop above.
-                tw.bool(TagType::Context(MoreChunkedMsgs as u8), true)?;
-                return Ok(());
+                // already populated in the loop above.
+                old_tw.bool(TagType::Context(MoreChunkedMsgs as u8), true)?;
+            } else {
+                // A None resume_from indicates no chunking
+                *resume_from = None;
             }
         }
-        // A None resume_from indicates no chunking
-        *resume_from = None;
         Ok(())
     }
 
+    /// Handle a read request
+    ///
+    /// This could be called from an actual read request or a resumed read request. Subscription
+    /// requests do not come to this function.
+    /// When the API returns the chunked read is on, if *resume_from is Some(x) otherwise
+    /// the read is complete
+    pub fn handle_read_req(
+        &self,
+        read_req: &ReadReq,
+        trans: &mut Transaction,
+        tw: &mut TLVWriter,
+        resume_from: &mut Option<GenericPath>,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        tw.start_struct(TagType::Anonymous)?;
+
+        self.handle_read_attr_array(read_req, trans, tw, resume_from)?;
+
+        if resume_from.is_none() {
+            tw.bool(TagType::Context(SupressResponse as u8), true)?;
+            // Mark transaction complete, if not chunked
+            trans.complete();
+        }
+        tw.end_container()?;
+        Ok((OpCode::ReportData, ResponseRequired::Yes))
+    }
+
+    /// Handle a resumed read request
     pub fn handle_resume_read(
         &self,
         resume_read_req: &mut ResumeReadReq,
@@ -263,16 +308,11 @@ impl DataModel {
             let root = tlv::get_root_node(rx_buf)?;
             let req = ReadReq::from_tlv(&root)?;
 
-            tw.start_struct(TagType::Anonymous)?;
-            self.handle_read_attr_array(&req, trans, tw, &mut resume_read_req.resume_from)?;
-
-            if resume_read_req.resume_from.is_none() {
-                tw.bool(TagType::Context(SupressResponse as u8), true)?;
-                // Mark transaction complete, if not chunked
-                trans.complete();
-            }
-            tw.end_container()?;
+            self.handle_read_req(&req, trans, tw, &mut resume_read_req.resume_from)
+        } else {
+            // No pending req, is that even possible?
+            error!("This shouldn't have happened");
+            Ok((OpCode::Reserved, ResponseRequired::No))
         }
-        Ok((OpCode::ReportData, ResponseRequired::Yes))
     }
 }

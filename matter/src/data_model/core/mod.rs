@@ -31,7 +31,7 @@ use crate::{
         core::{IMStatusCode, OpCode},
         messages::{
             ib::{self, AttrData, DataVersionFilter},
-            msg::{self, InvReq, ReadReq, ReportDataTag::SupressResponse, SubscribeReq, WriteReq},
+            msg::{self, InvReq, ReadReq, SubscribeReq, WriteReq},
             GenericPath,
         },
         InteractionConsumer, Transaction,
@@ -266,7 +266,7 @@ impl InteractionConsumer for DataModel {
         let mut resume_from = None;
         let root = tlv::get_root_node(rx_buf)?;
         let req = ReadReq::from_tlv(&root)?;
-        self.handle_read_attr_array(&req, trans, tw, &mut resume_from)?;
+        self.handle_read_req(&req, trans, tw, &mut resume_from)?;
         if resume_from.is_some() {
             // This is a multi-hop read transaction, remember this read request
             let resume = read::ResumeReadReq::new(rx_buf, &resume_from)?;
@@ -275,10 +275,6 @@ impl InteractionConsumer for DataModel {
                 return Err(Error::InvalidState);
             }
             trans.exch.set_data_boxed(Box::new(ResumeReq::Read(resume)));
-        } else {
-            tw.bool(TagType::Context(SupressResponse as u8), true)?;
-            // Mark transaction complete, if not chunked
-            trans.complete();
         }
         Ok(())
     }
