@@ -120,7 +120,7 @@ impl InteractionConsumer for DataModel {
 
     fn consume_subscribe(
         &self,
-        _req: &matter::interaction_model::messages::msg::SubscribeReq,
+        _req: &[u8],
         _trans: &mut Transaction,
         _tw: &mut TLVWriter,
     ) -> Result<(OpCode, matter::transport::proto_demux::ResponseRequired), Error> {
