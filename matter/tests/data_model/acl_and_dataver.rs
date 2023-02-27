@@ -294,7 +294,7 @@ fn wc_write_attribute() {
         peer,
         None,
         input0,
-        &[AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0)],
+        &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)],
     );
     assert_eq!(AttrValue::Uint16(val0), read_cluster_id_write_attr(&im, 0));
     assert_eq!(
@@ -316,8 +316,8 @@ fn wc_write_attribute() {
         None,
         input1,
         &[
-            AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0),
-            AttrStatus::new(&ep1_att, IMStatusCode::Sucess, 0),
+            AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
+            AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
         ],
     );
     assert_eq!(AttrValue::Uint16(val1), read_cluster_id_write_attr(&im, 0));
@@ -350,7 +350,7 @@ fn exact_write_attribute() {
         IMStatusCode::UnsupportedAccess,
         0,
     )];
-    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0)];
+    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)];
 
     let peer = 98765;
     let mut im = ImEngine::new();
@@ -401,7 +401,7 @@ fn exact_write_attribute_noc_cat() {
         IMStatusCode::UnsupportedAccess,
         0,
     )];
-    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0)];
+    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)];
 
     let peer = 98765;
     /* CAT in NOC is 1 more, in version, than that in ACL */
@@ -534,8 +534,8 @@ fn write_with_runtime_acl_add() {
         &[input0, acl_input, input0],
         &[
             AttrStatus::new(&ep0_att, IMStatusCode::UnsupportedAccess, 0),
-            AttrStatus::new(&acl_att, IMStatusCode::Sucess, 0),
-            AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0),
+            AttrStatus::new(&acl_att, IMStatusCode::Success, 0),
+            AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
         ],
     );
     assert_eq!(AttrValue::Uint16(val0), read_cluster_id_write_attr(&im, 0));
@@ -689,7 +689,7 @@ fn test_write_data_ver() {
         peer,
         None,
         input_correct_dataver,
-        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Sucess, 0)],
+        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, 0)],
     );
     assert_eq!(AttrValue::Uint16(val0), read_cluster_id_write_attr(&im, 0));
 
@@ -728,7 +728,7 @@ fn test_write_data_ver() {
         peer,
         None,
         input_correct_dataver,
-        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Sucess, 0)],
+        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, 0)],
     );
     assert_eq!(AttrValue::Uint16(val1), read_cluster_id_write_attr(&im, 0));
 

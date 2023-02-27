@@ -410,7 +410,7 @@ impl NocCluster {
         }
         cmd_req.trans.complete();
 
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 }
 

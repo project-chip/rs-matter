@@ -139,7 +139,7 @@ impl InteractionModel {
         trans.set_timeout(req.timeout.into());
 
         let status = StatusResp {
-            status: IMStatusCode::Sucess,
+            status: IMStatusCode::Success,
         };
         let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
         let _ = status.to_tlv(&mut tw, TagType::Anonymous);
@@ -213,7 +213,7 @@ impl proto_demux::HandleProto for InteractionModel {
 
 #[derive(FromPrimitive, Debug, Clone, Copy, PartialEq)]
 pub enum IMStatusCode {
-    Sucess = 0,
+    Success = 0,
     Failure = 1,
     InvalidSubscription = 0x7D,
     UnsupportedAccess = 0x7E,

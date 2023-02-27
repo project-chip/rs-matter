@@ -371,8 +371,8 @@ fn test_write_success() {
         ),
     ];
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0),
-        AttrStatus::new(&ep1_att, IMStatusCode::Sucess, 0),
+        AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
+        AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
     let dm = handle_write_reqs(input, expected);
@@ -428,8 +428,8 @@ fn test_write_wc_endpoint() {
         Some(echo_cluster::Attributes::AttWrite as u32),
     );
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0),
-        AttrStatus::new(&ep1_att, IMStatusCode::Sucess, 0),
+        AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
+        AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
     let dm = handle_write_reqs(input, expected);

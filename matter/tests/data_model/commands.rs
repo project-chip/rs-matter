@@ -151,7 +151,7 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     let input = &[cmd_data!(target, 1)];
     let expected = &[ExpectedInvResp::Status(CmdStatus::new(
         expected_path,
-        IMStatusCode::Sucess,
+        IMStatusCode::Success,
         0,
     ))];
     handle_commands(input, expected);
