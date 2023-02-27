@@ -33,9 +33,9 @@ use log::{error, info};
 use num;
 use num_derive::FromPrimitive;
 
+use super::InteractionModel;
 use super::Transaction;
 use super::TransactionState;
-use super::{messages::msg::SubscribeReq, InteractionModel};
 use super::{messages::msg::TimedReq, InteractionConsumer};
 
 /* Handle messages related to the Interation Model
@@ -107,10 +107,7 @@ impl InteractionModel {
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
         let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
-        let root = get_root_node_struct(rx_buf)?;
-        let req = SubscribeReq::from_tlv(&root)?;
-
-        let (opcode, resp) = self.consumer.consume_subscribe(&req, trans, &mut tw)?;
+        let (opcode, resp) = self.consumer.consume_subscribe(rx_buf, trans, &mut tw)?;
         proto_tx.set_proto_opcode(opcode as u8);
         Ok(resp)
     }

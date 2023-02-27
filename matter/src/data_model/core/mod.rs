@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use self::subscribe::SubsCtx;
+
 use super::{
     cluster_basic_information::BasicInfoConfig,
     device_types::device_type_add_root_node,
@@ -31,7 +33,7 @@ use crate::{
         core::{IMStatusCode, OpCode},
         messages::{
             ib::{self, AttrData, DataVersionFilter},
-            msg::{self, InvReq, ReadReq, SubscribeReq, WriteReq},
+            msg::{self, InvReq, ReadReq, WriteReq},
             GenericPath,
         },
         InteractionConsumer, Transaction,
@@ -320,9 +322,7 @@ impl InteractionConsumer for DataModel {
             let result = match *resume {
                 ResumeReq::Read(ref mut read) => self.handle_resume_read(read, trans, tw)?,
 
-                ResumeReq::Subscribe(mut ctx) => {
-                    self.handle_subscription_confirm(trans, tw, &mut ctx)?
-                }
+                ResumeReq::Subscribe(ref mut ctx) => ctx.handle_status_report(trans, tw, self)?,
             };
             trans.exch.set_data_boxed(resume);
             Ok(result)
@@ -336,7 +336,7 @@ impl InteractionConsumer for DataModel {
 
     fn consume_subscribe(
         &self,
-        req: &SubscribeReq,
+        rx_buf: &[u8],
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(OpCode, ResponseRequired), Error> {
@@ -344,7 +344,7 @@ impl InteractionConsumer for DataModel {
             error!("Exchange data already set!");
             return Err(Error::InvalidState);
         }
-        let ctx = self.handle_subscribe_req(req, trans, tw)?;
+        let ctx = SubsCtx::new(rx_buf, trans, tw, self)?;
         trans
             .exch
             .set_data_boxed(Box::new(ResumeReq::Subscribe(ctx)));

@@ -23,7 +23,7 @@ use crate::{
 
 use self::{
     core::OpCode,
-    messages::msg::{InvReq, StatusResp, SubscribeReq, WriteReq},
+    messages::msg::{InvReq, StatusResp, WriteReq},
 };
 
 #[derive(PartialEq)]
@@ -70,7 +70,7 @@ pub trait InteractionConsumer {
 
     fn consume_subscribe(
         &self,
-        _req: &SubscribeReq,
+        _req: &[u8],
         _trans: &mut Transaction,
         _tw: &mut TLVWriter,
     ) -> Result<(OpCode, ResponseRequired), Error>;

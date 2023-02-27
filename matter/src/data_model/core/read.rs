@@ -34,6 +34,7 @@ use crate::{
     wb_shrink, wb_unshrink,
 };
 use log::error;
+
 /// Encoder for generating a response to a read request
 pub struct AttrReadEncoder<'a, 'b, 'c> {
     tw: &'a mut TLVWriter<'b, 'c>,
@@ -107,13 +108,13 @@ impl<'a, 'b, 'c> Encoder for AttrReadEncoder<'a, 'b, 'c> {
 pub struct ResumeReadReq {
     /// The Read Request Attribute Path that caused chunking, and this is the path
     /// that needs to be resumed.
-    pending_req: Option<Packet<'static>>,
+    pub pending_req: Option<Packet<'static>>,
 
     /// The Attribute that couldn't be encoded because our buffer got full. The next chunk
     /// will start encoding from this attribute onwards.
     /// Note that given wildcard reads, one PendingPath in the member above can generated
     /// multiple encode paths. Hence this has to be maintained separately.
-    resume_from: Option<GenericPath>,
+    pub resume_from: Option<GenericPath>,
 }
 impl ResumeReadReq {
     pub fn new(rx_buf: &[u8], resume_from: &Option<GenericPath>) -> Result<Self, Error> {
