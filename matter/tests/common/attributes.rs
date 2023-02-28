@@ -49,6 +49,22 @@ pub const ATTR_DATA_TAG_DATA: u8 = 2;
 
 #[macro_export]
 macro_rules! attr_data {
+    ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
+        AttrResp::Data(AttrData {
+            data_ver: None,
+            path: AttrPath {
+                endpoint: Some($endpoint),
+                cluster: Some($cluster),
+                attr: Some($attr as u16),
+                ..Default::default()
+            },
+            data: EncodeValue::Tlv(TLVElement::new(TagType::Context(ATTR_DATA_TAG_DATA), $data)),
+        })
+    };
+}
+
+#[macro_export]
+macro_rules! attr_data_path {
     ($path:expr, $data:expr) => {
         AttrResp::Data(AttrData {
             data_ver: None,
