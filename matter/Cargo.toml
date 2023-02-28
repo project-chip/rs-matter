@@ -64,3 +64,8 @@ libmdns = { version = "0.7.4" }
 [[example]]
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
+
+
+[[example]]
+name = "speaker"
+path = "../examples/speaker/src/main.rs"
