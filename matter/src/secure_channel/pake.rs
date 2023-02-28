@@ -115,6 +115,12 @@ impl PaseMgr {
     }
 }
 
+impl Default for PaseMgr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // This file basically deals with the handlers for the PASE secure channel protocol
 // TLV extraction and encoding is done in this file.
 // We create a Spake2p object and set it up in the exchange-data. This object then

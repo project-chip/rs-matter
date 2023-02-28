@@ -19,7 +19,6 @@ use boxslab::Slab;
 use matter::error::Error;
 use matter::interaction_model::core::OpCode;
 use matter::interaction_model::messages::msg::InvReq;
-use matter::interaction_model::messages::msg::ReadReq;
 use matter::interaction_model::messages::msg::WriteReq;
 use matter::interaction_model::InteractionConsumer;
 use matter::interaction_model::InteractionModel;
@@ -32,6 +31,7 @@ use matter::transport::packet::Packet;
 use matter::transport::packet::PacketPool;
 use matter::transport::proto_demux::HandleProto;
 use matter::transport::proto_demux::ProtoCtx;
+use matter::transport::proto_demux::ResponseRequired;
 use matter::transport::session::SessionMgr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
@@ -93,7 +93,7 @@ impl InteractionConsumer for DataModel {
 
     fn consume_read_attr(
         &self,
-        _req: &ReadReq,
+        _req: &[u8],
         _trans: &mut Transaction,
         _tlvwriter: &mut TLVWriter,
     ) -> Result<(), Error> {
@@ -107,6 +107,24 @@ impl InteractionConsumer for DataModel {
         _tlvwriter: &mut TLVWriter,
     ) -> Result<(), Error> {
         Ok(())
+    }
+
+    fn consume_status_report(
+        &self,
+        _req: &matter::interaction_model::messages::msg::StatusResp,
+        _trans: &mut Transaction,
+        _tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        Ok((OpCode::StatusResponse, ResponseRequired::No))
+    }
+
+    fn consume_subscribe(
+        &self,
+        _req: &[u8],
+        _trans: &mut Transaction,
+        _tw: &mut TLVWriter,
+    ) -> Result<(OpCode, matter::transport::proto_demux::ResponseRequired), Error> {
+        Ok((OpCode::StatusResponse, ResponseRequired::No))
     }
 }
 

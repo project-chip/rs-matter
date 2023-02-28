@@ -18,6 +18,33 @@
 use crate::error::*;
 use byteorder::{ByteOrder, LittleEndian};
 
+/// Shrink WriteBuf
+///
+/// This Macro creates a new (child) WriteBuf which has a truncated slice end.
+/// - It accepts a WriteBuf, and the size to reserve (truncate) towards the end.
+/// - It returns the new (child) WriteBuf
+#[macro_export]
+macro_rules! wb_shrink {
+    ($orig_wb:ident, $reserve:ident) => {{
+        let m_data = $orig_wb.empty_as_mut_slice();
+        let m_wb = WriteBuf::new(m_data, m_data.len() - $reserve);
+        (m_wb)
+    }};
+}
+
+/// Unshrink WriteBuf
+///
+/// This macro unshrinks the WriteBuf
+/// - It accepts the original WriteBuf and the child WriteBuf (that was the result of wb_shrink)
+/// After this call, the child WriteBuf shouldn't be used
+#[macro_export]
+macro_rules! wb_unshrink {
+    ($orig_wb:ident, $new_wb:ident) => {{
+        let m_data_len = $new_wb.as_slice().len();
+        $orig_wb.forward_tail_by(m_data_len);
+    }};
+}
+
 #[derive(Debug)]
 pub struct WriteBuf<'a> {
     buf: &'a mut [u8],

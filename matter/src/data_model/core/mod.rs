@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use self::subscribe::SubsCtx;
+
 use super::{
     cluster_basic_information::BasicInfoConfig,
     device_types::device_type_add_root_node,
@@ -28,7 +30,7 @@ use crate::{
     fabric::FabricMgr,
     interaction_model::{
         command::CommandReq,
-        core::IMStatusCode,
+        core::{IMStatusCode, OpCode},
         messages::{
             ib::{self, AttrData, DataVersionFilter},
             msg::{self, InvReq, ReadReq, WriteReq},
@@ -37,8 +39,11 @@ use crate::{
         InteractionConsumer, Transaction,
     },
     secure_channel::pake::PaseMgr,
-    tlv::{TLVArray, TLVWriter, TagType, ToTLV},
-    transport::session::{Session, SessionMode},
+    tlv::{self, FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
+    transport::{
+        proto_demux::ResponseRequired,
+        session::{Session, SessionMode},
+    },
 };
 use log::{error, info};
 use std::sync::{Arc, RwLock};
@@ -74,17 +79,6 @@ impl DataModel {
             )?;
         }
         Ok(dm)
-    }
-
-    pub fn read_attribute_raw(
-        &self,
-        endpoint: u16,
-        cluster: u32,
-        attr: u16,
-    ) -> Result<AttrValue, IMStatusCode> {
-        let node = self.node.read().unwrap();
-        let cluster = node.get_cluster(endpoint, cluster)?;
-        cluster.base().read_attribute_raw(attr).map(|a| a.clone())
     }
 
     // Encode a write attribute from a path that may or may not be wildcard
@@ -150,42 +144,6 @@ impl DataModel {
         if let Err(e) = result {
             // We hit this only if this is a non-wildcard path and some parts of the path are missing
             encoder.encode_status(e, 0);
-        }
-    }
-
-    // Encode a read attribute from a path that may or may not be wildcard
-    fn handle_read_attr_path(
-        node: &Node,
-        accessor: &Accessor,
-        attr_encoder: &mut AttrReadEncoder,
-        attr_details: &mut AttrDetails,
-    ) {
-        let path = attr_encoder.path;
-        // Skip error reporting for wildcard paths, don't for concrete paths
-        attr_encoder.skip_error(path.is_wildcard());
-
-        let result = node.for_each_attribute(&path, |path, c| {
-            // Ignore processing if data filter matches.
-            // For a wildcard attribute, this may end happening unnecessarily for all attributes, although
-            // a single skip for the cluster is sufficient. That requires us to replace this for_each with a
-            // for_each_cluster
-            let cluster_data_ver = c.base().get_dataver();
-            if Self::data_filter_matches(&attr_encoder.data_ver_filters, path, cluster_data_ver) {
-                return Ok(());
-            }
-
-            attr_details.attr_id = path.leaf.unwrap_or_default() as u16;
-            // Overwrite the previous path with the concrete path
-            attr_encoder.set_path(*path);
-            // Set the cluster's data version
-            attr_encoder.set_data_ver(cluster_data_ver);
-            let mut access_req = AccessReq::new(accessor, path, Access::READ);
-            Cluster::read_attribute(c, &mut access_req, attr_encoder, attr_details);
-            Ok(())
-        });
-        if let Err(e) = result {
-            // We hit this only if this is a non-wildcard path
-            attr_encoder.encode_status(e, 0);
         }
     }
 
@@ -266,6 +224,15 @@ impl DataModel {
     }
 }
 
+pub mod read;
+pub mod subscribe;
+
+/// Type of Resume Request
+enum ResumeReq {
+    Subscribe(subscribe::SubsCtx),
+    Read(read::ResumeReadReq),
+}
+
 impl objects::ChangeConsumer for DataModel {
     fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error> {
         endpoint.add_cluster(DescriptorCluster::new(id, self.clone())?)?;
@@ -294,45 +261,22 @@ impl InteractionConsumer for DataModel {
 
     fn consume_read_attr(
         &self,
-        read_req: &ReadReq,
+        rx_buf: &[u8],
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
-        let mut attr_encoder = AttrReadEncoder::new(tw);
-        if let Some(filters) = &read_req.dataver_filters {
-            attr_encoder.set_data_ver_filters(filters);
-        }
-
-        let mut attr_details = AttrDetails {
-            // This will be updated internally
-            attr_id: 0,
-            // This will be updated internally
-            list_index: None,
-            // This will be updated internally
-            fab_idx: 0,
-            fab_filter: read_req.fabric_filtered,
-        };
-
-        if let Some(attr_requests) = &read_req.attr_requests {
-            let accessor = self.sess_to_accessor(trans.session);
-            let node = self.node.read().unwrap();
-            attr_encoder
-                .tw
-                .start_array(TagType::Context(msg::ReportDataTag::AttributeReports as u8))?;
-
-            for attr_path in attr_requests.iter() {
-                attr_encoder.set_path(attr_path.to_gp());
-                // Extract the attr_path fields into various structures
-                attr_details.list_index = attr_path.list_index;
-                attr_details.fab_idx = accessor.fab_idx;
-                DataModel::handle_read_attr_path(
-                    &node,
-                    &accessor,
-                    &mut attr_encoder,
-                    &mut attr_details,
-                );
+        let mut resume_from = None;
+        let root = tlv::get_root_node(rx_buf)?;
+        let req = ReadReq::from_tlv(&root)?;
+        self.handle_read_req(&req, trans, tw, &mut resume_from)?;
+        if resume_from.is_some() {
+            // This is a multi-hop read transaction, remember this read request
+            let resume = read::ResumeReadReq::new(rx_buf, &resume_from)?;
+            if !trans.exch.is_data_none() {
+                error!("Exchange data already set, and multi-hop read");
+                return Err(Error::InvalidState);
             }
-            tw.end_container()?;
+            trans.exch.set_data_boxed(Box::new(ResumeReq::Read(resume)));
         }
         Ok(())
     }
@@ -367,61 +311,44 @@ impl InteractionConsumer for DataModel {
 
         Ok(())
     }
-}
 
-/// Encoder for generating a response to a read request
-pub struct AttrReadEncoder<'a, 'b, 'c> {
-    tw: &'a mut TLVWriter<'b, 'c>,
-    data_ver: u32,
-    path: GenericPath,
-    skip_error: bool,
-    data_ver_filters: Option<&'a TLVArray<'a, DataVersionFilter>>,
-}
+    fn consume_status_report(
+        &self,
+        req: &msg::StatusResp,
+        trans: &mut Transaction,
+        tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        if let Some(mut resume) = trans.exch.take_data_boxed::<ResumeReq>() {
+            let result = match *resume {
+                ResumeReq::Read(ref mut read) => self.handle_resume_read(read, trans, tw)?,
 
-impl<'a, 'b, 'c> AttrReadEncoder<'a, 'b, 'c> {
-    pub fn new(tw: &'a mut TLVWriter<'b, 'c>) -> Self {
-        Self {
-            tw,
-            data_ver: 0,
-            skip_error: false,
-            path: Default::default(),
-            data_ver_filters: None,
+                ResumeReq::Subscribe(ref mut ctx) => ctx.handle_status_report(trans, tw, self)?,
+            };
+            trans.exch.set_data_boxed(resume);
+            Ok(result)
+        } else {
+            // Nothing to do for now
+            trans.complete();
+            info!("Received status report with status {:?}", req.status);
+            Ok((OpCode::Reserved, ResponseRequired::No))
         }
     }
 
-    pub fn skip_error(&mut self, skip: bool) {
-        self.skip_error = skip;
-    }
-
-    pub fn set_data_ver(&mut self, data_ver: u32) {
-        self.data_ver = data_ver;
-    }
-
-    pub fn set_data_ver_filters(&mut self, filters: &'a TLVArray<'a, DataVersionFilter>) {
-        self.data_ver_filters = Some(filters);
-    }
-
-    pub fn set_path(&mut self, path: GenericPath) {
-        self.path = path;
-    }
-}
-
-impl<'a, 'b, 'c> Encoder for AttrReadEncoder<'a, 'b, 'c> {
-    fn encode(&mut self, value: EncodeValue) {
-        let resp = ib::AttrResp::Data(ib::AttrData::new(
-            Some(self.data_ver),
-            ib::AttrPath::new(&self.path),
-            value,
-        ));
-        let _ = resp.to_tlv(self.tw, TagType::Anonymous);
-    }
-
-    fn encode_status(&mut self, status: IMStatusCode, cluster_status: u16) {
-        if !self.skip_error {
-            let resp =
-                ib::AttrResp::Status(ib::AttrStatus::new(&self.path, status, cluster_status));
-            let _ = resp.to_tlv(self.tw, TagType::Anonymous);
+    fn consume_subscribe(
+        &self,
+        rx_buf: &[u8],
+        trans: &mut Transaction,
+        tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error> {
+        if !trans.exch.is_data_none() {
+            error!("Exchange data already set!");
+            return Err(Error::InvalidState);
         }
+        let ctx = SubsCtx::new(rx_buf, trans, tw, self)?;
+        trans
+            .exch
+            .set_data_boxed(Box::new(ResumeReq::Subscribe(ctx)));
+        Ok((OpCode::ReportData, ResponseRequired::Yes))
     }
 }
 

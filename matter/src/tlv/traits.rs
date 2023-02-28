@@ -383,7 +383,7 @@ impl<'a, T: ToTLV> ToTLV for TLVArray<'a, T> {
                 }
                 tw.end_container()
             }
-            Self::Ptr(_) => Err(Error::Invalid),
+            Self::Ptr(t) => t.to_tlv(tw, tag_type),
         }
     }
 }
@@ -401,6 +401,31 @@ impl<'a, T: Debug + ToTLV + FromTLV<'a> + Copy> Debug for TLVArray<'a, T> {
             writeln!(f, "{:?}", i)?;
         }
         writeln!(f)
+    }
+}
+
+impl<'a> ToTLV for TLVElement<'a> {
+    fn to_tlv(&self, tw: &mut TLVWriter, _tag_type: TagType) -> Result<(), Error> {
+        match self.get_element_type() {
+            ElementType::S8(v) => v.to_tlv(tw, self.get_tag()),
+            ElementType::U8(v) => v.to_tlv(tw, self.get_tag()),
+            ElementType::U16(v) => v.to_tlv(tw, self.get_tag()),
+            ElementType::U32(v) => v.to_tlv(tw, self.get_tag()),
+            ElementType::U64(v) => v.to_tlv(tw, self.get_tag()),
+            ElementType::False => tw.bool(self.get_tag(), false),
+            ElementType::True => tw.bool(self.get_tag(), true),
+            ElementType::Utf8l(v) | ElementType::Utf16l(v) => tw.utf16(self.get_tag(), v),
+            ElementType::Str8l(v) | ElementType::Str16l(v) => tw.str16(self.get_tag(), v),
+            ElementType::Null => tw.null(self.get_tag()),
+            ElementType::Struct(_) => tw.start_struct(self.get_tag()),
+            ElementType::Array(_) => tw.start_array(self.get_tag()),
+            ElementType::List(_) => tw.start_list(self.get_tag()),
+            ElementType::EndCnt => tw.end_container(),
+            _ => {
+                error!("ToTLV Not supported");
+                Err(Error::Invalid)
+            }
+        }
     }
 }
 

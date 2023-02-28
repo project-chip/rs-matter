@@ -46,11 +46,28 @@ pub enum GlobalElements {
 
 // TODO: What if we instead of creating this, we just pass the AttrData/AttrPath to the read/write
 // methods?
+/// The Attribute Details structure records the details about the attribute under consideration.
+/// Typically this structure is progressively built as we proceed through the request processing.
 pub struct AttrDetails {
-    pub attr_id: u16,
-    pub list_index: Option<Nullable<u16>>,
-    pub fab_idx: u8,
+    /// Fabric Filtering Activated
     pub fab_filter: bool,
+    /// The current Fabric Index
+    pub fab_idx: u8,
+    /// List Index, if any
+    pub list_index: Option<Nullable<u16>>,
+    /// The actual attribute ID
+    pub attr_id: u16,
+}
+
+impl AttrDetails {
+    pub fn new(fab_idx: u8, fab_filter: bool) -> Self {
+        Self {
+            fab_filter,
+            fab_idx,
+            list_index: None,
+            attr_id: 0,
+        }
+    }
 }
 
 pub trait ClusterType {

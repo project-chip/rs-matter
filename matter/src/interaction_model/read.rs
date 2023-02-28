@@ -18,14 +18,11 @@
 use crate::{
     error::Error,
     interaction_model::core::OpCode,
-    tlv::{get_root_node_struct, FromTLV, TLVWriter, TagType},
+    tlv::TLVWriter,
     transport::{packet::Packet, proto_demux::ResponseRequired},
 };
 
-use super::{
-    messages::msg::{self, ReadReq},
-    InteractionModel, Transaction,
-};
+use super::{InteractionModel, Transaction};
 
 impl InteractionModel {
     pub fn handle_read_req(
@@ -35,21 +32,11 @@ impl InteractionModel {
         proto_tx: &mut Packet,
     ) -> Result<ResponseRequired, Error> {
         proto_tx.set_proto_opcode(OpCode::ReportData as u8);
+        let proto_tx_wb = proto_tx.get_writebuf()?;
+        let mut tw = TLVWriter::new(proto_tx_wb);
 
-        let mut tw = TLVWriter::new(proto_tx.get_writebuf()?);
-        let root = get_root_node_struct(rx_buf)?;
-        let read_req = ReadReq::from_tlv(&root)?;
+        self.consumer.consume_read_attr(rx_buf, trans, &mut tw)?;
 
-        tw.start_struct(TagType::Anonymous)?;
-        self.consumer.consume_read_attr(&read_req, trans, &mut tw)?;
-        // Supress response always true for read interaction
-        tw.bool(
-            TagType::Context(msg::ReportDataTag::SupressResponse as u8),
-            true,
-        )?;
-        tw.end_container()?;
-
-        trans.complete();
         Ok(ResponseRequired::Yes)
     }
 }

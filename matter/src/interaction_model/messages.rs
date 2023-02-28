@@ -223,7 +223,7 @@ pub mod msg {
         SubscriptionId = 0,
         AttributeReports = 1,
         _EventReport = 2,
-        _MoreChunkedMsgs = 3,
+        MoreChunkedMsgs = 3,
         SupressResponse = 4,
     }
 

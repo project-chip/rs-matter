@@ -18,10 +18,13 @@
 use crate::{
     error::Error,
     tlv::TLVWriter,
-    transport::{exchange::Exchange, session::Session},
+    transport::{exchange::Exchange, proto_demux::ResponseRequired, session::Session},
 };
 
-use self::messages::msg::{InvReq, ReadReq, WriteReq};
+use self::{
+    core::OpCode,
+    messages::msg::{InvReq, StatusResp, WriteReq},
+};
 
 #[derive(PartialEq)]
 pub enum TransactionState {
@@ -44,7 +47,9 @@ pub trait InteractionConsumer {
 
     fn consume_read_attr(
         &self,
-        req: &ReadReq,
+        // TODO: This handling is different from the other APIs here, identify
+        // consistent options for this trait
+        req: &[u8],
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error>;
@@ -55,6 +60,20 @@ pub trait InteractionConsumer {
         trans: &mut Transaction,
         tw: &mut TLVWriter,
     ) -> Result<(), Error>;
+
+    fn consume_status_report(
+        &self,
+        _req: &StatusResp,
+        _trans: &mut Transaction,
+        _tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error>;
+
+    fn consume_subscribe(
+        &self,
+        _req: &[u8],
+        _trans: &mut Transaction,
+        _tw: &mut TLVWriter,
+    ) -> Result<(OpCode, ResponseRequired), Error>;
 }
 
 pub struct InteractionModel {
@@ -64,5 +83,4 @@ pub mod command;
 pub mod core;
 pub mod messages;
 pub mod read;
-pub mod subscribe;
 pub mod write;
