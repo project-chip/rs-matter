@@ -29,8 +29,7 @@ use matter::{
             msg::{ReadReq, ReportDataMsg, WriteReq, WriteResp},
         },
     },
-    tlv::{self, ElementType, FromTLV, TLVElement, TLVList, TLVWriter, TagType},
-    utils::writebuf::WriteBuf,
+    tlv::{self, ElementType, FromTLV, TLVElement, TLVWriter, TagType},
 };
 
 use crate::{
@@ -208,19 +207,6 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
     handle_read_reqs(input, expected);
 }
 
-fn get_tlvs<'a>(buf: &'a mut [u8], data: &[u16]) -> TLVElement<'a> {
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-    let _ = tw.start_array(TagType::Context(2));
-    for e in data {
-        let _ = tw.u16(TagType::Anonymous, *e);
-    }
-    let _ = tw.end_container();
-    let tlv_array = TLVList::new(wb.as_slice()).iter().next().unwrap();
-    tlv_array
-}
-
 #[test]
 fn test_read_wc_endpoint_wc_attribute() {
     // 1 Attr Read Request
@@ -230,9 +216,8 @@ fn test_read_wc_endpoint_wc_attribute() {
     let wc_ep_wc_attr = GenericPath::new(None, Some(echo_cluster::ID), None);
     let input = &[AttrPath::new(&wc_ep_wc_attr)];
 
-    let mut buf = [0u8; 100];
-    let attr_list_tlvs = get_tlvs(
-        &mut buf,
+    let attr_list = TLVHolder::new_array(
+        2,
         &[
             GlobalElements::FeatureMap as u16,
             GlobalElements::AttributeList as u16,
@@ -242,6 +227,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             echo_cluster::Attributes::AttCustom as u16,
         ],
     );
+    let attr_list_tlv = attr_list.to_tlv();
 
     let expected = &[
         attr_data_path!(
@@ -258,7 +244,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlvs.get_element_type()
+            attr_list_tlv.get_element_type()
         ),
         attr_data_path!(
             GenericPath::new(
@@ -298,7 +284,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlvs.get_element_type()
+            attr_list_tlv.get_element_type()
         ),
         attr_data_path!(
             GenericPath::new(

@@ -22,7 +22,7 @@ use num_derive::FromPrimitive;
 pub const ID: u32 = 0x0028;
 
 #[derive(FromPrimitive)]
-enum Attributes {
+pub enum Attributes {
     DMRevision = 0,
     VendorId = 2,
     ProductId = 4,

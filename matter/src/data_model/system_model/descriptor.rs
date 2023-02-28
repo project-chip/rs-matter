@@ -28,7 +28,7 @@ pub const ID: u32 = 0x001D;
 
 #[derive(FromPrimitive)]
 #[allow(clippy::enum_variant_names)]
-enum Attributes {
+pub enum Attributes {
     DeviceTypeList = 0,
     ServerList = 1,
     ClientList = 2,

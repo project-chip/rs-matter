@@ -81,7 +81,7 @@ pub enum Commands {
 }
 
 #[derive(FromPrimitive)]
-enum Attributes {
+pub enum Attributes {
     NOCs = 0,
     Fabrics = 1,
     SupportedFabrics = 2,
