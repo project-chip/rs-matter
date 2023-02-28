@@ -154,8 +154,8 @@ fn test_timed_write_fail_and_success() {
         Some(echo_cluster::Attributes::AttWrite as u32),
     );
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Sucess, 0),
-        AttrStatus::new(&ep1_att, IMStatusCode::Sucess, 0),
+        AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
+        AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
     // Test with incorrect handling

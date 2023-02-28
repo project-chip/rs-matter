@@ -90,7 +90,7 @@ impl ClusterType for OnOffCluster {
                         .map_err(|_| IMStatusCode::Failure)?;
                 }
                 cmd_req.trans.complete();
-                Err(IMStatusCode::Sucess)
+                Err(IMStatusCode::Success)
             }
             Commands::On => {
                 cmd_enter!("On");
@@ -105,7 +105,7 @@ impl ClusterType for OnOffCluster {
                 }
 
                 cmd_req.trans.complete();
-                Err(IMStatusCode::Sucess)
+                Err(IMStatusCode::Success)
             }
             Commands::Toggle => {
                 cmd_enter!("Toggle");
@@ -121,7 +121,7 @@ impl ClusterType for OnOffCluster {
                     .write_attribute_raw(Attributes::OnOff as u16, AttrValue::Bool(!value))
                     .map_err(|_| IMStatusCode::Failure)?;
                 cmd_req.trans.complete();
-                Err(IMStatusCode::Sucess)
+                Err(IMStatusCode::Success)
             }
         }
     }

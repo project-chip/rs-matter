@@ -135,7 +135,7 @@ impl DataModel {
             encoder.set_path(*path);
             let mut access_req = AccessReq::new(accessor, path, Access::WRITE);
             let r = match Cluster::write_attribute(c, &mut access_req, write_data, &attr) {
-                Ok(_) => IMStatusCode::Sucess,
+                Ok(_) => IMStatusCode::Success,
                 Err(e) => e,
             };
             encoder.encode_status(r, 0);
@@ -384,7 +384,7 @@ impl<'a, 'b, 'c> Encoder for AttrWriteEncoder<'a, 'b, 'c> {
     }
 
     fn encode_status(&mut self, status: IMStatusCode, cluster_status: u16) {
-        if self.skip_error && status != IMStatusCode::Sucess {
+        if self.skip_error && status != IMStatusCode::Success {
             // Don't encode errors
             return;
         }

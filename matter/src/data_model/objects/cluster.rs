@@ -207,7 +207,7 @@ impl Cluster {
         encoder: &mut dyn Encoder,
         attr: &AttrDetails,
     ) {
-        let mut error = IMStatusCode::Sucess;
+        let mut error = IMStatusCode::Success;
         let base = c.base();
         let a = if let Ok(a) = base.get_attribute(attr.attr_id) {
             a
@@ -225,7 +225,7 @@ impl Cluster {
             error = IMStatusCode::UnsupportedAccess;
         }
 
-        if error != IMStatusCode::Sucess {
+        if error != IMStatusCode::Success {
             encoder.encode_status(error, 0);
         } else if Attribute::is_system_attr(attr.attr_id) {
             c.base().read_system_attribute(encoder, a)

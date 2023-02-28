@@ -145,7 +145,7 @@ impl AdminCommCluster {
         let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
         self.pase_mgr
             .enable_pase_session(verifier, req.discriminator)?;
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 }
 
