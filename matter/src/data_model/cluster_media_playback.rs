@@ -205,13 +205,13 @@ impl MediaPlaybackCluster {
             Attributes::CurrentState as u16,
             AttrValue::Uint8(PlaybackState::Playing as u8),
         )?;
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 
     fn _set_duration(&mut self, duration: u64) -> Result<(), IMStatusCode> {
         self.base
             .write_attribute_raw(Attributes::Duration as u16, AttrValue::Uint64(duration))?;
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 
     // When rewinding / changing stream / etc we need to change absolute position and updateAt
@@ -221,7 +221,7 @@ impl MediaPlaybackCluster {
         self.sampled_position.position = new_pos;
         self.sampled_position.updated_at = now;
 
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 
     fn enocde_sampled_position(&self, tag: TagType, tw: &mut TLVWriter) {
@@ -242,7 +242,7 @@ impl MediaPlaybackCluster {
 
         self.run_callback(Commands::Play);
         self.send_playback_response(CommandStatus::Success, cmd_req);
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
     fn handle_pause(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
         self.base.write_attribute_raw(
@@ -252,7 +252,7 @@ impl MediaPlaybackCluster {
 
         self.run_callback(Commands::Pause);
         self.send_playback_response(CommandStatus::Success, cmd_req);
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
     fn handle_stop(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
         self.base.write_attribute_raw(
@@ -262,7 +262,7 @@ impl MediaPlaybackCluster {
 
         self.run_callback(Commands::Stop);
         self.send_playback_response(CommandStatus::Success, cmd_req);
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 
     // Start current thinbg over
@@ -275,7 +275,7 @@ impl MediaPlaybackCluster {
         self.update_position(0)?;
         self.run_callback(Commands::StartOver);
         self.send_playback_response(CommandStatus::Success, cmd_req);
-        Err(IMStatusCode::Sucess)
+        Err(IMStatusCode::Success)
     }
 
     fn handle_next(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
