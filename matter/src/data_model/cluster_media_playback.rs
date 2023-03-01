@@ -55,7 +55,7 @@ enum PlaybackState {
     Playing = 0,
     Paused = 1,
     NotPlaying = 2,
-    BUFFERING = 3,
+    Buffering = 3,
 }
 #[derive(FromPrimitive)]
 enum CommandStatus {
@@ -186,10 +186,7 @@ impl MediaPlaybackCluster {
     }
 
     pub fn add_callback(&mut self, name: Commands, callback: Box<dyn FnMut()>) {
-        self.callbacks.push(ClusterCallback {
-            name,
-            callback: callback,
-        });
+        self.callbacks.push(ClusterCallback { name, callback });
     }
 
     fn run_callback(&mut self, name: Commands) {
