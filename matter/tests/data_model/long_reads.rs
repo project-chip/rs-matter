@@ -24,11 +24,11 @@ use matter::{
     },
     interaction_model::{
         core::{IMStatusCode, OpCode},
-        messages::GenericPath,
         messages::{
             ib::{AttrData, AttrPath, AttrResp},
-            msg::{ReadReq, ReportDataMsg, StatusResp},
+            msg::{ReadReq, ReportDataMsg, StatusResp, SubscribeResp},
         },
+        messages::{msg::SubscribeReq, GenericPath},
     },
     tlv::{self, ElementType, FromTLV, TLVElement, TagType, ToTLV},
     transport::{
@@ -181,4 +181,44 @@ fn test_long_read_success() {
     assert_attr_report_skip_data(&report_data, &expected_part2);
     assert_eq!(report_data.more_chunks, None);
     assert_eq!(out_code, OpCode::ReportData as u8);
+}
+
+#[test]
+fn test_long_read_subscription_success() {
+    // Subscribe to the entire attribute database, which requires 2 reads to complete
+    let _ = env_logger::try_init();
+    let mut lr = LongRead::new();
+    let mut output = [0_u8; MAX_RX_BUF_SIZE + 100];
+
+    let wc_path = GenericPath::new(None, None, None);
+
+    let read_all = [AttrPath::new(&wc_path)];
+    let subs_req = SubscribeReq::new(true, 1, 20).set_attr_requests(&read_all);
+    let expected_part1 = wildcard_read_resp(1);
+    let (out_code, out_data) = lr.process(OpCode::SubscribeRequest, &subs_req, &mut output);
+    let root = tlv::get_root_node_struct(out_data).unwrap();
+    let report_data = ReportDataMsg::from_tlv(&root).unwrap();
+    assert_attr_report_skip_data(&report_data, &expected_part1);
+    assert_eq!(report_data.more_chunks, Some(true));
+    assert_eq!(out_code, OpCode::ReportData as u8);
+
+    // Ask for the next read by sending a status report
+    let status_report = StatusResp {
+        status: IMStatusCode::Success,
+    };
+    let expected_part2 = wildcard_read_resp(2);
+    let (out_code, out_data) = lr.process(OpCode::StatusResponse, &status_report, &mut output);
+    let root = tlv::get_root_node_struct(out_data).unwrap();
+    let report_data = ReportDataMsg::from_tlv(&root).unwrap();
+    assert_attr_report_skip_data(&report_data, &expected_part2);
+    assert_eq!(report_data.more_chunks, None);
+    assert_eq!(out_code, OpCode::ReportData as u8);
+
+    // Finally confirm subscription
+    let (out_code, out_data) = lr.process(OpCode::StatusResponse, &status_report, &mut output);
+    tlv::print_tlv_list(out_data);
+    let root = tlv::get_root_node_struct(out_data).unwrap();
+    let subs_resp = SubscribeResp::from_tlv(&root).unwrap();
+    assert_eq!(out_code, OpCode::SubscriptResponse as u8);
+    assert_eq!(subs_resp.subs_id, 1);
 }
