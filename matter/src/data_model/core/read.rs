@@ -221,7 +221,7 @@ impl DataModel {
         //
         // This is the amount of space we reserve for other things to be attached towards
         // the end
-        const RESERVE_SIZE: usize = 18;
+        const RESERVE_SIZE: usize = 24;
         let mut new_wb = wb_shrink!(old_wb, RESERVE_SIZE);
         let mut tw = TLVWriter::new(&mut new_wb);
 
