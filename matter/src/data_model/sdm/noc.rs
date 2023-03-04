@@ -263,6 +263,23 @@ impl NocCluster {
         Ok(())
     }
 
+    fn handle_command_rmfabric(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
+        cmd_enter!("Remove Fabric");
+        let req =
+            RemoveFabricReq::from_tlv(&cmd_req.data).map_err(|_| IMStatusCode::InvalidCommand)?;
+        if self.fabric_mgr.remove(req.fab_idx).is_ok() {
+            cmd_req.trans.terminate();
+        } else {
+            NocCluster::create_nocresponse(
+                cmd_req.resp,
+                NocStatus::InvalidFabricIndex,
+                req.fab_idx,
+                "".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     fn handle_command_addnoc(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
         cmd_enter!("AddNOC");
         if let Err(e) = self._handle_command_addnoc(cmd_req) {
@@ -437,6 +454,7 @@ impl ClusterType for NocCluster {
             Commands::AttReq => self.handle_command_attrequest(cmd_req),
             Commands::CertChainReq => self.handle_command_certchainrequest(cmd_req),
             Commands::UpdateFabricLabel => self.handle_command_updatefablabel(cmd_req),
+            Commands::RemoveFabric => self.handle_command_rmfabric(cmd_req),
             _ => Err(IMStatusCode::UnsupportedCommand),
         }
     }
@@ -564,6 +582,11 @@ struct UpdateFabricLabelReq<'a> {
 #[derive(FromTLV)]
 struct CertChainReq {
     cert_type: u8,
+}
+
+#[derive(FromTLV)]
+struct RemoveFabricReq {
+    fab_idx: u8,
 }
 
 fn get_certchainrequest_params(data: &TLVElement) -> Result<DataType, Error> {

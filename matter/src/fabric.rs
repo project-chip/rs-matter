@@ -195,6 +195,17 @@ impl Fabric {
         }
     }
 
+    fn rm_store(&self, index: usize, psm: &MutexGuard<Psm>) {
+        psm.rm(fb_key!(index, ST_RCA));
+        psm.rm(fb_key!(index, ST_ICA));
+        psm.rm(fb_key!(index, ST_NOC));
+        psm.rm(fb_key!(index, ST_IPK));
+        psm.rm(fb_key!(index, ST_LBL));
+        psm.rm(fb_key!(index, ST_PBKEY));
+        psm.rm(fb_key!(index, ST_PRKEY));
+        psm.rm(fb_key!(index, ST_VID));
+    }
+
     fn store(&self, index: usize, psm: &MutexGuard<Psm>) -> Result<(), Error> {
         let mut key = [0u8; MAX_CERT_TLV_LEN];
         let len = self.root_ca.as_tlv(&mut key)?;
@@ -333,6 +344,19 @@ impl FabricMgr {
 
         mgr.fabrics[index] = Some(f);
         Ok(index as u8)
+    }
+
+    pub fn remove(&self, fab_idx: u8) -> Result<(), Error> {
+        let fab_idx = fab_idx as usize;
+        let mut mgr = self.inner.write().unwrap();
+        let psm = self.psm.lock().unwrap();
+        if let Some(f) = &mgr.fabrics[fab_idx] {
+            f.rm_store(fab_idx, &psm);
+            mgr.fabrics[fab_idx] = None;
+            Ok(())
+        } else {
+            Err(Error::NotFound)
+        }
     }
 
     pub fn match_dest_id(&self, random: &[u8], target: &[u8]) -> Result<usize, Error> {
