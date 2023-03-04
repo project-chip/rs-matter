@@ -61,12 +61,14 @@ impl Matter {
         let mdns = Mdns::get()?;
         mdns.set_values(dev_det.vid, dev_det.pid, &dev_det.device_name);
 
-        print_pairing_code_and_qr(&dev_det, &dev_comm, DiscoveryCapabilities::default());
-
         let fabric_mgr = Arc::new(FabricMgr::new()?);
+        let open_comm_window = fabric_mgr.is_empty();
+        if open_comm_window {
+            print_pairing_code_and_qr(&dev_det, &dev_comm, DiscoveryCapabilities::default());
+        }
+
         let acl_mgr = Arc::new(AclMgr::new()?);
         let mut pase = PaseMgr::new();
-        let open_comm_window = fabric_mgr.is_empty();
         let data_model =
             DataModel::new(dev_det, dev_att, fabric_mgr.clone(), acl_mgr, pase.clone())?;
         let mut matter = Box::new(Matter {
