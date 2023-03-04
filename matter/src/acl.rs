@@ -78,14 +78,17 @@ pub const NOC_CAT_SUBJECT_PREFIX: u64 = 0xFFFF_FFFD_0000_0000;
 const NOC_CAT_ID_MASK: u64 = 0xFFFF_0000;
 const NOC_CAT_VERSION_MASK: u64 = 0xFFFF;
 
+/// Is this identifier a NOC CAT
 fn is_noc_cat(id: u64) -> bool {
     (id & NOC_CAT_SUBJECT_PREFIX) == NOC_CAT_SUBJECT_PREFIX
 }
 
+/// Get the 16-bit NOC CAT id from the identifier
 fn get_noc_cat_id(id: u64) -> u64 {
     (id & NOC_CAT_ID_MASK) >> 16
 }
 
+/// Get the 16-bit NOC CAT version from the identifier
 fn get_noc_cat_version(id: u64) -> u64 {
     id & NOC_CAT_VERSION_MASK
 }
@@ -96,6 +99,7 @@ pub fn gen_noc_cat(id: u16, version: u16) -> u32 {
     ((id as u32) << 16) | version as u32
 }
 
+/// The Subjects that identify the Accessor
 pub struct AccessorSubjects([u64; MAX_ACCESSOR_SUBJECTS]);
 
 impl AccessorSubjects {
@@ -815,5 +819,35 @@ mod tests {
         let mut req = AccessReq::new(&accessor, &path, Access::WRITE);
         req.set_target_perms(Access::RWVA);
         assert_eq!(req.allow(), true);
+    }
+
+    #[test]
+    fn test_delete_for_fabric() {
+        let am = Arc::new(AclMgr::new_with(false).unwrap());
+        am.erase_all();
+        let path = GenericPath::new(Some(1), Some(1234), None);
+        let accessor2 = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, am.clone());
+        let mut req2 = AccessReq::new(&accessor2, &path, Access::READ);
+        req2.set_target_perms(Access::RWVA);
+        let accessor3 = Accessor::new(3, AccessorSubjects::new(112233), AuthMode::Case, am.clone());
+        let mut req3 = AccessReq::new(&accessor3, &path, Access::READ);
+        req3.set_target_perms(Access::RWVA);
+
+        // Allow for subject match - target is wildcard - Fabric idx 2
+        let mut new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(112233).unwrap();
+        am.add(new).unwrap();
+
+        // Allow for subject match - target is wildcard - Fabric idx 3
+        let mut new = AclEntry::new(3, Privilege::VIEW, AuthMode::Case);
+        new.add_subject(112233).unwrap();
+        am.add(new).unwrap();
+
+        // Req for Fabric idx 2 gets denied, and that for Fabric idx 3 is allowed
+        assert_eq!(req2.allow(), true);
+        assert_eq!(req3.allow(), true);
+        am.delete_for_fabric(2).unwrap();
+        assert_eq!(req2.allow(), false);
+        assert_eq!(req3.allow(), true);
     }
 }

@@ -17,7 +17,7 @@
 
 use std::{
     convert::TryInto,
-    fs::{DirBuilder, File},
+    fs::{remove_file, DirBuilder, File},
     io::{Read, Write},
     sync::{Arc, Mutex, Once},
 };
@@ -88,5 +88,9 @@ impl Psm {
         let _ = f.read_to_end(&mut vec)?;
         *val = u64::from_be_bytes(vec.as_slice().try_into()?);
         Ok(())
+    }
+
+    pub fn rm(&self, key: &str) {
+        let _ = remove_file(psm_path!(key));
     }
 }
