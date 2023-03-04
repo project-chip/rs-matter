@@ -268,6 +268,7 @@ impl NocCluster {
         let req =
             RemoveFabricReq::from_tlv(&cmd_req.data).map_err(|_| IMStatusCode::InvalidCommand)?;
         if self.fabric_mgr.remove(req.fab_idx).is_ok() {
+            let _ = self.acl_mgr.delete_for_fabric(req.fab_idx);
             cmd_req.trans.terminate();
         } else {
             NocCluster::create_nocresponse(
