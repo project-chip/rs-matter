@@ -48,10 +48,15 @@ impl Default for Role {
     }
 }
 
+/// State of the exchange
 #[derive(Debug, PartialEq)]
 enum State {
+    /// The exchange is open and active
     Open,
+    /// The exchange is closed, but keys are active since retransmissions/acks may be pending
     Close,
+    /// The exchange is terminated, keys are destroyed, no communication can happen
+    Terminate,
 }
 
 impl Default for State {
@@ -100,6 +105,11 @@ impl Exchange {
         }
     }
 
+    pub fn terminate(&mut self) {
+        self.data = DataOption::None;
+        self.state = State::Terminate;
+    }
+
     pub fn close(&mut self) {
         self.data = DataOption::None;
         self.state = State::Close;
@@ -111,7 +121,7 @@ impl Exchange {
 
     pub fn is_purgeable(&self) -> bool {
         // No Users, No pending ACKs/Retrans
-        self.state == State::Close && self.mrp.is_empty()
+        self.state == State::Terminate || (self.state == State::Close && self.mrp.is_empty())
     }
 
     pub fn get_id(&self) -> u16 {
@@ -170,6 +180,11 @@ impl Exchange {
         mut proto_tx: BoxSlab<PacketPool>,
         session: &mut SessionHandle,
     ) -> Result<(), Error> {
+        if self.state == State::Terminate {
+            info!("Skipping tx for terminated exchange {}", self.id);
+            return Ok(());
+        }
+
         trace!("payload: {:x?}", proto_tx.as_borrow_slice());
         info!(
             "{} with proto id: {} opcode: {}",

@@ -68,6 +68,16 @@ impl<'a> Transaction<'a> {
         }
     }
 
+    /// Terminates the transaction, no communication (even ACKs) happens hence forth
+    pub fn terminate(&mut self) {
+        self.state = TransactionState::Terminate
+    }
+
+    pub fn is_terminate(&self) -> bool {
+        self.state == TransactionState::Terminate
+    }
+
+    /// Marks the transaction as completed from the application's perspective
     pub fn complete(&mut self) {
         self.state = TransactionState::Complete
     }
@@ -200,7 +210,9 @@ impl proto_demux::HandleProto for InteractionModel {
             info!("Sending response");
             tlv::print_tlv_list(ctx.tx.as_borrow_slice());
         }
-        if trans.is_complete() {
+        if trans.is_terminate() {
+            ctx.exch_ctx.exch.terminate();
+        } else if trans.is_complete() {
             ctx.exch_ctx.exch.close();
         }
         Ok(result)

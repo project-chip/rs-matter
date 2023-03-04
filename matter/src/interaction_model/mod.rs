@@ -30,6 +30,7 @@ use self::{
 pub enum TransactionState {
     Ongoing,
     Complete,
+    Terminate,
 }
 pub struct Transaction<'a> {
     pub state: TransactionState,
