@@ -29,12 +29,11 @@ use matter::{
             msg::{ReadReq, ReportDataMsg, WriteReq, WriteResp},
         },
     },
-    tlv::{self, ElementType, FromTLV, TLVElement, TLVList, TLVWriter, TagType},
-    utils::writebuf::WriteBuf,
+    tlv::{self, ElementType, FromTLV, TLVElement, TLVWriter, TagType},
 };
 
 use crate::{
-    attr_data, attr_status,
+    attr_data, attr_data_path, attr_status,
     common::{attributes::*, echo_cluster, im_engine::im_engine},
 };
 
@@ -95,9 +94,9 @@ fn test_read_success() {
         AttrPath::new(&ep1_attcustom),
     ];
     let expected = &[
-        attr_data!(ep0_att1, ElementType::U16(0x1234)),
-        attr_data!(ep1_att2, ElementType::U16(0x5678)),
-        attr_data!(
+        attr_data_path!(ep0_att1, ElementType::U16(0x1234)),
+        attr_data_path!(ep1_att2, ElementType::U16(0x5678)),
+        attr_data_path!(
             ep1_attcustom,
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
@@ -168,19 +167,15 @@ fn test_read_wc_endpoint_all_have_clusters() {
 
     let expected = &[
         attr_data!(
-            GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::Att1 as u32)
-            ),
+            0,
+            echo_cluster::ID,
+            echo_cluster::Attributes::Att1,
             ElementType::U16(0x1234)
         ),
         attr_data!(
-            GenericPath::new(
-                Some(1),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::Attributes::Att1 as u32)
-            ),
+            1,
+            echo_cluster::ID,
+            echo_cluster::Attributes::Att1,
             ElementType::U16(0x1234)
         ),
     ];
@@ -201,7 +196,7 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
-    let expected = &[attr_data!(
+    let expected = &[attr_data_path!(
         GenericPath::new(
             Some(1),
             Some(cluster_on_off::ID),
@@ -210,19 +205,6 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
         ElementType::False
     )];
     handle_read_reqs(input, expected);
-}
-
-fn get_tlvs<'a>(buf: &'a mut [u8], data: &[u16]) -> TLVElement<'a> {
-    let buf_len = buf.len();
-    let mut wb = WriteBuf::new(buf, buf_len);
-    let mut tw = TLVWriter::new(&mut wb);
-    let _ = tw.start_array(TagType::Context(2));
-    for e in data {
-        let _ = tw.u16(TagType::Anonymous, *e);
-    }
-    let _ = tw.end_container();
-    let tlv_array = TLVList::new(wb.as_slice()).iter().next().unwrap();
-    tlv_array
 }
 
 #[test]
@@ -234,9 +216,8 @@ fn test_read_wc_endpoint_wc_attribute() {
     let wc_ep_wc_attr = GenericPath::new(None, Some(echo_cluster::ID), None);
     let input = &[AttrPath::new(&wc_ep_wc_attr)];
 
-    let mut buf = [0u8; 100];
-    let attr_list_tlvs = get_tlvs(
-        &mut buf,
+    let attr_list = TLVHolder::new_array(
+        2,
         &[
             GlobalElements::FeatureMap as u16,
             GlobalElements::AttributeList as u16,
@@ -246,9 +227,10 @@ fn test_read_wc_endpoint_wc_attribute() {
             echo_cluster::Attributes::AttCustom as u16,
         ],
     );
+    let attr_list_tlv = attr_list.to_tlv();
 
     let expected = &[
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
@@ -256,15 +238,15 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U8(0)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlvs.get_element_type()
+            attr_list_tlv.get_element_type()
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
@@ -272,7 +254,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U16(0x1234)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
@@ -280,7 +262,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U16(0x5678)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
@@ -288,7 +270,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
@@ -296,15 +278,15 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U8(0)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlvs.get_element_type()
+            attr_list_tlv.get_element_type()
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
@@ -312,7 +294,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U16(0x1234)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
@@ -320,7 +302,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             ),
             ElementType::U16(0x5678)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),

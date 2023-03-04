@@ -76,7 +76,7 @@ pub mod msg {
         EventPath,
     };
 
-    #[derive(FromTLV)]
+    #[derive(Default, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct SubscribeReq<'a> {
         pub keep_subs: bool,
@@ -92,6 +92,20 @@ pub mod msg {
     }
 
     impl<'a> SubscribeReq<'a> {
+        pub fn new(fabric_filtered: bool, min_int_floor: u16, max_int_ceil: u16) -> Self {
+            Self {
+                fabric_filtered,
+                min_int_floor,
+                max_int_ceil,
+                ..Default::default()
+            }
+        }
+
+        pub fn set_attr_requests(mut self, requests: &'a [AttrPath]) -> Self {
+            self.attr_requests = Some(TLVArray::new(requests));
+            self
+        }
+
         pub fn to_read_req(&self) -> ReadReq<'a> {
             ReadReq {
                 attr_requests: self.attr_requests,
@@ -103,7 +117,7 @@ pub mod msg {
         }
     }
 
-    #[derive(ToTLV)]
+    #[derive(Debug, FromTLV, ToTLV)]
     pub struct SubscribeResp {
         pub subs_id: u32,
         // The Context Tags are discontiguous for some reason

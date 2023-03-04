@@ -34,7 +34,7 @@ use matter::{
 };
 
 use crate::{
-    attr_data, attr_status,
+    attr_data_path, attr_status,
     common::{
         attributes::*,
         echo_cluster::{self, ATTR_WRITE_DEFAULT_VALUE},
@@ -151,7 +151,7 @@ fn wc_read_attribute() {
 
     // Test2: Only Single response as only single endpoint is allowed
     let input = &[AttrPath::new(&wc_att1)];
-    let expected = &[attr_data!(ep0_att1, ElementType::U16(0x1234))];
+    let expected = &[attr_data_path!(ep0_att1, ElementType::U16(0x1234))];
     handle_read_reqs(&mut im, peer, input, expected);
 
     // Add ACL to allow our peer to only access endpoint 1
@@ -163,8 +163,8 @@ fn wc_read_attribute() {
     // Test3: Both responses are valid
     let input = &[AttrPath::new(&wc_att1)];
     let expected = &[
-        attr_data!(ep0_att1, ElementType::U16(0x1234)),
-        attr_data!(ep1_att1, ElementType::U16(0x1234)),
+        attr_data_path!(ep0_att1, ElementType::U16(0x1234)),
+        attr_data_path!(ep1_att1, ElementType::U16(0x1234)),
     ];
     handle_read_reqs(&mut im, peer, input, expected);
 }
@@ -201,7 +201,7 @@ fn exact_read_attribute() {
 
     // Test2: Only Single response as only single endpoint is allowed
     let input = &[AttrPath::new(&wc_att1)];
-    let expected = &[attr_data!(ep0_att1, ElementType::U16(0x1234))];
+    let expected = &[attr_data_path!(ep0_att1, ElementType::U16(0x1234))];
     handle_read_reqs(&mut im, peer, input, expected);
 }
 
@@ -565,7 +565,7 @@ fn test_read_data_ver() {
     let input = &[AttrPath::new(&wc_ep_att1)];
 
     let expected = &[
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(0),
                 Some(echo_cluster::ID),
@@ -573,7 +573,7 @@ fn test_read_data_ver() {
             ),
             ElementType::U16(0x1234)
         ),
-        attr_data!(
+        attr_data_path!(
             GenericPath::new(
                 Some(1),
                 Some(echo_cluster::ID),
@@ -614,7 +614,7 @@ fn test_read_data_ver() {
         Some(TLVArray::Slice(&dataver_filter)),
         &mut out_buf,
     );
-    let expected_only_one = &[attr_data!(
+    let expected_only_one = &[attr_data_path!(
         GenericPath::new(
             Some(1),
             Some(echo_cluster::ID),

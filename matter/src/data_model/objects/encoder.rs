@@ -42,7 +42,7 @@ pub enum EncodeValue<'a> {
     Tlv(TLVElement<'a>),
     /// This indicates a static value. This variant is typically used in the transmit/
     /// to-tlv path
-    Value(&'a (dyn ToTLV)),
+    Value(&'a dyn ToTLV),
 }
 
 impl<'a> EncodeValue<'a> {
