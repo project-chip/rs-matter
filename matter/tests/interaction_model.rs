@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 struct Node {
     pub endpoint: u16,
     pub cluster: u32,
-    pub command: u16,
+    pub command: u32,
     pub variable: u8,
 }
 
@@ -82,7 +82,7 @@ impl InteractionConsumer for DataModel {
                 let mut common_data = self.node.lock().unwrap();
                 common_data.endpoint = cmd_path_ib.path.endpoint.unwrap_or(1);
                 common_data.cluster = cmd_path_ib.path.cluster.unwrap_or(0);
-                common_data.command = cmd_path_ib.path.leaf.unwrap_or(0) as u16;
+                common_data.command = cmd_path_ib.path.leaf.unwrap_or(0);
                 data.confirm_struct().unwrap();
                 common_data.variable = data.find_tag(0).unwrap().u8().unwrap();
             }
@@ -178,8 +178,9 @@ fn test_valid_invoke_cmd() -> Result<(), Error> {
     // An invoke command for endpoint 0, cluster 49, command 12 and a u8 variable value of 0x05
 
     let b = [
-        0x15, 0x28, 0x00, 0x28, 0x01, 0x36, 0x02, 0x15, 0x37, 0x00, 0x24, 0x00, 0x00, 0x24, 0x01,
-        0x31, 0x24, 0x02, 0x0c, 0x18, 0x35, 0x01, 0x24, 0x00, 0x05, 0x18, 0x18, 0x18, 0x18,
+        0x15, 0x28, 0x00, 0x28, 0x01, 0x36, 0x02, 0x15, 0x37, 0x00, 0x25, 0x00, 0x00, 0x00, 0x26,
+        0x01, 0x31, 0x00, 0x00, 0x00, 0x26, 0x02, 0x0c, 0x00, 0x00, 0x00, 0x18, 0x35, 0x01, 0x24,
+        0x00, 0x05, 0x18, 0x18, 0x18, 0x18,
     ];
 
     let mut out_buf: [u8; 20] = [0; 20];
