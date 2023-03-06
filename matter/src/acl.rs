@@ -21,7 +21,7 @@ use std::{
 };
 
 use crate::{
-    data_model::objects::{Access, Privilege},
+    data_model::objects::{Access, ClusterId, EndptId, Privilege},
     error::Error,
     fabric,
     interaction_model::messages::GenericPath,
@@ -240,13 +240,17 @@ impl<'a> AccessReq<'a> {
 
 #[derive(FromTLV, ToTLV, Copy, Clone, Debug, PartialEq)]
 pub struct Target {
-    cluster: Option<u32>,
-    endpoint: Option<u16>,
+    cluster: Option<ClusterId>,
+    endpoint: Option<EndptId>,
     device_type: Option<u32>,
 }
 
 impl Target {
-    pub fn new(endpoint: Option<u16>, cluster: Option<u32>, device_type: Option<u32>) -> Self {
+    pub fn new(
+        endpoint: Option<EndptId>,
+        cluster: Option<ClusterId>,
+        device_type: Option<u32>,
+    ) -> Self {
         Self {
             cluster,
             endpoint,

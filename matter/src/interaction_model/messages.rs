@@ -16,6 +16,7 @@
  */
 
 use crate::{
+    data_model::objects::{ClusterId, EndptId},
     error::Error,
     tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
 };
@@ -25,13 +26,13 @@ use crate::{
 #[derive(Default, Clone, Copy, Debug, PartialEq, FromTLV, ToTLV)]
 #[tlvargs(datatype = "list")]
 pub struct GenericPath {
-    pub endpoint: Option<u16>,
-    pub cluster: Option<u32>,
+    pub endpoint: Option<EndptId>,
+    pub cluster: Option<ClusterId>,
     pub leaf: Option<u32>,
 }
 
 impl GenericPath {
-    pub fn new(endpoint: Option<u16>, cluster: Option<u32>, leaf: Option<u32>) -> Self {
+    pub fn new(endpoint: Option<EndptId>, cluster: Option<ClusterId>, leaf: Option<u32>) -> Self {
         Self {
             endpoint,
             cluster,
@@ -40,7 +41,7 @@ impl GenericPath {
     }
 
     /// Returns Ok, if the path is non wildcard, otherwise returns an error
-    pub fn not_wildcard(&self) -> Result<(u16, u32, u32), Error> {
+    pub fn not_wildcard(&self) -> Result<(EndptId, ClusterId, u32), Error> {
         match *self {
             GenericPath {
                 endpoint: Some(e),
@@ -257,7 +258,7 @@ pub mod ib {
     use std::fmt::Debug;
 
     use crate::{
-        data_model::objects::{AttrDetails, EncodeValue},
+        data_model::objects::{AttrDetails, AttrId, ClusterId, EncodeValue, EndptId},
         error::Error,
         interaction_model::core::IMStatusCode,
         tlv::{FromTLV, Nullable, TLVElement, TLVWriter, TagType, ToTLV},
@@ -275,7 +276,12 @@ pub mod ib {
     }
 
     impl<'a> InvResp<'a> {
-        pub fn cmd_new(endpoint: u16, cluster: u32, cmd: u16, data: EncodeValue<'a>) -> Self {
+        pub fn cmd_new(
+            endpoint: EndptId,
+            cluster: ClusterId,
+            cmd: u16,
+            data: EncodeValue<'a>,
+        ) -> Self {
             Self::Cmd(CmdData::new(
                 CmdPath::new(Some(endpoint), Some(cluster), Some(cmd)),
                 data,
@@ -448,9 +454,9 @@ pub mod ib {
     pub struct AttrPath {
         pub tag_compression: Option<bool>,
         pub node: Option<u64>,
-        pub endpoint: Option<u16>,
-        pub cluster: Option<u32>,
-        pub attr: Option<u16>,
+        pub endpoint: Option<EndptId>,
+        pub cluster: Option<ClusterId>,
+        pub attr: Option<AttrId>,
         pub list_index: Option<Nullable<u16>>,
     }
 
@@ -490,7 +496,11 @@ pub mod ib {
     }
 
     impl CmdPath {
-        pub fn new(endpoint: Option<u16>, cluster: Option<u32>, command: Option<u16>) -> Self {
+        pub fn new(
+            endpoint: Option<EndptId>,
+            cluster: Option<ClusterId>,
+            command: Option<u16>,
+        ) -> Self {
             Self {
                 path: GenericPath {
                     endpoint,
@@ -525,8 +535,8 @@ pub mod ib {
     #[derive(FromTLV, ToTLV, Copy, Clone)]
     pub struct ClusterPath {
         pub node: Option<u64>,
-        pub endpoint: u16,
-        pub cluster: u32,
+        pub endpoint: EndptId,
+        pub cluster: ClusterId,
     }
 
     #[derive(FromTLV, ToTLV, Copy, Clone)]
@@ -539,8 +549,8 @@ pub mod ib {
     #[tlvargs(datatype = "list")]
     pub struct EventPath {
         pub node: Option<u64>,
-        pub endpoint: Option<u16>,
-        pub cluster: Option<u32>,
+        pub endpoint: Option<EndptId>,
+        pub cluster: Option<ClusterId>,
         pub event: Option<u32>,
         pub is_urgent: Option<bool>,
     }

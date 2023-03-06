@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use super::{GlobalElements, Privilege};
+use super::{AttrId, GlobalElements, Privilege};
 use crate::{
     error::*,
     // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
@@ -153,7 +153,7 @@ impl AttrValue {
 
 #[derive(Debug, Clone)]
 pub struct Attribute {
-    pub(super) id: u16,
+    pub(super) id: AttrId,
     pub(super) value: AttrValue,
     pub(super) quality: Quality,
     pub(super) access: Access,
@@ -171,7 +171,7 @@ impl Default for Attribute {
 }
 
 impl Attribute {
-    pub fn new(id: u16, value: AttrValue, access: Access, quality: Quality) -> Self {
+    pub fn new(id: AttrId, value: AttrValue, access: Access, quality: Quality) -> Self {
         Attribute {
             id,
             value,
@@ -189,8 +189,8 @@ impl Attribute {
         }
     }
 
-    pub fn is_system_attr(attr_id: u16) -> bool {
-        attr_id >= (GlobalElements::ServerGenCmd as u16)
+    pub fn is_system_attr(attr_id: AttrId) -> bool {
+        attr_id >= (GlobalElements::ServerGenCmd as AttrId)
     }
 }
 

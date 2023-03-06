@@ -134,9 +134,9 @@ impl ResumeReadReq {
 impl DataModel {
     pub fn read_attribute_raw(
         &self,
-        endpoint: u16,
-        cluster: u32,
-        attr: u16,
+        endpoint: EndptId,
+        cluster: ClusterId,
+        attr: AttrId,
     ) -> Result<AttrValue, IMStatusCode> {
         let node = self.node.read().unwrap();
         let cluster = node.get_cluster(endpoint, cluster)?;

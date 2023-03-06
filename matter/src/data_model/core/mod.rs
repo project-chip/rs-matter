@@ -234,7 +234,7 @@ enum ResumeReq {
 }
 
 impl objects::ChangeConsumer for DataModel {
-    fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error> {
+    fn endpoint_added(&self, id: EndptId, endpoint: &mut Endpoint) -> Result<(), Error> {
         endpoint.add_cluster(DescriptorCluster::new(id, self.clone())?)?;
         Ok(())
     }

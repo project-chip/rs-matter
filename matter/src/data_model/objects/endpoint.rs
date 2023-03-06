@@ -19,7 +19,7 @@ use crate::{data_model::objects::ClusterType, error::*, interaction_model::core:
 
 use std::fmt;
 
-use super::DeviceType;
+use super::{ClusterId, DeviceType};
 
 pub const CLUSTERS_PER_ENDPT: usize = 9;
 
@@ -51,18 +51,21 @@ impl Endpoint {
         &self.dev_type
     }
 
-    fn get_cluster_index(&self, cluster_id: u32) -> Option<usize> {
+    fn get_cluster_index(&self, cluster_id: ClusterId) -> Option<usize> {
         self.clusters.iter().position(|c| c.base().id == cluster_id)
     }
 
-    pub fn get_cluster(&self, cluster_id: u32) -> Result<&dyn ClusterType, Error> {
+    pub fn get_cluster(&self, cluster_id: ClusterId) -> Result<&dyn ClusterType, Error> {
         let index = self
             .get_cluster_index(cluster_id)
             .ok_or(Error::ClusterNotFound)?;
         Ok(self.clusters[index].as_ref())
     }
 
-    pub fn get_cluster_mut(&mut self, cluster_id: u32) -> Result<&mut dyn ClusterType, Error> {
+    pub fn get_cluster_mut(
+        &mut self,
+        cluster_id: ClusterId,
+    ) -> Result<&mut dyn ClusterType, Error> {
         let index = self
             .get_cluster_index(cluster_id)
             .ok_or(Error::ClusterNotFound)?;
@@ -72,7 +75,7 @@ impl Endpoint {
     // Returns a slice of clusters, with either a single cluster or all (wildcard)
     pub fn get_wildcard_clusters(
         &self,
-        cluster: Option<u32>,
+        cluster: Option<ClusterId>,
     ) -> Result<(&BoxedClusters, bool), IMStatusCode> {
         if let Some(c) = cluster {
             if let Some(i) = self.get_cluster_index(c) {
@@ -88,7 +91,7 @@ impl Endpoint {
     // Returns a slice of clusters, with either a single cluster or all (wildcard)
     pub fn get_wildcard_clusters_mut(
         &mut self,
-        cluster: Option<u32>,
+        cluster: Option<ClusterId>,
     ) -> Result<(&mut BoxedClusters, bool), IMStatusCode> {
         if let Some(c) = cluster {
             if let Some(i) = self.get_cluster_index(c) {
