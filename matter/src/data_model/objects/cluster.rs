@@ -139,14 +139,14 @@ impl Cluster {
             AttrValue::Uint32(0),
             Access::RV,
             Quality::NONE,
-        )?)?;
+        ))?;
 
         self.add_attribute(Attribute::new(
             GlobalElements::AttributeList as u16,
             AttrValue::Custom,
             Access::RV,
             Quality::NONE,
-        )?)
+        ))
     }
 
     pub fn add_attributes(&mut self, attrs: &[Attribute]) -> Result<(), Error> {

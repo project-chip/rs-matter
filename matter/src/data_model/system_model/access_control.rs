@@ -49,11 +49,11 @@ impl AccessControlCluster {
             base: Cluster::new(ID)?,
             acl_mgr,
         });
-        c.base.add_attribute(attr_acl_new()?)?;
-        c.base.add_attribute(attr_extension_new()?)?;
-        c.base.add_attribute(attr_subjects_per_entry_new()?)?;
-        c.base.add_attribute(attr_targets_per_entry_new()?)?;
-        c.base.add_attribute(attr_entries_per_fabric_new()?)?;
+        c.base.add_attribute(attr_acl_new())?;
+        c.base.add_attribute(attr_extension_new())?;
+        c.base.add_attribute(attr_subjects_per_entry_new())?;
+        c.base.add_attribute(attr_targets_per_entry_new())?;
+        c.base.add_attribute(attr_entries_per_fabric_new())?;
         Ok(c)
     }
 
@@ -143,7 +143,7 @@ impl ClusterType for AccessControlCluster {
     }
 }
 
-fn attr_acl_new() -> Result<Attribute, Error> {
+fn attr_acl_new() -> Attribute {
     Attribute::new(
         Attributes::Acl as u16,
         AttrValue::Custom,
@@ -152,7 +152,7 @@ fn attr_acl_new() -> Result<Attribute, Error> {
     )
 }
 
-fn attr_extension_new() -> Result<Attribute, Error> {
+fn attr_extension_new() -> Attribute {
     Attribute::new(
         Attributes::Extension as u16,
         AttrValue::Custom,
@@ -161,7 +161,7 @@ fn attr_extension_new() -> Result<Attribute, Error> {
     )
 }
 
-fn attr_subjects_per_entry_new() -> Result<Attribute, Error> {
+fn attr_subjects_per_entry_new() -> Attribute {
     Attribute::new(
         Attributes::SubjectsPerEntry as u16,
         AttrValue::Uint16(acl::SUBJECTS_PER_ENTRY as u16),
@@ -170,7 +170,7 @@ fn attr_subjects_per_entry_new() -> Result<Attribute, Error> {
     )
 }
 
-fn attr_targets_per_entry_new() -> Result<Attribute, Error> {
+fn attr_targets_per_entry_new() -> Attribute {
     Attribute::new(
         Attributes::TargetsPerEntry as u16,
         AttrValue::Uint16(acl::TARGETS_PER_ENTRY as u16),
@@ -179,7 +179,7 @@ fn attr_targets_per_entry_new() -> Result<Attribute, Error> {
     )
 }
 
-fn attr_entries_per_fabric_new() -> Result<Attribute, Error> {
+fn attr_entries_per_fabric_new() -> Attribute {
     Attribute::new(
         Attributes::EntriesPerFabric as u16,
         AttrValue::Uint16(acl::ENTRIES_PER_FABRIC as u16),

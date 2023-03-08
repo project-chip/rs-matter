@@ -171,18 +171,13 @@ impl Default for Attribute {
 }
 
 impl Attribute {
-    pub fn new(
-        id: u16,
-        value: AttrValue,
-        access: Access,
-        quality: Quality,
-    ) -> Result<Attribute, Error> {
-        Ok(Attribute {
+    pub fn new(id: u16, value: AttrValue, access: Access, quality: Quality) -> Self {
+        Attribute {
             id,
             value,
             access,
             quality,
-        })
+        }
     }
 
     pub fn set_value(&mut self, value: AttrValue) -> Result<(), Error> {

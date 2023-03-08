@@ -54,25 +54,25 @@ impl DescriptorCluster {
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::ServerList as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::PartsList as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::ClientList as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
         ];
         c.base.add_attributes(&attrs[..])?;
         Ok(c)

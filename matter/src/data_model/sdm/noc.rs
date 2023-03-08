@@ -131,25 +131,25 @@ impl NocCluster {
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::Fabrics as u16,
                 AttrValue::Custom,
                 Access::RV | Access::FAB_SCOPED,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SupportedFabrics as u16,
                 AttrValue::Uint8(MAX_SUPPORTED_FABRICS as u8),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::CommissionedFabrics as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
         ];
         c.base.add_attributes(&attrs[..])?;
         Ok(c)

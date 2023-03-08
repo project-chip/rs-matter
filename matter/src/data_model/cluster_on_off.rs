@@ -37,7 +37,7 @@ pub enum Commands {
     Toggle = 0x02,
 }
 
-fn attr_on_off_new() -> Result<Attribute, Error> {
+fn attr_on_off_new() -> Attribute {
     // OnOff, Value: false
     Attribute::new(
         Attributes::OnOff as u16,
@@ -56,7 +56,7 @@ impl OnOffCluster {
         let mut cluster = Box::new(OnOffCluster {
             base: Cluster::new(ID)?,
         });
-        cluster.base.add_attribute(attr_on_off_new()?)?;
+        cluster.base.add_attribute(attr_on_off_new())?;
         Ok(cluster)
     }
 }

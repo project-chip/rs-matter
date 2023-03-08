@@ -176,31 +176,31 @@ impl EchoCluster {
             AttrValue::Uint16(0x1234),
             Access::RV,
             Quality::NONE,
-        )?)?;
+        ))?;
         c.base.add_attribute(Attribute::new(
             Attributes::Att2 as u16,
             AttrValue::Uint16(0x5678),
             Access::RV,
             Quality::NONE,
-        )?)?;
+        ))?;
         c.base.add_attribute(Attribute::new(
             Attributes::AttWrite as u16,
             AttrValue::Uint16(ATTR_WRITE_DEFAULT_VALUE),
             Access::WRITE | Access::NEED_ADMIN,
             Quality::NONE,
-        )?)?;
+        ))?;
         c.base.add_attribute(Attribute::new(
             Attributes::AttCustom as u16,
             AttrValue::Custom,
             Access::READ | Access::NEED_VIEW,
             Quality::NONE,
-        )?)?;
+        ))?;
         c.base.add_attribute(Attribute::new(
             Attributes::AttWriteList as u16,
             AttrValue::Custom,
             Access::WRITE | Access::NEED_ADMIN,
             Quality::NONE,
-        )?)?;
+        ))?;
         Ok(c)
     }
 
