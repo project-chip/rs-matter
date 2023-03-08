@@ -165,9 +165,8 @@ impl GenCommCluster {
         c.base
             .add_attribute(attr_reg_config_new(RegLocationType::IndoorOutdoor))?;
         // TODO: Arch-Specific
-        c.base.add_attribute(attr_location_capability_new(
-            RegLocationType::IndoorOutdoor,
-        ))?;
+        c.base
+            .add_attribute(attr_location_capability_new(RegLocationType::IndoorOutdoor))?;
         c.base.add_attribute(attr_comm_info_new())?;
 
         Ok(c)

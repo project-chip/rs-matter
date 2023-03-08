@@ -171,12 +171,7 @@ impl Default for Attribute {
 }
 
 impl Attribute {
-    pub fn new(
-        id: u16,
-        value: AttrValue,
-        access: Access,
-        quality: Quality,
-    ) -> Self {
+    pub fn new(id: u16, value: AttrValue, access: Access, quality: Quality) -> Self {
         Attribute {
             id,
             value,
