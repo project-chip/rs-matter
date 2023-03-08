@@ -190,7 +190,7 @@ impl Spake2P {
         match verifier.data {
             VerifierOption::Password(pw) => {
                 // Derive w0 and L from the password
-                let mut w0w1s: [u8; (2 * CRYPTO_W_SIZE_BYTES)] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
+                let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
                 Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
                 let w0s_len = w0w1s.len() / 2;

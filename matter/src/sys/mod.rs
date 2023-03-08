@@ -25,7 +25,12 @@ mod sys_linux;
 #[cfg(target_os = "linux")]
 pub use self::sys_linux::*;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "espidf")]
+mod sys_espidf;
+#[cfg(target_os = "espidf")]
+pub use self::sys_espidf::*;
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "espidf"))]
 mod posix;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "espidf"))]
 pub use self::posix::*;

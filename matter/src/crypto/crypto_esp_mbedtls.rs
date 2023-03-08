@@ -85,6 +85,10 @@ impl KeyPair {
 }
 
 impl CryptoKeyPair for KeyPair {
+    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+        error!("This API should never get called");
+        Err(Error::Invalid)
+    }
     fn get_csr<'a>(&self, _out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         error!("This API should never get called");
         Err(Error::Invalid)

@@ -78,6 +78,10 @@ impl CryptoSpake2 for CryptoEspMbedTls {
         Ok(())
     }
 
+    fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+        Ok(())
+    }
+
     #[allow(non_snake_case)]
     fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
