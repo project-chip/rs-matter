@@ -60,43 +60,43 @@ impl BasicInfoCluster {
                 AttrValue::Uint8(1),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::VendorId as u16,
                 AttrValue::Uint16(cfg.vid),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::ProductId as u16,
                 AttrValue::Uint16(cfg.pid),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::HwVer as u16,
                 AttrValue::Uint16(cfg.hw_ver),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SwVer as u16,
                 AttrValue::Uint32(cfg.sw_ver),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SwVerString as u16,
                 AttrValue::Utf8(cfg.sw_ver_str),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SerialNo as u16,
                 AttrValue::Utf8(cfg.serial_no),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
         ];
         cluster.base.add_attributes(&attrs[..])?;
 

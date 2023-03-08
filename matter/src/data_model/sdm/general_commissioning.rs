@@ -62,7 +62,7 @@ pub enum RegLocationType {
     IndoorOutdoor = 2,
 }
 
-fn attr_bread_crumb_new(bread_crumb: u64) -> Result<Attribute, Error> {
+fn attr_bread_crumb_new(bread_crumb: u64) -> Attribute {
     Attribute::new(
         Attributes::BreadCrumb as u16,
         AttrValue::Uint64(bread_crumb),
@@ -71,7 +71,7 @@ fn attr_bread_crumb_new(bread_crumb: u64) -> Result<Attribute, Error> {
     )
 }
 
-fn attr_reg_config_new(reg_config: RegLocationType) -> Result<Attribute, Error> {
+fn attr_reg_config_new(reg_config: RegLocationType) -> Attribute {
     Attribute::new(
         Attributes::RegConfig as u16,
         AttrValue::Uint8(reg_config as u8),
@@ -80,7 +80,7 @@ fn attr_reg_config_new(reg_config: RegLocationType) -> Result<Attribute, Error> 
     )
 }
 
-fn attr_location_capability_new(reg_config: RegLocationType) -> Result<Attribute, Error> {
+fn attr_location_capability_new(reg_config: RegLocationType) -> Attribute {
     Attribute::new(
         Attributes::LocationCapability as u16,
         AttrValue::Uint8(reg_config as u8),
@@ -89,7 +89,7 @@ fn attr_location_capability_new(reg_config: RegLocationType) -> Result<Attribute
     )
 }
 
-fn attr_comm_info_new() -> Result<Attribute, Error> {
+fn attr_comm_info_new() -> Attribute {
     Attribute::new(
         Attributes::BasicCommissioningInfo as u16,
         AttrValue::Custom,
@@ -160,15 +160,15 @@ impl GenCommCluster {
             failsafe,
             base: Cluster::new(ID)?,
         });
-        c.base.add_attribute(attr_bread_crumb_new(0)?)?;
+        c.base.add_attribute(attr_bread_crumb_new(0))?;
         // TODO: Arch-Specific
         c.base
-            .add_attribute(attr_reg_config_new(RegLocationType::IndoorOutdoor)?)?;
+            .add_attribute(attr_reg_config_new(RegLocationType::IndoorOutdoor))?;
         // TODO: Arch-Specific
         c.base.add_attribute(attr_location_capability_new(
             RegLocationType::IndoorOutdoor,
-        )?)?;
-        c.base.add_attribute(attr_comm_info_new()?)?;
+        ))?;
+        c.base.add_attribute(attr_comm_info_new())?;
 
         Ok(c)
     }

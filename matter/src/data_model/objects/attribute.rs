@@ -176,13 +176,13 @@ impl Attribute {
         value: AttrValue,
         access: Access,
         quality: Quality,
-    ) -> Result<Attribute, Error> {
-        Ok(Attribute {
+    ) -> Self {
+        Attribute {
             id,
             value,
             access,
             quality,
-        })
+        }
     }
 
     pub fn set_value(&mut self, value: AttrValue) -> Result<(), Error> {

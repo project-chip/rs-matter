@@ -48,7 +48,7 @@ pub enum Commands {
     RevokeComm = 0x02,
 }
 
-fn attr_window_status_new() -> Result<Attribute, Error> {
+fn attr_window_status_new() -> Attribute {
     Attribute::new(
         Attributes::WindowStatus as u16,
         AttrValue::Custom,
@@ -57,7 +57,7 @@ fn attr_window_status_new() -> Result<Attribute, Error> {
     )
 }
 
-fn attr_admin_fabid_new() -> Result<Attribute, Error> {
+fn attr_admin_fabid_new() -> Attribute {
     Attribute::new(
         Attributes::AdminFabricIndex as u16,
         AttrValue::Custom,
@@ -66,7 +66,7 @@ fn attr_admin_fabid_new() -> Result<Attribute, Error> {
     )
 }
 
-fn attr_admin_vid_new() -> Result<Attribute, Error> {
+fn attr_admin_vid_new() -> Attribute {
     Attribute::new(
         Attributes::AdminVendorId as u16,
         AttrValue::Custom,
@@ -129,9 +129,9 @@ impl AdminCommCluster {
             pase_mgr,
             base: Cluster::new(ID)?,
         });
-        c.base.add_attribute(attr_window_status_new()?)?;
-        c.base.add_attribute(attr_admin_fabid_new()?)?;
-        c.base.add_attribute(attr_admin_vid_new()?)?;
+        c.base.add_attribute(attr_window_status_new())?;
+        c.base.add_attribute(attr_admin_fabid_new())?;
+        c.base.add_attribute(attr_admin_vid_new())?;
         Ok(c)
     }
 
