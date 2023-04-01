@@ -33,6 +33,7 @@ use log::{info, trace};
 use rand::Rng;
 
 use super::{
+    dedup::RxCtrState,
     network::{Address, NetworkInterface},
     packet::{Packet, PacketPool},
 };
@@ -84,6 +85,7 @@ pub struct Session {
     local_sess_id: u16,
     peer_sess_id: u16,
     msg_ctr: u32,
+    rx_ctr_state: RxCtrState,
     mode: SessionMode,
     data: Option<Box<dyn Any>>,
     last_use: SystemTime,
@@ -138,6 +140,7 @@ impl Session {
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: rand::thread_rng().gen_range(0..MATTER_MSG_CTR_RANGE),
+            rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
             data: None,
             last_use: SystemTime::now(),
@@ -156,6 +159,7 @@ impl Session {
             local_sess_id: clone_from.local_sess_id,
             peer_sess_id: clone_from.peer_sess_id,
             msg_ctr: rand::thread_rng().gen_range(0..MATTER_MSG_CTR_RANGE),
+            rx_ctr_state: RxCtrState::new(0),
             mode: clone_from.mode,
             data: None,
             last_use: SystemTime::now(),
@@ -481,7 +485,17 @@ impl SessionMgr {
             rx.plain.get_src_u64(),
             rx.plain.is_encrypted(),
         ) {
-            Ok(s) => Some(s),
+            Ok(s) => {
+                let session = self.sessions[s].as_mut().unwrap();
+                let is_encrypted = session.is_encrypted();
+                let duplicate = session.rx_ctr_state.recv(rx.plain.ctr, is_encrypted);
+                if duplicate {
+                    info!("Dropping duplicate packet");
+                    return Err(Error::Duplicate);
+                } else {
+                    Some(s)
+                }
+            }
             Err(Error::NoSpace) => None,
             Err(e) => {
                 return Err(e);
@@ -508,6 +522,7 @@ impl SessionMgr {
 
         // Get session
         let sess_handle = self.post_recv(&rx)?;
+
         Ok((rx, sess_handle))
     }
 
