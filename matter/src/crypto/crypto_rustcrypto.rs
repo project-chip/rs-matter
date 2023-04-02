@@ -26,12 +26,17 @@ use ccm::{
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use hmac::Mac;
 use log::error;
-use p256::{ecdsa::{SigningKey, VerifyingKey, Signature}, SecretKey, PublicKey, EncodedPoint, AffinePoint};
+use p256::{
+    ecdsa::{Signature, SigningKey, VerifyingKey},
+    AffinePoint, EncodedPoint, PublicKey, SecretKey,
+};
 use sha2::Digest;
 use x509_cert::{
     attr::AttributeType,
     der::{asn1::BitString, Any, Encode},
-    spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned}, name::RdnSequence, request::CertReq,
+    name::RdnSequence,
+    request::CertReq,
+    spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned},
 };
 
 use crate::error::Error;
@@ -159,20 +164,19 @@ impl CryptoKeyPair for KeyPair {
     fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         use p256::ecdsa::signature::Signer;
 
-        let subject =
-            RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(
-                vec![x509_cert::attr::AttributeTypeAndValue {
-                    // Organization name: http://www.oid-info.com/get/2.5.4.10
-                    oid: x509_cert::attr::AttributeType::new_unwrap("2.5.4.10"),
-                    value: x509_cert::attr::AttributeValue::new(
-                        x509_cert::der::Tag::Utf8String,
-                        "CSR".as_bytes(),
-                    )
-                    .unwrap(),
-                }]
-                .try_into()
+        let subject = RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(
+            vec![x509_cert::attr::AttributeTypeAndValue {
+                // Organization name: http://www.oid-info.com/get/2.5.4.10
+                oid: x509_cert::attr::AttributeType::new_unwrap("2.5.4.10"),
+                value: x509_cert::attr::AttributeValue::new(
+                    x509_cert::der::Tag::Utf8String,
+                    "CSR".as_bytes(),
+                )
                 .unwrap(),
-            )]);
+            }]
+            .try_into()
+            .unwrap(),
+        )]);
         let mut pubkey = [0; 65];
         self.get_public_key(&mut pubkey).unwrap();
         let info = x509_cert::request::CertReqInfo {
