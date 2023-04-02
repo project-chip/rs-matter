@@ -99,6 +99,13 @@ impl From<mbedtls::Error> for Error {
     }
 }
 
+#[cfg(feature = "crypto_rustcrypto")]
+impl From<ccm::aead::Error> for Error {
+    fn from(_e: ccm::aead::Error) -> Self {
+        Self::Crypto
+    }
+}
+
 impl From<SystemTimeError> for Error {
     fn from(_e: SystemTimeError) -> Self {
         Self::SysTimeFail
@@ -136,3 +143,5 @@ impl fmt::Display for Error {
         write!(f, "{:?}", self)
     }
 }
+
+impl std::error::Error for Error {}

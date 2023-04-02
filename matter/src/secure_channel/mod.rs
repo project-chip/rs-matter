@@ -23,6 +23,8 @@ pub mod crypto_esp_mbedtls;
 pub mod crypto_mbedtls;
 #[cfg(feature = "crypto_openssl")]
 pub mod crypto_openssl;
+#[cfg(feature = "crypto_rustcrypto")]
+pub mod crypto_rustcrypto;
 
 pub mod core;
 pub mod crypto;
