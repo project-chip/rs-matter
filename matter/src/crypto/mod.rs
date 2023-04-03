@@ -60,6 +60,11 @@ mod crypto_openssl;
 #[cfg(feature = "crypto_openssl")]
 pub use self::crypto_openssl::*;
 
+#[cfg(feature = "crypto_rustcrypto")]
+mod crypto_rustcrypto;
+#[cfg(feature = "crypto_rustcrypto")]
+pub use self::crypto_rustcrypto::*;
+
 pub mod crypto_dummy;
 
 #[cfg(test)]

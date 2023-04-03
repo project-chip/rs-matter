@@ -39,7 +39,7 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder, X509};
 // We directly use the hmac crate here, there was a self-referential structure
 // problem while using OpenSSL's Signer
 // TODO: Use proper OpenSSL method for this
-use hmac::{Hmac, Mac, NewMac};
+use hmac::{Hmac, Mac};
 pub struct HmacSha256 {
     ctx: Hmac<sha2::Sha256>,
 }
