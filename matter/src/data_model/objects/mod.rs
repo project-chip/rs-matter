@@ -15,6 +15,11 @@
  *    limitations under the License.
  */
 
+pub type EndptId = u16;
+pub type ClusterId = u32;
+pub type AttrId = u16;
+pub type CmdId = u32;
+
 mod attribute;
 pub use attribute::*;
 

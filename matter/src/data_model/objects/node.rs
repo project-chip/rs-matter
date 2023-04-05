@@ -23,10 +23,10 @@ use crate::{
 };
 use std::fmt;
 
-use super::DeviceType;
+use super::{ClusterId, DeviceType, EndptId};
 
 pub trait ChangeConsumer {
-    fn endpoint_added(&self, id: u16, endpoint: &mut Endpoint) -> Result<(), Error>;
+    fn endpoint_added(&self, id: EndptId, endpoint: &mut Endpoint) -> Result<(), Error>;
 }
 
 pub const ENDPTS_PER_ACC: usize = 3;
@@ -61,7 +61,7 @@ impl Node {
         self.changes_cb = Some(consumer);
     }
 
-    pub fn add_endpoint(&mut self, dev_type: DeviceType) -> Result<u32, Error> {
+    pub fn add_endpoint(&mut self, dev_type: DeviceType) -> Result<EndptId, Error> {
         let index = self
             .endpoints
             .iter()
@@ -69,13 +69,13 @@ impl Node {
             .ok_or(Error::NoSpace)?;
         let mut endpoint = Endpoint::new(dev_type)?;
         if let Some(cb) = &self.changes_cb {
-            cb.endpoint_added(index as u16, &mut endpoint)?;
+            cb.endpoint_added(index as EndptId, &mut endpoint)?;
         }
         self.endpoints[index] = Some(endpoint);
-        Ok(index as u32)
+        Ok(index as EndptId)
     }
 
-    pub fn get_endpoint(&self, endpoint_id: u16) -> Result<&Endpoint, Error> {
+    pub fn get_endpoint(&self, endpoint_id: EndptId) -> Result<&Endpoint, Error> {
         if (endpoint_id as usize) < ENDPTS_PER_ACC {
             let endpoint = self.endpoints[endpoint_id as usize]
                 .as_ref()
@@ -86,7 +86,7 @@ impl Node {
         }
     }
 
-    pub fn get_endpoint_mut(&mut self, endpoint_id: u16) -> Result<&mut Endpoint, Error> {
+    pub fn get_endpoint_mut(&mut self, endpoint_id: EndptId) -> Result<&mut Endpoint, Error> {
         if (endpoint_id as usize) < ENDPTS_PER_ACC {
             let endpoint = self.endpoints[endpoint_id as usize]
                 .as_mut()
@@ -97,17 +97,21 @@ impl Node {
         }
     }
 
-    pub fn get_cluster_mut(&mut self, e: u16, c: u32) -> Result<&mut dyn ClusterType, Error> {
+    pub fn get_cluster_mut(
+        &mut self,
+        e: EndptId,
+        c: ClusterId,
+    ) -> Result<&mut dyn ClusterType, Error> {
         self.get_endpoint_mut(e)?.get_cluster_mut(c)
     }
 
-    pub fn get_cluster(&self, e: u16, c: u32) -> Result<&dyn ClusterType, Error> {
+    pub fn get_cluster(&self, e: EndptId, c: ClusterId) -> Result<&dyn ClusterType, Error> {
         self.get_endpoint(e)?.get_cluster(c)
     }
 
     pub fn add_cluster(
         &mut self,
-        endpoint_id: u32,
+        endpoint_id: EndptId,
         cluster: Box<dyn ClusterType>,
     ) -> Result<(), Error> {
         let endpoint_id = endpoint_id as usize;
@@ -124,7 +128,7 @@ impl Node {
     // Returns a slice of endpoints, with either a single endpoint or all (wildcard)
     pub fn get_wildcard_endpoints(
         &self,
-        endpoint: Option<u16>,
+        endpoint: Option<EndptId>,
     ) -> Result<(&BoxedEndpoints, usize, bool), IMStatusCode> {
         if let Some(e) = endpoint {
             let e = e as usize;
@@ -140,7 +144,7 @@ impl Node {
 
     pub fn get_wildcard_endpoints_mut(
         &mut self,
-        endpoint: Option<u16>,
+        endpoint: Option<EndptId>,
     ) -> Result<(&mut BoxedEndpoints, usize, bool), IMStatusCode> {
         if let Some(e) = endpoint {
             let e = e as usize;
@@ -171,7 +175,7 @@ impl Node {
         let (endpoints, mut endpoint_id, wildcard) = self.get_wildcard_endpoints(path.endpoint)?;
         for e in endpoints.iter() {
             if let Some(e) = e {
-                current_path.endpoint = Some(endpoint_id as u16);
+                current_path.endpoint = Some(endpoint_id as EndptId);
                 f(&current_path, e.as_ref())
                     .or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
             }
@@ -202,7 +206,7 @@ impl Node {
             self.get_wildcard_endpoints_mut(path.endpoint)?;
         for e in endpoints.iter_mut() {
             if let Some(e) = e {
-                current_path.endpoint = Some(endpoint_id as u16);
+                current_path.endpoint = Some(endpoint_id as EndptId);
                 f(&current_path, e.as_mut())
                     .or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
             }

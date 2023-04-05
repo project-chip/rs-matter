@@ -28,7 +28,7 @@ use num_derive::FromPrimitive;
 use rand::Rng;
 use std::fmt::{self, Debug};
 
-use super::Encoder;
+use super::{AttrId, ClusterId, Encoder};
 
 pub const ATTRS_PER_CLUSTER: usize = 10;
 pub const CMDS_PER_CLUSTER: usize = 8;
@@ -56,7 +56,7 @@ pub struct AttrDetails {
     /// List Index, if any
     pub list_index: Option<Nullable<u16>>,
     /// The actual attribute ID
-    pub attr_id: u16,
+    pub attr_id: AttrId,
 }
 
 impl AttrDetails {
@@ -102,13 +102,13 @@ pub trait ClusterType {
 }
 
 pub struct Cluster {
-    pub(super) id: u32,
+    pub(super) id: ClusterId,
     attributes: Vec<Attribute>,
     data_ver: u32,
 }
 
 impl Cluster {
-    pub fn new(id: u32) -> Result<Cluster, Error> {
+    pub fn new(id: ClusterId) -> Result<Cluster, Error> {
         let mut c = Cluster {
             id,
             attributes: Vec::with_capacity(ATTRS_PER_CLUSTER),
@@ -118,7 +118,7 @@ impl Cluster {
         Ok(c)
     }
 
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> ClusterId {
         self.id
     }
 
@@ -167,18 +167,18 @@ impl Cluster {
         }
     }
 
-    fn get_attribute_index(&self, attr_id: u16) -> Option<usize> {
+    fn get_attribute_index(&self, attr_id: AttrId) -> Option<usize> {
         self.attributes.iter().position(|c| c.id == attr_id)
     }
 
-    fn get_attribute(&self, attr_id: u16) -> Result<&Attribute, Error> {
+    fn get_attribute(&self, attr_id: AttrId) -> Result<&Attribute, Error> {
         let index = self
             .get_attribute_index(attr_id)
             .ok_or(Error::AttributeNotFound)?;
         Ok(&self.attributes[index])
     }
 
-    fn get_attribute_mut(&mut self, attr_id: u16) -> Result<&mut Attribute, Error> {
+    fn get_attribute_mut(&mut self, attr_id: AttrId) -> Result<&mut Attribute, Error> {
         let index = self
             .get_attribute_index(attr_id)
             .ok_or(Error::AttributeNotFound)?;
@@ -188,7 +188,7 @@ impl Cluster {
     // Returns a slice of attribute, with either a single attribute or all (wildcard)
     pub fn get_wildcard_attribute(
         &self,
-        attribute: Option<u16>,
+        attribute: Option<AttrId>,
     ) -> Result<(&[Attribute], bool), IMStatusCode> {
         if let Some(a) = attribute {
             if let Some(i) = self.get_attribute_index(a) {
@@ -266,7 +266,7 @@ impl Cluster {
         encoder.encode_status(IMStatusCode::UnsupportedAttribute, 0)
     }
 
-    pub fn read_attribute_raw(&self, attr_id: u16) -> Result<&AttrValue, IMStatusCode> {
+    pub fn read_attribute_raw(&self, attr_id: AttrId) -> Result<&AttrValue, IMStatusCode> {
         let a = self
             .get_attribute(attr_id)
             .map_err(|_| IMStatusCode::UnsupportedAttribute)?;
@@ -300,7 +300,7 @@ impl Cluster {
 
     pub fn write_attribute_from_tlv(
         &mut self,
-        attr_id: u16,
+        attr_id: AttrId,
         data: &TLVElement,
     ) -> Result<(), IMStatusCode> {
         let a = self.get_attribute_mut(attr_id)?;
@@ -319,7 +319,7 @@ impl Cluster {
         }
     }
 
-    pub fn write_attribute_raw(&mut self, attr_id: u16, value: AttrValue) -> Result<(), Error> {
+    pub fn write_attribute_raw(&mut self, attr_id: AttrId, value: AttrValue) -> Result<(), Error> {
         let a = self.get_attribute_mut(attr_id)?;
         a.set_value(value).map(|_| {
             self.cluster_changed();

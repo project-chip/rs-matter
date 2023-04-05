@@ -37,12 +37,12 @@ pub enum Attributes {
 
 pub struct DescriptorCluster {
     base: Cluster,
-    endpoint_id: u16,
+    endpoint_id: EndptId,
     data_model: DataModel,
 }
 
 impl DescriptorCluster {
-    pub fn new(endpoint_id: u16, data_model: DataModel) -> Result<Box<Self>, Error> {
+    pub fn new(endpoint_id: EndptId, data_model: DataModel) -> Result<Box<Self>, Error> {
         let mut c = Box::new(DescriptorCluster {
             endpoint_id,
             data_model,
