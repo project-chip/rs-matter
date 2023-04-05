@@ -37,11 +37,11 @@ macro_rules! cmd_enter {
     }};
 }
 
-pub struct CommandReq<'a, 'b, 'c, 'd> {
+pub struct CommandReq<'a, 'b, 'c, 'd, 'e> {
     pub cmd: ib::CmdPath,
     pub data: TLVElement<'a>,
     pub resp: &'a mut TLVWriter<'b, 'c>,
-    pub trans: &'a mut Transaction<'d>,
+    pub trans: &'a mut Transaction<'d, 'e>,
 }
 
 impl InteractionModel {

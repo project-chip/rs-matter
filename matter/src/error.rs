@@ -29,6 +29,7 @@ pub enum Error {
     BufferTooSmall,
     ClusterNotFound,
     CommandNotFound,
+    Duplicate,
     EndpointNotFound,
     Crypto,
     TLSStack,

@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+mod dedup;
 pub mod exchange;
 pub mod mgr;
 pub mod mrp;

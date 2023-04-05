@@ -25,7 +25,7 @@ use crate::{
         exchange::Exchange,
         packet::Packet,
         proto_demux::{self, ProtoCtx, ResponseRequired},
-        session::Session,
+        session::SessionHandle,
     },
 };
 use colored::Colorize;
@@ -59,8 +59,8 @@ pub enum OpCode {
     TimedRequest = 10,
 }
 
-impl<'a> Transaction<'a> {
-    pub fn new(session: &'a mut Session, exch: &'a mut Exchange) -> Self {
+impl<'a, 'b> Transaction<'a, 'b> {
+    pub fn new(session: &'a mut SessionHandle<'b>, exch: &'a mut Exchange) -> Self {
         Self {
             state: TransactionState::Ongoing,
             session,
