@@ -175,7 +175,7 @@ impl Exchange {
         }
     }
 
-    fn send(
+    pub fn send(
         &mut self,
         mut proto_tx: BoxSlab<PacketPool>,
         session: &mut SessionHandle,

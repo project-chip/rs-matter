@@ -37,12 +37,12 @@ pub enum Attributes {
 
 pub struct DescriptorCluster {
     base: Cluster,
-    endpoint_id: u16,
+    endpoint_id: EndptId,
     data_model: DataModel,
 }
 
 impl DescriptorCluster {
-    pub fn new(endpoint_id: u16, data_model: DataModel) -> Result<Box<Self>, Error> {
+    pub fn new(endpoint_id: EndptId, data_model: DataModel) -> Result<Box<Self>, Error> {
         let mut c = Box::new(DescriptorCluster {
             endpoint_id,
             data_model,
@@ -54,25 +54,25 @@ impl DescriptorCluster {
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::ServerList as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::PartsList as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::ClientList as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
         ];
         c.base.add_attributes(&attrs[..])?;
         Ok(c)

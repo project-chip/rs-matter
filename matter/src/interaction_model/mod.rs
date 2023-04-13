@@ -18,7 +18,7 @@
 use crate::{
     error::Error,
     tlv::TLVWriter,
-    transport::{exchange::Exchange, proto_demux::ResponseRequired, session::Session},
+    transport::{exchange::Exchange, proto_demux::ResponseRequired, session::SessionHandle},
 };
 
 use self::{
@@ -32,9 +32,9 @@ pub enum TransactionState {
     Complete,
     Terminate,
 }
-pub struct Transaction<'a> {
+pub struct Transaction<'a, 'b> {
     pub state: TransactionState,
-    pub session: &'a mut Session,
+    pub session: &'a mut SessionHandle<'b>,
     pub exch: &'a mut Exchange,
 }
 

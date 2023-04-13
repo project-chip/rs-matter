@@ -136,46 +136,46 @@ impl MediaPlaybackCluster {
                 AttrValue::Uint8(PlaybackState::NotPlaying as u8),
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             // epoch-us
             Attribute::new(
                 Attributes::StartTime as u16,
                 AttrValue::Uint64(0),
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             Attribute::new(
                 Attributes::Duration as u16,
                 AttrValue::Uint64(1),
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             // Playback-Position
             Attribute::new(
                 Attributes::SampledPosition as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             // Float
             Attribute::new(
                 Attributes::PlaybackSpeed as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SeekRangeEnd as u16,
                 AttrValue::Uint64(0),
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SeekRangeStart as u16,
                 AttrValue::Uint64(0),
                 Access::RV,
                 Quality::PERSISTENT,
-            )?,
+            ),
             // Options - probably want a custom type here for mapping cluster options to TLV bitmask
         ];
         cluster.base.add_attributes(&attrs)?;

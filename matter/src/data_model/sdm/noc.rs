@@ -30,7 +30,7 @@ use crate::interaction_model::messages::ib;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
 use crate::transport::session::SessionMode;
 use crate::utils::writebuf::WriteBuf;
-use crate::{cmd_enter, error::*};
+use crate::{cmd_enter, error::*, secure_channel};
 use log::{error, info};
 use num_derive::FromPrimitive;
 
@@ -131,25 +131,25 @@ impl NocCluster {
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::Fabrics as u16,
                 AttrValue::Custom,
                 Access::RV | Access::FAB_SCOPED,
                 Quality::NONE,
-            )?,
+            ),
             Attribute::new(
                 Attributes::SupportedFabrics as u16,
                 AttrValue::Uint8(MAX_SUPPORTED_FABRICS as u8),
                 Access::RV,
                 Quality::FIXED,
-            )?,
+            ),
             Attribute::new(
                 Attributes::CommissionedFabrics as u16,
                 AttrValue::Custom,
                 Access::RV,
                 Quality::NONE,
-            )?,
+            ),
         ];
         c.base.add_attributes(&attrs[..])?;
         Ok(c)
@@ -177,6 +177,15 @@ impl NocCluster {
             return Err(NocStatus::InsufficientPrivlege);
         }
 
+        // This command's processing may take longer, send a stand alone ACK to the peer to avoid any retranmissions
+        let ack_send = secure_channel::common::send_mrp_standalone_ack(
+            cmd_req.trans.exch,
+            cmd_req.trans.session,
+        );
+        if ack_send.is_err() {
+            error!("Error sending Standalone ACK, falling back to piggybacked ACK");
+        }
+
         let r = AddNocReq::from_tlv(&cmd_req.data).map_err(|_| NocStatus::InvalidNOC)?;
 
         let noc_value = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
@@ -188,7 +197,6 @@ impl NocCluster {
         } else {
             None
         };
-
         let fabric = Fabric::new(
             noc_data.key_pair,
             noc_data.root_ca,

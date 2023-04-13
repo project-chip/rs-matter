@@ -46,7 +46,7 @@ pub fn device_type_add_root_node(
     fabric_mgr: Arc<FabricMgr>,
     acl_mgr: Arc<AclMgr>,
     pase_mgr: PaseMgr,
-) -> Result<u32, Error> {
+) -> Result<EndptId, Error> {
     // Add the root endpoint
     let endpoint = node.add_endpoint(DEV_TYPE_ROOT_NODE)?;
     if endpoint != 0 {
@@ -78,7 +78,7 @@ pub const DEV_TYPE_ON_SMART_SPEAKER: DeviceType = DeviceType {
     drev: 2,
 };
 
-pub fn device_type_add_on_off_light(node: &mut WriteNode) -> Result<u32, Error> {
+pub fn device_type_add_on_off_light(node: &mut WriteNode) -> Result<EndptId, Error> {
     let endpoint = node.add_endpoint(DEV_TYPE_ON_OFF_LIGHT)?;
     node.add_cluster(endpoint, OnOffCluster::new()?)?;
     Ok(endpoint)

@@ -1092,8 +1092,8 @@ mod tests {
     fn test_complex_structure_invoke_cmd() {
         // This is what we typically get in an invoke command
         let b = [
-            0x15, 0x36, 0x0, 0x15, 0x37, 0x0, 0x24, 0x0, 0x2, 0x24, 0x2, 0x6, 0x24, 0x3, 0x1, 0x18,
-            0x35, 0x1, 0x18, 0x18, 0x18, 0x18,
+            0x15, 0x36, 0x0, 0x15, 0x37, 0x0, 0x25, 0x0, 0x2, 0x0, 0x26, 0x1, 0x6, 0x0, 0x0, 0x0,
+            0x26, 0x2, 0x1, 0x0, 0x0, 0x0, 0x18, 0x35, 0x1, 0x18, 0x18, 0x18, 0x18,
         ];
 
         let root = get_root_node_struct(&b).unwrap();
@@ -1115,24 +1115,24 @@ mod tests {
             cmd_path.find_tag(0).unwrap(),
             TLVElement {
                 tag_type: TagType::Context(0),
-                element_type: ElementType::U8(2),
+                element_type: ElementType::U16(2),
+            }
+        );
+        assert_eq!(
+            cmd_path.find_tag(1).unwrap(),
+            TLVElement {
+                tag_type: TagType::Context(1),
+                element_type: ElementType::U32(6),
             }
         );
         assert_eq!(
             cmd_path.find_tag(2).unwrap(),
             TLVElement {
                 tag_type: TagType::Context(2),
-                element_type: ElementType::U8(6),
+                element_type: ElementType::U32(1),
             }
         );
-        assert_eq!(
-            cmd_path.find_tag(3).unwrap(),
-            TLVElement {
-                tag_type: TagType::Context(3),
-                element_type: ElementType::U8(1),
-            }
-        );
-        assert_eq!(cmd_path.find_tag(1), Err(Error::NoTagFound));
+        assert_eq!(cmd_path.find_tag(3), Err(Error::NoTagFound));
 
         // This is the variable of the invoke command
         assert_eq!(
