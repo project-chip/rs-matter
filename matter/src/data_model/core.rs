@@ -69,6 +69,17 @@ impl<'a, T> DataModel<'a, T> {
                     CmdDataEncoder::handle(item, &mut self.handler, transaction, &mut tw)?;
                 }
             }
+            Interaction::Subscribe(req) => {
+                for item in self.node.subscribing_read(req, &accessor) {
+                    AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?;
+                }
+            }
+            Interaction::Status(_resp) => {
+                todo!()
+                // for item in self.node.subscribing_read(req, &accessor) {
+                //     AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?;
+                // }
+            }
             Interaction::Timed(_) => (),
         }
 

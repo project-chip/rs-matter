@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
- use crate::utils::rand::Rand;
+use crate::utils::rand::Rand;
 
 pub struct Dataver {
     ver: u32,

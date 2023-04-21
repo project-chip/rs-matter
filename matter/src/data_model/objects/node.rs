@@ -21,13 +21,13 @@ use crate::{
     interaction_model::{
         core::IMStatusCode,
         messages::{
-            ib::{AttrStatus, CmdStatus},
-            msg::{InvReq, ReadReq, WriteReq},
+            ib::{AttrPath, AttrStatus, CmdStatus, DataVersionFilter},
+            msg::{InvReq, ReadReq, SubscribeReq, WriteReq},
             GenericPath,
         },
     },
     // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
-    tlv::TLVElement,
+    tlv::{TLVArray, TLVElement},
 };
 use core::{
     fmt,
@@ -72,15 +72,48 @@ impl<'a> Node<'a> {
     where
         's: 'm,
     {
-        if let Some(attr_requests) = req.attr_requests.as_ref() {
+        self.read_attr_requests(
+            req.attr_requests.as_ref(),
+            req.dataver_filters.as_ref(),
+            req.fabric_filtered,
+            accessor,
+        )
+    }
+
+    pub fn subscribing_read<'s, 'm>(
+        &'s self,
+        req: &'m SubscribeReq,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+    {
+        self.read_attr_requests(
+            req.attr_requests.as_ref(),
+            req.dataver_filters.as_ref(),
+            req.fabric_filtered,
+            accessor,
+        )
+    }
+
+    fn read_attr_requests<'s, 'm>(
+        &'s self,
+        attr_requests: Option<&'m TLVArray<AttrPath>>,
+        dataver_filters: Option<&'m TLVArray<DataVersionFilter>>,
+        fabric_filtered: bool,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+    {
+        if let Some(attr_requests) = attr_requests.as_ref() {
             WildcardIter::Wildcard(attr_requests.iter().flat_map(
                 move |path| match self.expand_attr(accessor, path.to_gp(), false) {
                     Ok(iter) => {
                         let wildcard = matches!(iter, WildcardIter::Wildcard(_));
 
                         WildcardIter::Wildcard(iter.map(move |(ep, cl, attr)| {
-                            let dataver_filter = req
-                                .dataver_filters
+                            let dataver_filter = dataver_filters
                                 .as_ref()
                                 .iter()
                                 .flat_map(|array| array.iter())
@@ -96,7 +129,7 @@ impl<'a> Node<'a> {
                                 attr_id: attr,
                                 list_index: path.list_index,
                                 fab_idx: accessor.fab_idx,
-                                fab_filter: req.fabric_filtered,
+                                fab_filter: fabric_filtered,
                                 dataver: dataver_filter,
                                 wildcard,
                             })

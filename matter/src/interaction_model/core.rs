@@ -28,7 +28,7 @@ use log::{error, info};
 use num;
 use num_derive::FromPrimitive;
 
-use super::messages::msg::{self, InvReq, ReadReq, StatusResp, TimedReq, WriteReq};
+use super::messages::msg::{self, InvReq, ReadReq, StatusResp, SubscribeReq, TimedReq, WriteReq};
 
 #[macro_export]
 macro_rules! cmd_enter {
@@ -104,7 +104,7 @@ pub enum OpCode {
     StatusResponse = 1,
     ReadRequest = 2,
     SubscribeRequest = 3,
-    SubscriptResponse = 4,
+    SubscribeResponse = 4,
     ReportData = 5,
     WriteRequest = 6,
     WriteResponse = 7,
@@ -186,6 +186,8 @@ pub enum Interaction<'a> {
     Read(ReadReq<'a>),
     Write(WriteReq<'a>),
     Invoke(InvReq<'a>),
+    Subscribe(SubscribeReq<'a>),
+    Status(StatusResp),
     Timed(TimedReq),
 }
 
@@ -209,12 +211,15 @@ impl<'a> Interaction<'a> {
             OpCode::InvokeRequest => Ok(Self::Invoke(InvReq::from_tlv(&get_root_node_struct(
                 rx_data,
             )?)?)),
+            OpCode::SubscribeRequest => Ok(Self::Subscribe(SubscribeReq::from_tlv(
+                &get_root_node_struct(rx_data)?,
+            )?)),
+            OpCode::StatusResponse => Ok(Self::Status(StatusResp::from_tlv(
+                &get_root_node_struct(rx_data)?,
+            )?)),
             OpCode::TimedRequest => Ok(Self::Timed(TimedReq::from_tlv(&get_root_node_struct(
                 rx_data,
             )?)?)),
-            // TODO
-            // OpCode::SubscribeRequest => self.handle_subscribe_req(&mut trans, buf, &mut ctx.tx)?,
-            // OpCode::StatusResponse => self.handle_status_resp(&mut trans, buf, &mut ctx.tx)?,
             _ => {
                 error!("Opcode Not Handled: {:?}", opcode);
                 Err(Error::InvalidOpcode)
@@ -242,7 +247,7 @@ impl<'a> Interaction<'a> {
 
                 false
             }
-            Interaction::Write(_) => {
+            Self::Write(_) => {
                 if transaction.has_timed_out() {
                     Self::create_status_response(tx, IMStatusCode::Timeout)?;
 
@@ -262,7 +267,7 @@ impl<'a> Interaction<'a> {
                     false
                 }
             }
-            Interaction::Invoke(request) => {
+            Self::Invoke(request) => {
                 if transaction.has_timed_out() {
                     Self::create_status_response(tx, IMStatusCode::Timeout)?;
 
@@ -303,7 +308,31 @@ impl<'a> Interaction<'a> {
                     }
                 }
             }
-            Interaction::Timed(request) => {
+            Self::Subscribe(request) => {
+                tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+                tx.set_proto_opcode(OpCode::ReportData as u8);
+
+                let mut tw = TLVWriter::new(tx.get_writebuf()?);
+
+                tw.start_struct(TagType::Anonymous)?;
+
+                if request.attr_requests.is_some() {
+                    tw.start_array(TagType::Context(msg::ReportDataTag::AttributeReports as u8))?;
+                }
+
+                true
+            }
+            Self::Status(_) => {
+                tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+                tx.set_proto_opcode(OpCode::SubscribeResponse as u8);
+
+                let mut tw = TLVWriter::new(tx.get_writebuf()?);
+
+                tw.start_struct(TagType::Anonymous)?;
+
+                true
+            }
+            Self::Timed(request) => {
                 tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
                 tx.set_proto_opcode(OpCode::StatusResponse as u8);
 
@@ -372,6 +401,24 @@ impl<'a> Interaction<'a> {
                 if request.inv_requests.is_some() {
                     tw.end_container()?;
                 }
+
+                tw.end_container()?;
+
+                true
+            }
+            Self::Subscribe(request) => {
+                let mut tw = TLVWriter::new(tx.get_writebuf()?);
+
+                if request.attr_requests.is_some() {
+                    tw.end_container()?;
+                }
+
+                tw.end_container()?;
+
+                true
+            }
+            Self::Status(_) => {
+                let mut tw = TLVWriter::new(tx.get_writebuf()?);
 
                 tw.end_container()?;
 
