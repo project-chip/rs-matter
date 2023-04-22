@@ -33,6 +33,7 @@ use super::{
 };
 
 pub const MAX_RX_BUF_SIZE: usize = 1583;
+pub const MAX_TX_BUF_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
 type Buffer = [u8; MAX_RX_BUF_SIZE];
 
 // TODO: I am not very happy with this construction, need to find another way to do this

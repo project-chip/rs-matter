@@ -24,16 +24,20 @@ use matter::{
         cluster_on_off::{self, OnOffCluster},
         core::DataModel,
         device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE},
-        objects::{ChainedHandler, Endpoint, Node, Privilege},
+        objects::{Endpoint, Node, Privilege},
         root_endpoint::{self, RootEndpointHandler},
         sdm::{
             admin_commissioning,
             dev_att::{DataType, DevAttDataFetcher},
             general_commissioning, noc, nw_commissioning,
         },
-        system_model::access_control,
+        system_model::{
+            access_control,
+            descriptor::{self, DescriptorCluster},
+        },
     },
     error::Error,
+    handler_chain_type,
     interaction_model::core::{InteractionModel, OpCode},
     mdns::Mdns,
     tlv::{TLVWriter, TagType, ToTLV},
@@ -41,6 +45,7 @@ use matter::{
     transport::{
         exchange::{self, Exchange, ExchangeCtx},
         network::Address,
+        packet::MAX_RX_BUF_SIZE,
         proto_ctx::ProtoCtx,
         session::{CaseDetails, CloneData, NocCatIds, SessionMgr, SessionMode},
     },
@@ -97,12 +102,9 @@ impl<'a> ImInput<'a> {
     }
 }
 
-pub type DmHandler<'a> = ChainedHandler<
-    OnOffCluster,
-    ChainedHandler<EchoCluster, ChainedHandler<EchoCluster, RootEndpointHandler<'a>>>,
->;
+pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster, EchoCluster | RootEndpointHandler<'a>);
 
-pub fn matter<'a>(mdns: &'a mut dyn Mdns) -> Matter<'_> {
+pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
     Matter::new(&BASIC_INFO, mdns, sys_epoch, dummy_rand)
 }
 
@@ -132,6 +134,7 @@ impl<'a> ImEngine<'a> {
                     Endpoint {
                         id: 0,
                         clusters: &[
+                            descriptor::CLUSTER,
                             cluster_basic_information::CLUSTER,
                             general_commissioning::CLUSTER,
                             nw_commissioning::CLUSTER,
@@ -144,13 +147,18 @@ impl<'a> ImEngine<'a> {
                     },
                     Endpoint {
                         id: 1,
-                        clusters: &[echo_cluster::CLUSTER, cluster_on_off::CLUSTER],
+                        clusters: &[
+                            descriptor::CLUSTER,
+                            cluster_on_off::CLUSTER,
+                            echo_cluster::CLUSTER,
+                        ],
                         device_type: DEV_TYPE_ON_OFF_LIGHT,
                     },
                 ],
             },
             root_endpoint::handler(0, &DummyDevAtt {}, matter)
                 .chain(0, echo_cluster::ID, EchoCluster::new(2, *matter.borrow()))
+                .chain(1, descriptor::ID, DescriptorCluster::new(*matter.borrow()))
                 .chain(1, echo_cluster::ID, EchoCluster::new(3, *matter.borrow()))
                 .chain(1, cluster_on_off::ID, OnOffCluster::new(*matter.borrow())),
         );
@@ -164,7 +172,7 @@ impl<'a> ImEngine<'a> {
 
     pub fn echo_cluster(&self, endpoint: u16) -> &EchoCluster {
         match endpoint {
-            0 => &self.im.0.handler.next.next.handler,
+            0 => &self.im.0.handler.next.next.next.handler,
             1 => &self.im.0.handler.next.handler,
             _ => panic!(),
         }
@@ -196,8 +204,8 @@ impl<'a> ImEngine<'a> {
             sess,
             epoch: *self.matter.borrow(),
         };
-        let mut tx_buf = [0; 1500];
-        let mut rx_buf = [0; 1500];
+        let mut rx_buf = [0; MAX_RX_BUF_SIZE];
+        let mut tx_buf = [0; 1450]; // For the long read tests to run unchanged
         let mut rx = Packet::new_rx(&mut rx_buf);
         let mut tx = Packet::new_tx(&mut tx_buf);
         // Create fake rx packet

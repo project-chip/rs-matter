@@ -19,11 +19,11 @@ use core::convert::TryInto;
 
 use super::objects::*;
 use crate::{attribute_enum, error::Error, utils::rand::Rand};
-use strum::{EnumDiscriminants, FromRepr};
+use strum::FromRepr;
 
 pub const ID: u32 = 0x0028;
 
-#[derive(Clone, Copy, Debug, FromRepr, EnumDiscriminants)]
+#[derive(Clone, Copy, Debug, FromRepr)]
 #[repr(u16)]
 pub enum Attributes {
     DMRevision(AttrType<u8>) = 0,
@@ -36,6 +36,16 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
+
+pub enum AttributesDiscriminants {
+    DMRevision = 0,
+    VendorId = 2,
+    ProductId = 4,
+    HwVer = 7,
+    SwVer = 9,
+    SwVerString = 0xa,
+    SerialNo = 0x0f,
+}
 
 #[derive(Default)]
 pub struct BasicInfoConfig<'a> {

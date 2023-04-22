@@ -186,8 +186,15 @@ macro_rules! handler_chain_type {
     ($h:ty) => {
         $crate::data_model::objects::ChainedHandler<$h, $crate::data_model::objects::EmptyHandler>
     };
-    ($h1:ty, $($rest:ty),+) => {
+    ($h1:ty $(, $rest:ty)+) => {
         $crate::data_model::objects::ChainedHandler<$h1, handler_chain_type!($($rest),+)>
+    };
+
+    ($h:ty | $f:ty) => {
+        $crate::data_model::objects::ChainedHandler<$h, $f>
+    };
+    ($h1:ty $(, $rest:ty)+ | $f:ty) => {
+        $crate::data_model::objects::ChainedHandler<$h1, handler_chain_type!($($rest),+ | $f)>
     };
 }
 

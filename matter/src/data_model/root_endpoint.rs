@@ -21,19 +21,24 @@ use super::{
         noc::{self, NocCluster},
         nw_commissioning::{self, NwCommCluster},
     },
-    system_model::access_control::{self, AccessControlCluster},
+    system_model::{
+        access_control::{self, AccessControlCluster},
+        descriptor::{self, DescriptorCluster},
+    },
 };
 
 pub type RootEndpointHandler<'a> = handler_chain_type!(
-    AccessControlCluster<'a>,
-    NocCluster<'a>,
-    AdminCommCluster<'a>,
-    NwCommCluster,
+    DescriptorCluster,
+    BasicInfoCluster<'a>,
     GenCommCluster,
-    BasicInfoCluster<'a>
+    NwCommCluster,
+    AdminCommCluster<'a>,
+    NocCluster<'a>,
+    AccessControlCluster<'a>
 );
 
-pub const CLUSTERS: [Cluster<'static>; 6] = [
+pub const CLUSTERS: [Cluster<'static>; 7] = [
+    descriptor::CLUSTER,
     cluster_basic_information::CLUSTER,
     general_commissioning::CLUSTER,
     nw_commissioning::CLUSTER,
@@ -77,32 +82,29 @@ pub fn wrap<'a>(
     EmptyHandler
         .chain(
             endpoint_id,
-            cluster_basic_information::CLUSTER.id,
-            BasicInfoCluster::new(basic_info, rand),
+            access_control::ID,
+            AccessControlCluster::new(acl, rand),
         )
         .chain(
             endpoint_id,
-            general_commissioning::CLUSTER.id,
-            GenCommCluster::new(rand),
-        )
-        .chain(
-            endpoint_id,
-            nw_commissioning::CLUSTER.id,
-            NwCommCluster::new(rand),
-        )
-        .chain(
-            endpoint_id,
-            admin_commissioning::CLUSTER.id,
-            AdminCommCluster::new(pase, mdns_mgr, rand),
-        )
-        .chain(
-            endpoint_id,
-            noc::CLUSTER.id,
+            noc::ID,
             NocCluster::new(dev_att, fabric, acl, failsafe, mdns_mgr, epoch, rand),
         )
         .chain(
             endpoint_id,
-            access_control::CLUSTER.id,
-            AccessControlCluster::new(acl, rand),
+            admin_commissioning::ID,
+            AdminCommCluster::new(pase, mdns_mgr, rand),
         )
+        .chain(endpoint_id, nw_commissioning::ID, NwCommCluster::new(rand))
+        .chain(
+            endpoint_id,
+            general_commissioning::ID,
+            GenCommCluster::new(rand),
+        )
+        .chain(
+            endpoint_id,
+            cluster_basic_information::ID,
+            BasicInfoCluster::new(basic_info, rand),
+        )
+        .chain(endpoint_id, descriptor::ID, DescriptorCluster::new(rand))
 }

@@ -19,7 +19,7 @@ use crate::{
     acl::Accessor,
     data_model::objects::Endpoint,
     interaction_model::{
-        core::IMStatusCode,
+        core::{IMStatusCode, ResumeReadReq, ResumeSubscribeReq},
         messages::{
             ib::{AttrPath, AttrStatus, CmdStatus, DataVersionFilter},
             msg::{InvReq, ReadReq, SubscribeReq, WriteReq},
@@ -27,16 +27,16 @@ use crate::{
         },
     },
     // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
-    tlv::{TLVArray, TLVElement},
+    tlv::{TLVArray, TLVArrayIter, TLVElement},
 };
 use core::{
     fmt,
     iter::{once, Once},
 };
 
-use super::{AttrDetails, AttrId, ClusterId, CmdDetails, CmdId, EndptId};
+use super::{AttrDetails, AttrId, Attribute, Cluster, ClusterId, CmdDetails, CmdId, EndptId};
 
-enum WildcardIter<T, E> {
+pub enum WildcardIter<T, E> {
     None,
     Single(Once<E>),
     Wildcard(T),
@@ -57,6 +57,41 @@ where
     }
 }
 
+pub trait Iterable {
+    type Item;
+
+    type Iterator<'a>: Iterator<Item = Self::Item>
+    where
+        Self: 'a;
+
+    fn iter(&self) -> Self::Iterator<'_>;
+}
+
+impl<'a> Iterable for Option<&'a TLVArray<'a, DataVersionFilter>> {
+    type Item = DataVersionFilter;
+
+    type Iterator<'i> = WildcardIter<TLVArrayIter<'i, DataVersionFilter>, DataVersionFilter> where Self: 'i;
+
+    fn iter(&self) -> Self::Iterator<'_> {
+        if let Some(filters) = self {
+            WildcardIter::Wildcard(filters.iter())
+        } else {
+            WildcardIter::None
+        }
+    }
+}
+
+impl<'a> Iterable for &'a [DataVersionFilter] {
+    type Item = DataVersionFilter;
+
+    type Iterator<'i> = core::iter::Copied<core::slice::Iter<'i, DataVersionFilter>> where Self: 'i;
+
+    fn iter(&self) -> Self::Iterator<'_> {
+        let slice: &[DataVersionFilter] = self;
+        slice.iter().copied()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Node<'a> {
     pub id: u16,
@@ -73,10 +108,30 @@ impl<'a> Node<'a> {
         's: 'm,
     {
         self.read_attr_requests(
-            req.attr_requests.as_ref(),
+            req.attr_requests
+                .iter()
+                .flat_map(|attr_requests| attr_requests.iter()),
             req.dataver_filters.as_ref(),
             req.fabric_filtered,
             accessor,
+            None,
+        )
+    }
+
+    pub fn resume_read<'s, 'm>(
+        &'s self,
+        req: &'m ResumeReadReq,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+    {
+        self.read_attr_requests(
+            req.paths.iter().copied(),
+            req.filters.as_slice(),
+            req.fabric_filtered,
+            accessor,
+            Some(req.resume_path),
         )
     }
 
@@ -89,60 +144,115 @@ impl<'a> Node<'a> {
         's: 'm,
     {
         self.read_attr_requests(
-            req.attr_requests.as_ref(),
+            req.attr_requests
+                .iter()
+                .flat_map(|attr_requests| attr_requests.iter()),
             req.dataver_filters.as_ref(),
             req.fabric_filtered,
             accessor,
+            None,
         )
     }
 
-    fn read_attr_requests<'s, 'm>(
+    pub fn resume_subscribing_read<'s, 'm>(
         &'s self,
-        attr_requests: Option<&'m TLVArray<AttrPath>>,
-        dataver_filters: Option<&'m TLVArray<DataVersionFilter>>,
-        fabric_filtered: bool,
+        req: &'m ResumeSubscribeReq,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
     where
         's: 'm,
     {
-        if let Some(attr_requests) = attr_requests.as_ref() {
-            WildcardIter::Wildcard(attr_requests.iter().flat_map(
-                move |path| match self.expand_attr(accessor, path.to_gp(), false) {
-                    Ok(iter) => {
-                        let wildcard = matches!(iter, WildcardIter::Wildcard(_));
+        self.read_attr_requests(
+            req.paths.iter().copied(),
+            req.filters.as_slice(),
+            req.fabric_filtered,
+            accessor,
+            Some(req.resume_path.unwrap()),
+        )
+    }
 
-                        WildcardIter::Wildcard(iter.map(move |(ep, cl, attr)| {
-                            let dataver_filter = dataver_filters
-                                .as_ref()
-                                .iter()
-                                .flat_map(|array| array.iter())
-                                .find_map(|filter| {
-                                    (filter.path.endpoint == ep && filter.path.cluster == cl)
-                                        .then_some(filter.data_ver)
-                                });
+    fn read_attr_requests<'s, 'm, P, D>(
+        &'s self,
+        attr_requests: P,
+        dataver_filters: D,
+        fabric_filtered: bool,
+        accessor: &'m Accessor<'m>,
+        from: Option<GenericPath>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+        P: Iterator<Item = AttrPath> + 'm,
+        D: Iterable<Item = DataVersionFilter> + Clone + 'm,
+    {
+        attr_requests.flat_map(move |path| {
+            if path.to_gp().is_wildcard() {
+                let dataver_filters = dataver_filters.clone();
+                let from = from;
 
-                            Ok(AttrDetails {
-                                node: self,
-                                endpoint_id: ep,
-                                cluster_id: cl,
-                                attr_id: attr,
-                                list_index: path.list_index,
-                                fab_idx: accessor.fab_idx,
-                                fab_filter: fabric_filtered,
-                                dataver: dataver_filter,
-                                wildcard,
-                            })
-                        }))
+                let iter = self
+                    .match_attributes(path.endpoint, path.cluster, path.attr)
+                    .skip_while(move |(ep, cl, attr)| {
+                        !Self::matches(from.as_ref(), ep.id, cl.id, attr.id as _)
+                    })
+                    .filter(move |(ep, cl, attr)| {
+                        Cluster::check_attr_access(
+                            accessor,
+                            GenericPath::new(Some(ep.id), Some(cl.id), Some(attr.id as _)),
+                            false,
+                            attr.access,
+                        )
+                        .is_ok()
+                    })
+                    .map(move |(ep, cl, attr)| {
+                        let dataver = dataver_filters.iter().find_map(|filter| {
+                            (filter.path.endpoint == ep.id && filter.path.cluster == cl.id)
+                                .then_some(filter.data_ver)
+                        });
+
+                        Ok(AttrDetails {
+                            node: self,
+                            endpoint_id: ep.id,
+                            cluster_id: cl.id,
+                            attr_id: attr.id,
+                            list_index: path.list_index,
+                            fab_idx: accessor.fab_idx,
+                            fab_filter: fabric_filtered,
+                            dataver,
+                            wildcard: true,
+                        })
+                    });
+
+                WildcardIter::Wildcard(iter)
+            } else {
+                let ep = path.endpoint.unwrap();
+                let cl = path.cluster.unwrap();
+                let attr = path.attr.unwrap();
+
+                let result = match self.check_attribute(accessor, ep, cl, attr, false) {
+                    Ok(()) => {
+                        let dataver = dataver_filters.iter().find_map(|filter| {
+                            (filter.path.endpoint == ep && filter.path.cluster == cl)
+                                .then_some(filter.data_ver)
+                        });
+
+                        Ok(AttrDetails {
+                            node: self,
+                            endpoint_id: ep,
+                            cluster_id: cl,
+                            attr_id: attr,
+                            list_index: path.list_index,
+                            fab_idx: accessor.fab_idx,
+                            fab_filter: fabric_filtered,
+                            dataver,
+                            wildcard: false,
+                        })
                     }
-                    Err(err) => {
-                        WildcardIter::Single(once(Err(AttrStatus::new(&path.to_gp(), err, 0))))
-                    }
-                },
-            ))
-        } else {
-            WildcardIter::None
-        }
+                    Err(err) => Err(AttrStatus::new(&path.to_gp(), err, 0)),
+                };
+
+                WildcardIter::Single(once(result))
+            }
+        })
     }
 
     pub fn write<'m>(
@@ -163,34 +273,64 @@ impl<'a> Node<'a> {
                     IMStatusCode::UnsupportedAttribute,
                     0,
                 ))))
-            } else {
-                match self.expand_attr(accessor, attr_data.path.to_gp(), true) {
-                    Ok(iter) => {
-                        let wildcard = matches!(iter, WildcardIter::Wildcard(_));
+            } else if attr_data.path.to_gp().is_wildcard() {
+                let iter = self
+                    .match_attributes(
+                        attr_data.path.endpoint,
+                        attr_data.path.cluster,
+                        attr_data.path.attr,
+                    )
+                    .filter(move |(ep, cl, attr)| {
+                        Cluster::check_attr_access(
+                            accessor,
+                            GenericPath::new(Some(ep.id), Some(cl.id), Some(attr.id as _)),
+                            true,
+                            attr.access,
+                        )
+                        .is_ok()
+                    })
+                    .map(move |(ep, cl, attr)| {
+                        Ok((
+                            AttrDetails {
+                                node: self,
+                                endpoint_id: ep.id,
+                                cluster_id: cl.id,
+                                attr_id: attr.id,
+                                list_index: attr_data.path.list_index,
+                                fab_idx: accessor.fab_idx,
+                                fab_filter: false,
+                                dataver: attr_data.data_ver,
+                                wildcard: true,
+                            },
+                            attr_data.data.unwrap_tlv().unwrap(),
+                        ))
+                    });
 
-                        WildcardIter::Wildcard(iter.map(move |(ep, cl, attr)| {
-                            Ok((
-                                AttrDetails {
-                                    node: self,
-                                    endpoint_id: ep,
-                                    cluster_id: cl,
-                                    attr_id: attr,
-                                    list_index: attr_data.path.list_index,
-                                    fab_idx: accessor.fab_idx,
-                                    fab_filter: false,
-                                    dataver: attr_data.data_ver,
-                                    wildcard,
-                                },
-                                attr_data.data.unwrap_tlv().unwrap(),
-                            ))
-                        }))
-                    }
-                    Err(err) => WildcardIter::Single(once(Err(AttrStatus::new(
-                        &attr_data.path.to_gp(),
-                        err,
-                        0,
-                    )))),
-                }
+                WildcardIter::Wildcard(iter)
+            } else {
+                let ep = attr_data.path.endpoint.unwrap();
+                let cl = attr_data.path.cluster.unwrap();
+                let attr = attr_data.path.attr.unwrap();
+
+                let result = match self.check_attribute(accessor, ep, cl, attr, true) {
+                    Ok(()) => Ok((
+                        AttrDetails {
+                            node: self,
+                            endpoint_id: ep,
+                            cluster_id: cl,
+                            attr_id: attr,
+                            list_index: attr_data.path.list_index,
+                            fab_idx: accessor.fab_idx,
+                            fab_filter: false,
+                            dataver: attr_data.data_ver,
+                            wildcard: false,
+                        },
+                        attr_data.data.unwrap_tlv().unwrap(),
+                    )),
+                    Err(err) => Err(AttrStatus::new(&attr_data.path.to_gp(), err, 0)),
+                };
+
+                WildcardIter::Single(once(result))
             }
         })
     }
@@ -200,136 +340,99 @@ impl<'a> Node<'a> {
         req: &'m InvReq,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<(CmdDetails, TLVElement<'m>), CmdStatus>> + 'm {
-        if let Some(inv_requests) = req.inv_requests.as_ref() {
-            WildcardIter::Wildcard(inv_requests.iter().flat_map(move |cmd_data| {
-                match self.expand_cmd(accessor, cmd_data.path.path) {
-                    Ok(iter) => {
-                        let wildcard = matches!(iter, WildcardIter::Wildcard(_));
-
-                        WildcardIter::Wildcard(iter.map(move |(ep, cl, cmd)| {
+        req.inv_requests
+            .iter()
+            .flat_map(|inv_requests| inv_requests.iter())
+            .flat_map(move |cmd_data| {
+                if cmd_data.path.path.is_wildcard() {
+                    let iter = self
+                        .match_commands(
+                            cmd_data.path.path.endpoint,
+                            cmd_data.path.path.cluster,
+                            cmd_data.path.path.leaf.map(|leaf| leaf as _),
+                        )
+                        .filter(move |(ep, cl, cmd)| {
+                            Cluster::check_cmd_access(
+                                accessor,
+                                GenericPath::new(Some(ep.id), Some(cl.id), Some(*cmd)),
+                            )
+                            .is_ok()
+                        })
+                        .map(move |(ep, cl, cmd)| {
                             Ok((
                                 CmdDetails {
                                     node: self,
-                                    endpoint_id: ep,
-                                    cluster_id: cl,
+                                    endpoint_id: ep.id,
+                                    cluster_id: cl.id,
                                     cmd_id: cmd,
-                                    wildcard,
+                                    wildcard: true,
                                 },
                                 cmd_data.data.unwrap_tlv().unwrap(),
                             ))
-                        }))
-                    }
-                    Err(err) => {
-                        WildcardIter::Single(once(Err(CmdStatus::new(cmd_data.path, err, 0))))
-                    }
+                        });
+
+                    WildcardIter::Wildcard(iter)
+                } else {
+                    let ep = cmd_data.path.path.endpoint.unwrap();
+                    let cl = cmd_data.path.path.cluster.unwrap();
+                    let cmd = cmd_data.path.path.leaf.unwrap();
+
+                    let result = match self.check_command(accessor, ep, cl, cmd) {
+                        Ok(()) => Ok((
+                            CmdDetails {
+                                node: self,
+                                endpoint_id: cmd_data.path.path.endpoint.unwrap(),
+                                cluster_id: cmd_data.path.path.cluster.unwrap(),
+                                cmd_id: cmd_data.path.path.leaf.unwrap(),
+                                wildcard: false,
+                            },
+                            cmd_data.data.unwrap_tlv().unwrap(),
+                        )),
+                        Err(err) => Err(CmdStatus::new(cmd_data.path, err, 0)),
+                    };
+
+                    WildcardIter::Single(once(result))
                 }
-            }))
+            })
+    }
+
+    fn matches(path: Option<&GenericPath>, ep: EndptId, cl: ClusterId, leaf: u32) -> bool {
+        if let Some(path) = path {
+            path.endpoint.map(|id| id == ep).unwrap_or(true)
+                && path.cluster.map(|id| id == cl).unwrap_or(true)
+                && path.leaf.map(|id| id == leaf).unwrap_or(true)
         } else {
-            WildcardIter::None
+            true
         }
     }
 
-    fn expand_attr<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
-        path: GenericPath,
-        write: bool,
-    ) -> Result<
-        WildcardIter<
-            impl Iterator<Item = (EndptId, ClusterId, AttrId)> + 'm,
-            (EndptId, ClusterId, AttrId),
-        >,
-        IMStatusCode,
-    > {
-        if path.is_wildcard() {
-            Ok(WildcardIter::Wildcard(self.match_attributes(
-                accessor,
-                path.endpoint,
-                path.cluster,
-                path.leaf.map(|leaf| leaf as u16),
-                write,
-            )))
-        } else {
-            self.check_attribute(
-                accessor,
-                path.endpoint.unwrap(),
-                path.cluster.unwrap(),
-                path.leaf.unwrap() as _,
-                write,
-            )?;
-
-            Ok(WildcardIter::Single(once((
-                path.endpoint.unwrap(),
-                path.cluster.unwrap(),
-                path.leaf.unwrap() as _,
-            ))))
-        }
-    }
-
-    fn expand_cmd<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
-        path: GenericPath,
-    ) -> Result<
-        WildcardIter<
-            impl Iterator<Item = (EndptId, ClusterId, CmdId)> + 'm,
-            (EndptId, ClusterId, CmdId),
-        >,
-        IMStatusCode,
-    > {
-        if path.is_wildcard() {
-            Ok(WildcardIter::Wildcard(self.match_commands(
-                accessor,
-                path.endpoint,
-                path.cluster,
-                path.leaf,
-            )))
-        } else {
-            self.check_command(
-                accessor,
-                path.endpoint.unwrap(),
-                path.cluster.unwrap(),
-                path.leaf.unwrap(),
-            )?;
-
-            Ok(WildcardIter::Single(once((
-                path.endpoint.unwrap(),
-                path.cluster.unwrap(),
-                path.leaf.unwrap(),
-            ))))
-        }
-    }
-
-    fn match_attributes<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
+    pub fn match_attributes(
+        &self,
         ep: Option<EndptId>,
         cl: Option<ClusterId>,
         attr: Option<AttrId>,
-        write: bool,
-    ) -> impl Iterator<Item = (EndptId, ClusterId, AttrId)> + 'm {
+    ) -> impl Iterator<Item = (&'_ Endpoint, &'_ Cluster, &'_ Attribute)> + '_ {
         self.match_endpoints(ep).flat_map(move |endpoint| {
             endpoint
-                .match_attributes(accessor, cl, attr, write)
-                .map(move |(cl, attr)| (endpoint.id, cl, attr))
+                .match_attributes(cl, attr)
+                .map(move |(cl, attr)| (endpoint, cl, attr))
         })
     }
 
-    fn match_commands<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
+    pub fn match_commands(
+        &self,
         ep: Option<EndptId>,
         cl: Option<ClusterId>,
         cmd: Option<CmdId>,
-    ) -> impl Iterator<Item = (EndptId, ClusterId, CmdId)> + 'm {
+    ) -> impl Iterator<Item = (&'_ Endpoint, &'_ Cluster, CmdId)> + '_ {
         self.match_endpoints(ep).flat_map(move |endpoint| {
             endpoint
-                .match_commands(accessor, cl, cmd)
-                .map(move |(cl, cmd)| (endpoint.id, cl, cmd))
+                .match_commands(cl, cmd)
+                .map(move |(cl, cmd)| (endpoint, cl, cmd))
         })
     }
 
-    fn check_attribute(
+    pub fn check_attribute(
         &self,
         accessor: &Accessor,
         ep: EndptId,
@@ -341,7 +444,7 @@ impl<'a> Node<'a> {
             .and_then(|endpoint| endpoint.check_attribute(accessor, cl, attr, write))
     }
 
-    fn check_command(
+    pub fn check_command(
         &self,
         accessor: &Accessor,
         ep: EndptId,
@@ -352,13 +455,13 @@ impl<'a> Node<'a> {
             .and_then(|endpoint| endpoint.check_command(accessor, cl, cmd))
     }
 
-    fn match_endpoints(&self, ep: Option<EndptId>) -> impl Iterator<Item = &Endpoint> + '_ {
+    pub fn match_endpoints(&self, ep: Option<EndptId>) -> impl Iterator<Item = &'_ Endpoint> + '_ {
         self.endpoints
             .iter()
             .filter(move |endpoint| ep.map(|id| id == endpoint.id).unwrap_or(true))
     }
 
-    fn check_endpoint(&self, ep: EndptId) -> Result<&Endpoint, IMStatusCode> {
+    pub fn check_endpoint(&self, ep: EndptId) -> Result<&Endpoint, IMStatusCode> {
         self.endpoints
             .iter()
             .find(|endpoint| endpoint.id == ep)

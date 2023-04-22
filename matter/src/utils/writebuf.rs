@@ -18,44 +18,21 @@
 use crate::error::*;
 use byteorder::{ByteOrder, LittleEndian};
 
-/// Shrink WriteBuf
-///
-/// This Macro creates a new (child) WriteBuf which has a truncated slice end.
-/// - It accepts a WriteBuf, and the size to reserve (truncate) towards the end.
-/// - It returns the new (child) WriteBuf
-#[macro_export]
-macro_rules! wb_shrink {
-    ($orig_wb:ident, $reserve:ident) => {{
-        let m_data = $orig_wb.empty_as_mut_slice();
-        let m_wb = WriteBuf::new(m_data, m_data.len() - $reserve);
-        (m_wb)
-    }};
-}
-
-/// Unshrink WriteBuf
-///
-/// This macro unshrinks the WriteBuf
-/// - It accepts the original WriteBuf and the child WriteBuf (that was the result of wb_shrink)
-/// After this call, the child WriteBuf shouldn't be used
-#[macro_export]
-macro_rules! wb_unshrink {
-    ($orig_wb:ident, $new_wb:ident) => {{
-        let m_data_len = $new_wb.as_slice().len();
-        $orig_wb.forward_tail_by(m_data_len);
-    }};
-}
-
 #[derive(Debug)]
 pub struct WriteBuf<'a> {
     buf: &'a mut [u8],
+    buf_size: usize,
     start: usize,
     end: usize,
 }
 
 impl<'a> WriteBuf<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
+        let buf_size = buf.len();
+
         Self {
             buf,
+            buf_size,
             start: 0,
             end: 0,
         }
@@ -73,10 +50,6 @@ impl<'a> WriteBuf<'a> {
         self.end += new_offset
     }
 
-    pub fn into_slice(self) -> &'a [u8] {
-        &self.buf[self.start..self.end]
-    }
-
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[self.start..self.end]
     }
@@ -86,20 +59,43 @@ impl<'a> WriteBuf<'a> {
     }
 
     pub fn empty_as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf[self.end..]
+        &mut self.buf[self.end..self.buf_size]
     }
 
-    pub fn reset(&mut self, reserve: usize) {
-        self.start = reserve;
-        self.end = reserve;
+    pub fn reset(&mut self) {
+        self.buf_size = self.buf.len();
+        self.start = 0;
+        self.end = 0;
     }
 
     pub fn reserve(&mut self, reserve: usize) -> Result<(), Error> {
-        if self.end != 0 || self.start != 0 {
-            return Err(Error::Invalid);
+        if self.end != 0 || self.start != 0 || self.buf_size != self.buf.len() {
+            Err(Error::Invalid)
+        } else if reserve > self.buf_size {
+            Err(Error::NoSpace)
+        } else {
+            self.start = reserve;
+            self.end = reserve;
+            Ok(())
         }
-        self.reset(reserve);
-        Ok(())
+    }
+
+    pub fn shrink(&mut self, with: usize) -> Result<(), Error> {
+        if self.end + with <= self.buf_size {
+            self.buf_size -= with;
+            Ok(())
+        } else {
+            Err(Error::NoSpace)
+        }
+    }
+
+    pub fn expand(&mut self, by: usize) -> Result<(), Error> {
+        if self.buf.len() - self.buf_size >= by {
+            self.buf_size += by;
+            Ok(())
+        } else {
+            Err(Error::NoSpace)
+        }
     }
 
     pub fn prepend_with<F>(&mut self, size: usize, f: F) -> Result<(), Error>
@@ -125,7 +121,7 @@ impl<'a> WriteBuf<'a> {
     where
         F: FnOnce(&mut Self),
     {
-        if self.end + size <= self.buf.len() {
+        if self.end + size <= self.buf_size {
             f(self);
             self.end += size;
             return Ok(());
@@ -274,7 +270,7 @@ mod tests {
         buf.prepend(&new_slice).unwrap();
 
         assert_eq!(
-            buf.into_slice(),
+            buf.as_slice(),
             [
                 0xa, 0xb, 0xc, 1, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xbe, 0xba, 0xfe, 0xca, 0xbe,
                 0xba, 0xfe, 0xca

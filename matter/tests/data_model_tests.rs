@@ -22,6 +22,6 @@ mod data_model {
     mod attribute_lists;
     mod attributes;
     mod commands;
-    // TODO mod long_reads;
+    mod long_reads;
     mod timed_requests;
 }

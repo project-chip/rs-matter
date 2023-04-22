@@ -138,11 +138,20 @@ fn gen_totlv_for_struct(
     let expanded = quote! {
         impl #generics ToTLV for #struct_name #generics {
             fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-                tw. #datatype (tag_type)?;
-                #(
-                    self.#idents.to_tlv(tw, TagType::Context(#tags))?;
-                )*
-                tw.end_container()
+                let anchor = tw.get_tail();
+
+                if let Err(err) = (|| {
+                    tw. #datatype (tag_type)?;
+                    #(
+                        self.#idents.to_tlv(tw, TagType::Context(#tags))?;
+                    )*
+                    tw.end_container()
+                })() {
+                    tw.rewind_to(anchor);
+                    Err(err)
+                } else {
+                    Ok(())
+                }
             }
         }
     };
@@ -179,17 +188,26 @@ fn gen_totlv_for_enum(
     }
 
     let expanded = quote! {
-           impl #generics ToTLV for #enum_name #generics {
-           fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-                   tw.start_struct(tag_type)?;
-                   match self {
-                       #(
-                           Self::#variant_names(c) => { c.to_tlv(tw, TagType::Context(#tags))?; },
-                       )*
-                   }
-                   tw.end_container()
-               }
-           }
+        impl #generics ToTLV for #enum_name #generics {
+            fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
+                let anchor = tw.get_tail();
+
+                if let Err(err) = (|| {
+                    tw.start_struct(tag_type)?;
+                    match self {
+                        #(
+                            Self::#variant_names(c) => { c.to_tlv(tw, TagType::Context(#tags))?; },
+                        )*
+                    }
+                    tw.end_container()
+                })() {
+                    tw.rewind_to(anchor);
+                    Err(err)
+                } else {
+                    Ok(())
+                }
+            }
+        }
     };
 
     //    panic!("Expanded to {}", expanded);

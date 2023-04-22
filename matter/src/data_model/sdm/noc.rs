@@ -398,7 +398,7 @@ impl<'a> NocCluster<'a> {
 
         encoder
             .with_command(RespCommands::NOCResp as _)?
-            .set(&cmd_data)
+            .set(cmd_data)
     }
 
     fn handle_command_updatefablabel(
@@ -527,7 +527,7 @@ impl<'a> NocCluster<'a> {
 
         encoder
             .with_command(RespCommands::CertChainResp as _)?
-            .set(&cmd_data)
+            .set(cmd_data)
     }
 
     fn handle_command_csrrequest(

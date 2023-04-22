@@ -19,7 +19,7 @@ use crate::{acl::Accessor, interaction_model::core::IMStatusCode};
 
 use core::fmt;
 
-use super::{AttrId, Cluster, ClusterId, CmdId, DeviceType, EndptId};
+use super::{AttrId, Attribute, Cluster, ClusterId, CmdId, DeviceType, EndptId};
 
 #[derive(Debug, Clone)]
 pub struct Endpoint<'a> {
@@ -29,34 +29,28 @@ pub struct Endpoint<'a> {
 }
 
 impl<'a> Endpoint<'a> {
-    pub(crate) fn match_attributes<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
+    pub fn match_attributes(
+        &self,
         cl: Option<ClusterId>,
         attr: Option<AttrId>,
-        write: bool,
-    ) -> impl Iterator<Item = (ClusterId, AttrId)> + 'm {
+    ) -> impl Iterator<Item = (&'_ Cluster, &'_ Attribute)> + '_ {
         self.match_clusters(cl).flat_map(move |cluster| {
             cluster
-                .match_attributes(accessor, self.id, attr, write)
-                .map(move |attr| (cluster.id, attr))
+                .match_attributes(attr)
+                .map(move |attr| (cluster, attr))
         })
     }
 
-    pub(crate) fn match_commands<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
+    pub fn match_commands(
+        &self,
         cl: Option<ClusterId>,
         cmd: Option<CmdId>,
-    ) -> impl Iterator<Item = (ClusterId, CmdId)> + 'm {
-        self.match_clusters(cl).flat_map(move |cluster| {
-            cluster
-                .match_commands(accessor, self.id, cmd)
-                .map(move |cmd| (cluster.id, cmd))
-        })
+    ) -> impl Iterator<Item = (&'_ Cluster, CmdId)> + '_ {
+        self.match_clusters(cl)
+            .flat_map(move |cluster| cluster.match_commands(cmd).map(move |cmd| (cluster, cmd)))
     }
 
-    pub(crate) fn check_attribute(
+    pub fn check_attribute(
         &self,
         accessor: &Accessor,
         cl: ClusterId,
@@ -67,7 +61,7 @@ impl<'a> Endpoint<'a> {
             .and_then(|cluster| cluster.check_attribute(accessor, self.id, attr, write))
     }
 
-    pub(crate) fn check_command(
+    pub fn check_command(
         &self,
         accessor: &Accessor,
         cl: ClusterId,
@@ -77,13 +71,13 @@ impl<'a> Endpoint<'a> {
             .and_then(|cluster| cluster.check_command(accessor, self.id, cmd))
     }
 
-    fn match_clusters(&self, cl: Option<ClusterId>) -> impl Iterator<Item = &Cluster> + '_ {
+    pub fn match_clusters(&self, cl: Option<ClusterId>) -> impl Iterator<Item = &'_ Cluster> + '_ {
         self.clusters
             .iter()
             .filter(move |cluster| cl.map(|id| id == cluster.id).unwrap_or(true))
     }
 
-    fn check_cluster(&self, cl: ClusterId) -> Result<&Cluster, IMStatusCode> {
+    pub fn check_cluster(&self, cl: ClusterId) -> Result<&Cluster, IMStatusCode> {
         self.clusters
             .iter()
             .find(|cluster| cluster.id == cl)

@@ -52,8 +52,16 @@ impl NwCommCluster {
 }
 
 impl Handler for NwCommCluster {
-    fn read(&self, _attr: &AttrDetails, _encoder: AttrDataEncoder) -> Result<(), Error> {
-        Err(Error::AttributeNotFound)
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                Err(Error::AttributeNotFound)
+            }
+        } else {
+            Ok(())
+        }
     }
 }
 

@@ -20,7 +20,7 @@ use core::convert::TryInto;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::acl::{AclEntry, AclMgr};
+use crate::acl::{self, AclEntry, AclMgr};
 use crate::data_model::objects::*;
 use crate::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
@@ -116,9 +116,14 @@ impl<'a> AccessControlCluster<'a> {
 
                         writer.complete()
                     }
-                    _ => {
-                        error!("Attribute not yet supported: this shouldn't happen");
-                        Err(Error::AttributeNotFound)
+                    Attributes::SubjectsPerEntry(codec) => {
+                        codec.encode(writer, acl::SUBJECTS_PER_ENTRY as u16)
+                    }
+                    Attributes::TargetsPerEntry(codec) => {
+                        codec.encode(writer, acl::TARGETS_PER_ENTRY as u16)
+                    }
+                    Attributes::EntriesPerFabric(codec) => {
+                        codec.encode(writer, acl::ENTRIES_PER_FABRIC as u16)
                     }
                 }
             }
@@ -365,7 +370,7 @@ mod tests {
                 writebuf.as_slice()
             );
         }
-        writebuf.reset(0);
+        writebuf.reset();
 
         // Test 2, only single entry is read in the response with fabric filtering and fabric idx 1
         {
@@ -400,7 +405,7 @@ mod tests {
                 writebuf.as_slice()
             );
         }
-        writebuf.reset(0);
+        writebuf.reset();
 
         // Test 3, only single entry is read in the response with fabric filtering and fabric idx 2
         {

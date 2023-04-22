@@ -597,7 +597,7 @@ impl Cert {
         let mut wb = WriteBuf::new(buf);
         let mut tw = TLVWriter::new(&mut wb);
         self.to_tlv(&mut tw, TagType::Anonymous)?;
-        Ok(wb.into_slice().len())
+        Ok(wb.as_slice().len())
     }
 
     pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
@@ -823,7 +823,7 @@ mod tests {
             let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
             cert.to_tlv(&mut tw, TagType::Anonymous).unwrap();
-            assert_eq!(*input, wb.into_slice());
+            assert_eq!(*input, wb.as_slice());
         }
     }
 
