@@ -179,14 +179,14 @@ impl<'a> Accessor<'a> {
                         let _ = subject.add_catid(i);
                     }
                 }
-                Accessor::new(c.fab_idx, subject, AuthMode::Case, &acl_mgr)
+                Accessor::new(c.fab_idx, subject, AuthMode::Case, acl_mgr)
             }
             SessionMode::Pase => {
-                Accessor::new(0, AccessorSubjects::new(1), AuthMode::Pase, &acl_mgr)
+                Accessor::new(0, AccessorSubjects::new(1), AuthMode::Pase, acl_mgr)
             }
 
             SessionMode::PlainText => {
-                Accessor::new(0, AccessorSubjects::new(1), AuthMode::Invalid, &acl_mgr)
+                Accessor::new(0, AccessorSubjects::new(1), AuthMode::Invalid, acl_mgr)
             }
         }
     }
@@ -514,7 +514,7 @@ impl AclMgr {
             let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
             self.entries.to_tlv(&mut tw, TagType::Anonymous)?;
-            psm.set_kv_slice(ACL_KV_ENTRY, wb.into_slice())?;
+            psm.set_kv_slice(ACL_KV_ENTRY, wb.as_slice())?;
 
             self.changed = false;
         }
@@ -546,7 +546,7 @@ impl AclMgr {
             let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
             self.entries.to_tlv(&mut tw, TagType::Anonymous)?;
-            psm.set_kv_slice(ACL_KV_ENTRY, wb.into_slice()).await?;
+            psm.set_kv_slice(ACL_KV_ENTRY, wb.as_slice()).await?;
 
             self.changed = false;
         }
@@ -561,10 +561,7 @@ impl AclMgr {
     {
         let mut buf = [0u8; ACL_KV_MAX_SIZE];
         let acl_tlvs = psm.get_kv_slice(ACL_KV_ENTRY, &mut buf).await?;
-        let root = TLVList::new(&acl_tlvs)
-            .iter()
-            .next()
-            .ok_or(Error::Invalid)?;
+        let root = TLVList::new(acl_tlvs).iter().next().ok_or(Error::Invalid)?;
 
         self.entries = AclEntries::from_tlv(&root)?;
         self.changed = false;

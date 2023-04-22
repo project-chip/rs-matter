@@ -311,7 +311,7 @@ mod tests {
 
         encrypt_in_place(send_ctr, 0, &plain_hdr, &mut writebuf, &key).unwrap();
         assert_eq!(
-            writebuf.into_slice(),
+            writebuf.as_slice(),
             [
                 189, 83, 250, 121, 38, 87, 97, 17, 153, 78, 243, 20, 36, 11, 131, 142, 136, 165,
                 227, 107, 204, 129, 193, 153, 42, 131, 138, 254, 22, 190, 76, 244, 116, 45, 156,

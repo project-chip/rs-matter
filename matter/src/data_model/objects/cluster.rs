@@ -64,6 +64,7 @@ pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
 // TODO: What if we instead of creating this, we just pass the AttrData/AttrPath to the read/write
 // methods?
 /// The Attribute Details structure records the details about the attribute under consideration.
+#[derive(Debug)]
 pub struct AttrDetails<'a> {
     pub node: &'a Node<'a>,
     /// The actual endpoint ID
@@ -129,6 +130,7 @@ impl<'a> AttrDetails<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct CmdDetails<'a> {
     pub node: &'a Node<'a>,
     pub endpoint_id: EndptId,
@@ -208,49 +210,23 @@ impl<'a> Cluster<'a> {
         }
     }
 
-    pub(crate) fn match_attributes<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
-        ep: EndptId,
+    pub fn match_attributes(
+        &self,
         attr: Option<AttrId>,
-        write: bool,
-    ) -> impl Iterator<Item = AttrId> + 'm {
+    ) -> impl Iterator<Item = &'_ Attribute> + '_ {
         self.attributes
             .iter()
             .filter(move |attribute| attr.map(|attr| attr == attribute.id).unwrap_or(true))
-            .filter(move |attribute| {
-                let mut access_req = AccessReq::new(
-                    accessor,
-                    GenericPath::new(Some(ep), Some(self.id), Some(attribute.id as _)),
-                    if write { Access::WRITE } else { Access::READ },
-                );
-                self.check_attr_access(&mut access_req, attribute.access)
-                    .is_ok()
-            })
-            .map(|attribute| attribute.id)
     }
 
-    pub fn match_commands<'m>(
-        &'m self,
-        accessor: &'m Accessor<'m>,
-        ep: EndptId,
-        cmd: Option<CmdId>,
-    ) -> impl Iterator<Item = CmdId> + 'm {
+    pub fn match_commands(&self, cmd: Option<CmdId>) -> impl Iterator<Item = CmdId> + '_ {
         self.commands
             .iter()
             .filter(move |id| cmd.map(|cmd| **id == cmd).unwrap_or(true))
-            .filter(move |id| {
-                let mut access_req = AccessReq::new(
-                    accessor,
-                    GenericPath::new(Some(ep), Some(self.id), Some(**id as _)),
-                    Access::WRITE,
-                );
-                self.check_cmd_access(&mut access_req).is_ok()
-            })
             .copied()
     }
 
-    pub(crate) fn check_attribute(
+    pub fn check_attribute(
         &self,
         accessor: &Accessor,
         ep: EndptId,
@@ -263,16 +239,15 @@ impl<'a> Cluster<'a> {
             .find(|attribute| attribute.id == attr)
             .ok_or(IMStatusCode::UnsupportedAttribute)?;
 
-        let mut access_req = AccessReq::new(
+        Self::check_attr_access(
             accessor,
             GenericPath::new(Some(ep), Some(self.id), Some(attr as _)),
-            if write { Access::WRITE } else { Access::READ },
-        );
-
-        self.check_attr_access(&mut access_req, attribute.access)
+            write,
+            attribute.access,
+        )
     }
 
-    pub(crate) fn check_command(
+    pub fn check_command(
         &self,
         accessor: &Accessor,
         ep: EndptId,
@@ -283,20 +258,24 @@ impl<'a> Cluster<'a> {
             .find(|id| **id == cmd)
             .ok_or(IMStatusCode::UnsupportedCommand)?;
 
-        let mut access_req = AccessReq::new(
+        Self::check_cmd_access(
             accessor,
-            GenericPath::new(Some(ep), Some(self.id), Some(cmd as _)),
-            Access::WRITE,
-        );
-
-        self.check_cmd_access(&mut access_req)
+            GenericPath::new(Some(ep), Some(self.id), Some(cmd)),
+        )
     }
 
-    fn check_attr_access(
-        &self,
-        access_req: &mut AccessReq,
+    pub(crate) fn check_attr_access(
+        accessor: &Accessor,
+        path: GenericPath,
+        write: bool,
         target_perms: Access,
     ) -> Result<(), IMStatusCode> {
+        let mut access_req = AccessReq::new(
+            accessor,
+            path,
+            if write { Access::WRITE } else { Access::READ },
+        );
+
         if !target_perms.contains(access_req.operation()) {
             Err(if matches!(access_req.operation(), Access::WRITE) {
                 IMStatusCode::UnsupportedWrite
@@ -313,7 +292,12 @@ impl<'a> Cluster<'a> {
         }
     }
 
-    fn check_cmd_access(&self, access_req: &mut AccessReq) -> Result<(), IMStatusCode> {
+    pub(crate) fn check_cmd_access(
+        accessor: &Accessor,
+        path: GenericPath,
+    ) -> Result<(), IMStatusCode> {
+        let mut access_req = AccessReq::new(accessor, path, Access::WRITE);
+
         access_req.set_target_perms(
             Access::WRITE
                 .union(Access::NEED_OPERATE)

@@ -25,6 +25,8 @@ use matter::transport::exchange::Exchange;
 use matter::transport::exchange::ExchangeCtx;
 use matter::transport::network::Address;
 use matter::transport::packet::Packet;
+use matter::transport::packet::MAX_RX_BUF_SIZE;
+use matter::transport::packet::MAX_TX_BUF_SIZE;
 use matter::transport::proto_ctx::ProtoCtx;
 use matter::transport::session::SessionMgr;
 use matter::utils::epoch::dummy_epoch;
@@ -52,30 +54,27 @@ impl DataModel {
 impl DataHandler for DataModel {
     fn handle(
         &mut self,
-        interaction: &Interaction,
+        interaction: Interaction,
         _tx: &mut Packet,
         _transaction: &mut Transaction,
     ) -> Result<bool, Error> {
-        match interaction {
-            Interaction::Invoke(req) => {
-                if let Some(inv_requests) = &req.inv_requests {
-                    for i in inv_requests.iter() {
-                        let data = if let Some(data) = i.data.unwrap_tlv() {
-                            data
-                        } else {
-                            continue;
-                        };
-                        let cmd_path_ib = i.path;
-                        let mut common_data = &mut self.node;
-                        common_data.endpoint = cmd_path_ib.path.endpoint.unwrap_or(1);
-                        common_data.cluster = cmd_path_ib.path.cluster.unwrap_or(0);
-                        common_data.command = cmd_path_ib.path.leaf.unwrap_or(0) as u16;
-                        data.confirm_struct().unwrap();
-                        common_data.variable = data.find_tag(0).unwrap().u8().unwrap();
-                    }
+        if let Interaction::Invoke(req) = interaction {
+            if let Some(inv_requests) = &req.inv_requests {
+                for i in inv_requests.iter() {
+                    let data = if let Some(data) = i.data.unwrap_tlv() {
+                        data
+                    } else {
+                        continue;
+                    };
+                    let cmd_path_ib = i.path;
+                    let mut common_data = &mut self.node;
+                    common_data.endpoint = cmd_path_ib.path.endpoint.unwrap_or(1);
+                    common_data.cluster = cmd_path_ib.path.cluster.unwrap_or(0);
+                    common_data.command = cmd_path_ib.path.leaf.unwrap_or(0) as u16;
+                    data.confirm_struct().unwrap();
+                    common_data.variable = data.find_tag(0).unwrap().u8().unwrap();
                 }
             }
-            _ => (),
         }
 
         Ok(false)
@@ -109,8 +108,8 @@ fn handle_data(action: OpCode, data_in: &[u8], data_out: &mut [u8]) -> (DataMode
         sess,
         epoch: dummy_epoch,
     };
-    let mut rx_buf = [0; 1500];
-    let mut tx_buf = [0; 1500];
+    let mut rx_buf = [0; MAX_RX_BUF_SIZE];
+    let mut tx_buf = [0; MAX_TX_BUF_SIZE];
     let mut rx = Packet::new_rx(&mut rx_buf);
     let mut tx = Packet::new_tx(&mut tx_buf);
     // Create fake rx packet

@@ -328,7 +328,7 @@ impl<'a> Case<'a> {
         tw.end_container()?;
 
         let key = KeyPair::new_from_public(initiator_noc_cert.get_pubkey())?;
-        key.verify_msg(write_buf.into_slice(), sign)?;
+        key.verify_msg(write_buf.as_slice(), sign)?;
         Ok(())
     }
 
@@ -508,7 +508,7 @@ impl<'a> Case<'a> {
             cipher_text,
             cipher_text.len() - TAG_LEN,
         )?;
-        Ok(write_buf.into_slice().len())
+        Ok(write_buf.as_slice().len())
     }
 
     fn get_sigma2_sign(
@@ -531,7 +531,7 @@ impl<'a> Case<'a> {
         tw.str8(TagType::Context(4), peer_pub_key)?;
         tw.end_container()?;
         //println!("TBS is {:x?}", write_buf.as_borrow_slice());
-        fabric.sign_msg(write_buf.into_slice(), signature)
+        fabric.sign_msg(write_buf.as_slice(), signature)
     }
 }
 

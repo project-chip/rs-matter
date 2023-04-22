@@ -215,7 +215,7 @@ impl GenCommCluster {
 
         encoder
             .with_command(RespCommands::ArmFailsafeResp as _)?
-            .set(&cmd_data)
+            .set(cmd_data)
     }
 
     fn handle_command_setregulatoryconfig(
@@ -238,7 +238,7 @@ impl GenCommCluster {
 
         encoder
             .with_command(RespCommands::SetRegulatoryConfigResp as _)?
-            .set(&cmd_data)
+            .set(cmd_data)
     }
 
     fn handle_command_commissioningcomplete(
@@ -272,7 +272,7 @@ impl GenCommCluster {
 
         encoder
             .with_command(RespCommands::CommissioningCompleteResp as _)?
-            .set(&cmd_data)
+            .set(cmd_data)
     }
 }
 

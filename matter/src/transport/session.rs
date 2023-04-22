@@ -267,7 +267,7 @@ impl Session {
         let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
         let mut write_buf = WriteBuf::new(&mut tmp_buf);
         tx.proto.encode(&mut write_buf)?;
-        tx.get_writebuf()?.prepend(write_buf.into_slice())?;
+        tx.get_writebuf()?.prepend(write_buf.as_slice())?;
 
         // Generate plain-text header
         if self.mode == SessionMode::PlainText {
@@ -278,7 +278,7 @@ impl Session {
         let mut tmp_buf = [0_u8; plain_hdr::max_plain_hdr_len()];
         let mut write_buf = WriteBuf::new(&mut tmp_buf);
         tx.plain.encode(&mut write_buf)?;
-        let plain_hdr_bytes = write_buf.into_slice();
+        let plain_hdr_bytes = write_buf.as_slice();
 
         trace!("unencrypted packet: {:x?}", tx.as_mut_slice());
         let ctr = tx.plain.ctr;

@@ -22,6 +22,7 @@ use core::time::Duration;
 use log::{error, info, trace};
 
 use crate::error::Error;
+use crate::interaction_model::core::{ResumeReadReq, ResumeSubscribeReq};
 use crate::secure_channel;
 use crate::secure_channel::case::CaseSession;
 use crate::utils::epoch::Epoch;
@@ -68,6 +69,8 @@ enum State {
 pub enum DataOption {
     CaseSession(CaseSession),
     Time(Duration),
+    SuspendedReadReq(ResumeReadReq),
+    SuspendedSubscibeReq(ResumeSubscribeReq),
     #[default]
     None,
 }
@@ -124,16 +127,12 @@ impl Exchange {
         self.role
     }
 
-    pub fn is_data_none(&self) -> bool {
-        matches!(self.data, DataOption::None)
+    pub fn clear_data(&mut self) {
+        self.data = DataOption::None;
     }
 
     pub fn set_case_session(&mut self, session: CaseSession) {
         self.data = DataOption::CaseSession(session);
-    }
-
-    pub fn clear_data(&mut self) {
-        self.data = DataOption::None;
     }
 
     pub fn get_case_session(&mut self) -> Option<&mut CaseSession> {
@@ -148,6 +147,34 @@ impl Exchange {
         let old = core::mem::replace(&mut self.data, DataOption::None);
         if let DataOption::CaseSession(session) = old {
             Some(session)
+        } else {
+            self.data = old;
+            None
+        }
+    }
+
+    pub fn set_suspended_read_req(&mut self, req: ResumeReadReq) {
+        self.data = DataOption::SuspendedReadReq(req);
+    }
+
+    pub fn take_suspended_read_req(&mut self) -> Option<ResumeReadReq> {
+        let old = core::mem::replace(&mut self.data, DataOption::None);
+        if let DataOption::SuspendedReadReq(req) = old {
+            Some(req)
+        } else {
+            self.data = old;
+            None
+        }
+    }
+
+    pub fn set_suspended_subscribe_req(&mut self, req: ResumeSubscribeReq) {
+        self.data = DataOption::SuspendedSubscibeReq(req);
+    }
+
+    pub fn take_suspended_subscribe_req(&mut self) -> Option<ResumeSubscribeReq> {
+        let old = core::mem::replace(&mut self.data, DataOption::None);
+        if let DataOption::SuspendedSubscibeReq(req) = old {
+            Some(req)
         } else {
             self.data = old;
             None
@@ -430,7 +457,7 @@ mod tests {
         error::Error,
         transport::{
             network::Address,
-            packet::Packet,
+            packet::{Packet, MAX_TX_BUF_SIZE},
             session::{CloneData, SessionMode, MAX_SESSIONS},
         },
         utils::{
@@ -505,7 +532,7 @@ mod tests {
     /// - The sessions are evicted in LRU
     /// - The exchanges associated with those sessions are evicted too
     fn test_sess_evict() {
-        let mut mgr = ExchangeMgr::new(sys_epoch, dummy_rand); // TODO
+        let mut mgr = ExchangeMgr::new(sys_epoch, dummy_rand);
 
         fill_sessions(&mut mgr, MAX_SESSIONS + 1);
         // Sessions are now full from local session id 1 to 16
@@ -531,7 +558,7 @@ mod tests {
             let result = mgr.add_session(&get_clone_data(new_peer_sess_id, new_local_sess_id));
             assert!(matches!(result, Err(Error::NoSpace)));
 
-            let mut buf = [0; 1500];
+            let mut buf = [0; MAX_TX_BUF_SIZE];
             let tx = &mut Packet::new_tx(&mut buf);
             let evicted = mgr.evict_session(tx).unwrap();
             assert!(evicted);

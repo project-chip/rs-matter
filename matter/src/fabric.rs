@@ -495,7 +495,11 @@ impl FabricMgr {
     }
 
     #[cfg(feature = "nightly")]
-    pub async fn load_async<T>(&mut self, mut psm: T, mdns_mgr: &mut MdnsMgr) -> Result<(), Error>
+    pub async fn load_async<T>(
+        &mut self,
+        mut psm: T,
+        mdns_mgr: &mut MdnsMgr<'_>,
+    ) -> Result<(), Error>
     where
         T: crate::persist::asynch::AsyncPsm,
     {

@@ -23,6 +23,7 @@ use crate::interaction_model::core::{IMStatusCode, Transaction};
 use crate::interaction_model::messages::ib::{
     AttrPath, AttrResp, AttrStatus, CmdDataTag, CmdPath, CmdStatus, InvResp, InvRespTag,
 };
+use crate::interaction_model::messages::GenericPath;
 use crate::tlv::UtfStr;
 use crate::{
     error::Error,
@@ -127,13 +128,14 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         item: Result<AttrDetails, AttrStatus>,
         handler: &T,
         tw: &mut TLVWriter,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<GenericPath>, Error> {
         let status = match item {
             Ok(attr) => {
                 let encoder = AttrDataEncoder::new(&attr, tw);
 
                 match handler.read(&attr, encoder) {
                     Ok(()) => None,
+                    Err(Error::NoSpace) => return Ok(Some(attr.path().to_gp())),
                     Err(error) => attr.status(error.into())?,
                 }
             }
@@ -144,7 +146,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
             AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
         }
 
-        Ok(())
+        Ok(None)
     }
 
     pub fn handle_write<T: Handler>(
@@ -172,13 +174,14 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         item: Result<AttrDetails<'_>, AttrStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<GenericPath>, Error> {
         let status = match item {
             Ok(attr) => {
                 let encoder = AttrDataEncoder::new(&attr, tw);
 
                 match handler.read(&attr, encoder).await {
                     Ok(()) => None,
+                    Err(Error::NoSpace) => return Ok(Some(attr.path().to_gp())),
                     Err(error) => attr.status(error.into())?,
                 }
             }
@@ -189,7 +192,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
             AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
         }
 
-        Ok(())
+        Ok(None)
     }
 
     #[cfg(feature = "nightly")]
