@@ -15,37 +15,7 @@
  *    limitations under the License.
  */
 
-use alloc::sync::Arc;
-use std::sync::{Mutex, Once};
-
 use crate::{crypto, error::Error};
-
-extern crate alloc;
-
-// This is just makeshift implementation for now, not used anywhere
-pub struct GroupKeys {}
-
-static mut G_GRP_KEYS: Option<Arc<Mutex<GroupKeys>>> = None;
-static INIT: Once = Once::new();
-
-impl GroupKeys {
-    fn new() -> Self {
-        Self {}
-    }
-
-    pub fn get() -> Result<Arc<Mutex<Self>>, Error> {
-        unsafe {
-            INIT.call_once(|| {
-                G_GRP_KEYS = Some(Arc::new(Mutex::new(GroupKeys::new())));
-            });
-            Ok(G_GRP_KEYS.as_ref().ok_or(Error::Invalid)?.clone())
-        }
-    }
-
-    pub fn insert_key() -> Result<(), Error> {
-        Ok(())
-    }
-}
 
 #[derive(Debug, Default)]
 pub struct KeySet {

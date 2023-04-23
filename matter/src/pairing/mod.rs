@@ -82,14 +82,16 @@ impl DiscoveryCapabilities {
 }
 
 /// Prepares and prints the pairing code and the QR code for easy pairing.
-pub fn print_pairing_code_and_qr(
+pub fn print_pairing_code_and_qr<const N: usize>(
     dev_det: &BasicInfoConfig,
     comm_data: &CommissioningData,
     discovery_capabilities: DiscoveryCapabilities,
+    buf: &mut [u8],
 ) {
     let pairing_code = compute_pairing_code(comm_data);
     let qr_code_data = QrSetupPayload::new(dev_det, comm_data, discovery_capabilities);
-    let data_str = payload_base38_representation(&qr_code_data).expect("Failed to encode");
+    let data_str =
+        payload_base38_representation::<N>(&qr_code_data, buf).expect("Failed to encode");
 
     pretty_print_pairing_code(&pairing_code);
     print_qr_code(&data_str);
