@@ -17,10 +17,6 @@
 
 //! Base38 encoding and decoding functions.
 
-extern crate alloc;
-
-use alloc::{string::String, vec::Vec};
-
 use crate::error::Error;
 
 const BASE38_CHARS: [char; 38] = [
@@ -81,60 +77,68 @@ const DECODE_BASE38: [u8; 46] = [
     35,     // 'Z', =90
 ];
 
-const BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK: [u8; 3] = [2, 4, 5];
 const RADIX: u32 = BASE38_CHARS.len() as u32;
 
 /// Encode a byte array into a base38 string.
 ///
 /// # Arguments
 /// * `bytes` - byte array to encode
-/// * `length` - optional length of the byte array to encode. If not specified, the entire byte array is encoded.
-pub fn encode(bytes: &[u8], length: Option<usize>) -> String {
-    let mut offset = 0;
-    let mut result = String::new();
-
-    // if length is specified, use it, otherwise use the length of the byte array
-    // if length is specified but is greater than the length of the byte array, use the length of the byte array
-    let b_len = bytes.len();
-    let length = length.map(|l| l.min(b_len)).unwrap_or(b_len);
-
-    while offset < length {
-        let remaining = length - offset;
-        match remaining.cmp(&2) {
-            core::cmp::Ordering::Greater => {
-                result.push_str(&encode_base38(
-                    ((bytes[offset + 2] as u32) << 16)
-                        | ((bytes[offset + 1] as u32) << 8)
-                        | (bytes[offset] as u32),
-                    5,
-                ));
-                offset += 3;
-            }
-            core::cmp::Ordering::Equal => {
-                result.push_str(&encode_base38(
-                    ((bytes[offset + 1] as u32) << 8) | (bytes[offset] as u32),
-                    4,
-                ));
-                break;
-            }
-            core::cmp::Ordering::Less => {
-                result.push_str(&encode_base38(bytes[offset] as u32, 2));
-                break;
-            }
-        }
+pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<heapless::String<N>, Error> {
+    let mut string = heapless::String::new();
+    for c in encode(bytes) {
+        string.push(c).map_err(|_| Error::NoSpace)?;
     }
 
-    result
+    Ok(string)
 }
 
-fn encode_base38(mut value: u32, char_count: u8) -> String {
-    let mut result = String::new();
-    for _ in 0..char_count {
-        let remainder = value % 38;
-        result.push(BASE38_CHARS[remainder as usize]);
-        value = (value - remainder) / 38;
+pub fn encode(bytes: &[u8]) -> impl Iterator<Item = char> + '_ {
+    (0..bytes.len() / 3)
+        .flat_map(move |index| {
+            let offset = index * 3;
+
+            encode_base38(
+                ((bytes[offset + 2] as u32) << 16)
+                    | ((bytes[offset + 1] as u32) << 8)
+                    | (bytes[offset] as u32),
+                5,
+            )
+        })
+        .chain(
+            core::iter::once(bytes.len() % 3).flat_map(move |remainder| {
+                let offset = bytes.len() / 3 * 3;
+
+                match remainder {
+                    2 => encode_base38(
+                        ((bytes[offset + 1] as u32) << 8) | (bytes[offset] as u32),
+                        4,
+                    ),
+                    1 => encode_base38(bytes[offset] as u32, 2),
+                    _ => encode_base38(0, 0),
+                }
+            }),
+        )
+}
+
+fn encode_base38(mut value: u32, repeat: usize) -> impl Iterator<Item = char> {
+    (0..repeat).map(move |_| {
+        let remainder = value % RADIX;
+        let c = BASE38_CHARS[remainder as usize];
+
+        value = (value - remainder) / RADIX;
+
+        c
+    })
+}
+
+pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<heapless::Vec<u8, N>, Error> {
+    let mut vec = heapless::Vec::new();
+
+    for byte in decode(base38_str) {
+        vec.push(byte?).map_err(|_| Error::NoSpace)?;
     }
-    result
+
+    Ok(vec)
 }
 
 /// Decode a base38-encoded string into a byte slice
@@ -142,57 +146,64 @@ fn encode_base38(mut value: u32, char_count: u8) -> String {
 /// # Arguments
 /// * `base38_str` - base38-encoded string to decode
 ///
-/// Fails if the string contains invalid characters
-pub fn decode(base38_str: &str) -> Result<Vec<u8>, Error> {
-    let mut result = Vec::new();
-    let mut base38_characters_number: usize = base38_str.len();
-    let mut decoded_base38_characters: usize = 0;
+/// Fails if the string contains invalid characters or if the supplied buffer is too small to fit the decoded data
+pub fn decode(base38_str: &str) -> impl Iterator<Item = Result<u8, Error>> + '_ {
+    let stru = base38_str.as_bytes();
 
-    while base38_characters_number > 0 {
-        let base38_characters_in_chunk: usize;
-        let bytes_in_decoded_chunk: usize;
-
-        if base38_characters_number >= BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK[2] as usize {
-            base38_characters_in_chunk = BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK[2] as usize;
-            bytes_in_decoded_chunk = 3;
-        } else if base38_characters_number == BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK[1] as usize {
-            base38_characters_in_chunk = BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK[1] as usize;
-            bytes_in_decoded_chunk = 2;
-        } else if base38_characters_number == BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK[0] as usize {
-            base38_characters_in_chunk = BASE38_CHARACTERS_NEEDED_IN_NBYTES_CHUNK[0] as usize;
-            bytes_in_decoded_chunk = 1;
-        } else {
-            return Err(Error::InvalidData);
-        }
-
-        let mut value = 0u32;
-
-        for i in (1..=base38_characters_in_chunk).rev() {
-            let mut base38_chars = base38_str.chars();
-            let v = decode_char(base38_chars.nth(decoded_base38_characters + i - 1).unwrap())?;
-
-            value = value * RADIX + v as u32;
-        }
-
-        decoded_base38_characters += base38_characters_in_chunk;
-        base38_characters_number -= base38_characters_in_chunk;
-
-        for _i in 0..bytes_in_decoded_chunk {
-            result.push(value as u8);
-            value >>= 8;
-        }
-
-        if value > 0 {
-            // encoded value is too big to represent a correct chunk of size 1, 2 or 3 bytes
-            return Err(Error::InvalidArgument);
-        }
-    }
-
-    Ok(result)
+    (0..stru.len() / 5)
+        .flat_map(move |index| {
+            let offset = index * 5;
+            decode_base38(&stru[offset..offset + 5])
+        })
+        .chain({
+            let offset = stru.len() / 5 * 5;
+            decode_base38(&stru[offset..])
+        })
+        .take_while(Result::is_ok)
 }
 
-fn decode_char(c: char) -> Result<u8, Error> {
-    let c = c as u8;
+fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, Error>> {
+    let mut value = 0u32;
+    let mut cerr = None;
+
+    let repeat = match chars.len() {
+        5 => 3,
+        4 => 2,
+        2 => 1,
+        0 => 0,
+        _ => -1,
+    };
+
+    if repeat >= 0 {
+        for c in chars.iter().rev() {
+            match decode_char(*c) {
+                Ok(v) => value = value * RADIX + v as u32,
+                Err(err) => {
+                    cerr = Some(err);
+                    break;
+                }
+            }
+        }
+    } else {
+        cerr = Some(Error::InvalidData)
+    }
+
+    (0..repeat)
+        .map(move |_| {
+            if let Some(err) = cerr {
+                Err(err)
+            } else {
+                let byte = (value & 0xff) as u8;
+
+                value >>= 8;
+
+                Ok(byte)
+            }
+        })
+        .take_while(Result::is_ok)
+}
+
+fn decode_char(c: u8) -> Result<u8, Error> {
     if !(45..=90).contains(&c) {
         return Err(Error::InvalidData);
     }
@@ -215,15 +226,17 @@ mod tests {
 
     #[test]
     fn can_base38_encode() {
-        assert_eq!(encode(&DECODED, None), ENCODED);
-        assert_eq!(encode(&DECODED, Some(11)), ENCODED);
-
-        // length is greater than the length of the byte array
-        assert_eq!(encode(&DECODED, Some(12)), ENCODED);
+        assert_eq!(
+            encode_string::<{ ENCODED.len() }>(&DECODED).unwrap(),
+            ENCODED
+        );
     }
 
     #[test]
     fn can_base38_decode() {
-        assert_eq!(decode(ENCODED).expect("can not decode base38"), DECODED);
+        assert_eq!(
+            decode_vec::<{ DECODED.len() }>(ENCODED).expect("Cannot decode base38"),
+            DECODED
+        );
     }
 }
