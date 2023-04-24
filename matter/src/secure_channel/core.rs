@@ -18,8 +18,13 @@
 use core::cell::RefCell;
 
 use crate::{
-    error::*, fabric::FabricMgr, mdns::MdnsMgr, secure_channel::common::*, tlv,
-    transport::proto_ctx::ProtoCtx, utils::rand::Rand,
+    error::*,
+    fabric::FabricMgr,
+    mdns::MdnsMgr,
+    secure_channel::common::*,
+    tlv,
+    transport::proto_ctx::ProtoCtx,
+    utils::{epoch::UtcCalendar, rand::Rand},
 };
 use log::{error, info};
 use num;
@@ -41,9 +46,10 @@ impl<'a> SecureChannel<'a> {
         fabric_mgr: &'a RefCell<FabricMgr>,
         mdns: &'a RefCell<MdnsMgr<'a>>,
         rand: Rand,
+        utc_calendar: UtcCalendar,
     ) -> Self {
         SecureChannel {
-            case: Case::new(fabric_mgr, rand),
+            case: Case::new(fabric_mgr, rand, utc_calendar),
             pase,
             mdns,
         }

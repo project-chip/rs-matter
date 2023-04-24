@@ -16,10 +16,11 @@
  */
 
 use super::{CertConsumer, MAX_DEPTH};
-use crate::error::Error;
-use chrono::{Datelike, TimeZone, Utc}; // TODO
-use core::fmt::Write;
-use log::warn;
+use crate::{
+    error::Error,
+    utils::epoch::{UtcCalendar, MATTER_EPOCH_SECS},
+};
+use core::{fmt::Write, time::Duration};
 
 #[derive(Debug)]
 pub struct ASN1Writer<'a> {
@@ -261,31 +262,34 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
         self.write_str(0x06, oid)
     }
 
-    fn utctime(&mut self, _tag: &str, epoch: u32) -> Result<(), Error> {
-        let mut matter_epoch = Utc
-            .with_ymd_and_hms(2000, 1, 1, 0, 0, 0)
-            .unwrap()
-            .timestamp();
+    fn utctime(&mut self, _tag: &str, epoch: u32, utc_calendar: UtcCalendar) -> Result<(), Error> {
+        let matter_epoch = MATTER_EPOCH_SECS + epoch as u64;
 
-        matter_epoch += epoch as i64;
+        let dt = utc_calendar(Duration::from_secs(matter_epoch as _));
 
-        let dt = match Utc.timestamp_opt(matter_epoch, 0) {
-            chrono::LocalResult::None => return Err(Error::InvalidTime),
-            chrono::LocalResult::Single(s) => s,
-            chrono::LocalResult::Ambiguous(_, a) => {
-                warn!("Ambiguous time for epoch {epoch}; returning latest timestamp: {a}");
-                a
-            }
-        };
+        let mut time_str: heapless::String<32> = heapless::String::<32>::new();
 
-        if dt.year() >= 2050 {
+        if dt.year >= 2050 {
             // If year is >= 2050, ASN.1 requires it to be Generalised Time
-            let mut time_str = heapless::String::<32>::new();
-            write!(&mut time_str, "{}Z", dt.format("%Y%m%d%H%M%S")).unwrap();
+            write!(
+                &mut time_str,
+                "{:04}{:02}{:02}{:02}{:02}{:02}Z",
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+            )
+            .unwrap();
             self.write_str(0x18, time_str.as_bytes())
         } else {
-            let mut time_str = heapless::String::<32>::new();
-            write!(&mut time_str, "{}Z", dt.format("%y%m%d%H%M%S")).unwrap();
+            write!(
+                &mut time_str,
+                "{:02}{:02}{:02}{:02}{:02}{:02}Z",
+                dt.year % 100,
+                dt.month,
+                dt.day,
+                dt.hour,
+                dt.minute,
+                dt.second
+            )
+            .unwrap();
             self.write_str(0x17, time_str.as_bytes())
         }
     }
