@@ -15,14 +15,14 @@
  *    limitations under the License.
  */
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "std", target_os = "macos"))]
 mod sys_macos;
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "std", target_os = "macos"))]
 pub use self::sys_macos::*;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 mod sys_linux;
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 pub use self::sys_linux::*;
 
 pub const SPAKE2_ITERATION_COUNT: u32 = 2000;

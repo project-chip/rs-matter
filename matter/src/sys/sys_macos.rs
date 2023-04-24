@@ -15,32 +15,95 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use std::collections::HashMap;
+
+use crate::{error::Error, mdns::Mdns};
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
 use log::info;
 
-#[allow(dead_code)]
-pub struct SysMdnsService {
-    s: RegisteredDnsService,
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct ServiceId {
+    name: String,
+    service_type: String,
+    port: u16,
 }
 
-/// Publish a mDNS service
-/// name - can be a service name (comma separate subtypes may follow)
-/// regtype - registration type (e.g. _matter_.tcp etc)
-/// port - the port
-pub fn sys_publish_service(
-    name: &str,
-    regtype: &str,
-    port: u16,
-    txt_kvs: &[[&str; 2]],
-) -> Result<SysMdnsService, Error> {
-    let mut builder = DNSServiceBuilder::new(regtype, port).with_name(name);
+pub struct MacOsMdns {
+    services: HashMap<RegisteredDnsService, RegisteredDnsService>,
+}
 
-    info!("mDNS Registration Type {}", regtype);
-    for kvs in txt_kvs {
-        info!("mDNS TXT key {} val {}", kvs[0], kvs[1]);
-        builder = builder.with_key_value(kvs[0].to_string(), kvs[1].to_string());
+impl MacOsMdns {
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
+            services: HashMap::new(),
+        })
     }
-    let s = builder.register().map_err(|_| Error::MdnsError)?;
-    Ok(SysMdnsService { s })
+
+    pub fn add(
+        &mut self,
+        name: &str,
+        service_type: &str,
+        port: u16,
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        info!(
+            "Registering mDNS service {}/{}/{}",
+            name, service_type, port
+        );
+
+        let _ = self.remove(name, service_type, port);
+
+        let mut builder = DNSServiceBuilder::new(service_type, port).with_name(name);
+
+        for kvs in txt_kvs {
+            info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
+            builder = builder.with_key_value(kvs.0.to_string(), kvs.1.to_string());
+        }
+
+        let service = builder.register().map_err(|_| Error::MdnsError)?;
+
+        self.services.insert(
+            ServiceId {
+                name: name.into(),
+                service_type: service_type.into(),
+                port,
+            },
+            service,
+        );
+
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        let id = ServiceId {
+            name: name.into(),
+            service_type: service_type.into(),
+            port,
+        };
+
+        if self.services.remove(&id).is_some() {
+            info!(
+                "Deregistering mDNS service {}/{}/{}",
+                name, service_type, port
+            );
+        }
+
+        Ok(())
+    }
+}
+
+impl Mdns for MacOsMdns {
+    fn add(
+        &mut self,
+        name: &str,
+        service_type: &str,
+        port: u16,
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        MacOsMdns::add(self, name, service_type, port, txt_kvs)
+    }
+
+    fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        MacOsMdns::remove(self, name, service_type, port)
+    }
 }

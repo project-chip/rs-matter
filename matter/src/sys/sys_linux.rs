@@ -16,43 +16,101 @@
  */
 
 use crate::error::Error;
-use lazy_static::lazy_static;
+use crate::mdns::Mdns;
 use libmdns::{Responder, Service};
 use log::info;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 use std::vec::Vec;
 
-#[allow(dead_code)]
-pub struct SysMdnsService {
-    service: Service,
-}
-
-lazy_static! {
-    static ref RESPONDER: Arc<Mutex<Responder>> = Arc::new(Mutex::new(Responder::new().unwrap()));
-}
-
-/// Publish a mDNS service
-/// name - can be a service name (comma separate subtypes may follow)
-/// regtype - registration type (e.g. _matter_.tcp etc)
-/// port - the port
-pub fn sys_publish_service(
-    name: &str,
-    regtype: &str,
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct ServiceId {
+    name: String,
+    service_type: String,
     port: u16,
-    txt_kvs: &[[&str; 2]],
-) -> Result<SysMdnsService, Error> {
-    info!("mDNS Registration Type {}", regtype);
-    info!("mDNS properties {:?}", txt_kvs);
+}
 
-    let mut properties = Vec::new();
-    for kvs in txt_kvs {
-        info!("mDNS TXT key {} val {}", kvs[0], kvs[1]);
-        properties.push(format!("{}={}", kvs[0], kvs[1]));
+pub struct LinuxMdns {
+    responder: Responder,
+    services: HashMap<ServiceId, Service>,
+}
+
+impl LinuxMdns {
+    pub fn new() -> Result<Self, Error> {
+        let responder = Responder::new()?;
+
+        Ok(Self {
+            responder,
+            services: HashMap::new(),
+        })
     }
-    let properties: Vec<&str> = properties.iter().map(|entry| entry.as_str()).collect();
 
-    let responder = RESPONDER.lock().map_err(|_| Error::MdnsError)?;
-    let service = responder.register(regtype.to_owned(), name.to_owned(), port, &properties);
+    pub fn add(
+        &mut self,
+        name: &str,
+        service_type: &str,
+        port: u16,
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        info!(
+            "Registering mDNS service {}/{}/{}",
+            name, service_type, port
+        );
 
-    Ok(SysMdnsService { service })
+        let _ = self.remove(name, service_type, port);
+
+        let mut properties = Vec::new();
+        for kvs in txt_kvs {
+            info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
+            properties.push(format!("{}={}", kvs.0, kvs.1));
+        }
+        let properties: Vec<&str> = properties.iter().map(|entry| entry.as_str()).collect();
+
+        let service =
+            self.responder
+                .register(service_type.to_owned(), name.to_owned(), port, &properties);
+
+        self.services.insert(
+            ServiceId {
+                name: name.into(),
+                service_type: service_type.into(),
+                port,
+            },
+            service,
+        );
+
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        let id = ServiceId {
+            name: name.into(),
+            service_type: service_type.into(),
+            port,
+        };
+
+        if self.services.remove(&id).is_some() {
+            info!(
+                "Deregistering mDNS service {}/{}/{}",
+                name, service_type, port
+            );
+        }
+
+        Ok(())
+    }
+}
+
+impl Mdns for LinuxMdns {
+    fn add(
+        &mut self,
+        name: &str,
+        service_type: &str,
+        port: u16,
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        LinuxMdns::add(self, name, service_type, port, txt_kvs)
+    }
+
+    fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        LinuxMdns::remove(self, name, service_type, port)
+    }
 }
