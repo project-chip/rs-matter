@@ -18,6 +18,7 @@
 use crate::error::Error;
 
 use super::exchange::ExchangeCtx;
+use super::network::Address;
 use super::packet::Packet;
 
 /// This is the context in which a receive packet is being processed
@@ -35,9 +36,7 @@ impl<'a, 'b> ProtoCtx<'a, 'b> {
         Self { exch_ctx, rx, tx }
     }
 
-    pub fn send(&mut self) -> Result<&[u8], Error> {
-        self.exch_ctx.exch.send(self.tx, &mut self.exch_ctx.sess)?;
-
-        Ok(self.tx.as_slice())
+    pub fn send(&mut self) -> Result<Option<Address>, Error> {
+        self.exch_ctx.exch.send(self.tx, &mut self.exch_ctx.sess)
     }
 }

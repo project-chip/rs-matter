@@ -32,6 +32,7 @@ use crate::transport::{exchange, packet::Packet};
 use crate::utils::epoch::{Epoch, UtcCalendar};
 use crate::utils::rand::Rand;
 
+use super::network::Address;
 use super::proto_ctx::ProtoCtx;
 use super::session::CloneData;
 
@@ -45,12 +46,13 @@ enum RecvState {
 }
 
 pub enum RecvAction<'r, 'p> {
-    Send(&'r [u8]),
+    Send(Address, &'r [u8]),
     Interact(ProtoCtx<'r, 'p>),
 }
 
 pub struct RecvCompletion<'r, 'a, 'p> {
     mgr: &'r mut TransportMgr<'a>,
+    addr: Address, // TODO: Not used yet
     rx: &'r mut Packet<'p>,
     tx: &'r mut Packet<'p>,
     state: RecvState,
@@ -90,9 +92,10 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                             self.state = RecvState::Ack;
                         }
 
-                        if reply {
-                            proto_ctx.send()?;
-                            Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                        let addr = if reply { proto_ctx.send()? } else { None };
+
+                        if let Some(addr) = addr {
+                            Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
                         } else {
                             Ok(None)
                         }
@@ -125,14 +128,22 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                 Err(err) => Err(err),
             },
             RecvState::EvictSession => {
-                self.mgr.exch_mgr.evict_session(self.tx)?;
+                let addr = self.mgr.exch_mgr.evict_session(self.tx)?;
                 self.state = RecvState::OpenExchange;
-                Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                if let Some(addr) = addr {
+                    Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
+                } else {
+                    Ok(None)
+                }
             }
             RecvState::EvictSession2(clone_data) => {
-                self.mgr.exch_mgr.evict_session(self.tx)?;
+                let addr = self.mgr.exch_mgr.evict_session(self.tx)?;
                 self.state = RecvState::AddSession(clone_data);
-                Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                if let Some(addr) = addr {
+                    Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
+                } else {
+                    Ok(None)
+                }
             }
             RecvState::Ack => {
                 if let Some(exch_id) = self.mgr.exch_mgr.pending_ack() {
@@ -140,8 +151,8 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
 
                     ReliableMessage::prepare_ack(exch_id, self.tx);
 
-                    self.mgr.exch_mgr.send(exch_id, self.tx)?;
-                    Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                    let addr = self.mgr.exch_mgr.send(exch_id, self.tx)?;
+                    Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
                 } else {
                     Ok(Some(None))
                 }
@@ -220,11 +231,13 @@ impl<'a> TransportMgr<'a> {
 
     pub fn recv<'r, 'p>(
         &'r mut self,
+        addr: Address,
         rx: &'r mut Packet<'p>,
         tx: &'r mut Packet<'p>,
     ) -> RecvCompletion<'r, 'a, 'p> {
         RecvCompletion {
             mgr: self,
+            addr,
             rx,
             tx,
             state: RecvState::New,

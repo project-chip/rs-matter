@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     cluster_basic_information::{self, BasicInfoCluster, BasicInfoConfig},
-    objects::{Cluster, EmptyHandler},
+    objects::{Cluster, EmptyHandler, Endpoint, EndptId},
     sdm::{
         admin_commissioning::{self, AdminCommCluster},
         dev_att::DevAttDataFetcher,
@@ -46,6 +46,14 @@ pub const CLUSTERS: [Cluster<'static>; 7] = [
     noc::CLUSTER,
     access_control::CLUSTER,
 ];
+
+pub fn endpoint(id: EndptId) -> Endpoint<'static> {
+    Endpoint {
+        id,
+        device_type: super::device_types::DEV_TYPE_ROOT_NODE,
+        clusters: &CLUSTERS,
+    }
+}
 
 pub fn handler<'a>(
     endpoint_id: u16,
