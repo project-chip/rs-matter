@@ -15,18 +15,6 @@
  *    limitations under the License.
  */
 
-#[cfg(all(feature = "std", target_os = "macos"))]
-mod sys_macos;
-#[cfg(all(feature = "std", target_os = "macos"))]
-pub use self::sys_macos::*;
-
-#[cfg(all(feature = "std", target_os = "linux"))]
-mod sys_linux;
-#[cfg(all(feature = "std", target_os = "linux"))]
-pub use self::sys_linux::*;
-
-pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
-
 // The Packet Pool that is allocated from. POSIX systems can use
 // higher values unlike embedded systems
 pub const MAX_PACKET_POOL_SIZE: usize = 25;

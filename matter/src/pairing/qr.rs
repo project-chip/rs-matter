@@ -315,10 +315,7 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
 }
 
 pub(super) fn print_qr_code(qr_data: &str) {
-    #[cfg(not(feature = "std"))]
-    {
-        info!("\n QR CODE DATA: {}", qr_data);
-    }
+    info!("QR Code: {}", qr_data);
 
     #[cfg(feature = "std")]
     {

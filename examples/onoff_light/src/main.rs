@@ -48,7 +48,8 @@ fn main() {
         device_name: "OnOff Light",
     };
 
-    let mut mdns = matter::sys::LinuxMdns::new().unwrap();
+    //let mut mdns = matter::mdns::bonjour::BonjourMdns::new().unwrap();
+    let mut mdns = matter::mdns::libmdns::LibMdns::new().unwrap();
 
     let matter = Matter::new_default(&dev_info, &mut mdns);
 
