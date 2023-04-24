@@ -48,7 +48,7 @@ impl UdpListener {
         Ok((size, Address::Udp(addr)))
     }
 
-    pub async fn send(&self, out_buf: &[u8], addr: Address) -> Result<usize, Error> {
+    pub async fn send(&self, addr: Address, out_buf: &[u8]) -> Result<usize, Error> {
         match addr {
             Address::Udp(addr) => self.socket.send_to(out_buf, addr).await.map_err(|e| {
                 info!("Error on the network: {:?}", e);

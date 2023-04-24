@@ -15,7 +15,7 @@ name = "matter"
 path = "src/lib.rs"
 
 [features]
-default = ["std", "crypto_mbedtls"]
+default = ["std", "crypto_mbedtls", "nightly"]
 std = ["alloc", "env_logger", "chrono", "rand", "qrcode", "smol"]
 alloc = []
 nightly = []

@@ -710,14 +710,14 @@ impl ResumeSubscribeReq {
 }
 
 pub trait InteractionHandler {
-    fn handle<'a>(&mut self, ctx: &'a mut ProtoCtx) -> Result<Option<&'a [u8]>, Error>;
+    fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error>;
 }
 
 impl<T> InteractionHandler for &mut T
 where
     T: InteractionHandler,
 {
-    fn handle<'a>(&mut self, ctx: &'a mut ProtoCtx) -> Result<Option<&'a [u8]>, Error> {
+    fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
         (**self).handle(ctx)
     }
 }
@@ -728,7 +728,7 @@ impl<T> InteractionModel<T>
 where
     T: DataHandler,
 {
-    pub fn handle<'a>(&mut self, ctx: &'a mut ProtoCtx) -> Result<Option<&'a [u8]>, Error> {
+    pub fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
         let mut transaction = Transaction::new(&mut ctx.exch_ctx);
 
         let reply =
@@ -738,7 +738,7 @@ where
                 true
             };
 
-        Ok(reply.then_some(ctx.tx.as_slice()))
+        Ok(reply)
     }
 }
 
@@ -747,10 +747,7 @@ impl<T> InteractionModel<T>
 where
     T: crate::data_model::core::asynch::AsyncDataHandler,
 {
-    pub async fn handle_async<'a>(
-        &mut self,
-        ctx: &'a mut ProtoCtx<'_, '_>,
-    ) -> Result<Option<&'a [u8]>, Error> {
+    pub async fn handle_async<'a>(&mut self, ctx: &mut ProtoCtx<'_, '_>) -> Result<bool, Error> {
         let mut transaction = Transaction::new(&mut ctx.exch_ctx);
 
         let reply =
@@ -760,7 +757,7 @@ where
                 true
             };
 
-        Ok(reply.then_some(ctx.tx.as_slice()))
+        Ok(reply)
     }
 }
 
@@ -768,7 +765,7 @@ impl<T> InteractionHandler for InteractionModel<T>
 where
     T: DataHandler,
 {
-    fn handle<'a>(&mut self, ctx: &'a mut ProtoCtx) -> Result<Option<&'a [u8]>, Error> {
+    fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
         InteractionModel::handle(self, ctx)
     }
 }
@@ -782,20 +779,14 @@ pub mod asynch {
     use super::InteractionModel;
 
     pub trait AsyncInteractionHandler {
-        async fn handle<'a>(
-            &mut self,
-            ctx: &'a mut ProtoCtx<'_, '_>,
-        ) -> Result<Option<&'a [u8]>, Error>;
+        async fn handle(&mut self, ctx: &mut ProtoCtx<'_, '_>) -> Result<bool, Error>;
     }
 
     impl<T> AsyncInteractionHandler for &mut T
     where
         T: AsyncInteractionHandler,
     {
-        async fn handle<'a>(
-            &mut self,
-            ctx: &'a mut ProtoCtx<'_, '_>,
-        ) -> Result<Option<&'a [u8]>, Error> {
+        async fn handle(&mut self, ctx: &mut ProtoCtx<'_, '_>) -> Result<bool, Error> {
             (**self).handle(ctx).await
         }
     }
@@ -804,10 +795,7 @@ pub mod asynch {
     where
         T: AsyncDataHandler,
     {
-        async fn handle<'a>(
-            &mut self,
-            ctx: &'a mut ProtoCtx<'_, '_>,
-        ) -> Result<Option<&'a [u8]>, Error> {
+        async fn handle(&mut self, ctx: &mut ProtoCtx<'_, '_>) -> Result<bool, Error> {
             InteractionModel::handle_async(self, ctx).await
         }
     }

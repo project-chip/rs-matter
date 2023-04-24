@@ -99,7 +99,7 @@ impl<'a> Matter<'a> {
     }
 
     pub fn start<const N: usize>(
-        &mut self,
+        &self,
         dev_comm: CommissioningData,
         buf: &mut [u8],
     ) -> Result<(), Error> {
