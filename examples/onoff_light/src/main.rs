@@ -28,8 +28,8 @@ use matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use matter::interaction_model::core::InteractionModel;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::{
-    mgr::RecvAction, mgr::TransportMgr, packet::Packet, packet::MAX_RX_BUF_SIZE,
-    packet::MAX_TX_BUF_SIZE, udp::UdpListener,
+    mgr::RecvAction, mgr::TransportMgr, packet::MAX_RX_BUF_SIZE, packet::MAX_TX_BUF_SIZE,
+    udp::UdpListener,
 };
 
 mod dev_att;
@@ -48,7 +48,7 @@ fn main() {
         device_name: "OnOff Light",
     };
 
-    //let mut mdns = matter::mdns::bonjour::BonjourMdns::new().unwrap();
+    //let mut mdns = matter::mdns::astro::AstroMdns::new().unwrap();
     let mut mdns = matter::mdns::libmdns::LibMdns::new().unwrap();
 
     let matter = Matter::new_default(&dev_info, &mut mdns);
@@ -80,10 +80,7 @@ fn main() {
 
             let (len, addr) = udp.recv(&mut rx_buf).await.unwrap();
 
-            let mut rx = Packet::new_rx(&mut rx_buf[..len]);
-            let mut tx = Packet::new_tx(&mut tx_buf);
-
-            let mut completion = transport.recv(addr, &mut rx, &mut tx);
+            let mut completion = transport.recv(addr, &mut rx_buf[..len], &mut tx_buf);
 
             while let Some(action) = completion.next_action().unwrap() {
                 match action {
@@ -109,8 +106,8 @@ fn main() {
                             InteractionModel(DataModel::new(matter.borrow(), &node, &mut handler));
 
                         if im.handle(&mut ctx).unwrap() {
-                            if let Some(addr) = ctx.send().unwrap() {
-                                udp.send(addr, ctx.tx.as_slice()).await.unwrap();
+                            if ctx.send().unwrap() {
+                                udp.send(ctx.tx.peer, ctx.tx.as_slice()).await.unwrap();
                             }
                         }
                     }

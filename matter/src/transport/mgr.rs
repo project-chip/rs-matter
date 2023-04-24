@@ -28,11 +28,10 @@ use crate::secure_channel::pake::PaseMgr;
 use crate::secure_channel::common::PROTO_ID_SECURE_CHANNEL;
 use crate::secure_channel::core::SecureChannel;
 use crate::transport::mrp::ReliableMessage;
-use crate::transport::{exchange, packet::Packet};
+use crate::transport::{exchange, network::Address, packet::Packet};
 use crate::utils::epoch::{Epoch, UtcCalendar};
 use crate::utils::rand::Rand;
 
-use super::network::Address;
 use super::proto_ctx::ProtoCtx;
 use super::session::CloneData;
 
@@ -52,9 +51,8 @@ pub enum RecvAction<'r, 'p> {
 
 pub struct RecvCompletion<'r, 'a, 'p> {
     mgr: &'r mut TransportMgr<'a>,
-    addr: Address, // TODO: Not used yet
-    rx: &'r mut Packet<'p>,
-    tx: &'r mut Packet<'p>,
+    rx: Packet<'p>,
+    tx: Packet<'p>,
     state: RecvState,
 }
 
@@ -73,91 +71,94 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
     fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'p>>>, Error> {
         self.mgr.exch_mgr.purge();
 
-        match core::mem::replace(&mut self.state, RecvState::New) {
+        let (state, next) = match core::mem::replace(&mut self.state, RecvState::New) {
             RecvState::New => {
-                self.mgr.exch_mgr.get_sess_mgr().decode(self.rx)?;
-                self.state = RecvState::OpenExchange;
-                Ok(None)
+                self.mgr.exch_mgr.get_sess_mgr().decode(&mut self.rx)?;
+                (RecvState::OpenExchange, None)
             }
-            RecvState::OpenExchange => match self.mgr.exch_mgr.recv(self.rx) {
+            RecvState::OpenExchange => match self.mgr.exch_mgr.recv(&mut self.rx) {
                 Ok(Some(exch_ctx)) => {
                     if self.rx.get_proto_id() == PROTO_ID_SECURE_CHANNEL {
-                        let mut proto_ctx = ProtoCtx::new(exch_ctx, self.rx, self.tx);
+                        let mut proto_ctx = ProtoCtx::new(exch_ctx, &self.rx, &mut self.tx);
 
                         let (reply, clone_data) = self.mgr.secure_channel.handle(&mut proto_ctx)?;
 
-                        if let Some(clone_data) = clone_data {
-                            self.state = RecvState::AddSession(clone_data);
+                        let state = if let Some(clone_data) = clone_data {
+                            RecvState::AddSession(clone_data)
                         } else {
-                            self.state = RecvState::Ack;
-                        }
+                            RecvState::Ack
+                        };
 
-                        let addr = if reply { proto_ctx.send()? } else { None };
-
-                        if let Some(addr) = addr {
-                            Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
+                        if reply {
+                            if proto_ctx.send()? {
+                                (
+                                    state,
+                                    Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
+                                )
+                            } else {
+                                (state, None)
+                            }
                         } else {
-                            Ok(None)
+                            (state, None)
                         }
                     } else {
-                        let proto_ctx = ProtoCtx::new(exch_ctx, self.rx, self.tx);
-                        self.state = RecvState::Ack;
+                        let proto_ctx = ProtoCtx::new(exch_ctx, &self.rx, &mut self.tx);
 
-                        Ok(Some(Some(RecvAction::Interact(proto_ctx))))
+                        (RecvState::Ack, Some(Some(RecvAction::Interact(proto_ctx))))
                     }
                 }
-                Ok(None) => {
-                    self.state = RecvState::Ack;
-                    Ok(None)
-                }
-                Err(Error::NoSpace) => {
-                    self.state = RecvState::EvictSession;
-                    Ok(None)
-                }
-                Err(err) => Err(err),
+                Ok(None) => (RecvState::Ack, None),
+                Err(Error::Duplicate) => (RecvState::Ack, Some(None)),
+                Err(Error::NoSpace) => (RecvState::EvictSession, None),
+                Err(err) => Err(err)?,
             },
             RecvState::AddSession(clone_data) => match self.mgr.exch_mgr.add_session(&clone_data) {
-                Ok(_) => {
-                    self.state = RecvState::Ack;
-                    Ok(None)
-                }
-                Err(Error::NoSpace) => {
-                    self.state = RecvState::EvictSession2(clone_data);
-                    Ok(None)
-                }
-                Err(err) => Err(err),
+                Ok(_) => (RecvState::Ack, None),
+                Err(Error::NoSpace) => (RecvState::EvictSession2(clone_data), None),
+                Err(err) => Err(err)?,
             },
             RecvState::EvictSession => {
-                let addr = self.mgr.exch_mgr.evict_session(self.tx)?;
-                self.state = RecvState::OpenExchange;
-                if let Some(addr) = addr {
-                    Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
+                if self.mgr.exch_mgr.evict_session(&mut self.tx)? {
+                    (
+                        RecvState::OpenExchange,
+                        Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
+                    )
                 } else {
-                    Ok(None)
+                    (RecvState::EvictSession, None)
                 }
             }
             RecvState::EvictSession2(clone_data) => {
-                let addr = self.mgr.exch_mgr.evict_session(self.tx)?;
-                self.state = RecvState::AddSession(clone_data);
-                if let Some(addr) = addr {
-                    Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
+                if self.mgr.exch_mgr.evict_session(&mut self.tx)? {
+                    (
+                        RecvState::AddSession(clone_data),
+                        Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
+                    )
                 } else {
-                    Ok(None)
+                    (RecvState::EvictSession2(clone_data), None)
                 }
             }
             RecvState::Ack => {
                 if let Some(exch_id) = self.mgr.exch_mgr.pending_ack() {
                     info!("Sending MRP Standalone ACK for  exch {}", exch_id);
 
-                    ReliableMessage::prepare_ack(exch_id, self.tx);
+                    ReliableMessage::prepare_ack(exch_id, &mut self.tx);
 
-                    let addr = self.mgr.exch_mgr.send(exch_id, self.tx)?;
-                    Ok(Some(Some(RecvAction::Send(addr, self.tx.as_slice()))))
+                    if self.mgr.exch_mgr.send(exch_id, &mut self.tx)? {
+                        (
+                            RecvState::Ack,
+                            Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
+                        )
+                    } else {
+                        (RecvState::Ack, None)
+                    }
                 } else {
-                    Ok(Some(None))
+                    (RecvState::Ack, Some(None))
                 }
             }
-        }
+        };
+
+        self.state = state;
+        Ok(next)
     }
 }
 
@@ -232,12 +233,16 @@ impl<'a> TransportMgr<'a> {
     pub fn recv<'r, 'p>(
         &'r mut self,
         addr: Address,
-        rx: &'r mut Packet<'p>,
-        tx: &'r mut Packet<'p>,
+        rx_buf: &'p mut [u8],
+        tx_buf: &'p mut [u8],
     ) -> RecvCompletion<'r, 'a, 'p> {
+        let mut rx = Packet::new_rx(rx_buf);
+        let tx = Packet::new_tx(tx_buf);
+
+        rx.peer = addr;
+
         RecvCompletion {
             mgr: self,
-            addr,
             rx,
             tx,
             state: RecvState::New,

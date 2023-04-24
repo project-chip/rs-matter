@@ -31,10 +31,7 @@ use crate::utils::rand::Rand;
 use heapless::LinearMap;
 
 use super::session::CloneData;
-use super::{
-    mrp::ReliableMessage, network::Address, packet::Packet, session::SessionHandle,
-    session::SessionMgr,
-};
+use super::{mrp::ReliableMessage, packet::Packet, session::SessionHandle, session::SessionMgr};
 
 pub struct ExchangeCtx<'a> {
     pub exch: &'a mut Exchange,
@@ -43,7 +40,7 @@ pub struct ExchangeCtx<'a> {
 }
 
 impl<'a> ExchangeCtx<'a> {
-    pub fn send(&mut self, tx: &mut Packet) -> Result<Option<Address>, Error> {
+    pub fn send(&mut self, tx: &mut Packet) -> Result<bool, Error> {
         self.exch.send(tx, &mut self.sess)
     }
 }
@@ -201,10 +198,10 @@ impl Exchange {
         &mut self,
         tx: &mut Packet,
         session: &mut SessionHandle,
-    ) -> Result<Option<Address>, Error> {
+    ) -> Result<bool, Error> {
         if self.state == State::Terminate {
             info!("Skipping tx for terminated exchange {}", self.id);
-            return Ok(None);
+            return Ok(false);
         }
 
         trace!("payload: {:x?}", tx.as_mut_slice());
@@ -224,7 +221,7 @@ impl Exchange {
         self.mrp.pre_send(tx)?;
         session.send(tx)?;
 
-        Ok(Some(session.get_peer_addr()))
+        Ok(true)
     }
 }
 
@@ -359,13 +356,11 @@ impl ExchangeMgr {
         }
     }
 
-    pub fn send(&mut self, exch_id: u16, tx: &mut Packet) -> Result<Address, Error> {
+    pub fn send(&mut self, exch_id: u16, tx: &mut Packet) -> Result<bool, Error> {
         let exchange =
             ExchangeMgr::_get_with_id(&mut self.exchanges, exch_id).ok_or(Error::NoExchange)?;
         let mut session = self.sess_mgr.get_session_handle(exchange.sess_idx);
-        exchange.send(tx, &mut session)?;
-
-        Ok(session.get_peer_addr())
+        exchange.send(tx, &mut session)
     }
 
     pub fn purge(&mut self) {
@@ -388,7 +383,7 @@ impl ExchangeMgr {
             .map(|(exch_id, _)| *exch_id)
     }
 
-    pub fn evict_session(&mut self, tx: &mut Packet) -> Result<Option<Address>, Error> {
+    pub fn evict_session(&mut self, tx: &mut Packet) -> Result<bool, Error> {
         if let Some(index) = self.sess_mgr.get_session_for_eviction() {
             info!("Sessions full, vacating session with index: {}", index);
             // If we enter here, we have an LRU session that needs to be reclaimed
@@ -431,13 +426,11 @@ impl ExchangeMgr {
                 self.exchanges.remove(&exch_id);
             }
 
-            let addr = session.get_peer_addr();
-
             self.sess_mgr.remove(index);
 
-            Ok(Some(addr))
+            Ok(true)
         } else {
-            Ok(None)
+            Ok(false)
         }
     }
 
@@ -571,7 +564,7 @@ mod tests {
             let mut buf = [0; MAX_TX_BUF_SIZE];
             let tx = &mut Packet::new_tx(&mut buf);
             let evicted = mgr.evict_session(tx).unwrap();
-            assert!(evicted.is_some());
+            assert!(evicted);
 
             let session = mgr
                 .add_session(&get_clone_data(new_peer_sess_id, new_local_sess_id))

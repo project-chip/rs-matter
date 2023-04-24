@@ -23,13 +23,15 @@ pub trait Mdns {
     fn add(
         &mut self,
         name: &str,
-        service_type: &str,
+        service: &str,
+        protocol: &str,
         port: u16,
         service_subtypes: &[&str],
         txt_kvs: &[(&str, &str)],
     ) -> Result<(), Error>;
 
-    fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error>;
+    fn remove(&mut self, name: &str, service: &str, protocol: &str, port: u16)
+        -> Result<(), Error>;
 }
 
 impl<T> Mdns for &mut T
@@ -39,16 +41,23 @@ where
     fn add(
         &mut self,
         name: &str,
-        service_type: &str,
+        service: &str,
+        protocol: &str,
         port: u16,
         service_subtypes: &[&str],
         txt_kvs: &[(&str, &str)],
     ) -> Result<(), Error> {
-        (**self).add(name, service_type, port, service_subtypes, txt_kvs)
+        (**self).add(name, service, protocol, port, service_subtypes, txt_kvs)
     }
 
-    fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
-        (**self).remove(name, service_type, port)
+    fn remove(
+        &mut self,
+        name: &str,
+        service: &str,
+        protocol: &str,
+        port: u16,
+    ) -> Result<(), Error> {
+        (**self).remove(name, service, protocol, port)
     }
 }
 
@@ -58,7 +67,8 @@ impl Mdns for DummyMdns {
     fn add(
         &mut self,
         _name: &str,
-        _service_type: &str,
+        _service: &str,
+        _protocol: &str,
         _port: u16,
         _service_subtypes: &[&str],
         _txt_kvs: &[(&str, &str)],
@@ -66,7 +76,13 @@ impl Mdns for DummyMdns {
         Ok(())
     }
 
-    fn remove(&mut self, _name: &str, _service_type: &str, _port: u16) -> Result<(), Error> {
+    fn remove(
+        &mut self,
+        _name: &str,
+        _service: &str,
+        _protocol: &str,
+        _port: u16,
+    ) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -117,7 +133,7 @@ impl<'a> MdnsMgr<'a> {
         match mode {
             ServiceMode::Commissioned => {
                 self.mdns
-                    .add(name, "_matter._tcp", self.matter_port, &[], &[])
+                    .add(name, "_matter", "_tcp", self.matter_port, &[], &[])
             }
             ServiceMode::Commissionable(discriminator) => {
                 let discriminator_str = Self::get_discriminator_str(discriminator);
@@ -136,7 +152,8 @@ impl<'a> MdnsMgr<'a> {
 
                 self.mdns.add(
                     name,
-                    "_matter._udp",
+                    "_matterc",
+                    "_udp",
                     self.matter_port,
                     &[
                         &self.get_long_service_subtype(discriminator),
@@ -150,9 +167,11 @@ impl<'a> MdnsMgr<'a> {
 
     pub fn unpublish_service(&mut self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         match mode {
-            ServiceMode::Commissioned => self.mdns.remove(name, "_matter._tcp", self.matter_port),
+            ServiceMode::Commissioned => {
+                self.mdns.remove(name, "_matter", "_tcp", self.matter_port)
+            }
             ServiceMode::Commissionable(_) => {
-                self.mdns.remove(name, "_matter._udp", self.matter_port)
+                self.mdns.remove(name, "_matterc", "_udp", self.matter_port)
             }
         }
     }
@@ -193,8 +212,8 @@ impl<'a> MdnsMgr<'a> {
     }
 }
 
-#[cfg(all(feature = "std", feature = "bonjour"))]
-pub mod bonjour {
+#[cfg(all(feature = "std", feature = "astro-dnssd"))]
+pub mod astro {
     use std::collections::HashMap;
 
     use super::Mdns;
@@ -205,15 +224,16 @@ pub mod bonjour {
     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub struct ServiceId {
         name: String,
-        service_type: String,
+        service: String,
+        protocol: String,
         port: u16,
     }
 
-    pub struct BonjourMdns {
-        services: HashMap<RegisteredDnsService, RegisteredDnsService>,
+    pub struct AstroMdns {
+        services: HashMap<ServiceId, RegisteredDnsService>,
     }
 
-    impl BonjourMdns {
+    impl AstroMdns {
         pub fn new() -> Result<Self, Error> {
             Ok(Self {
                 services: HashMap::new(),
@@ -223,56 +243,65 @@ pub mod bonjour {
         pub fn add(
             &mut self,
             name: &str,
-            service_type: &str,
+            service: &str,
+            protocol: &str,
             port: u16,
             service_subtypes: &[&str],
             txt_kvs: &[(&str, &str)],
         ) -> Result<(), Error> {
             info!(
-                "Registering mDNS service {}/{}/{}",
-                name, service_type, port
+                "Registering mDNS service {}/{}.{} [{:?}]/{}",
+                name, service, protocol, service_subtypes, port
             );
 
-            let _ = self.remove(name, service_type, port);
+            let _ = self.remove(name, service, protocol, port);
 
             let composite_service_type = if !service_subtypes.is_empty() {
-                format!("{}{}", service_type, service_subtypes.join(","))
+                format!("{}.{},{}", service, protocol, service_subtypes.join(","))
             } else {
-                service_type
+                format!("{}.{}", service, protocol)
             };
 
-            let mut builder = DNSServiceBuilder::new(composite_service_type, port).with_name(name);
+            let mut builder = DNSServiceBuilder::new(&composite_service_type, port).with_name(name);
 
             for kvs in txt_kvs {
                 info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
                 builder = builder.with_key_value(kvs.0.to_string(), kvs.1.to_string());
             }
 
-            let service = builder.register().map_err(|_| Error::MdnsError)?;
+            let svc = builder.register().map_err(|_| Error::MdnsError)?;
 
             self.services.insert(
                 ServiceId {
                     name: name.into(),
-                    service_type: service_type.into(),
+                    service: service.into(),
+                    protocol: protocol.into(),
                     port,
                 },
-                service,
+                svc,
             );
 
             Ok(())
         }
 
-        pub fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        pub fn remove(
+            &mut self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
             let id = ServiceId {
                 name: name.into(),
-                service_type: service_type.into(),
+                service: service.into(),
+                protocol: protocol.into(),
                 port,
             };
 
             if self.services.remove(&id).is_some() {
                 info!(
-                    "Deregistering mDNS service {}/{}/{}",
-                    name, service_type, port
+                    "Deregistering mDNS service {}/{}.{}/{}",
+                    name, service, protocol, port
                 );
             }
 
@@ -280,23 +309,171 @@ pub mod bonjour {
         }
     }
 
-    impl Mdns for BonjourMdns {
+    impl Mdns for AstroMdns {
         fn add(
             &mut self,
             name: &str,
-            service_type: &str,
+            service: &str,
+            protocol: &str,
             port: u16,
             service_subtypes: &[&str],
             txt_kvs: &[(&str, &str)],
         ) -> Result<(), Error> {
-            BonjourMdns::add(self, name, service_type, port, service_subtypes, txt_kvs)
+            AstroMdns::add(
+                self,
+                name,
+                service,
+                protocol,
+                port,
+                service_subtypes,
+                txt_kvs,
+            )
         }
 
-        fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
-            BonjourMdns::remove(self, name, service_type, port)
+        fn remove(
+            &mut self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
+            AstroMdns::remove(self, name, service, protocol, port)
         }
     }
 }
+
+// TODO: Maybe future
+// #[cfg(all(feature = "std", feature = "zeroconf"))]
+// pub mod zeroconf {
+//     use std::collections::HashMap;
+
+//     use super::Mdns;
+//     use crate::error::Error;
+//     use log::info;
+//     use zeroconf::prelude::*;
+//     use zeroconf::{MdnsService, ServiceType, TxtRecord};
+
+//     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+//     pub struct ServiceId {
+//         name: String,
+//         service: String,
+//         protocol: String,
+//         port: u16,
+//     }
+
+//     pub struct ZeroconfMdns {
+//         services: HashMap<ServiceId, MdnsService>,
+//     }
+
+//     impl ZeroconfMdns {
+//         pub fn new() -> Result<Self, Error> {
+//             Ok(Self {
+//                 services: HashMap::new(),
+//             })
+//         }
+
+//         pub fn add(
+//             &mut self,
+//             name: &str,
+//             service: &str,
+//             protocol: &str,
+//             port: u16,
+//             service_subtypes: &[&str],
+//             txt_kvs: &[(&str, &str)],
+//         ) -> Result<(), Error> {
+//             info!(
+//                 "Registering mDNS service {}/{}.{} [{:?}]/{}",
+//                 name, service, protocol, service_subtypes, port
+//             );
+
+//             let _ = self.remove(name, service, protocol, port);
+
+//             let mut svc = MdnsService::new(
+//                 ServiceType::with_sub_types(service, protocol, service_subtypes.into()).unwrap(),
+//                 port,
+//             );
+
+//             let mut txt = TxtRecord::new();
+
+//             for kvs in txt_kvs {
+//                 info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
+//                 txt.insert(kvs.0, kvs.1);
+//             }
+
+//             svc.set_txt_record(txt);
+
+//             //let event_loop = svc.register().map_err(|_| Error::MdnsError)?;
+
+//             self.services.insert(
+//                 ServiceId {
+//                     name: name.into(),
+//                     service: service.into(),
+//                     protocol: protocol.into(),
+//                     port,
+//                 },
+//                 svc,
+//             );
+
+//             Ok(())
+//         }
+
+//         pub fn remove(
+//             &mut self,
+//             name: &str,
+//             service: &str,
+//             protocol: &str,
+//             port: u16,
+//         ) -> Result<(), Error> {
+//             let id = ServiceId {
+//                 name: name.into(),
+//                 service: service.into(),
+//                 protocol: protocol.into(),
+//                 port,
+//             };
+
+//             if self.services.remove(&id).is_some() {
+//                 info!(
+//                     "Deregistering mDNS service {}.{}/{}/{}",
+//                     name, service, protocol, port
+//                 );
+//             }
+
+//             Ok(())
+//         }
+//     }
+
+//     impl Mdns for ZeroconfMdns {
+//         fn add(
+//             &mut self,
+//             name: &str,
+//             service: &str,
+//             protocol: &str,
+//             port: u16,
+//             service_subtypes: &[&str],
+//             txt_kvs: &[(&str, &str)],
+//         ) -> Result<(), Error> {
+//             ZeroconfMdns::add(
+//                 self,
+//                 name,
+//                 service,
+//                 protocol,
+//                 port,
+//                 service_subtypes,
+//                 txt_kvs,
+//             )
+//         }
+
+//         fn remove(
+//             &mut self,
+//             name: &str,
+//             service: &str,
+//             protocol: &str,
+//             port: u16,
+//         ) -> Result<(), Error> {
+//             ZeroconfMdns::remove(self, name, service, protocol, port)
+//         }
+//     }
+// }
 
 #[cfg(feature = "std")]
 pub mod libmdns {
@@ -310,7 +487,8 @@ pub mod libmdns {
     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub struct ServiceId {
         name: String,
-        service_type: String,
+        service: String,
+        protocol: String,
         port: u16,
     }
 
@@ -332,16 +510,17 @@ pub mod libmdns {
         pub fn add(
             &mut self,
             name: &str,
-            service_type: &str,
+            service: &str,
+            protocol: &str,
             port: u16,
             txt_kvs: &[(&str, &str)],
         ) -> Result<(), Error> {
             info!(
-                "Registering mDNS service {}/{}/{}",
-                name, service_type, port
+                "Registering mDNS service {}/{}.{}/{}",
+                name, service, protocol, port
             );
 
-            let _ = self.remove(name, service_type, port);
+            let _ = self.remove(name, service, protocol, port);
 
             let mut properties = Vec::new();
             for kvs in txt_kvs {
@@ -350,8 +529,8 @@ pub mod libmdns {
             }
             let properties: Vec<&str> = properties.iter().map(|entry| entry.as_str()).collect();
 
-            let service = self.responder.register(
-                service_type.to_owned(),
+            let svc = self.responder.register(
+                format!("{}.{}", service, protocol),
                 name.to_owned(),
                 port,
                 &properties,
@@ -360,26 +539,34 @@ pub mod libmdns {
             self.services.insert(
                 ServiceId {
                     name: name.into(),
-                    service_type: service_type.into(),
+                    service: service.into(),
+                    protocol: protocol.into(),
                     port,
                 },
-                service,
+                svc,
             );
 
             Ok(())
         }
 
-        pub fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
+        pub fn remove(
+            &mut self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
             let id = ServiceId {
                 name: name.into(),
-                service_type: service_type.into(),
+                service: service.into(),
+                protocol: protocol.into(),
                 port,
             };
 
             if self.services.remove(&id).is_some() {
                 info!(
-                    "Deregistering mDNS service {}/{}/{}",
-                    name, service_type, port
+                    "Deregistering mDNS service {}/{}.{}/{}",
+                    name, service, protocol, port
                 );
             }
 
@@ -391,20 +578,28 @@ pub mod libmdns {
         fn add(
             &mut self,
             name: &str,
-            service_type: &str,
+            service: &str,
+            protocol: &str,
             port: u16,
             _service_subtypes: &[&str],
             txt_kvs: &[(&str, &str)],
         ) -> Result<(), Error> {
-            LibMdns::add(self, name, service_type, port, txt_kvs)
+            LibMdns::add(self, name, service, protocol, port, txt_kvs)
         }
 
-        fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
-            LibMdns::remove(self, name, service_type, port)
+        fn remove(
+            &mut self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
+            LibMdns::remove(self, name, service, protocol, port)
         }
     }
 }
 
+// TODO: Maybe future
 // #[cfg(feature = "std")]
 // pub mod simplemdns {
 //     use std::net::Ipv4Addr;
