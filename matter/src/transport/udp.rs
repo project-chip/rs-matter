@@ -56,7 +56,7 @@ impl UdpListener {
             Error::Network
         })?;
 
-        info!("Got packet: {:?} from addr {:?}", in_buf, addr);
+        info!("Got packet: {:?} from addr {:?}", &in_buf[..size], addr);
 
         Ok((size, Address::Udp(addr)))
     }
