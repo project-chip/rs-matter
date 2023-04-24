@@ -15,13 +15,10 @@
  *    limitations under the License.
  */
 
-use alloc::string::FromUtf8Error;
-use core::{array::TryFromSliceError, fmt};
+use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
 use async_channel::{SendError, TryRecvError};
 use log::error;
-
-extern crate alloc;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Error {
@@ -166,8 +163,8 @@ impl<T> From<SendError<T>> for Error {
     }
 }
 
-impl From<FromUtf8Error> for Error {
-    fn from(_e: FromUtf8Error) -> Self {
+impl From<Utf8Error> for Error {
+    fn from(_e: Utf8Error) -> Self {
         Self::Utf8Fail
     }
 }

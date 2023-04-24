@@ -349,7 +349,9 @@ impl<'a> Case<'a> {
             verifier = verifier.add_cert(icac)?;
         }
 
-        verifier.add_cert(&fabric.root_ca)?.finalise()?;
+        verifier
+            .add_cert(&Cert::new(&fabric.root_ca)?)?
+            .finalise()?;
         Ok(())
     }
 
@@ -481,9 +483,9 @@ impl<'a> Case<'a> {
         let mut write_buf = WriteBuf::new(out);
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
-        tw.str16_as(TagType::Context(1), |buf| fabric.noc.as_tlv(buf))?;
-        if let Some(icac_cert) = &fabric.icac {
-            tw.str16_as(TagType::Context(2), |buf| icac_cert.as_tlv(buf))?
+        tw.str16(TagType::Context(1), &fabric.noc)?;
+        if let Some(icac_cert) = fabric.icac.as_ref() {
+            tw.str16(TagType::Context(2), icac_cert)?
         };
 
         tw.str8(TagType::Context(3), signature)?;
@@ -523,9 +525,9 @@ impl<'a> Case<'a> {
         let mut write_buf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut write_buf);
         tw.start_struct(TagType::Anonymous)?;
-        tw.str16_as(TagType::Context(1), |buf| fabric.noc.as_tlv(buf))?;
-        if let Some(icac_cert) = &fabric.icac {
-            tw.str16_as(TagType::Context(2), |buf| icac_cert.as_tlv(buf))?;
+        tw.str16(TagType::Context(1), &fabric.noc)?;
+        if let Some(icac_cert) = fabric.icac.as_deref() {
+            tw.str16(TagType::Context(2), icac_cert)?;
         }
         tw.str8(TagType::Context(3), our_pub_key)?;
         tw.str8(TagType::Context(4), peer_pub_key)?;

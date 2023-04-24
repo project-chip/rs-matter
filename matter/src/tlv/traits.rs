@@ -17,13 +17,9 @@
 
 use super::{ElementType, TLVContainerIterator, TLVElement, TLVWriter, TagType};
 use crate::error::Error;
-use alloc::borrow::ToOwned;
-use alloc::{string::String, vec::Vec};
 use core::fmt::Debug;
 use core::slice::Iter;
 use log::error;
-
-extern crate alloc;
 
 pub trait FromTLV<'a> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error>
@@ -118,14 +114,11 @@ totlv_for!(i8 u8 u16 u32 u64 bool);
 //
 // - UtfStr, OctetStr: These are versions that map to utfstr and ostr in the TLV spec
 //     - These only have references into the original list
-// - String, Vec<u8>: Is the owned version of utfstr and ostr, data is cloned into this
-//     - String is only partially implemented
 //
 // - TLVArray: Is an array of entries, with reference within the original list
-// - TLVArrayOwned: Is the owned version of this, data is cloned into this
 
 /// Implements UTFString from the spec
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct UtfStr<'a>(pub &'a [u8]);
 
 impl<'a> UtfStr<'a> {
@@ -135,10 +128,6 @@ impl<'a> UtfStr<'a> {
 
     pub fn as_str(&self) -> Result<&str, Error> {
         core::str::from_utf8(self.0).map_err(|_| Error::Invalid)
-    }
-
-    pub fn to_string(self) -> Result<String, Error> {
-        String::from_utf8(self.0.to_vec()).map_err(|_| Error::Invalid)
     }
 }
 
@@ -155,7 +144,7 @@ impl<'a> FromTLV<'a> for UtfStr<'a> {
 }
 
 /// Implements OctetString from the spec
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct OctetStr<'a>(pub &'a [u8]);
 
 impl<'a> OctetStr<'a> {
@@ -173,41 +162,6 @@ impl<'a> FromTLV<'a> for OctetStr<'a> {
 impl<'a> ToTLV for OctetStr<'a> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.str16(tag, self.0)
-    }
-}
-
-/// Implements the Owned version of Octet String
-impl FromTLV<'_> for Vec<u8> {
-    fn from_tlv(t: &TLVElement) -> Result<Vec<u8>, Error> {
-        t.slice().map(|x| x.to_owned())
-    }
-}
-
-impl ToTLV for Vec<u8> {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
-        tw.str16(tag, self.as_slice())
-    }
-}
-
-/// Implements the Owned version of UTF String
-impl FromTLV<'_> for String {
-    fn from_tlv(t: &TLVElement) -> Result<String, Error> {
-        match t.slice() {
-            Ok(x) => {
-                if let Ok(s) = String::from_utf8(x.to_vec()) {
-                    Ok(s)
-                } else {
-                    Err(Error::Invalid)
-                }
-            }
-            Err(e) => Err(e),
-        }
-    }
-}
-
-impl ToTLV for String {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
-        tw.utf16(tag, self.as_bytes())
     }
 }
 
@@ -276,37 +230,6 @@ impl<T: ToTLV> ToTLV for Nullable<T> {
             Nullable::Null => tw.null(tag),
             Nullable::NotNull(s) => s.to_tlv(tw, tag),
         }
-    }
-}
-
-/// Owned version of a TLVArray
-pub struct TLVArrayOwned<T>(Vec<T>);
-impl<'a, T: FromTLV<'a>> FromTLV<'a> for TLVArrayOwned<T> {
-    fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
-        t.confirm_array()?;
-        let mut vec = Vec::<T>::new();
-        if let Some(tlv_iter) = t.enter() {
-            for element in tlv_iter {
-                vec.push(T::from_tlv(&element)?);
-            }
-        }
-        Ok(Self(vec))
-    }
-}
-
-impl<T: ToTLV> ToTLV for TLVArrayOwned<T> {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.start_array(tag_type)?;
-        for t in &self.0 {
-            t.to_tlv(tw, TagType::Anonymous)?;
-        }
-        tw.end_container()
-    }
-}
-
-impl<T> TLVArrayOwned<T> {
-    pub fn iter(&self) -> Iter<T> {
-        self.0.iter()
     }
 }
 
@@ -390,18 +313,23 @@ where
     }
 }
 
-impl<'a, T: ToTLV> ToTLV for TLVArray<'a, T> {
+impl<'a, T: FromTLV<'a> + Copy + ToTLV> ToTLV for TLVArray<'a, T> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        match *self {
-            Self::Slice(s) => {
-                tw.start_array(tag_type)?;
-                for a in s {
-                    a.to_tlv(tw, TagType::Anonymous)?;
-                }
-                tw.end_container()
-            }
-            Self::Ptr(t) => t.to_tlv(tw, tag_type),
+        tw.start_array(tag_type)?;
+        for a in self.iter() {
+            a.to_tlv(tw, TagType::Anonymous)?;
         }
+        tw.end_container()
+        // match *self {
+        //     Self::Slice(s) => {
+        //         tw.start_array(tag_type)?;
+        //         for a in s {
+        //             a.to_tlv(tw, TagType::Anonymous)?;
+        //         }
+        //         tw.end_container()
+        //     }
+        //     Self::Ptr(t) => t.to_tlv(tw, tag_type), <-- TODO: this fails the unit tests of Cert from/to TLV
+        // }
     }
 }
 
@@ -414,10 +342,17 @@ impl<'a, T> FromTLV<'a> for TLVArray<'a, T> {
 
 impl<'a, T: Debug + ToTLV + FromTLV<'a> + Copy> Debug for TLVArray<'a, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "TLVArray [")?;
+        let mut first = true;
         for i in self.iter() {
-            writeln!(f, "{:?}", i)?;
+            if !first {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{:?}", i)?;
+            first = false;
         }
-        writeln!(f)
+        write!(f, "]")
     }
 }
 
