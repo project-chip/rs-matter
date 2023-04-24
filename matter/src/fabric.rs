@@ -21,7 +21,7 @@ use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use log::{error, info};
 
 use crate::{
-    cert::Cert,
+    cert::{Cert, MAX_CERT_TLV_LEN},
     crypto::{self, hkdf_sha256, HmacSha256, KeyPair},
     error::Error,
     group_keys::KeySet,
@@ -30,7 +30,6 @@ use crate::{
     tlv::{OctetStr, TLVWriter, TagType, ToTLV, UtfStr},
 };
 
-const MAX_CERT_TLV_LEN: usize = 300;
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
 macro_rules! fb_key {
@@ -72,9 +71,9 @@ pub struct Fabric {
     fabric_id: u64,
     vendor_id: u16,
     key_pair: KeyPair,
-    pub root_ca: Cert,
-    pub icac: Option<Cert>,
-    pub noc: Cert,
+    pub root_ca: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
+    pub icac: Option<heapless::Vec<u8, { MAX_CERT_TLV_LEN }>>,
+    pub noc: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
     pub ipk: KeySet,
     label: heapless::String<32>,
     mdns_service_name: heapless::String<33>,
@@ -83,20 +82,25 @@ pub struct Fabric {
 impl Fabric {
     pub fn new(
         key_pair: KeyPair,
-        root_ca: Cert,
-        icac: Option<Cert>,
-        noc: Cert,
+        root_ca: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
+        icac: Option<heapless::Vec<u8, { MAX_CERT_TLV_LEN }>>,
+        noc: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
         ipk: &[u8],
         vendor_id: u16,
         label: &str,
     ) -> Result<Self, Error> {
-        let node_id = noc.get_node_id()?;
-        let fabric_id = noc.get_fabric_id()?;
+        let (node_id, fabric_id) = {
+            let noc_p = Cert::new(&noc)?;
+            (noc_p.get_node_id()?, noc_p.get_fabric_id()?)
+        };
 
         let mut compressed_id = [0_u8; COMPRESSED_FABRIC_ID_LEN];
 
-        Fabric::get_compressed_id(root_ca.get_pubkey(), fabric_id, &mut compressed_id)?;
-        let ipk = KeySet::new(ipk, &compressed_id)?;
+        let ipk = {
+            let root_ca_p = Cert::new(&root_ca)?;
+            Fabric::get_compressed_id(root_ca_p.get_pubkey(), fabric_id, &mut compressed_id)?;
+            KeySet::new(ipk, &compressed_id)?
+        };
 
         let mut mdns_service_name = heapless::String::<33>::new();
         for c in compressed_id {
@@ -144,7 +148,7 @@ impl Fabric {
         let mut mac = HmacSha256::new(self.ipk.op_key())?;
 
         mac.update(random)?;
-        mac.update(self.root_ca.get_pubkey())?;
+        mac.update(self.get_root_ca()?.get_pubkey())?;
 
         let mut buf: [u8; 8] = [0; 8];
         LittleEndian::write_u64(&mut buf, self.fabric_id);
@@ -174,15 +178,25 @@ impl Fabric {
         self.fabric_id
     }
 
-    pub fn get_fabric_desc(&self, fab_idx: u8) -> FabricDescriptor {
-        FabricDescriptor {
-            root_public_key: OctetStr::new(self.root_ca.get_pubkey()),
+    pub fn get_root_ca(&self) -> Result<Cert<'_>, Error> {
+        Cert::new(&self.root_ca)
+    }
+
+    pub fn get_fabric_desc<'a>(
+        &'a self,
+        fab_idx: u8,
+        root_ca_cert: &'a Cert,
+    ) -> Result<FabricDescriptor<'a>, Error> {
+        let desc = FabricDescriptor {
+            root_public_key: OctetStr::new(root_ca_cert.get_pubkey()),
             vendor_id: self.vendor_id,
             fabric_id: self.fabric_id,
             node_id: self.node_id,
             label: UtfStr(self.label.as_bytes()),
             fab_idx: Some(fab_idx),
-        }
+        };
+
+        Ok(desc)
     }
 
     fn store<T>(&self, index: usize, mut psm: T) -> Result<(), Error>
@@ -191,19 +205,13 @@ impl Fabric {
     {
         let mut _kb = heapless::String::<32>::new();
 
-        let mut buf = [0u8; MAX_CERT_TLV_LEN];
-        let len = self.root_ca.as_tlv(&mut buf)?;
-        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &buf[..len])?;
+        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &self.root_ca)?;
+        psm.set_kv_slice(
+            fb_key!(index, ST_ICA, _kb),
+            self.icac.as_deref().unwrap_or(&[]),
+        )?;
 
-        let len = if let Some(icac) = &self.icac {
-            icac.as_tlv(&mut buf)?
-        } else {
-            0
-        };
-        psm.set_kv_slice(fb_key!(index, ST_ICA, _kb), &buf[..len])?;
-
-        let len = self.noc.as_tlv(&mut buf)?;
-        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &buf[..len])?;
+        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &self.noc)?;
         psm.set_kv_slice(fb_key!(index, ST_IPK, _kb), self.ipk.epoch_key())?;
         psm.set_kv_slice(fb_key!(index, ST_LBL, _kb), self.label.as_bytes())?;
 
@@ -228,18 +236,21 @@ impl Fabric {
         let mut _kb = heapless::String::<32>::new();
 
         let mut buf = [0u8; MAX_CERT_TLV_LEN];
-        let root_ca = psm.get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)?;
-        let root_ca = Cert::new(root_ca)?;
+
+        let root_ca =
+            heapless::Vec::from_slice(psm.get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)?)
+                .unwrap();
 
         let icac = psm.get_kv_slice(fb_key!(index, ST_ICA, _kb), &mut buf)?;
         let icac = if !icac.is_empty() {
-            Some(Cert::new(icac)?)
+            Some(heapless::Vec::from_slice(icac).unwrap())
         } else {
             None
         };
 
-        let noc = psm.get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)?;
-        let noc = Cert::new(noc)?;
+        let noc =
+            heapless::Vec::from_slice(psm.get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)?)
+                .unwrap();
 
         let label = psm.get_kv_slice(fb_key!(index, ST_LBL, _kb), &mut buf)?;
         let label: heapless::String<32> = core::str::from_utf8(label)
@@ -293,21 +304,16 @@ impl Fabric {
     {
         let mut _kb = heapless::String::<32>::new();
 
-        let mut buf = [0u8; MAX_CERT_TLV_LEN];
-        let len = self.root_ca.as_tlv(&mut buf)?;
-        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &buf[..len])
+        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &self.root_ca)
             .await?;
 
-        let len = if let Some(icac) = &self.icac {
-            icac.as_tlv(&mut buf)?
-        } else {
-            0
-        };
-        psm.set_kv_slice(fb_key!(index, ST_ICA, _kb), &buf[..len])
-            .await?;
+        psm.set_kv_slice(
+            fb_key!(index, ST_ICA, _kb),
+            self.icac.as_deref().unwrap_or(&[]),
+        )
+        .await?;
 
-        let len = self.noc.as_tlv(&mut buf)?;
-        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &buf[..len])
+        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &self.noc)
             .await?;
         psm.set_kv_slice(fb_key!(index, ST_IPK, _kb), self.ipk.epoch_key())
             .await?;
@@ -337,24 +343,27 @@ impl Fabric {
         let mut _kb = heapless::String::<32>::new();
 
         let mut buf = [0u8; MAX_CERT_TLV_LEN];
-        let root_ca = psm
-            .get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)
-            .await?;
-        let root_ca = Cert::new(root_ca)?;
+
+        let root_ca = heapless::Vec::from_slice(
+            psm.get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)
+                .await?,
+        )
+        .unwrap();
 
         let icac = psm
             .get_kv_slice(fb_key!(index, ST_ICA, _kb), &mut buf)
             .await?;
         let icac = if !icac.is_empty() {
-            Some(Cert::new(icac)?)
+            Some(heapless::Vec::from_slice(icac).unwrap())
         } else {
             None
         };
 
-        let noc = psm
-            .get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)
-            .await?;
-        let noc = Cert::new(noc)?;
+        let noc = heapless::Vec::from_slice(
+            psm.get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)
+                .await?,
+        )
+        .unwrap();
 
         let label = psm
             .get_kv_slice(fb_key!(index, ST_LBL, _kb), &mut buf)

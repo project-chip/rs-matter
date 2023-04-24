@@ -19,7 +19,7 @@ use core::cell::RefCell;
 use core::convert::TryInto;
 
 use crate::acl::{AclEntry, AclMgr, AuthMode};
-use crate::cert::Cert;
+use crate::cert::{Cert, MAX_CERT_TLV_LEN};
 use crate::crypto::{self, KeyPair};
 use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
@@ -158,14 +158,14 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 
 pub struct NocData {
     pub key_pair: KeyPair,
-    pub root_ca: Cert,
+    pub root_ca: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
 }
 
 impl NocData {
     pub fn new(key_pair: KeyPair) -> Self {
         Self {
             key_pair,
-            root_ca: Cert::default(),
+            root_ca: heapless::Vec::new(),
         }
     }
 }
@@ -259,8 +259,10 @@ impl<'a> NocCluster<'a> {
                         writer.start_array(AttrDataWriter::TAG)?;
                         self.fabric_mgr.borrow().for_each(|entry, fab_idx| {
                             if !attr.fab_filter || attr.fab_idx == fab_idx {
+                                let root_ca_cert = entry.get_root_ca()?;
+
                                 entry
-                                    .get_fabric_desc(fab_idx)
+                                    .get_fabric_desc(fab_idx, &root_ca_cert)?
                                     .to_tlv(&mut writer, TagType::Anonymous)?;
                             }
 
@@ -351,12 +353,18 @@ impl<'a> NocCluster<'a> {
 
         let r = AddNocReq::from_tlv(data).map_err(|_| NocStatus::InvalidNOC)?;
 
-        let noc_value = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-        info!("Received NOC as: {}", noc_value);
-        let icac_value = if !r.icac_value.0.is_empty() {
-            let cert = Cert::new(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-            info!("Received ICAC as: {}", cert);
-            Some(cert)
+        let noc_cert = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+        info!("Received NOC as: {}", noc_cert);
+
+        let noc = heapless::Vec::from_slice(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+
+        let icac = if !r.icac_value.0.is_empty() {
+            let icac_cert = Cert::new(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+            info!("Received ICAC as: {}", icac_cert);
+
+            let icac =
+                heapless::Vec::from_slice(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+            Some(icac)
         } else {
             None
         };
@@ -364,8 +372,8 @@ impl<'a> NocCluster<'a> {
         let fabric = Fabric::new(
             noc_data.key_pair,
             noc_data.root_ca,
-            icac_value,
-            noc_value,
+            icac,
+            noc,
             r.ipk_value.0,
             r.vendor_id,
             "",
@@ -592,7 +600,9 @@ impl<'a> NocCluster<'a> {
                 let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
                 info!("Received Trusted Cert:{:x?}", req.str);
 
-                noc_data.root_ca = Cert::new(req.str.0)?;
+                noc_data.root_ca =
+                    heapless::Vec::from_slice(req.str.0).map_err(|_| Error::BufferTooSmall)?;
+                // TODO
             }
             _ => (),
         }
