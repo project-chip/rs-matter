@@ -26,7 +26,10 @@ use crate::{
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
     transport::udp::MATTER_PORT,
-    utils::{epoch::Epoch, rand::Rand},
+    utils::{
+        epoch::{Epoch, UtcCalendar},
+        rand::Rand,
+    },
 };
 
 /// Device Commissioning Data
@@ -46,6 +49,7 @@ pub struct Matter<'a> {
     pub mdns_mgr: RefCell<MdnsMgr<'a>>,
     pub epoch: Epoch,
     pub rand: Rand,
+    pub utc_calendar: UtcCalendar,
     pub dev_det: &'a BasicInfoConfig<'a>,
 }
 
@@ -61,6 +65,7 @@ impl<'a> Matter<'a> {
         mdns: &'a mut dyn Mdns,
         epoch: Epoch,
         rand: Rand,
+        utc_calendar: UtcCalendar,
     ) -> Self {
         Self {
             fabric_mgr: RefCell::new(FabricMgr::new()),
@@ -76,6 +81,7 @@ impl<'a> Matter<'a> {
             )),
             epoch,
             rand,
+            utc_calendar,
             dev_det,
         }
     }
@@ -148,5 +154,11 @@ impl<'a> Borrow<Epoch> for Matter<'a> {
 impl<'a> Borrow<Rand> for Matter<'a> {
     fn borrow(&self) -> &Rand {
         &self.rand
+    }
+}
+
+impl<'a> Borrow<UtcCalendar> for Matter<'a> {
+    fn borrow(&self) -> &UtcCalendar {
+        &self.utc_calendar
     }
 }

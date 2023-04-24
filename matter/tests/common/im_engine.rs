@@ -49,7 +49,11 @@ use matter::{
         proto_ctx::ProtoCtx,
         session::{CaseDetails, CloneData, NocCatIds, SessionMgr, SessionMode},
     },
-    utils::{epoch::sys_epoch, rand::dummy_rand, writebuf::WriteBuf},
+    utils::{
+        epoch::{sys_epoch, sys_utc_calendar},
+        rand::dummy_rand,
+        writebuf::WriteBuf,
+    },
     Matter,
 };
 use std::net::{Ipv4Addr, SocketAddr};
@@ -105,7 +109,7 @@ impl<'a> ImInput<'a> {
 pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster, EchoCluster | RootEndpointHandler<'a>);
 
 pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
-    Matter::new(&BASIC_INFO, mdns, sys_epoch, dummy_rand)
+    Matter::new(&BASIC_INFO, mdns, sys_epoch, dummy_rand, sys_utc_calendar)
 }
 
 /// An Interaction Model Engine to facilitate easy testing

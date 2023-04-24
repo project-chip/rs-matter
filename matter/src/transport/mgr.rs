@@ -29,7 +29,7 @@ use crate::secure_channel::common::PROTO_ID_SECURE_CHANNEL;
 use crate::secure_channel::core::SecureChannel;
 use crate::transport::mrp::ReliableMessage;
 use crate::transport::{exchange, packet::Packet};
-use crate::utils::epoch::Epoch;
+use crate::utils::epoch::{Epoch, UtcCalendar};
 use crate::utils::rand::Rand;
 
 use super::proto_ctx::ProtoCtx;
@@ -167,13 +167,23 @@ pub struct TransportMgr<'a> {
 
 impl<'a> TransportMgr<'a> {
     pub fn new<
-        T: Borrow<RefCell<FabricMgr>> + Borrow<RefCell<PaseMgr>> + Borrow<Epoch> + Borrow<Rand>,
+        T: Borrow<RefCell<FabricMgr>>
+            + Borrow<RefCell<PaseMgr>>
+            + Borrow<Epoch>
+            + Borrow<Rand>
+            + Borrow<UtcCalendar>,
     >(
         matter: &'a T,
         mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
     ) -> Self {
         Self::wrap(
-            SecureChannel::new(matter.borrow(), matter.borrow(), mdns_mgr, *matter.borrow()),
+            SecureChannel::new(
+                matter.borrow(),
+                matter.borrow(),
+                mdns_mgr,
+                *matter.borrow(),
+                *matter.borrow(),
+            ),
             *matter.borrow(),
             *matter.borrow(),
         )
