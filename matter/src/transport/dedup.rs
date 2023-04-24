@@ -86,6 +86,8 @@ impl RxCtrState {
 #[cfg(test)]
 mod tests {
 
+    use log::info;
+
     use super::RxCtrState;
 
     const ENCRYPTED: bool = true;
@@ -194,10 +196,10 @@ mod tests {
 
     #[test]
     fn unencrypted_device_reboot() {
-        println!("Sub 65532 is {:?}", 1_u16.overflowing_sub(65532));
-        println!("Sub 65535 is {:?}", 1_u16.overflowing_sub(65535));
-        println!("Sub 11-13 is {:?}", 11_u32.wrapping_sub(13_u32) as i32);
-        println!("Sub regular is {:?}", 2000_u16.overflowing_sub(1998));
+        info!("Sub 65532 is {:?}", 1_u16.overflowing_sub(65532));
+        info!("Sub 65535 is {:?}", 1_u16.overflowing_sub(65535));
+        info!("Sub 11-13 is {:?}", 11_u32.wrapping_sub(13_u32) as i32);
+        info!("Sub regular is {:?}", 2000_u16.overflowing_sub(1998));
         let mut s = RxCtrState::new(20010);
 
         assert_ndup(s.recv(20011, NOT_ENCRYPTED));

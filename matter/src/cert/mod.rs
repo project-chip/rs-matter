@@ -519,8 +519,16 @@ fn encode_dn_value(
     w.oid(name, oid)?;
     match value {
         DistNameValue::Uint(v) => match expected_len {
-            Some(IntToStringLen::Len16) => w.utf8str("", format!("{:016X}", v).as_str())?,
-            Some(IntToStringLen::Len8) => w.utf8str("", format!("{:08X}", v).as_str())?,
+            Some(IntToStringLen::Len16) => {
+                let mut string = heapless::String::<32>::new();
+                write!(&mut string, "{:016X}", v).unwrap();
+                w.utf8str("", &string)?
+            }
+            Some(IntToStringLen::Len8) => {
+                let mut string = heapless::String::<32>::new();
+                write!(&mut string, "{:08X}", v).unwrap();
+                w.utf8str("", &string)?
+            }
             _ => {
                 error!("Invalid encoding");
                 return Err(Error::Invalid);

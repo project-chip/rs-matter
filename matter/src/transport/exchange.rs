@@ -457,13 +457,9 @@ mod tests {
         error::Error,
         transport::{
             network::Address,
-            packet::{Packet, MAX_TX_BUF_SIZE},
-            session::{CloneData, SessionMode, MAX_SESSIONS},
+            session::{CloneData, SessionMode},
         },
-        utils::{
-            epoch::{dummy_epoch, sys_epoch},
-            rand::dummy_rand,
-        },
+        utils::{epoch::dummy_epoch, rand::dummy_rand},
     };
 
     use super::{ExchangeMgr, Role};
@@ -526,13 +522,17 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "std")]
     #[test]
     /// We purposefuly overflow the sessions
     /// and when the overflow happens, we confirm that
     /// - The sessions are evicted in LRU
     /// - The exchanges associated with those sessions are evicted too
     fn test_sess_evict() {
-        let mut mgr = ExchangeMgr::new(sys_epoch, dummy_rand);
+        use crate::transport::packet::{Packet, MAX_TX_BUF_SIZE};
+        use crate::transport::session::MAX_SESSIONS;
+
+        let mut mgr = ExchangeMgr::new(crate::utils::epoch::sys_epoch, dummy_rand);
 
         fill_sessions(&mut mgr, MAX_SESSIONS + 1);
         // Sessions are now full from local session id 1 to 16

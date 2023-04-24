@@ -143,7 +143,7 @@ impl AccessorSubjects {
 }
 
 impl Display for AccessorSubjects {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::result::Result<(), core::fmt::Error> {
         write!(f, "[")?;
         for i in self.0 {
             if is_noc_cat(i) {
