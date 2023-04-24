@@ -30,7 +30,6 @@ use crate::{
     transport::{
         network::Address,
         proto_ctx::ProtoCtx,
-        queue::{Msg, WorkQ},
         session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
     utils::{epoch::UtcCalendar, rand::Rand, writebuf::WriteBuf},
@@ -83,7 +82,10 @@ impl<'a> Case<'a> {
         }
     }
 
-    pub fn casesigma3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
+    pub fn casesigma3_handler(
+        &mut self,
+        ctx: &mut ProtoCtx,
+    ) -> Result<(bool, Option<CloneData>), Error> {
         let mut case_session = ctx
             .exch_ctx
             .exch
@@ -104,7 +106,7 @@ impl<'a> Case<'a> {
                 None,
             )?;
             ctx.exch_ctx.exch.close();
-            return Ok(true);
+            return Ok((true, None));
         }
         // Safe to unwrap here
         let fabric = fabric.unwrap();
@@ -137,7 +139,7 @@ impl<'a> Case<'a> {
             error!("Certificate Chain doesn't match: {}", e);
             common::create_sc_status_report(ctx.tx, common::SCStatusCodes::InvalidParameter, None)?;
             ctx.exch_ctx.exch.close();
-            return Ok(true);
+            return Ok((true, None));
         }
 
         if Case::validate_sigma3_sign(
@@ -152,7 +154,7 @@ impl<'a> Case<'a> {
             error!("Sigma3 Signature doesn't match");
             common::create_sc_status_report(ctx.tx, common::SCStatusCodes::InvalidParameter, None)?;
             ctx.exch_ctx.exch.close();
-            return Ok(true);
+            return Ok((true, None));
         }
 
         // Only now do we add this message to the TT Hash
@@ -167,13 +169,11 @@ impl<'a> Case<'a> {
             &case_session,
             &peer_catids,
         )?;
-        // Queue a transport mgr request to add a new session
-        WorkQ::get()?.sync_send(Msg::NewSession(clone_data))?;
 
         common::create_sc_status_report(ctx.tx, SCStatusCodes::SessionEstablishmentSuccess, None)?;
         ctx.exch_ctx.exch.clear_data();
         ctx.exch_ctx.exch.close();
-        Ok(true)
+        Ok((true, Some(clone_data)))
     }
 
     pub fn casesigma1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {

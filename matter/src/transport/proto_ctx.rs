@@ -38,6 +38,6 @@ impl<'a, 'b> ProtoCtx<'a, 'b> {
     pub fn send(&mut self) -> Result<&[u8], Error> {
         self.exch_ctx.exch.send(self.tx, &mut self.exch_ctx.sess)?;
 
-        Ok(self.tx.as_mut_slice())
+        Ok(self.tx.as_slice())
     }
 }

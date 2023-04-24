@@ -17,7 +17,6 @@
 
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
-use async_channel::{SendError, TryRecvError};
 use log::error;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -156,23 +155,9 @@ impl From<TryFromSliceError> for Error {
     }
 }
 
-impl<T> From<SendError<T>> for Error {
-    fn from(e: SendError<T>) -> Self {
-        error!("Error in channel send {}", e);
-        Self::Invalid
-    }
-}
-
 impl From<Utf8Error> for Error {
     fn from(_e: Utf8Error) -> Self {
         Self::Utf8Fail
-    }
-}
-
-impl From<TryRecvError> for Error {
-    fn from(e: TryRecvError) -> Self {
-        error!("Error in channel try_recv {}", e);
-        Self::Invalid
     }
 }
 

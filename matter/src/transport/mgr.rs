@@ -33,12 +33,14 @@ use crate::utils::epoch::{Epoch, UtcCalendar};
 use crate::utils::rand::Rand;
 
 use super::proto_ctx::ProtoCtx;
+use super::session::CloneData;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
 enum RecvState {
     New,
     OpenExchange,
+    AddSession(CloneData),
     EvictSession,
+    EvictSession2(CloneData),
     Ack,
 }
 
@@ -69,7 +71,7 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
     fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'p>>>, Error> {
         self.mgr.exch_mgr.purge();
 
-        match self.state {
+        match core::mem::replace(&mut self.state, RecvState::New) {
             RecvState::New => {
                 self.mgr.exch_mgr.get_sess_mgr().decode(self.rx)?;
                 self.state = RecvState::OpenExchange;
@@ -80,13 +82,18 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                     if self.rx.get_proto_id() == PROTO_ID_SECURE_CHANNEL {
                         let mut proto_ctx = ProtoCtx::new(exch_ctx, self.rx, self.tx);
 
-                        if self.mgr.secure_channel.handle(&mut proto_ctx)? {
-                            proto_ctx.send()?;
+                        let (reply, clone_data) = self.mgr.secure_channel.handle(&mut proto_ctx)?;
 
-                            self.state = RecvState::Ack;
-                            Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                        if let Some(clone_data) = clone_data {
+                            self.state = RecvState::AddSession(clone_data);
                         } else {
                             self.state = RecvState::Ack;
+                        }
+
+                        if reply {
+                            proto_ctx.send()?;
+                            Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+                        } else {
                             Ok(None)
                         }
                     } else {
@@ -106,9 +113,25 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                 }
                 Err(err) => Err(err),
             },
+            RecvState::AddSession(clone_data) => match self.mgr.exch_mgr.add_session(&clone_data) {
+                Ok(_) => {
+                    self.state = RecvState::Ack;
+                    Ok(None)
+                }
+                Err(Error::NoSpace) => {
+                    self.state = RecvState::EvictSession2(clone_data);
+                    Ok(None)
+                }
+                Err(err) => Err(err),
+            },
             RecvState::EvictSession => {
                 self.mgr.exch_mgr.evict_session(self.tx)?;
                 self.state = RecvState::OpenExchange;
+                Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
+            }
+            RecvState::EvictSession2(clone_data) => {
+                self.mgr.exch_mgr.evict_session(self.tx)?;
+                self.state = RecvState::AddSession(clone_data);
                 Ok(Some(Some(RecvAction::Send(self.tx.as_slice()))))
             }
             RecvState::Ack => {
@@ -127,7 +150,6 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
 enum NotifyState {}
 
 pub enum NotifyAction<'r, 'p> {
@@ -212,23 +234,4 @@ impl<'a> TransportMgr<'a> {
     pub fn notify(&mut self, _tx: &mut Packet) -> Result<bool, Error> {
         Ok(false)
     }
-
-    // async fn handle_queue_msgs(&mut self) -> Result<(), Error> {
-    //     if let Ok(msg) = self.rx_q.try_recv() {
-    //         match msg {
-    //             Msg::NewSession(clone_data) => {
-    //                 // If a new session was created, add it
-    //                 let _ = self
-    //                     .exch_mgr
-    //                     .add_session(&clone_data)
-    //                     .await
-    //                     .map_err(|e| error!("Error adding new session {:?}", e));
-    //             }
-    //             _ => {
-    //                 error!("Queue Message Type not yet handled {:?}", msg);
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
 }
