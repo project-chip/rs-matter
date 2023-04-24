@@ -54,6 +54,14 @@ pub struct Matter<'a> {
 }
 
 impl<'a> Matter<'a> {
+    #[cfg(feature = "std")]
+    pub fn new_default(dev_det: &'a BasicInfoConfig, mdns: &'a mut dyn Mdns) -> Self {
+        use crate::utils::epoch::{sys_epoch, sys_utc_calendar};
+        use crate::utils::rand::sys_rand;
+
+        Self::new(dev_det, mdns, sys_epoch, sys_rand, sys_utc_calendar)
+    }
+
     /// Creates a new Matter object
     ///
     /// # Parameters

@@ -191,18 +191,18 @@ impl<'a> TransportMgr<'a> {
     pub fn new<
         T: Borrow<RefCell<FabricMgr>>
             + Borrow<RefCell<PaseMgr>>
+            + Borrow<RefCell<MdnsMgr<'a>>>
             + Borrow<Epoch>
             + Borrow<Rand>
             + Borrow<UtcCalendar>,
     >(
         matter: &'a T,
-        mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
     ) -> Self {
         Self::wrap(
             SecureChannel::new(
                 matter.borrow(),
                 matter.borrow(),
-                mdns_mgr,
+                matter.borrow(),
                 *matter.borrow(),
                 *matter.borrow(),
             ),
