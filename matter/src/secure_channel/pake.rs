@@ -31,7 +31,6 @@ use crate::{
         exchange::ExchangeCtx,
         network::Address,
         proto_ctx::ProtoCtx,
-        queue::{Msg, WorkQ},
         session::{CloneData, SessionMode},
     },
     utils::{epoch::Epoch, rand::Rand},
@@ -101,15 +100,18 @@ impl PaseMgr {
 
     /// If the PASE Session is enabled, execute the closure,
     /// if not enabled, generate SC Status Report
-    fn if_enabled<F>(&mut self, ctx: &mut ProtoCtx, f: F) -> Result<(), Error>
+    fn if_enabled<F, T>(&mut self, ctx: &mut ProtoCtx, f: F) -> Result<Option<T>, Error>
     where
-        F: FnOnce(&mut Pake, &mut ProtoCtx) -> Result<(), Error>,
+        F: FnOnce(&mut Pake, &mut ProtoCtx) -> Result<T, Error>,
     {
         if let PaseMgrState::Enabled(pake, _, _) = &mut self.state {
-            f(pake, ctx)
+            let data = f(pake, ctx)?;
+
+            Ok(Some(data))
         } else {
             error!("PASE Not enabled");
-            create_sc_status_report(ctx.tx, SCStatusCodes::InvalidParameter, None)
+            create_sc_status_report(ctx.tx, SCStatusCodes::InvalidParameter, None)?;
+            Ok(None)
         }
     }
 
@@ -129,10 +131,10 @@ impl PaseMgr {
         &mut self,
         ctx: &mut ProtoCtx,
         mdns: &mut MdnsMgr,
-    ) -> Result<bool, Error> {
-        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
+    ) -> Result<(bool, Option<CloneData>), Error> {
+        let clone_data = self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
         self.disable_pase_session(mdns)?;
-        Ok(true)
+        Ok((true, clone_data.flatten()))
     }
 }
 
@@ -230,13 +232,13 @@ impl Pake {
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_pasepake3(&mut self, ctx: &mut ProtoCtx) -> Result<(), Error> {
+    pub fn handle_pasepake3(&mut self, ctx: &mut ProtoCtx) -> Result<Option<CloneData>, Error> {
         let mut sd = self.state.take_sess_data(&ctx.exch_ctx)?;
 
         let cA = extract_pasepake_1_or_3_params(ctx.rx.as_slice())?;
         let (status_code, ke) = sd.spake2p.handle_cA(cA);
 
-        if status_code == SCStatusCodes::SessionEstablishmentSuccess {
+        let clone_data = if status_code == SCStatusCodes::SessionEstablishmentSuccess {
             // Get the keys
             let ke = ke.ok_or(Error::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
@@ -262,12 +264,14 @@ impl Pake {
                 .copy_from_slice(&session_keys[32..48]);
 
             // Queue a transport mgr request to add a new session
-            WorkQ::get()?.sync_send(Msg::NewSession(clone_data))?;
-        }
+            Some(clone_data)
+        } else {
+            None
+        };
 
         create_sc_status_report(ctx.tx, status_code, None)?;
         ctx.exch_ctx.exch.close();
-        Ok(())
+        Ok(clone_data)
     }
 
     #[allow(non_snake_case)]

@@ -23,7 +23,7 @@ use crate::{
     mdns::MdnsMgr,
     secure_channel::common::*,
     tlv,
-    transport::proto_ctx::ProtoCtx,
+    transport::{proto_ctx::ProtoCtx, session::CloneData},
     utils::{epoch::UtcCalendar, rand::Rand},
 };
 use log::{error, info};
@@ -55,22 +55,30 @@ impl<'a> SecureChannel<'a> {
         }
     }
 
-    pub fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<bool, Error> {
+    pub fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<(bool, Option<CloneData>), Error> {
         let proto_opcode: OpCode =
             num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(Error::Invalid)?;
         ctx.tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
         info!("Received Opcode: {:?}", proto_opcode);
         info!("Received Data:");
         tlv::print_tlv_list(ctx.rx.as_slice());
-        let reply = match proto_opcode {
-            OpCode::MRPStandAloneAck => Ok(true),
-            OpCode::PBKDFParamRequest => self.pase.borrow_mut().pbkdfparamreq_handler(ctx),
-            OpCode::PASEPake1 => self.pase.borrow_mut().pasepake1_handler(ctx),
+        let (reply, clone_data) = match proto_opcode {
+            OpCode::MRPStandAloneAck => Ok((true, None)),
+            OpCode::PBKDFParamRequest => self
+                .pase
+                .borrow_mut()
+                .pbkdfparamreq_handler(ctx)
+                .map(|reply| (reply, None)),
+            OpCode::PASEPake1 => self
+                .pase
+                .borrow_mut()
+                .pasepake1_handler(ctx)
+                .map(|reply| (reply, None)),
             OpCode::PASEPake3 => self
                 .pase
                 .borrow_mut()
                 .pasepake3_handler(ctx, &mut self.mdns.borrow_mut()),
-            OpCode::CASESigma1 => self.case.casesigma1_handler(ctx),
+            OpCode::CASESigma1 => self.case.casesigma1_handler(ctx).map(|reply| (reply, None)),
             OpCode::CASESigma3 => self.case.casesigma3_handler(ctx),
             _ => {
                 error!("OpCode Not Handled: {:?}", proto_opcode);
@@ -83,6 +91,6 @@ impl<'a> SecureChannel<'a> {
             tlv::print_tlv_list(ctx.tx.as_mut_slice());
         }
 
-        Ok(reply)
+        Ok((reply, clone_data))
     }
 }
