@@ -17,7 +17,6 @@
 
 use crate::{
     crypto::{self, HmacSha256},
-    sys,
     utils::rand::Rand,
 };
 use byteorder::{ByteOrder, LittleEndian};
@@ -31,13 +30,15 @@ use crate::{
 
 use super::{common::SCStatusCodes, crypto::CryptoSpake2};
 
-// This file handle Spake2+ specific instructions. In itself, this file is
+// This file handles Spake2+ specific instructions. In itself, this file is
 // independent from the BigNum and EC operations that are typically required
 // Spake2+. We use the CryptoSpake2 trait object that allows us to abstract
 // out the specific implementations.
 //
 // In the case of the verifier, we don't actually release the Ke until we
 // validate that the cA is confirmed.
+
+pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Spake2VerifierState {
@@ -104,7 +105,7 @@ impl VerifierData {
     pub fn new_with_pw(pw: u32, rand: Rand) -> Self {
         let mut s = Self {
             salt: [0; MAX_SALT_SIZE_BYTES],
-            count: sys::SPAKE2_ITERATION_COUNT,
+            count: SPAKE2_ITERATION_COUNT,
             data: VerifierOption::Password(pw),
         };
         rand(&mut s.salt);

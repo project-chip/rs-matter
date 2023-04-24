@@ -16,7 +16,7 @@
  */
 
 use crate::error::*;
-use log::info;
+use log::{info, warn};
 use smol::net::{Ipv6Addr, UdpSocket};
 
 use super::network::Address;
@@ -35,25 +35,50 @@ pub const MATTER_PORT: u16 = 5540;
 
 impl UdpListener {
     pub async fn new() -> Result<UdpListener, Error> {
-        Ok(UdpListener {
+        let listener = UdpListener {
             socket: UdpSocket::bind((Ipv6Addr::UNSPECIFIED, MATTER_PORT)).await?,
-        })
+        };
+
+        info!(
+            "Listening on {:?} port {}",
+            Ipv6Addr::UNSPECIFIED,
+            MATTER_PORT
+        );
+
+        Ok(listener)
     }
 
     pub async fn recv(&self, in_buf: &mut [u8]) -> Result<(usize, Address), Error> {
+        info!("Waiting for incoming packets");
+
         let (size, addr) = self.socket.recv_from(in_buf).await.map_err(|e| {
-            info!("Error on the network: {:?}", e);
+            warn!("Error on the network: {:?}", e);
             Error::Network
         })?;
+
+        info!("Got packet: {:?} from addr {:?}", in_buf, addr);
+
         Ok((size, Address::Udp(addr)))
     }
 
     pub async fn send(&self, addr: Address, out_buf: &[u8]) -> Result<usize, Error> {
         match addr {
-            Address::Udp(addr) => self.socket.send_to(out_buf, addr).await.map_err(|e| {
-                info!("Error on the network: {:?}", e);
-                Error::Network
-            }),
+            Address::Udp(addr) => {
+                let len = self.socket.send_to(out_buf, addr).await.map_err(|e| {
+                    warn!("Error on the network: {:?}", e);
+                    Error::Network
+                })?;
+
+                info!(
+                    "Send packet: {:?} ({}/{}) to addr {:?}",
+                    out_buf,
+                    out_buf.len(),
+                    len,
+                    addr
+                );
+
+                Ok(len)
+            }
         }
     }
 }
