@@ -315,15 +315,27 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
 }
 
 pub(super) fn print_qr_code(qr_data: &str) {
-    let needed_version = compute_qr_version(qr_data);
-    let code =
-        QrCode::with_version(qr_data, Version::Normal(needed_version), qrcode::EcLevel::M).unwrap();
-    let image = code
-        .render::<unicode::Dense1x2>()
-        .dark_color(unicode::Dense1x2::Light)
-        .light_color(unicode::Dense1x2::Dark)
-        .build();
-    info!("\n{}", image);
+    #[cfg(not(feature = "std"))]
+    {
+        info!("\n QR CODE DATA: {}", qr_data);
+    }
+
+    #[cfg(feature = "std")]
+    {
+        use qrcode::{render::unicode, QrCode, Version};
+
+        let needed_version = compute_qr_version(qr_data);
+        let code =
+            QrCode::with_version(qr_data, Version::Normal(needed_version), qrcode::EcLevel::M)
+                .unwrap();
+        let image = code
+            .render::<unicode::Dense1x2>()
+            .dark_color(unicode::Dense1x2::Light)
+            .light_color(unicode::Dense1x2::Dark)
+            .build();
+
+        info!("\n{}", image);
+    }
 }
 
 fn compute_qr_version(qr_data: &str) -> i16 {

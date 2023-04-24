@@ -22,7 +22,6 @@ pub mod qr;
 pub mod vendor_identifiers;
 
 use log::info;
-use qrcode::{render::unicode, QrCode, Version};
 use verhoeff::Verhoeff;
 
 use crate::{
