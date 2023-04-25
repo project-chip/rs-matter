@@ -51,7 +51,7 @@ fn main() {
     //let mut mdns = matter::mdns::astro::AstroMdns::new().unwrap();
     let mut mdns = matter::mdns::libmdns::LibMdns::new().unwrap();
 
-    let matter = Matter::new_default(&dev_info, &mut mdns);
+    let matter = Matter::new_default(&dev_info, &mut mdns, matter::transport::udp::MATTER_PORT);
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 

@@ -25,7 +25,6 @@ crypto_esp_mbedtls = ["esp-idf-sys"]
 crypto_rustcrypto = ["sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert"]
 
 [dependencies]
-boxslab = { path = "../boxslab" }
 matter_macro_derive = { path = "../matter_macro_derive" }
 bitflags = "1.3"
 byteorder = "1.4.3"
@@ -35,6 +34,7 @@ num-derive = "0.3.3"
 num-traits = "0.2.15"
 strum = { version = "0.24", features = ["derive"], default-features = false, no-default-feature = true }
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_debug"] }
+no-std-net = "0.6"
 subtle = "2.4.1"
 safemem = "0.3.3"
 colored = "2.0.0" # TODO: Requires STD
