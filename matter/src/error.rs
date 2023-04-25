@@ -17,8 +17,6 @@
 
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
-use log::error;
-
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Error {
     AttributeNotFound,
@@ -122,7 +120,7 @@ impl<T> From<std::sync::PoisonError<T>> for Error {
 #[cfg(feature = "crypto_openssl")]
 impl From<openssl::error::ErrorStack> for Error {
     fn from(e: openssl::error::ErrorStack) -> Self {
-        error!("Error in TLS: {}", e);
+        ::log::error!("Error in TLS: {}", e);
         Self::TLSStack
     }
 }
@@ -130,7 +128,7 @@ impl From<openssl::error::ErrorStack> for Error {
 #[cfg(feature = "crypto_mbedtls")]
 impl From<mbedtls::Error> for Error {
     fn from(e: mbedtls::Error) -> Self {
-        error!("Error in TLS: {}", e);
+        ::log::error!("Error in TLS: {}", e);
         Self::TLSStack
     }
 }

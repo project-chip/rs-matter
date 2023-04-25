@@ -85,7 +85,6 @@ pub mod mdns;
 pub mod pairing;
 pub mod persist;
 pub mod secure_channel;
-pub mod sys;
 pub mod tlv;
 pub mod transport;
 pub mod utils;

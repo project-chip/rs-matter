@@ -16,6 +16,9 @@
  */
 
 use core::fmt::{Debug, Display};
+#[cfg(not(feature = "std"))]
+use no_std_net::{IpAddr, Ipv4Addr, SocketAddr};
+#[cfg(feature = "std")]
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[derive(PartialEq, Copy, Clone)]

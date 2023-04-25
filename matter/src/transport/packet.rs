@@ -15,14 +15,10 @@
  *    limitations under the License.
  */
 
-use log::{error, trace};
-use std::sync::Mutex;
-
-use boxslab::box_slab;
+use log::error;
 
 use crate::{
     error::Error,
-    sys::MAX_PACKET_POOL_SIZE,
     utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
 };
 
@@ -34,54 +30,6 @@ use super::{
 
 pub const MAX_RX_BUF_SIZE: usize = 1583;
 pub const MAX_TX_BUF_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
-type Buffer = [u8; MAX_RX_BUF_SIZE];
-
-// TODO: I am not very happy with this construction, need to find another way to do this
-pub struct BufferPool {
-    buffers: [Option<Buffer>; MAX_PACKET_POOL_SIZE],
-}
-
-impl BufferPool {
-    const INIT: Option<Buffer> = None;
-    fn get() -> &'static Mutex<BufferPool> {
-        static mut BUFFER_HOLDER: Option<Mutex<BufferPool>> = None;
-        static ONCE: Once = Once::new();
-        unsafe {
-            ONCE.call_once(|| {
-                BUFFER_HOLDER = Some(Mutex::new(BufferPool {
-                    buffers: [BufferPool::INIT; MAX_PACKET_POOL_SIZE],
-                }));
-            });
-            BUFFER_HOLDER.as_ref().unwrap()
-        }
-    }
-
-    pub fn alloc() -> Option<(usize, &'static mut Buffer)> {
-        trace!("Buffer Alloc called\n");
-
-        let mut pool = BufferPool::get().lock().unwrap();
-        for i in 0..MAX_PACKET_POOL_SIZE {
-            if pool.buffers[i].is_none() {
-                pool.buffers[i] = Some([0; MAX_RX_BUF_SIZE]);
-                // Sigh! to by-pass the borrow-checker telling us we are stealing a mutable reference
-                // from under the lock
-                // In this case the lock only protects against the setting of Some/None,
-                // the objects then are independently accessed in a unique way
-                let buffer = unsafe { &mut *(pool.buffers[i].as_mut().unwrap() as *mut Buffer) };
-                return Some((i, buffer));
-            }
-        }
-        None
-    }
-
-    pub fn free(index: usize) {
-        trace!("Buffer Free called\n");
-        let mut pool = BufferPool::get().lock().unwrap();
-        if pool.buffers[index].is_some() {
-            pool.buffers[index] = None;
-        }
-    }
-}
 
 #[derive(PartialEq)]
 enum RxState {
@@ -229,5 +177,3 @@ impl<'a> Packet<'a> {
         }
     }
 }
-
-box_slab!(PacketPool, Packet<'static>, MAX_PACKET_POOL_SIZE);

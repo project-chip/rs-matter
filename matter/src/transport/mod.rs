@@ -25,4 +25,5 @@ pub mod plain_hdr;
 pub mod proto_ctx;
 pub mod proto_hdr;
 pub mod session;
+#[cfg(feature = "std")]
 pub mod udp;

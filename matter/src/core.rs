@@ -25,7 +25,6 @@ use crate::{
     mdns::{Mdns, MdnsMgr},
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
-    transport::udp::MATTER_PORT,
     utils::{
         epoch::{Epoch, UtcCalendar},
         rand::Rand,
@@ -55,11 +54,11 @@ pub struct Matter<'a> {
 
 impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
-    pub fn new_default(dev_det: &'a BasicInfoConfig, mdns: &'a mut dyn Mdns) -> Self {
+    pub fn new_default(dev_det: &'a BasicInfoConfig, mdns: &'a mut dyn Mdns, port: u16) -> Self {
         use crate::utils::epoch::{sys_epoch, sys_utc_calendar};
         use crate::utils::rand::sys_rand;
 
-        Self::new(dev_det, mdns, sys_epoch, sys_rand, sys_utc_calendar)
+        Self::new(dev_det, mdns, sys_epoch, sys_rand, sys_utc_calendar, port)
     }
 
     /// Creates a new Matter object
@@ -74,6 +73,7 @@ impl<'a> Matter<'a> {
         epoch: Epoch,
         rand: Rand,
         utc_calendar: UtcCalendar,
+        port: u16,
     ) -> Self {
         Self {
             fabric_mgr: RefCell::new(FabricMgr::new()),
@@ -84,7 +84,7 @@ impl<'a> Matter<'a> {
                 dev_det.vid,
                 dev_det.pid,
                 dev_det.device_name,
-                MATTER_PORT,
+                port,
                 mdns,
             )),
             epoch,
