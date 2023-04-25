@@ -109,7 +109,14 @@ impl<'a> ImInput<'a> {
 pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster, EchoCluster | RootEndpointHandler<'a>);
 
 pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
-    Matter::new(&BASIC_INFO, mdns, sys_epoch, dummy_rand, sys_utc_calendar)
+    Matter::new(
+        &BASIC_INFO,
+        mdns,
+        sys_epoch,
+        dummy_rand,
+        sys_utc_calendar,
+        5540,
+    )
 }
 
 /// An Interaction Model Engine to facilitate easy testing

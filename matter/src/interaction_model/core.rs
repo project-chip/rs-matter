@@ -395,7 +395,6 @@ impl<'a> WriteReq<'a> {
             Interaction::create_status_response(tx, IMStatusCode::Timeout)?;
 
             transaction.complete();
-            transaction.ctx.exch.close();
 
             Ok(false)
         } else {
@@ -436,7 +435,6 @@ impl<'a> InvReq<'a> {
             Interaction::create_status_response(tx, IMStatusCode::Timeout)?;
 
             transaction.complete();
-            transaction.ctx.exch.close();
 
             Ok(false)
         } else {
@@ -738,6 +736,10 @@ where
                 true
             };
 
+        if transaction.is_complete() {
+            transaction.exch_mut().close();
+        }
+
         Ok(reply)
     }
 }
@@ -756,6 +758,10 @@ where
             } else {
                 true
             };
+
+        if transaction.is_complete() {
+            transaction.exch_mut().close();
+        }
 
         Ok(reply)
     }
