@@ -22,7 +22,6 @@ use crate::data_model::objects::*;
 use crate::data_model::sdm::failsafe::FailSafe;
 use crate::interaction_model::core::Transaction;
 use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
-use crate::transport::session::Session;
 use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
@@ -173,18 +172,18 @@ impl GenCommCluster {
 
     pub fn invoke(
         &mut self,
-        session: &mut Session,
+        transaction: &mut Transaction,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::ArmFailsafe => self.handle_command_armfailsafe(session, data, encoder)?,
+            Commands::ArmFailsafe => self.handle_command_armfailsafe(transaction, data, encoder)?,
             Commands::SetRegulatoryConfig => {
-                self.handle_command_setregulatoryconfig(data, encoder)?
+                self.handle_command_setregulatoryconfig(transaction, data, encoder)?
             }
             Commands::CommissioningComplete => {
-                self.handle_command_commissioningcomplete(session, encoder)?;
+                self.handle_command_commissioningcomplete(transaction, encoder)?;
             }
         }
 
@@ -195,7 +194,7 @@ impl GenCommCluster {
 
     fn handle_command_armfailsafe(
         &mut self,
-        session: &Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
@@ -203,23 +202,33 @@ impl GenCommCluster {
 
         let p = FailSafeParams::from_tlv(data)?;
 
-        self.failsafe
+        let status = if self
+            .failsafe
             .borrow_mut()
-            .arm(p.expiry_len, session.get_session_mode())
-            .map_err(|e| e.remap(|_| true, Error::Busy))?;
+            .arm(p.expiry_len, transaction.session().get_session_mode())
+            .is_err()
+        {
+            CommissioningError::ErrBusyWithOtherAdmin as u8
+        } else {
+            CommissioningError::Ok as u8
+        };
 
         let cmd_data = CommonResponse {
-            error_code: CommissioningError::ErrBusyWithOtherAdmin as u8,
+            error_code: status,
             debug_txt: UtfStr::new(b""),
         };
 
         encoder
             .with_command(RespCommands::ArmFailsafeResp as _)?
-            .set(cmd_data)
+            .set(cmd_data)?;
+
+        transaction.complete();
+        Ok(())
     }
 
     fn handle_command_setregulatoryconfig(
         &mut self,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
@@ -238,19 +247,22 @@ impl GenCommCluster {
 
         encoder
             .with_command(RespCommands::SetRegulatoryConfigResp as _)?
-            .set(cmd_data)
+            .set(cmd_data)?;
+
+        transaction.complete();
+        Ok(())
     }
 
     fn handle_command_commissioningcomplete(
         &mut self,
-        session: &Session,
+        transaction: &mut Transaction,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Commissioning Complete");
         let mut status: u8 = CommissioningError::Ok as u8;
 
         // Has to be a Case Session
-        if session.get_local_fabric_idx().is_none() {
+        if transaction.session().get_local_fabric_idx().is_none() {
             status = CommissioningError::ErrInvalidAuth as u8;
         }
 
@@ -259,7 +271,7 @@ impl GenCommCluster {
         if self
             .failsafe
             .borrow_mut()
-            .disarm(session.get_session_mode())
+            .disarm(transaction.session().get_session_mode())
             .is_err()
         {
             status = CommissioningError::ErrInvalidAuth as u8;
@@ -272,7 +284,10 @@ impl GenCommCluster {
 
         encoder
             .with_command(RespCommands::CommissioningCompleteResp as _)?
-            .set(cmd_data)
+            .set(cmd_data)?;
+
+        transaction.complete();
+        Ok(())
     }
 }
 
@@ -288,7 +303,7 @@ impl Handler for GenCommCluster {
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        GenCommCluster::invoke(self, transaction.session_mut(), cmd, data, encoder)
+        GenCommCluster::invoke(self, transaction, cmd, data, encoder)
     }
 }
 
