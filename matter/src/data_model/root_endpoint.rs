@@ -30,7 +30,7 @@ use super::{
 pub type RootEndpointHandler<'a> = handler_chain_type!(
     DescriptorCluster,
     BasicInfoCluster<'a>,
-    GenCommCluster,
+    GenCommCluster<'a>,
     NwCommCluster,
     AdminCommCluster<'a>,
     NocCluster<'a>,
@@ -107,7 +107,7 @@ pub fn wrap<'a>(
         .chain(
             endpoint_id,
             general_commissioning::ID,
-            GenCommCluster::new(rand),
+            GenCommCluster::new(failsafe, rand),
         )
         .chain(
             endpoint_id,
