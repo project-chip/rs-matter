@@ -121,17 +121,17 @@ struct FailSafeParams {
     bread_crumb: u8,
 }
 
-pub struct GenCommCluster {
+pub struct GenCommCluster<'a> {
     data_ver: Dataver,
     expiry_len: u16,
-    failsafe: RefCell<FailSafe>,
+    failsafe: &'a RefCell<FailSafe>,
 }
 
-impl GenCommCluster {
-    pub fn new(rand: Rand) -> Self {
+impl<'a> GenCommCluster<'a> {
+    pub fn new(failsafe: &'a RefCell<FailSafe>, rand: Rand) -> Self {
         Self {
             data_ver: Dataver::new(rand),
-            failsafe: RefCell::new(FailSafe::new()),
+            failsafe,
             // TODO: Arch-Specific
             expiry_len: 120,
         }
@@ -291,7 +291,7 @@ impl GenCommCluster {
     }
 }
 
-impl Handler for GenCommCluster {
+impl<'a> Handler for GenCommCluster<'a> {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         GenCommCluster::read(self, attr, encoder)
     }
@@ -307,9 +307,9 @@ impl Handler for GenCommCluster {
     }
 }
 
-impl NonBlockingHandler for GenCommCluster {}
+impl<'a> NonBlockingHandler for GenCommCluster<'a> {}
 
-impl ChangeNotifier<()> for GenCommCluster {
+impl<'a> ChangeNotifier<()> for GenCommCluster<'a> {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }
