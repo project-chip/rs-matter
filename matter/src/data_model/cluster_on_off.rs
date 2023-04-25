@@ -112,6 +112,7 @@ impl OnOffCluster {
 
     pub fn invoke(
         &mut self,
+        transaction: &mut Transaction,
         cmd: &CmdDetails,
         _data: &TLVElement,
         _encoder: CmdDataEncoder,
@@ -131,6 +132,8 @@ impl OnOffCluster {
             }
         }
 
+        transaction.complete();
+
         self.data_ver.changed();
 
         Ok(())
@@ -148,12 +151,12 @@ impl Handler for OnOffCluster {
 
     fn invoke(
         &mut self,
-        _transaction: &mut Transaction,
+        transaction: &mut Transaction,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        OnOffCluster::invoke(self, cmd, data, encoder)
+        OnOffCluster::invoke(self, transaction, cmd, data, encoder)
     }
 }
 

@@ -27,7 +27,7 @@ use crate::fabric::{Fabric, FabricMgr, MAX_SUPPORTED_FABRICS};
 use crate::interaction_model::core::Transaction;
 use crate::mdns::MdnsMgr;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
-use crate::transport::session::{Session, SessionMode};
+use crate::transport::session::SessionMode;
 use crate::utils::epoch::Epoch;
 use crate::utils::rand::Rand;
 use crate::utils::writebuf::WriteBuf;
@@ -294,21 +294,17 @@ impl<'a> NocCluster<'a> {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::AddNOC => {
-                self.handle_command_addnoc(transaction.session_mut(), data, encoder)?
-            }
-            Commands::CSRReq => {
-                self.handle_command_csrrequest(transaction.session_mut(), data, encoder)?
-            }
+            Commands::AddNOC => self.handle_command_addnoc(transaction, data, encoder)?,
+            Commands::CSRReq => self.handle_command_csrrequest(transaction, data, encoder)?,
             Commands::AddTrustedRootCert => {
-                self.handle_command_addtrustedrootcert(transaction.session_mut(), data)?
+                self.handle_command_addtrustedrootcert(transaction, data)?
             }
-            Commands::AttReq => {
-                self.handle_command_attrequest(transaction.session(), data, encoder)?
+            Commands::AttReq => self.handle_command_attrequest(transaction, data, encoder)?,
+            Commands::CertChainReq => {
+                self.handle_command_certchainrequest(transaction, data, encoder)?
             }
-            Commands::CertChainReq => self.handle_command_certchainrequest(data, encoder)?,
             Commands::UpdateFabricLabel => {
-                self.handle_command_updatefablabel(transaction.session(), data, encoder)?;
+                self.handle_command_updatefablabel(transaction, data, encoder)?;
             }
             Commands::RemoveFabric => self.handle_command_rmfabric(transaction, data, encoder)?,
         }
@@ -326,10 +322,13 @@ impl<'a> NocCluster<'a> {
 
     fn _handle_command_addnoc(
         &mut self,
-        session: &mut Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
     ) -> Result<u8, NocError> {
-        let noc_data = session.take_noc_data().ok_or(NocStatus::MissingCsr)?;
+        let noc_data = transaction
+            .session_mut()
+            .take_noc_data()
+            .ok_or(NocStatus::MissingCsr)?;
 
         if !self
             .failsafe
@@ -389,6 +388,7 @@ impl<'a> NocCluster<'a> {
 
         self.failsafe.borrow_mut().record_add_noc(fab_idx)?;
 
+        transaction.complete();
         Ok(fab_idx)
     }
 
@@ -411,32 +411,36 @@ impl<'a> NocCluster<'a> {
 
     fn handle_command_updatefablabel(
         &mut self,
-        session: &Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Update Fabric Label");
         let req = UpdateFabricLabelReq::from_tlv(data).map_err(Error::map_invalid_data_type)?;
-        let (result, fab_idx) = if let SessionMode::Case(c) = session.get_session_mode() {
-            if self
-                .fabric_mgr
-                .borrow_mut()
-                .set_label(
-                    c.fab_idx,
-                    req.label.as_str().map_err(Error::map_invalid_data_type)?,
-                )
-                .is_err()
-            {
-                (NocStatus::LabelConflict, c.fab_idx)
+        let (result, fab_idx) =
+            if let SessionMode::Case(c) = transaction.session().get_session_mode() {
+                if self
+                    .fabric_mgr
+                    .borrow_mut()
+                    .set_label(
+                        c.fab_idx,
+                        req.label.as_str().map_err(Error::map_invalid_data_type)?,
+                    )
+                    .is_err()
+                {
+                    (NocStatus::LabelConflict, c.fab_idx)
+                } else {
+                    (NocStatus::Ok, c.fab_idx)
+                }
             } else {
-                (NocStatus::Ok, c.fab_idx)
-            }
-        } else {
-            // Update Fabric Label not allowed
-            (NocStatus::InvalidFabricIndex, 0)
-        };
+                // Update Fabric Label not allowed
+                (NocStatus::InvalidFabricIndex, 0)
+            };
 
-        Self::create_nocresponse(encoder, result, fab_idx, "")
+        Self::create_nocresponse(encoder, result, fab_idx, "")?;
+
+        transaction.complete();
+        Ok(())
     }
 
     fn handle_command_rmfabric(
@@ -463,13 +467,13 @@ impl<'a> NocCluster<'a> {
 
     fn handle_command_addnoc(
         &mut self,
-        session: &mut Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("AddNOC");
 
-        let (status, fab_idx) = match self._handle_command_addnoc(session, data) {
+        let (status, fab_idx) = match self._handle_command_addnoc(transaction, data) {
             Ok(fab_idx) => (NocStatus::Ok, fab_idx),
             Err(NocError::Status(status)) => (status, 0),
             Err(NocError::Error(error)) => Err(error)?,
@@ -480,7 +484,7 @@ impl<'a> NocCluster<'a> {
 
     fn handle_command_attrequest(
         &mut self,
-        session: &Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
@@ -490,7 +494,7 @@ impl<'a> NocCluster<'a> {
         info!("Received Attestation Nonce:{:?}", req.str);
 
         let mut attest_challenge = [0u8; crypto::SYMM_KEY_LEN_BYTES];
-        attest_challenge.copy_from_slice(session.get_att_challenge());
+        attest_challenge.copy_from_slice(transaction.session().get_att_challenge());
 
         let mut writer = encoder.with_command(RespCommands::AttReqResp as _)?;
 
@@ -512,11 +516,15 @@ impl<'a> NocCluster<'a> {
         )?;
         writer.end_container()?;
 
-        writer.complete()
+        writer.complete()?;
+
+        transaction.complete();
+        Ok(())
     }
 
     fn handle_command_certchainrequest(
         &mut self,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
@@ -535,12 +543,15 @@ impl<'a> NocCluster<'a> {
 
         encoder
             .with_command(RespCommands::CertChainResp as _)?
-            .set(cmd_data)
+            .set(cmd_data)?;
+
+        transaction.complete();
+        Ok(())
     }
 
     fn handle_command_csrrequest(
         &mut self,
-        session: &mut Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
@@ -555,7 +566,7 @@ impl<'a> NocCluster<'a> {
 
         let noc_keypair = KeyPair::new()?;
         let mut attest_challenge = [0u8; crypto::SYMM_KEY_LEN_BYTES];
-        attest_challenge.copy_from_slice(session.get_att_challenge());
+        attest_challenge.copy_from_slice(transaction.session().get_att_challenge());
 
         let mut writer = encoder.with_command(RespCommands::CSRResp as _)?;
 
@@ -576,14 +587,15 @@ impl<'a> NocCluster<'a> {
         let noc_data = NocData::new(noc_keypair);
         // Store this in the session data instead of cluster data, so it gets cleared
         // if the session goes away for some reason
-        session.set_noc_data(noc_data);
+        transaction.session_mut().set_noc_data(noc_data);
 
+        transaction.complete();
         Ok(())
     }
 
     fn handle_command_addtrustedrootcert(
         &mut self,
-        session: &mut Session,
+        transaction: &mut Transaction,
         data: &TLVElement,
     ) -> Result<(), Error> {
         cmd_enter!("AddTrustedRootCert");
@@ -592,10 +604,13 @@ impl<'a> NocCluster<'a> {
         }
 
         // This may happen on CASE or PASE. For PASE, the existence of NOC Data is necessary
-        match session.get_session_mode() {
+        match transaction.session().get_session_mode() {
             SessionMode::Case(_) => error!("CASE: AddTrustedRootCert handling pending"), // For a CASE Session, we just return success for now,
             SessionMode::Pase => {
-                let noc_data = session.get_noc_data::<NocData>().ok_or(Error::NoSession)?;
+                let noc_data = transaction
+                    .session_mut()
+                    .get_noc_data::<NocData>()
+                    .ok_or(Error::NoSession)?;
 
                 let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
                 info!("Received Trusted Cert:{:x?}", req.str);
@@ -607,6 +622,7 @@ impl<'a> NocCluster<'a> {
             _ => (),
         }
 
+        transaction.complete();
         Ok(())
     }
 }
