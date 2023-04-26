@@ -470,6 +470,8 @@ impl<'a> InvReq<'a> {
     }
 
     pub fn complete(self, tx: &mut Packet, _transaction: &mut Transaction) -> Result<bool, Error> {
+        let suppress = self.suppress_response.unwrap_or_default();
+
         let mut tw = TLVWriter::new(tx.get_writebuf()?);
 
         if self.inv_requests.is_some() {
@@ -478,7 +480,12 @@ impl<'a> InvReq<'a> {
 
         tw.end_container()?;
 
-        Ok(true)
+        Ok(if suppress {
+            error!("Supress response is set, is this the expected handling?");
+            false
+        } else {
+            true
+        })
     }
 }
 

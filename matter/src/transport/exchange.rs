@@ -25,6 +25,7 @@ use crate::error::Error;
 use crate::interaction_model::core::{ResumeReadReq, ResumeSubscribeReq};
 use crate::secure_channel;
 use crate::secure_channel::case::CaseSession;
+use crate::tlv::print_tlv_list;
 use crate::utils::epoch::Epoch;
 use crate::utils::rand::Rand;
 
@@ -204,13 +205,14 @@ impl Exchange {
             return Ok(false);
         }
 
-        trace!("payload: {:x?}", tx.as_mut_slice());
+        trace!("payload: {:x?}", tx.as_slice());
         info!(
-            "{} with proto id: {} opcode: {}",
+            "{} with proto id: {} opcode: {}, tlv:\n",
             "Sending".blue(),
             tx.get_proto_id(),
             tx.get_proto_opcode(),
         );
+        print_tlv_list(tx.as_slice());
 
         tx.proto.exch_id = self.id;
         if self.role == Role::Initiator {
