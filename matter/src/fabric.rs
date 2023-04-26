@@ -53,7 +53,7 @@ const ST_PBKEY: &str = "pubkey";
 const ST_PRKEY: &str = "privkey";
 
 #[allow(dead_code)]
-#[derive(ToTLV)]
+#[derive(Debug, ToTLV)]
 #[tlvargs(lifetime = "'a", start = 1)]
 pub struct FabricDescriptor<'a> {
     root_public_key: OctetStr<'a>,
@@ -66,6 +66,7 @@ pub struct FabricDescriptor<'a> {
     pub fab_idx: Option<u8>,
 }
 
+#[derive(Debug)]
 pub struct Fabric {
     node_id: u64,
     fabric_id: u64,
@@ -532,22 +533,21 @@ impl FabricMgr {
     }
 
     pub fn add(&mut self, f: Fabric, mdns_mgr: &mut MdnsMgr) -> Result<u8, Error> {
-        let index = self
-            .fabrics
-            .iter()
-            .skip(1)
-            .position(|f| f.is_none())
-            .ok_or(Error::NoSpace)?;
+        for i in 1..MAX_SUPPORTED_FABRICS {
+            if self.fabrics[i].is_none() {
+                self.fabrics[i] = Some(f);
+                mdns_mgr.publish_service(
+                    &self.fabrics[i].as_ref().unwrap().mdns_service_name,
+                    ServiceMode::Commissioned,
+                )?;
 
-        self.fabrics[index] = Some(f);
-        mdns_mgr.publish_service(
-            &self.fabrics[index].as_ref().unwrap().mdns_service_name,
-            ServiceMode::Commissioned,
-        )?;
+                self.changed = true;
 
-        self.changed = true;
+                return Ok(i as u8);
+            }
+        }
 
-        Ok(index as u8)
+        Err(Error::NoSpace)
     }
 
     pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
