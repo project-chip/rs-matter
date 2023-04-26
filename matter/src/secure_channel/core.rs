@@ -63,7 +63,7 @@ impl<'a> SecureChannel<'a> {
         info!("Received Data:");
         tlv::print_tlv_list(ctx.rx.as_slice());
         let (reply, clone_data) = match proto_opcode {
-            OpCode::MRPStandAloneAck => Ok((true, None)),
+            OpCode::MRPStandAloneAck => Ok((false, None)),
             OpCode::PBKDFParamRequest => self
                 .pase
                 .borrow_mut()
