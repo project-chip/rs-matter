@@ -199,6 +199,12 @@ impl KeyPair {
     }
 }
 
+impl core::fmt::Debug for KeyPair {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("KeyPair").finish()
+    }
+}
+
 fn convert_r_s_to_asn1_sign(signature: &[u8], mbedtls_sign: &mut [u8]) -> Result<usize, Error> {
     let r = &signature[0..32];
     let s = &signature[32..64];
