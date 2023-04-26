@@ -29,7 +29,7 @@ use num_derive::FromPrimitive;
 pub use self::asn1_writer::ASN1Writer;
 use self::printer::CertPrinter;
 
-pub const MAX_CERT_TLV_LEN: usize = 300; // TODO
+pub const MAX_CERT_TLV_LEN: usize = 1024; // TODO
 
 // As per https://datatracker.ietf.org/doc/html/rfc5280
 

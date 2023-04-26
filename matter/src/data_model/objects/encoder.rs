@@ -368,10 +368,16 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
 
                 match handler.invoke(transaction, &cmd, &data, encoder) {
                     Ok(()) => cmd.success(&tracker),
-                    Err(error) => cmd.status(error.into()),
+                    Err(error) => {
+                        error!("Error invoking command: {}", error);
+                        cmd.status(error.into())
+                    }
                 }
             }
-            Err(status) => Some(status),
+            Err(status) => {
+                error!("Error invoking command: {:?}", status);
+                Some(status)
+            }
         };
 
         if let Some(status) = status {
