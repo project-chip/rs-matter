@@ -70,6 +70,7 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
 
     fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'p>>>, Error> {
         self.mgr.exch_mgr.purge();
+        self.tx.reset();
 
         let (state, next) = match core::mem::replace(&mut self.state, RecvState::New) {
             RecvState::New => {
@@ -108,7 +109,7 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                     }
                 }
                 Ok(None) => (RecvState::Ack, None),
-                Err(Error::Duplicate) => (RecvState::Ack, Some(None)),
+                Err(Error::Duplicate) => (RecvState::Ack, None),
                 Err(Error::NoSpace) => (RecvState::EvictSession, None),
                 Err(err) => Err(err)?,
             },

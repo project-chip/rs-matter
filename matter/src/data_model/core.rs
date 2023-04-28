@@ -15,25 +15,16 @@
  *    limitations under the License.
  */
 
-use core::{
-    cell::RefCell,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::cell::RefCell;
 
 use super::objects::*;
 use crate::{
     acl::{Accessor, AclMgr},
     error::*,
-    interaction_model::{
-        core::{Interaction, Transaction},
-        messages::msg::SubscribeResp,
-    },
-    tlv::{TLVWriter, TagType, ToTLV},
+    interaction_model::core::{Interaction, Transaction},
+    tlv::TLVWriter,
     transport::packet::Packet,
 };
-
-// TODO: For now...
-static SUBS_ID: AtomicU32 = AtomicU32::new(1);
 
 pub struct DataModel<'a, T> {
     pub acl_mgr: &'a RefCell<AclMgr>,
@@ -120,19 +111,12 @@ impl<'a, T> DataModel<'a, T> {
             Interaction::ResumeSubscribe(req) => {
                 let mut resume_path = None;
 
-                if req.resume_path.is_some() {
-                    for item in self.node.resume_subscribing_read(&req, &accessor) {
-                        if let Some(path) =
-                            AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?
-                        {
-                            resume_path = Some(path);
-                            break;
-                        }
+                for item in self.node.resume_subscribing_read(&req, &accessor) {
+                    if let Some(path) = AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?
+                    {
+                        resume_path = Some(path);
+                        break;
                     }
-                } else {
-                    // TODO
-                    let resp = SubscribeResp::new(SUBS_ID.fetch_add(1, Ordering::SeqCst), 40);
-                    resp.to_tlv(&mut tw, TagType::Anonymous)?;
                 }
 
                 req.complete(tx, transaction, resume_path)
@@ -215,19 +199,13 @@ impl<'a, T> DataModel<'a, T> {
             Interaction::ResumeSubscribe(req) => {
                 let mut resume_path = None;
 
-                if req.resume_path.is_some() {
-                    for item in self.node.resume_subscribing_read(&req, &accessor) {
-                        if let Some(path) =
-                            AttrDataEncoder::handle_read_async(item, &self.handler, &mut tw).await?
-                        {
-                            resume_path = Some(path);
-                            break;
-                        }
+                for item in self.node.resume_subscribing_read(&req, &accessor) {
+                    if let Some(path) =
+                        AttrDataEncoder::handle_read_async(item, &self.handler, &mut tw).await?
+                    {
+                        resume_path = Some(path);
+                        break;
                     }
-                } else {
-                    // TODO
-                    let resp = SubscribeResp::new(SUBS_ID.fetch_add(1, Ordering::SeqCst), 40);
-                    resp.to_tlv(&mut tw, TagType::Anonymous)?;
                 }
 
                 req.complete(tx, transaction, resume_path)

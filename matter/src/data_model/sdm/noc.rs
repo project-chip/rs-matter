@@ -388,7 +388,6 @@ impl<'a> NocCluster<'a> {
 
         self.failsafe.borrow_mut().record_add_noc(fab_idx)?;
 
-        transaction.complete();
         Ok(fab_idx)
     }
 
@@ -479,7 +478,10 @@ impl<'a> NocCluster<'a> {
             Err(NocError::Error(error)) => Err(error)?,
         };
 
-        Self::create_nocresponse(encoder, status, fab_idx, "")
+        Self::create_nocresponse(encoder, status, fab_idx, "")?;
+        transaction.complete();
+
+        Ok(())
     }
 
     fn handle_command_attrequest(
