@@ -71,7 +71,12 @@ impl DescriptorCluster {
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::DeviceTypeList => {
-                        self.encode_devtype_list(attr.node, AttrDataWriter::TAG, &mut writer)?;
+                        self.encode_devtype_list(
+                            attr.node,
+                            attr.endpoint_id,
+                            AttrDataWriter::TAG,
+                            &mut writer,
+                        )?;
                         writer.complete()
                     }
                     Attributes::ServerList => {
@@ -111,13 +116,16 @@ impl DescriptorCluster {
     fn encode_devtype_list(
         &self,
         node: &Node,
+        endpoint_id: u16,
         tag: TagType,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
         tw.start_array(tag)?;
         for endpoint in node.endpoints {
-            let dev_type = endpoint.device_type;
-            dev_type.to_tlv(tw, TagType::Anonymous)?;
+            if endpoint.id == endpoint_id {
+                let dev_type = endpoint.device_type;
+                dev_type.to_tlv(tw, TagType::Anonymous)?;
+            }
         }
 
         tw.end_container()
