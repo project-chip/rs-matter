@@ -61,6 +61,7 @@ impl FailSafe {
             }
             State::Armed(c) => {
                 if c.session_mode != session_mode {
+                    error!("Received Fail-Safe Arm with different session modes; current {:?}, incoming {:?}", c.session_mode, session_mode);
                     return Err(Error::Invalid);
                 }
                 // re-arm
