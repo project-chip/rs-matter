@@ -71,6 +71,7 @@ pub enum DataOption {
     CaseSession(CaseSession),
     Time(Duration),
     SuspendedReadReq(ResumeReadReq),
+    SubscriptionId(u32),
     SuspendedSubscibeReq(ResumeSubscribeReq),
     #[default]
     None,
@@ -162,6 +163,20 @@ impl Exchange {
         let old = core::mem::replace(&mut self.data, DataOption::None);
         if let DataOption::SuspendedReadReq(req) = old {
             Some(req)
+        } else {
+            self.data = old;
+            None
+        }
+    }
+
+    pub fn set_subscription_id(&mut self, id: u32) {
+        self.data = DataOption::SubscriptionId(id);
+    }
+
+    pub fn take_subscription_id(&mut self) -> Option<u32> {
+        let old = core::mem::replace(&mut self.data, DataOption::None);
+        if let DataOption::SubscriptionId(id) = old {
+            Some(id)
         } else {
             self.data = old;
             None
