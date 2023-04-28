@@ -693,12 +693,8 @@ impl ResumeSubscribeReq {
 
             let mut tw = TLVWriter::new(tx.get_writebuf()?);
 
-            tw.start_struct(TagType::Anonymous)?;
-
             let resp = SubscribeResp::new(self.subscription_id, 40);
             resp.to_tlv(&mut tw, TagType::Anonymous)?;
-
-            tw.end_container()?;
 
             Ok(false)
         }
