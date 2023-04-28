@@ -25,6 +25,7 @@ use matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use matter::data_model::objects::*;
 use matter::data_model::root_endpoint;
 use matter::data_model::sdm::dev_att::DevAttDataFetcher;
+use matter::data_model::system_model::descriptor;
 use matter::interaction_model::core::InteractionModel;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::{
@@ -95,7 +96,7 @@ fn main() {
                                 Endpoint {
                                     id: 1,
                                     device_type: DEV_TYPE_ON_OFF_LIGHT,
-                                    clusters: &[cluster_on_off::CLUSTER],
+                                    clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
                                 },
                             ],
                         };
@@ -118,9 +119,15 @@ fn main() {
 }
 
 fn handler<'a>(matter: &'a Matter<'a>, dev_att: &'a dyn DevAttDataFetcher) -> impl Handler + 'a {
-    root_endpoint::handler(0, dev_att, matter).chain(
-        1,
-        cluster_on_off::ID,
-        cluster_on_off::OnOffCluster::new(*matter.borrow()),
-    )
+    root_endpoint::handler(0, dev_att, matter)
+        .chain(
+            1,
+            descriptor::ID,
+            descriptor::DescriptorCluster::new(*matter.borrow()),
+        )
+        .chain(
+            1,
+            cluster_on_off::ID,
+            cluster_on_off::OnOffCluster::new(*matter.borrow()),
+        )
 }
