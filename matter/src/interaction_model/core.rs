@@ -271,6 +271,8 @@ impl<'a> Interaction<'a> {
         transaction: &mut Transaction,
     ) -> Result<Option<Self>, Error> {
         if let Some(interaction) = Self::new(rx, transaction)? {
+            tx.reset();
+
             let initiated = match &interaction {
                 Interaction::Read(req) => req.initiate(tx, transaction)?,
                 Interaction::Write(req) => req.initiate(tx, transaction)?,

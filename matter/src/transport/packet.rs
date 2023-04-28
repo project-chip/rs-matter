@@ -78,6 +78,19 @@ impl<'a> Packet<'a> {
         }
     }
 
+    pub fn reset(&mut self) -> () {
+        if let Direction::Tx(wb) = &mut self.data {
+            wb.reset();
+            wb.reserve(Packet::HDR_RESERVE).unwrap();
+
+            self.plain = Default::default();
+            self.proto = Default::default();
+            self.peer = Address::default();
+
+            self.proto.set_reliable();
+        }
+    }
+
     pub fn as_slice(&self) -> &[u8] {
         match &self.data {
             Direction::Rx(pb, _) => pb.as_slice(),
