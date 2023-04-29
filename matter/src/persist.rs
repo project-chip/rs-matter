@@ -23,6 +23,8 @@ mod file_psm {
     use std::io::{Read, Write};
     use std::path::PathBuf;
 
+    use log::info;
+
     use crate::error::Error;
 
     pub struct FilePsm {
@@ -57,7 +59,11 @@ mod file_psm {
                         offset += len;
                     }
 
-                    Ok(Some(&buf[..offset]))
+                    let data = &buf[..offset];
+
+                    info!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
+
+                    Ok(Some(data))
                 }
                 Err(_) => Ok(None),
             }
@@ -69,6 +75,8 @@ mod file_psm {
             let mut file = fs::File::create(path)?;
 
             file.write_all(data)?;
+
+            info!("Key {}: stored {} bytes {:?}", key, data.len(), data);
 
             Ok(())
         }
