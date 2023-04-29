@@ -24,10 +24,10 @@ use log::info;
 use crate::{
     cert::{Cert, MAX_CERT_TLV_LEN},
     crypto::{self, hkdf_sha256, HmacSha256, KeyPair},
-    error::Error,
+    error::{Error, ErrorCode},
     group_keys::KeySet,
     mdns::{MdnsMgr, ServiceMode},
-    tlv::{FromTLV, OctetStr, TLVElement, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
+    tlv::{FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
     utils::writebuf::WriteBuf,
 };
 
@@ -123,7 +123,7 @@ impl Fabric {
             0x69, 0x63,
         ];
         hkdf_sha256(&fabric_id_be, root_pubkey, &COMPRESSED_FABRIC_ID_INFO, out)
-            .map_err(|_| Error::NoSpace)
+            .map_err(|_| Error::from(ErrorCode::NoSpace))
     }
 
     pub fn match_dest_id(&self, random: &[u8], target: &[u8]) -> Result<(), Error> {
@@ -144,7 +144,7 @@ impl Fabric {
         if id.as_slice() == target {
             Ok(())
         } else {
-            Err(Error::NotFound)
+            Err(ErrorCode::NotFound.into())
         }
     }
 
@@ -208,7 +208,7 @@ impl FabricMgr {
             }
         }
 
-        let root = TLVList::new(data).iter().next().ok_or(Error::Invalid)?;
+        let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
         self.fabrics = FabricEntries::from_tlv(&root)?;
 
@@ -227,6 +227,7 @@ impl FabricMgr {
         if self.changed {
             let mut wb = WriteBuf::new(buf);
             let mut tw = TLVWriter::new(&mut wb);
+
             self.fabrics.to_tlv(&mut tw, TagType::Anonymous)?;
 
             self.changed = false;
@@ -252,7 +253,7 @@ impl FabricMgr {
             }
         }
 
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
@@ -262,10 +263,10 @@ impl FabricMgr {
                 self.changed = true;
                 Ok(())
             } else {
-                Err(Error::NotFound)
+                Err(ErrorCode::NotFound.into())
             }
         } else {
-            Err(Error::NotFound)
+            Err(ErrorCode::NotFound.into())
         }
     }
 
@@ -277,7 +278,7 @@ impl FabricMgr {
                 }
             }
         }
-        Err(Error::NotFound)
+        Err(ErrorCode::NotFound.into())
     }
 
     pub fn get_fabric(&self, idx: usize) -> Result<Option<&Fabric>, Error> {
@@ -317,7 +318,7 @@ impl FabricMgr {
                 .filter_map(|f| f.as_ref())
                 .any(|f| f.label == label)
             {
-                return Err(Error::Invalid);
+                return Err(ErrorCode::Invalid.into());
             }
         }
 

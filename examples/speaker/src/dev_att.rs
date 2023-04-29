@@ -159,7 +159,7 @@ impl DevAttDataFetcher for HardCodedDevAtt {
             data.copy_from_slice(src);
             Ok(src.len())
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 }

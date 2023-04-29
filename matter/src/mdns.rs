@@ -217,7 +217,7 @@ pub mod astro {
     use std::collections::HashMap;
 
     use super::Mdns;
-    use crate::error::Error;
+    use crate::error::{Error, ErrorCode};
     use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
     use log::info;
 
@@ -269,7 +269,7 @@ pub mod astro {
                 builder = builder.with_key_value(kvs.0.to_string(), kvs.1.to_string());
             }
 
-            let svc = builder.register().map_err(|_| Error::MdnsError)?;
+            let svc = builder.register().map_err(|_| ErrorCode::MdnsError)?;
 
             self.services.insert(
                 ServiceId {
@@ -348,7 +348,7 @@ pub mod astro {
 //     use std::collections::HashMap;
 
 //     use super::Mdns;
-//     use crate::error::Error;
+//     use crate::error::{Error, ErrorCode};
 //     use log::info;
 //     use zeroconf::prelude::*;
 //     use zeroconf::{MdnsService, ServiceType, TxtRecord};
@@ -402,7 +402,7 @@ pub mod astro {
 
 //             svc.set_txt_record(txt);
 
-//             //let event_loop = svc.register().map_err(|_| Error::MdnsError)?;
+//             //let event_loop = svc.register().map_err(|_| ErrorCode::MdnsError)?;
 
 //             self.services.insert(
 //                 ServiceId {
@@ -604,7 +604,7 @@ pub mod libmdns {
 // pub mod simplemdns {
 //     use std::net::Ipv4Addr;
 
-//     use crate::error::Error;
+//     use crate::error::{Error, ErrorCode};
 //     use super::Mdns;
 //     use log::info;
 //     use simple_dns::{

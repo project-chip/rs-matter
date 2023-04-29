@@ -109,14 +109,18 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                     }
                 }
                 Ok(None) => (RecvState::Ack, None),
-                Err(Error::Duplicate) => (RecvState::Ack, None),
-                Err(Error::NoSpace) => (RecvState::EvictSession, None),
-                Err(err) => Err(err)?,
+                Err(e) => match e.code() {
+                    ErrorCode::Duplicate => (RecvState::Ack, None),
+                    ErrorCode::NoSpace => (RecvState::EvictSession, None),
+                    _ => Err(e)?,
+                },
             },
             RecvState::AddSession(clone_data) => match self.mgr.exch_mgr.add_session(&clone_data) {
                 Ok(_) => (RecvState::Ack, None),
-                Err(Error::NoSpace) => (RecvState::EvictSession2(clone_data), None),
-                Err(err) => Err(err)?,
+                Err(e) => match e.code() {
+                    ErrorCode::NoSpace => (RecvState::EvictSession2(clone_data), None),
+                    _ => Err(e)?,
+                },
             },
             RecvState::EvictSession => {
                 if self.mgr.exch_mgr.evict_session(&mut self.tx)? {

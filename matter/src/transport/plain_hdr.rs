@@ -65,7 +65,7 @@ impl PlainHdr {
 impl PlainHdr {
     // it will have an additional 'message length' field first
     pub fn decode(&mut self, msg: &mut ParseBuf) -> Result<(), Error> {
-        self.flags = MsgFlags::from_bits(msg.le_u8()?).ok_or(Error::Invalid)?;
+        self.flags = MsgFlags::from_bits(msg.le_u8()?).ok_or(ErrorCode::Invalid)?;
         self.sess_id = msg.le_u16()?;
         let _sec_flags = msg.le_u8()?;
         self.sess_type = if self.sess_id != 0 {

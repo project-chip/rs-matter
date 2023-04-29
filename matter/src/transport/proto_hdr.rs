@@ -105,7 +105,7 @@ impl ProtoHdr {
             decrypt_in_place(plain_hdr.ctr, peer_nodeid, parsebuf, d)?;
         }
 
-        self.exch_flags = ExchFlags::from_bits(parsebuf.le_u8()?).ok_or(Error::Invalid)?;
+        self.exch_flags = ExchFlags::from_bits(parsebuf.le_u8()?).ok_or(ErrorCode::Invalid)?;
         self.proto_opcode = parsebuf.le_u8()?;
         self.exch_id = parsebuf.le_u16()?;
         self.proto_id = parsebuf.le_u16()?;
@@ -128,10 +128,10 @@ impl ProtoHdr {
         resp_buf.le_u16(self.exch_id)?;
         resp_buf.le_u16(self.proto_id)?;
         if self.is_vendor() {
-            resp_buf.le_u16(self.proto_vendor_id.ok_or(Error::Invalid)?)?;
+            resp_buf.le_u16(self.proto_vendor_id.ok_or(ErrorCode::Invalid)?)?;
         }
         if self.is_ack() {
-            resp_buf.le_u32(self.ack_msg_ctr.ok_or(Error::Invalid)?)?;
+            resp_buf.le_u32(self.ack_msg_ctr.ok_or(ErrorCode::Invalid)?)?;
         }
         Ok(())
     }
@@ -216,7 +216,7 @@ fn decrypt_in_place(
         // If so, we need to handle it cleanly here.
         aad.copy_from_slice(parsed_slice);
     } else {
-        return Err(Error::InvalidAAD);
+        Err(ErrorCode::InvalidAAD)?;
     }
 
     // IV:

@@ -53,7 +53,7 @@ impl UdpListener {
 
         let (size, addr) = self.socket.recv_from(in_buf).await.map_err(|e| {
             warn!("Error on the network: {:?}", e);
-            Error::Network
+            ErrorCode::Network
         })?;
 
         info!("Got packet: {:?} from addr {:?}", &in_buf[..size], addr);
@@ -66,7 +66,7 @@ impl UdpListener {
             Address::Udp(addr) => {
                 let len = self.socket.send_to(out_buf, addr).await.map_err(|e| {
                     warn!("Error on the network: {:?}", e);
-                    Error::Network
+                    ErrorCode::Network
                 })?;
 
                 info!(

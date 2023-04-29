@@ -59,7 +59,7 @@ impl AckEntry {
                 ack_timeout,
             })
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 
@@ -120,7 +120,7 @@ impl ReliableMessage {
         if self.retrans.is_some() {
             // This indicates there was some existing entry for same sess-id/exch-id, which shouldnt happen
             error!("Previous retrans entry for this exchange already exists");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
 
         self.retrans = Some(RetransEntry::new(proto_tx.plain.ctr));
@@ -135,7 +135,7 @@ impl ReliableMessage {
     pub fn recv(&mut self, proto_rx: &Packet, epoch: Epoch) -> Result<(), Error> {
         if proto_rx.proto.is_ack() {
             // Handle received Acks
-            let ack_msg_ctr = proto_rx.proto.get_ack_msg_ctr().ok_or(Error::Invalid)?;
+            let ack_msg_ctr = proto_rx.proto.get_ack_msg_ctr().ok_or(ErrorCode::Invalid)?;
             if let Some(entry) = &self.retrans {
                 if entry.get_msg_ctr() != ack_msg_ctr {
                     // TODO: XXX Fix this
@@ -150,7 +150,7 @@ impl ReliableMessage {
                 // This indicates there was some existing entry for same sess-id/exch-id, which shouldnt happen
                 // TODO: As per the spec if this happens, we need to send out the previous ACK and note this new ACK
                 error!("Previous ACK entry for this exchange already exists");
-                return Err(Error::Invalid);
+                Err(ErrorCode::Invalid)?;
             }
 
             self.ack = Some(AckEntry::new(proto_rx.plain.ctr, epoch)?);

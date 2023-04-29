@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     tlv::{FromTLV, TLVWriter, TagType, ToTLV},
 };
 
@@ -80,12 +80,12 @@ impl<'a> FromTLV<'a> for KeyPair {
         t.confirm_array()?.enter();
 
         if let Some(mut array) = t.enter() {
-            let pub_key = array.next().ok_or(Error::Invalid)?.slice()?;
-            let priv_key = array.next().ok_or(Error::Invalid)?.slice()?;
+            let pub_key = array.next().ok_or(ErrorCode::Invalid)?.slice()?;
+            let priv_key = array.next().ok_or(ErrorCode::Invalid)?.slice()?;
 
             KeyPair::new_from_components(pub_key, priv_key)
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 }
@@ -108,7 +108,7 @@ impl ToTLV for KeyPair {
 
 #[cfg(test)]
 mod tests {
-    use crate::error::Error;
+    use crate::error::ErrorCode;
 
     use super::KeyPair;
 
@@ -122,8 +122,9 @@ mod tests {
     fn test_verify_msg_fail() {
         let key = KeyPair::new_from_public(&test_vectors::PUB_KEY1).unwrap();
         assert_eq!(
-            key.verify_msg(&test_vectors::MSG1_FAIL, &test_vectors::SIGNATURE1),
-            Err(Error::InvalidSignature)
+            key.verify_msg(&test_vectors::MSG1_FAIL, &test_vectors::SIGNATURE1)
+                .map_err(|e| e.code()),
+            Err(ErrorCode::InvalidSignature)
         );
     }
 

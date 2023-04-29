@@ -19,7 +19,7 @@ use core::fmt::{self, Write};
 
 use crate::{
     crypto::KeyPair,
-    error::Error,
+    error::{Error, ErrorCode},
     tlv::{self, FromTLV, OctetStr, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
     utils::{epoch::UtcCalendar, writebuf::WriteBuf},
 };
@@ -349,22 +349,22 @@ impl<'a> FromTLV<'a> for DistNames<'a> {
         let mut d = Self {
             dn: heapless::Vec::new(),
         };
-        let iter = t.confirm_list()?.enter().ok_or(Error::Invalid)?;
+        let iter = t.confirm_list()?.enter().ok_or(ErrorCode::Invalid)?;
         for t in iter {
             if let TagType::Context(tag) = t.get_tag() {
                 if let Ok(value) = t.u64() {
                     d.dn.push((tag, DistNameValue::Uint(value)))
-                        .map_err(|_| Error::BufferTooSmall)?;
+                        .map_err(|_| ErrorCode::BufferTooSmall)?;
                 } else if let Ok(value) = t.slice() {
                     if tag > PRINTABLE_STR_THRESHOLD {
                         d.dn.push((
                             tag - PRINTABLE_STR_THRESHOLD,
                             DistNameValue::PrintableStr(value),
                         ))
-                        .map_err(|_| Error::BufferTooSmall)?;
+                        .map_err(|_| ErrorCode::BufferTooSmall)?;
                     } else {
                         d.dn.push((tag, DistNameValue::Utf8Str(value)))
-                            .map_err(|_| Error::BufferTooSmall)?;
+                            .map_err(|_| ErrorCode::BufferTooSmall)?;
                     }
                 }
             }
@@ -531,7 +531,7 @@ fn encode_dn_value(
             }
             _ => {
                 error!("Invalid encoding");
-                return Err(Error::Invalid);
+                Err(ErrorCode::Invalid)?
             }
         },
         DistNameValue::Utf8Str(v) => {
@@ -570,7 +570,9 @@ impl<'a> Cert<'a> {
     }
 
     pub fn get_node_id(&self) -> Result<u64, Error> {
-        self.subject.u64(DnTags::NodeId).ok_or(Error::NoNodeId)
+        self.subject
+            .u64(DnTags::NodeId)
+            .ok_or_else(|| Error::from(ErrorCode::NoNodeId))
     }
 
     pub fn get_cat_ids(&self, output: &mut [u32]) {
@@ -578,7 +580,9 @@ impl<'a> Cert<'a> {
     }
 
     pub fn get_fabric_id(&self) -> Result<u64, Error> {
-        self.subject.u64(DnTags::FabricId).ok_or(Error::NoFabricId)
+        self.subject
+            .u64(DnTags::FabricId)
+            .ok_or_else(|| Error::from(ErrorCode::NoFabricId))
     }
 
     pub fn get_pubkey(&self) -> &[u8] {
@@ -589,7 +593,7 @@ impl<'a> Cert<'a> {
         if let Some(id) = self.extensions.subj_key_id.as_ref() {
             Ok(id.0)
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 
@@ -641,7 +645,7 @@ impl<'a> Cert<'a> {
         w.integer("Serial Num:", self.serial_no.0)?;
 
         w.start_seq("Signature Algorithm:")?;
-        let (str, oid) = match get_sign_algo(self.sign_algo).ok_or(Error::Invalid)? {
+        let (str, oid) = match get_sign_algo(self.sign_algo).ok_or(ErrorCode::Invalid)? {
             SignAlgoValue::ECDSAWithSHA256 => ("ECDSA with SHA256", OID_ECDSA_WITH_SHA256),
         };
         w.oid(str, &oid)?;
@@ -660,11 +664,11 @@ impl<'a> Cert<'a> {
 
         w.start_seq("")?;
         w.start_seq("Public Key Algorithm")?;
-        let (str, pub_key) = match get_pubkey_algo(self.pubkey_algo).ok_or(Error::Invalid)? {
+        let (str, pub_key) = match get_pubkey_algo(self.pubkey_algo).ok_or(ErrorCode::Invalid)? {
             PubKeyAlgoValue::EcPubKey => ("ECPubKey", OID_PUB_KEY_ECPUBKEY),
         };
         w.oid(str, &pub_key)?;
-        let (str, curve_id) = match get_ec_curve_id(self.ec_curve_id).ok_or(Error::Invalid)? {
+        let (str, curve_id) = match get_ec_curve_id(self.ec_curve_id).ok_or(ErrorCode::Invalid)? {
             EcCurveIdValue::Prime256V1 => ("Prime256v1", OID_EC_TYPE_PRIME256V1),
         };
         w.oid(str, &curve_id)?;
@@ -704,7 +708,7 @@ impl<'a> CertVerifier<'a> {
 
     pub fn add_cert(self, parent: &'a Cert) -> Result<CertVerifier<'a>, Error> {
         if !self.cert.is_authority(parent)? {
-            return Err(Error::InvalidAuthKey);
+            Err(ErrorCode::InvalidAuthKey)?;
         }
         let mut asn1 = [0u8; MAX_ASN1_CERT_SIZE];
         let len = self.cert.as_asn1(&mut asn1, self.utc_calendar)?;
@@ -761,7 +765,6 @@ mod tests {
     use log::info;
 
     use crate::cert::Cert;
-    use crate::error::Error;
     use crate::tlv::{self, FromTLV, TLVWriter, TagType, ToTLV};
     use crate::utils::writebuf::WriteBuf;
 
@@ -815,31 +818,43 @@ mod tests {
     #[test]
     fn test_verify_chain_incomplete() {
         // The chain doesn't lead up to a self-signed certificate
+
+        use crate::error::ErrorCode;
         let noc = Cert::new(&test_vectors::NOC1_SUCCESS).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
         assert_eq!(
-            Err(Error::InvalidAuthKey),
-            a.add_cert(&icac).unwrap().finalise()
+            Err(ErrorCode::InvalidAuthKey),
+            a.add_cert(&icac).unwrap().finalise().map_err(|e| e.code())
         );
     }
 
     #[cfg(feature = "std")]
     #[test]
     fn test_auth_key_chain_incorrect() {
+        use crate::error::ErrorCode;
+
         let noc = Cert::new(&test_vectors::NOC1_AUTH_KEY_FAIL).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
-        assert_eq!(Err(Error::InvalidAuthKey), a.add_cert(&icac).map(|_| ()));
+        assert_eq!(
+            Err(ErrorCode::InvalidAuthKey),
+            a.add_cert(&icac).map(|_| ()).map_err(|e| e.code())
+        );
     }
 
     #[cfg(feature = "std")]
     #[test]
     fn test_cert_corrupted() {
+        use crate::error::ErrorCode;
+
         let noc = Cert::new(&test_vectors::NOC1_CORRUPT_CERT).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
-        assert_eq!(Err(Error::InvalidSignature), a.add_cert(&icac).map(|_| ()));
+        assert_eq!(
+            Err(ErrorCode::InvalidSignature),
+            a.add_cert(&icac).map(|_| ()).map_err(|e| e.code())
+        );
     }
 
     #[test]

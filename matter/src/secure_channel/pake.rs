@@ -23,10 +23,10 @@ use super::{
 };
 use crate::{
     crypto,
-    error::Error,
+    error::{Error, ErrorCode},
     mdns::{MdnsMgr, ServiceMode},
     secure_channel::common::OpCode,
-    tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV},
+    tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType, ToTLV},
     transport::{
         exchange::ExchangeCtx,
         network::Address,
@@ -176,7 +176,7 @@ impl PakeState {
         if let PakeState::InProgress(s) = new {
             Ok(s)
         } else {
-            Err(Error::InvalidSignature)
+            Err(ErrorCode::InvalidSignature.into())
         }
     }
 
@@ -187,7 +187,7 @@ impl PakeState {
     fn take_sess_data(&mut self, exch_ctx: &ExchangeCtx) -> Result<SessionData, Error> {
         let sd = self.take()?;
         if sd.exch_id != exch_ctx.exch.get_id() || sd.peer_addr != exch_ctx.sess.get_peer_addr() {
-            Err(Error::InvalidState)
+            Err(ErrorCode::InvalidState.into())
         } else {
             Ok(sd)
         }
@@ -240,10 +240,10 @@ impl Pake {
 
         let clone_data = if status_code == SCStatusCodes::SessionEstablishmentSuccess {
             // Get the keys
-            let ke = ke.ok_or(Error::Invalid)?;
+            let ke = ke.ok_or(ErrorCode::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
             crypto::hkdf_sha256(&[], ke, &SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
-                .map_err(|_x| Error::NoSpace)?;
+                .map_err(|_x| ErrorCode::NoSpace)?;
 
             // Create a session
             let data = sd.spake2p.get_app_data();
@@ -314,7 +314,7 @@ impl Pake {
         let a = PBKDFParamReq::from_tlv(&root)?;
         if a.passcode_id != 0 {
             error!("Can't yet handle passcode_id != 0");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
 
         let mut our_random: [u8; 32] = [0; 32];

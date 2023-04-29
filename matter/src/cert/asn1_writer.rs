@@ -17,7 +17,7 @@
 
 use super::{CertConsumer, MAX_DEPTH};
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     utils::epoch::{UtcCalendar, MATTER_EPOCH_SECS},
 };
 use core::{fmt::Write, time::Duration};
@@ -54,7 +54,7 @@ impl<'a> ASN1Writer<'a> {
             self.offset += size;
             return Ok(());
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn append_tlv<F>(&mut self, tag: u8, len: usize, f: F) -> Result<(), Error>
@@ -70,7 +70,7 @@ impl<'a> ASN1Writer<'a> {
             self.offset += len;
             return Ok(());
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     fn add_compound(&mut self, val: u8) -> Result<(), Error> {
@@ -80,7 +80,7 @@ impl<'a> ASN1Writer<'a> {
         self.depth[self.current_depth] = self.offset;
         self.current_depth += 1;
         if self.current_depth >= MAX_DEPTH {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         } else {
             Ok(())
         }
@@ -113,7 +113,7 @@ impl<'a> ASN1Writer<'a> {
 
     fn end_compound(&mut self) -> Result<(), Error> {
         if self.current_depth == 0 {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         let seq_len = self.get_compound_len();
         let write_offset = self.get_length_encoding_offset();
@@ -148,7 +148,7 @@ impl<'a> ASN1Writer<'a> {
             // This is done with an 0xA2 followed by 2 bytes of actual len
             3
         } else {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?
         };
         Ok(len)
     }

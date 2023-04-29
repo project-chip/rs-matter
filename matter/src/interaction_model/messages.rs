@@ -17,8 +17,8 @@
 
 use crate::{
     data_model::objects::{ClusterId, EndptId},
-    error::Error,
-    tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
+    error::{Error, ErrorCode},
+    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
 };
 
 // A generic path with endpoint, clusters, and a leaf
@@ -48,7 +48,7 @@ impl GenericPath {
                 cluster: Some(c),
                 leaf: Some(l),
             } => Ok((e, c, l)),
-            _ => Err(Error::Invalid),
+            _ => Err(ErrorCode::Invalid.into()),
         }
     }
     /// Returns true, if the path is wildcard
@@ -69,7 +69,7 @@ pub mod msg {
     use crate::{
         error::Error,
         interaction_model::core::IMStatusCode,
-        tlv::{FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
+        tlv::{FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
     };
 
     use super::ib::{
@@ -259,7 +259,7 @@ pub mod ib {
 
     use crate::{
         data_model::objects::{AttrDetails, AttrId, ClusterId, CmdId, EncodeValue, EndptId},
-        error::Error,
+        error::{Error, ErrorCode},
         interaction_model::core::IMStatusCode,
         tlv::{FromTLV, Nullable, TLVElement, TLVWriter, TagType, ToTLV},
     };
@@ -447,7 +447,7 @@ pub mod ib {
             f(ListOperation::DeleteList, data)?;
             // Now the data must be a list, that should be added item by item
 
-            let container = data.enter().ok_or(Error::Invalid)?;
+            let container = data.enter().ok_or(ErrorCode::Invalid)?;
             for d in container {
                 f(ListOperation::AddItem, &d)?;
             }
@@ -544,7 +544,7 @@ pub mod ib {
 
             if c.path.leaf.is_none() {
                 error!("Wildcard command parameter not supported");
-                Err(Error::CommandNotFound)
+                Err(ErrorCode::CommandNotFound.into())
             } else {
                 Ok(c)
             }

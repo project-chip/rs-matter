@@ -235,9 +235,9 @@ impl<'a> GenCommCluster<'a> {
         cmd_enter!("Set Regulatory Config");
         let country_code = data
             .find_tag(1)
-            .map_err(|_| Error::InvalidCommand)?
+            .map_err(|_| ErrorCode::InvalidCommand)?
             .slice()
-            .map_err(|_| Error::InvalidCommand)?;
+            .map_err(|_| ErrorCode::InvalidCommand)?;
         info!("Received country code: {:?}", country_code);
 
         let cmd_data = CommonResponse {

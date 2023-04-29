@@ -22,7 +22,7 @@ use crate::{
     acl::{AccessReq, Accessor},
     attribute_enum,
     data_model::objects::*,
-    error::Error,
+    error::{Error, ErrorCode},
     interaction_model::{
         core::IMStatusCode,
         messages::{
@@ -320,7 +320,7 @@ impl<'a> Cluster<'a> {
             GlobalElements::FeatureMap => writer.set(self.feature_map),
             other => {
                 error!("This attribute is not yet handled {:?}", other);
-                Err(Error::AttributeNotFound)
+                Err(ErrorCode::AttributeNotFound.into())
             }
         }
     }

@@ -17,8 +17,8 @@
 
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Error {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ErrorCode {
     AttributeNotFound,
     AttributeIsCustom,
     BufferTooSmall,
@@ -73,7 +73,36 @@ pub enum Error {
     Utf8Fail,
 }
 
+impl From<ErrorCode> for Error {
+    fn from(code: ErrorCode) -> Self {
+        Self::new(code)
+    }
+}
+
+pub struct Error {
+    code: ErrorCode,
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    backtrace: std::backtrace::Backtrace,
+}
+
 impl Error {
+    pub fn new(code: ErrorCode) -> Self {
+        Self {
+            code,
+            #[cfg(all(feature = "std", feature = "backtrace"))]
+            backtrace: std::backtrace::Backtrace::capture(),
+        }
+    }
+
+    pub const fn code(&self) -> ErrorCode {
+        self.code
+    }
+
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    pub const fn backtrace(&self) -> &std::backtrace::Backtrace {
+        &self.backtrace
+    }
+
     pub fn remap<F>(self, matcher: F, to: Self) -> Self
     where
         F: FnOnce(&Self) -> bool,
@@ -86,19 +115,22 @@ impl Error {
     }
 
     pub fn map_invalid(self, to: Self) -> Self {
-        self.remap(|e| matches!(e, Self::Invalid | Self::InvalidData), to)
+        self.remap(
+            |e| matches!(e.code(), ErrorCode::Invalid | ErrorCode::InvalidData),
+            to,
+        )
     }
 
     pub fn map_invalid_command(self) -> Self {
-        self.map_invalid(Error::InvalidCommand)
+        self.map_invalid(Error::new(ErrorCode::InvalidCommand))
     }
 
     pub fn map_invalid_action(self) -> Self {
-        self.map_invalid(Error::InvalidAction)
+        self.map_invalid(Error::new(ErrorCode::InvalidAction))
     }
 
     pub fn map_invalid_data_type(self) -> Self {
-        self.map_invalid(Error::InvalidDataType)
+        self.map_invalid(Error::new(ErrorCode::InvalidDataType))
     }
 }
 
@@ -106,14 +138,14 @@ impl Error {
 impl From<std::io::Error> for Error {
     fn from(_e: std::io::Error) -> Self {
         // Keep things simple for now
-        Self::StdIoError
+        Self::new(ErrorCode::StdIoError)
     }
 }
 
 #[cfg(feature = "std")]
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(_e: std::sync::PoisonError<T>) -> Self {
-        Self::RwLock
+        Self::new(ErrorCode::RwLock)
     }
 }
 
@@ -121,7 +153,7 @@ impl<T> From<std::sync::PoisonError<T>> for Error {
 impl From<openssl::error::ErrorStack> for Error {
     fn from(e: openssl::error::ErrorStack) -> Self {
         ::log::error!("Error in TLS: {}", e);
-        Self::TLSStack
+        Self::new(ErrorCode::TLSStack)
     }
 }
 
@@ -129,39 +161,57 @@ impl From<openssl::error::ErrorStack> for Error {
 impl From<mbedtls::Error> for Error {
     fn from(e: mbedtls::Error) -> Self {
         ::log::error!("Error in TLS: {}", e);
-        Self::TLSStack
+        Self::new(ErrorCode::TLSStack)
     }
 }
 
 #[cfg(feature = "crypto_rustcrypto")]
 impl From<ccm::aead::Error> for Error {
     fn from(_e: ccm::aead::Error) -> Self {
-        Self::Crypto
+        Self::new(ErrorCode::Crypto)
     }
 }
 
 #[cfg(feature = "std")]
 impl From<std::time::SystemTimeError> for Error {
     fn from(_e: std::time::SystemTimeError) -> Self {
-        Self::SysTimeFail
+        Error::new(ErrorCode::SysTimeFail)
     }
 }
 
 impl From<TryFromSliceError> for Error {
     fn from(_e: TryFromSliceError) -> Self {
-        Self::Invalid
+        Self::new(ErrorCode::Invalid)
     }
 }
 
 impl From<Utf8Error> for Error {
     fn from(_e: Utf8Error) -> Self {
-        Self::Utf8Fail
+        Self::new(ErrorCode::Utf8Fail)
+    }
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(not(all(feature = "std", feature = "backtrace")))]
+        {
+            write!(f, "Error::{}", self)?;
+        }
+
+        #[cfg(all(feature = "std", feature = "backtrace"))]
+        {
+            write!(f, "Error::{} {{\n", self)?;
+            write!(f, "{}", self.backtrace())?;
+            write!(f, "}}\n")?;
+        }
+
+        Ok(())
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{:?}", self.code())
     }
 }
 

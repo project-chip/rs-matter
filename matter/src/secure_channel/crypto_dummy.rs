@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 #[allow(non_snake_case)]
 
@@ -29,35 +29,35 @@ impl CryptoSpake2 {
 
     // Computes w0 from w0s respectively
     pub fn set_w0_from_w0s(&mut self, _w0s: &[u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     pub fn set_w1_from_w1s(&mut self, _w1s: &[u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     pub fn set_w0(&mut self, _w0: &[u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     pub fn set_w1(&mut self, _w1: &[u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     #[allow(non_snake_case)]
     pub fn set_L(&mut self, _l: &[u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     pub fn set_L_from_w1s(&mut self, _w1s: &[u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     #[allow(non_snake_case)]
     pub fn get_pB(&mut self, _pB: &mut [u8]) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     #[allow(non_snake_case)]
@@ -68,6 +68,6 @@ impl CryptoSpake2 {
         _pB: &[u8],
         _out: &mut [u8],
     ) -> Result<(), Error> {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 }

@@ -25,7 +25,7 @@ mod file_psm {
 
     use log::info;
 
-    use crate::error::Error;
+    use crate::error::{Error, ErrorCode};
 
     pub struct FilePsm {
         dir: PathBuf,
@@ -47,7 +47,7 @@ mod file_psm {
 
                     loop {
                         if offset == buf.len() {
-                            return Err(Error::NoSpace);
+                            Err(ErrorCode::NoSpace)?;
                         }
 
                         let len = file.read(&mut buf[offset..])?;

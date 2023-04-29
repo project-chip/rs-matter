@@ -216,7 +216,7 @@ impl<'a> ImEngine<'a> {
             epoch: *self.matter.borrow(),
         };
         let mut rx_buf = [0; MAX_RX_BUF_SIZE];
-        let mut tx_buf = [0; 1450]; // For the long read tests to run unchanged
+        let mut tx_buf = [0; 1440]; // For the long read tests to run unchanged
         let mut rx = Packet::new_rx(&mut rx_buf);
         let mut tx = Packet::new_tx(&mut tx_buf);
         // Create fake rx packet

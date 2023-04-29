@@ -141,7 +141,7 @@ impl<'a> AccessControlCluster<'a> {
             }
             _ => {
                 error!("Attribute not yet supported: this shouldn't happen");
-                Err(Error::AttributeNotFound)
+                Err(ErrorCode::AttributeNotFound.into())
             }
         }
     }
@@ -229,7 +229,7 @@ mod tests {
         // Test, ACL has fabric index 2, but the accessing fabric is 1
         //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1
         let result = acl.write_acl_attr(&ListOperation::AddItem, &data, 1);
-        assert_eq!(result, Ok(()));
+        assert!(result.is_ok());
 
         let verifier = AclEntry::new(1, Privilege::VIEW, AuthMode::Case);
         acl_mgr
@@ -268,7 +268,7 @@ mod tests {
         let result = acl.write_acl_attr(&ListOperation::EditItem(1), &data, 2);
         // Fabric 2's index 1, is actually our index 2, update the verifier
         verifier[2] = new;
-        assert_eq!(result, Ok(()));
+        assert!(result.is_ok());
 
         // Also validate in the acl_mgr that the entries are in the right order
         let mut index = 0;
@@ -301,7 +301,7 @@ mod tests {
 
         // Test , Delete Fabric 1's index 0
         let result = acl.write_acl_attr(&ListOperation::DeleteItem(0), &data, 1);
-        assert_eq!(result, Ok(()));
+        assert!(result.is_ok());
 
         let verifier = [input[0], input[2]];
         // Also validate in the acl_mgr that the entries are in the right order

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 use byteorder::{ByteOrder, LittleEndian};
 use log::error;
@@ -158,7 +158,7 @@ impl CryptoSpake2 {
         let pB_internal = pB_internal.as_slice();
         if pB_internal.len() != pB.len() {
             error!("pB length mismatch");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         pB.copy_from_slice(pB_internal);
         Ok(())

@@ -78,27 +78,33 @@ pub enum IMStatusCode {
     FailSafeRequired = 0xca,
 }
 
-impl From<Error> for IMStatusCode {
-    fn from(e: Error) -> Self {
+impl From<ErrorCode> for IMStatusCode {
+    fn from(e: ErrorCode) -> Self {
         match e {
-            Error::EndpointNotFound => IMStatusCode::UnsupportedEndpoint,
-            Error::ClusterNotFound => IMStatusCode::UnsupportedCluster,
-            Error::AttributeNotFound => IMStatusCode::UnsupportedAttribute,
-            Error::CommandNotFound => IMStatusCode::UnsupportedCommand,
-            Error::InvalidAction => IMStatusCode::InvalidAction,
-            Error::InvalidCommand => IMStatusCode::InvalidCommand,
-            Error::UnsupportedAccess => IMStatusCode::UnsupportedAccess,
-            Error::Busy => IMStatusCode::Busy,
-            Error::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
-            Error::ResourceExhausted => IMStatusCode::ResourceExhausted,
+            ErrorCode::EndpointNotFound => IMStatusCode::UnsupportedEndpoint,
+            ErrorCode::ClusterNotFound => IMStatusCode::UnsupportedCluster,
+            ErrorCode::AttributeNotFound => IMStatusCode::UnsupportedAttribute,
+            ErrorCode::CommandNotFound => IMStatusCode::UnsupportedCommand,
+            ErrorCode::InvalidAction => IMStatusCode::InvalidAction,
+            ErrorCode::InvalidCommand => IMStatusCode::InvalidCommand,
+            ErrorCode::UnsupportedAccess => IMStatusCode::UnsupportedAccess,
+            ErrorCode::Busy => IMStatusCode::Busy,
+            ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
+            ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
             _ => IMStatusCode::Failure,
         }
     }
 }
 
+impl From<Error> for IMStatusCode {
+    fn from(value: Error) -> Self {
+        Self::from(value.code())
+    }
+}
+
 impl FromTLV<'_> for IMStatusCode {
     fn from_tlv(t: &TLVElement) -> Result<Self, Error> {
-        num::FromPrimitive::from_u16(t.u16()?).ok_or(Error::Invalid)
+        num::FromPrimitive::from_u16(t.u16()?).ok_or_else(|| ErrorCode::Invalid.into())
     }
 }
 
@@ -223,7 +229,7 @@ pub enum Interaction<'a> {
 impl<'a> Interaction<'a> {
     fn new(rx: &'a Packet, transaction: &mut Transaction) -> Result<Option<Self>, Error> {
         let opcode: OpCode =
-            num::FromPrimitive::from_u8(rx.get_proto_opcode()).ok_or(Error::Invalid)?;
+            num::FromPrimitive::from_u8(rx.get_proto_opcode()).ok_or(ErrorCode::Invalid)?;
 
         let rx_data = rx.as_slice();
 
@@ -264,7 +270,7 @@ impl<'a> Interaction<'a> {
             )?))),
             _ => {
                 error!("Opcode not handled: {:?}", opcode);
-                Err(Error::InvalidOpcode)
+                Err(ErrorCode::InvalidOpcode.into())
             }
         }
     }

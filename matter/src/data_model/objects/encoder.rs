@@ -26,7 +26,7 @@ use crate::interaction_model::messages::ib::{
 use crate::interaction_model::messages::GenericPath;
 use crate::tlv::UtfStr;
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     interaction_model::messages::ib::{AttrDataTag, AttrRespTag},
     tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
 };
@@ -135,8 +135,13 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
 
                 match handler.read(&attr, encoder) {
                     Ok(()) => None,
-                    Err(Error::NoSpace) => return Ok(Some(attr.path().to_gp())),
-                    Err(error) => attr.status(error.into())?,
+                    Err(e) => {
+                        if e.code() == ErrorCode::NoSpace {
+                            return Ok(Some(attr.path().to_gp()));
+                        } else {
+                            attr.status(e.into())?
+                        }
+                    }
                 }
             }
             Err(status) => Some(status),
@@ -181,8 +186,13 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
 
                 match handler.read(&attr, encoder).await {
                     Ok(()) => None,
-                    Err(Error::NoSpace) => return Ok(Some(attr.path().to_gp())),
-                    Err(error) => attr.status(error.into())?,
+                    Err(e) => {
+                        if e.code() == ErrorCode::NoSpace {
+                            return Ok(Some(attr.path().to_gp()));
+                        } else {
+                            attr.status(e.into())?
+                        }
+                    }
                 }
             }
             Err(status) => Some(status),
@@ -321,7 +331,7 @@ impl<'a> AttrData<'a> {
     pub fn with_dataver(self, dataver: u32) -> Result<&'a TLVElement<'a>, Error> {
         if let Some(req_dataver) = self.for_dataver {
             if req_dataver != dataver {
-                return Err(Error::DataVersionMismatch);
+                Err(ErrorCode::DataVersionMismatch)?;
             }
         }
 
@@ -557,7 +567,8 @@ macro_rules! attribute_enum {
             type Error = $crate::error::Error;
 
             fn try_from(id: $crate::data_model::objects::AttrId) -> Result<Self, Self::Error> {
-                <$en>::from_repr(id).ok_or($crate::error::Error::AttributeNotFound)
+                <$en>::from_repr(id)
+                    .ok_or_else(|| $crate::error::ErrorCode::AttributeNotFound.into())
             }
         }
     };
@@ -571,7 +582,7 @@ macro_rules! command_enum {
             type Error = $crate::error::Error;
 
             fn try_from(id: $crate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
-                <$en>::from_repr(id).ok_or($crate::error::Error::CommandNotFound)
+                <$en>::from_repr(id).ok_or_else(|| $crate::error::ErrorCode::CommandNotFound.into())
             }
         }
     };
