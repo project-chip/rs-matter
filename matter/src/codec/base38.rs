@@ -17,7 +17,7 @@
 
 //! Base38 encoding and decoding functions.
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 const BASE38_CHARS: [char; 38] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
@@ -86,7 +86,7 @@ const RADIX: u32 = BASE38_CHARS.len() as u32;
 pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<heapless::String<N>, Error> {
     let mut string = heapless::String::new();
     for c in encode(bytes) {
-        string.push(c).map_err(|_| Error::NoSpace)?;
+        string.push(c).map_err(|_| ErrorCode::NoSpace)?;
     }
 
     Ok(string)
@@ -135,7 +135,7 @@ pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<heapless::Vec<u8, 
     let mut vec = heapless::Vec::new();
 
     for byte in decode(base38_str) {
-        vec.push(byte?).map_err(|_| Error::NoSpace)?;
+        vec.push(byte?).map_err(|_| ErrorCode::NoSpace)?;
     }
 
     Ok(vec)
@@ -179,19 +179,19 @@ fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, Error>> {
             match decode_char(*c) {
                 Ok(v) => value = value * RADIX + v as u32,
                 Err(err) => {
-                    cerr = Some(err);
+                    cerr = Some(err.code());
                     break;
                 }
             }
         }
     } else {
-        cerr = Some(Error::InvalidData)
+        cerr = Some(ErrorCode::InvalidData)
     }
 
     (0..repeat)
         .map(move |_| {
             if let Some(err) = cerr {
-                Err(err)
+                Err(err.into())
             } else {
                 let byte = (value & 0xff) as u8;
 
@@ -205,12 +205,12 @@ fn decode_base38(chars: &[u8]) -> impl Iterator<Item = Result<u8, Error>> {
 
 fn decode_char(c: u8) -> Result<u8, Error> {
     if !(45..=90).contains(&c) {
-        return Err(Error::InvalidData);
+        Err(ErrorCode::InvalidData)?;
     }
 
     let c = DECODE_BASE38[c as usize - 45];
     if c == UNUSED {
-        return Err(Error::InvalidData);
+        Err(ErrorCode::InvalidData)?;
     }
 
     Ok(c)

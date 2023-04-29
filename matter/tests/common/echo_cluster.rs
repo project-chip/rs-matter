@@ -27,7 +27,7 @@ use matter::{
         Cluster, CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, Quality,
         ATTRIBUTE_LIST, FEATURE_MAP,
     },
-    error::Error,
+    error::{Error, ErrorCode},
     interaction_model::{
         core::Transaction,
         messages::ib::{attr_list_write, ListOperation},
@@ -122,7 +122,7 @@ impl TestChecker {
             INIT.call_once(|| {
                 G_TEST_CHECKER = Some(Arc::new(Mutex::new(Self::new())));
             });
-            Ok(G_TEST_CHECKER.as_ref().ok_or(Error::Invalid)?.clone())
+            Ok(G_TEST_CHECKER.as_ref().ok_or(ErrorCode::Invalid)?.clone())
         }
     }
 }
@@ -235,7 +235,7 @@ impl EchoCluster {
                     }
                 }
 
-                Err(Error::ResourceExhausted)
+                Err(ErrorCode::ResourceExhausted.into())
             }
             ListOperation::EditItem(index) => {
                 let data = data.u16()?;
@@ -243,7 +243,7 @@ impl EchoCluster {
                     tc.write_list[*index as usize] = Some(data);
                     Ok(())
                 } else {
-                    Err(Error::InvalidAction)
+                    Err(ErrorCode::InvalidAction.into())
                 }
             }
             ListOperation::DeleteItem(index) => {
@@ -251,7 +251,7 @@ impl EchoCluster {
                     tc.write_list[*index as usize] = None;
                     Ok(())
                 } else {
-                    Err(Error::InvalidAction)
+                    Err(ErrorCode::InvalidAction.into())
                 }
             }
             ListOperation::DeleteList => {

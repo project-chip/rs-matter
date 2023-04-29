@@ -410,7 +410,7 @@ impl SessionMgr {
             self.sessions[index] = Some(session);
             Ok(index)
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 
@@ -465,7 +465,7 @@ impl SessionMgr {
             info!("Creating new session");
             self.add(peer_addr, peer_nodeid)
         } else {
-            Err(Error::NotFound)
+            Err(ErrorCode::NotFound.into())
         }
     }
 
@@ -484,14 +484,14 @@ impl SessionMgr {
         let duplicate = session.rx_ctr_state.recv(rx.plain.ctr, is_encrypted);
         if duplicate {
             info!("Dropping duplicate packet");
-            Err(Error::Duplicate)
+            Err(ErrorCode::Duplicate.into())
         } else {
             Ok(sess_index)
         }
     }
 
     pub fn decode(&mut self, rx: &mut Packet) -> Result<(), Error> {
-        // let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
+        // let network = self.network.as_ref().ok_or(ErrorCode::NoNetworkInterface)?;
 
         // let (len, src) = network.recv(rx.as_borrow_slice()).await?;
         // rx.get_parsebuf()?.set_len(len);
@@ -507,7 +507,7 @@ impl SessionMgr {
     pub fn send(&mut self, sess_idx: usize, tx: &mut Packet) -> Result<(), Error> {
         self.sessions[sess_idx]
             .as_mut()
-            .ok_or(Error::NoSession)?
+            .ok_or(ErrorCode::NoSession)?
             .do_send(self.epoch, tx)?;
 
         // let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;

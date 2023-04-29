@@ -16,7 +16,9 @@
  */
 
 use std::borrow::Borrow;
+use std::error::Error;
 
+use log::info;
 use matter::core::{CommissioningData, Matter};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
 use matter::data_model::cluster_on_off;
@@ -36,8 +38,10 @@ use matter::transport::{
 
 mod dev_att;
 
-fn main() {
-    env_logger::init();
+fn main() -> Result<(), impl Error> {
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
 
     // vid/pid should match those in the DAC
     let dev_info = BasicInfoConfig {
@@ -50,35 +54,37 @@ fn main() {
         device_name: "OnOff Light",
     };
 
-    //let mut mdns = matter::mdns::astro::AstroMdns::new().unwrap();
-    let mut mdns = matter::mdns::libmdns::LibMdns::new().unwrap();
+    let mut mdns = matter::mdns::astro::AstroMdns::new()?;
+    //let mut mdns = matter::mdns::libmdns::LibMdns::new()?;
+    //let mut mdns = matter::mdns::DummyMdns {};
 
     let matter = Matter::new_default(&dev_info, &mut mdns, matter::transport::udp::MATTER_PORT);
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 
-    let psm = persist::FilePsm::new(std::env::temp_dir().join("matter-iot")).unwrap();
+    let psm_path = std::env::temp_dir().join("matter-iot");
+    info!("Persisting from/to {}", psm_path.display());
+
+    let psm = persist::FilePsm::new(psm_path)?;
 
     let mut buf = [0; 4096];
 
-    if let Some(data) = psm.load("fabrics", &mut buf).unwrap() {
-        matter.load_fabrics(data).unwrap();
+    if let Some(data) = psm.load("acls", &mut buf)? {
+        matter.load_acls(data)?;
     }
 
-    if let Some(data) = psm.load("acls", &mut buf).unwrap() {
-        matter.load_acls(data).unwrap();
+    if let Some(data) = psm.load("fabrics", &mut buf)? {
+        matter.load_fabrics(data)?;
     }
 
-    matter
-        .start::<4096>(
-            CommissioningData {
-                // TODO: Hard-coded for now
-                verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
-                discriminator: 250,
-            },
-            &mut buf,
-        )
-        .unwrap();
+    matter.start::<4096>(
+        CommissioningData {
+            // TODO: Hard-coded for now
+            verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
+            discriminator: 250,
+        },
+        &mut buf,
+    )?;
 
     let matter = &matter;
     let dev_att = &dev_att;
@@ -86,20 +92,20 @@ fn main() {
     let mut transport = TransportMgr::new(matter);
 
     smol::block_on(async move {
-        let udp = UdpListener::new().await.unwrap();
+        let udp = UdpListener::new().await?;
 
         loop {
             let mut rx_buf = [0; MAX_RX_BUF_SIZE];
             let mut tx_buf = [0; MAX_TX_BUF_SIZE];
 
-            let (len, addr) = udp.recv(&mut rx_buf).await.unwrap();
+            let (len, addr) = udp.recv(&mut rx_buf).await?;
 
             let mut completion = transport.recv(addr, &mut rx_buf[..len], &mut tx_buf);
 
-            while let Some(action) = completion.next_action().unwrap() {
+            while let Some(action) = completion.next_action()? {
                 match action {
                     RecvAction::Send(addr, buf) => {
-                        udp.send(addr, buf).await.unwrap();
+                        udp.send(addr, buf).await?;
                     }
                     RecvAction::Interact(mut ctx) => {
                         let node = Node {
@@ -119,24 +125,29 @@ fn main() {
                         let mut im =
                             InteractionModel(DataModel::new(matter.borrow(), &node, &mut handler));
 
-                        if im.handle(&mut ctx).unwrap() {
-                            if ctx.send().unwrap() {
-                                udp.send(ctx.tx.peer, ctx.tx.as_slice()).await.unwrap();
+                        if im.handle(&mut ctx)? {
+                            if ctx.send()? {
+                                udp.send(ctx.tx.peer, ctx.tx.as_slice()).await?;
                             }
                         }
                     }
                 }
             }
 
-            if let Some(data) = matter.store_fabrics(&mut buf).unwrap() {
-                psm.store("fabrics", data).unwrap();
+            if let Some(data) = matter.store_fabrics(&mut buf)? {
+                psm.store("fabrics", data)?;
             }
 
-            if let Some(data) = matter.store_acls(&mut buf).unwrap() {
-                psm.store("acls", data).unwrap();
+            if let Some(data) = matter.store_acls(&mut buf)? {
+                psm.store("acls", data)?;
             }
         }
-    });
+
+        #[allow(unreachable_code)]
+        Ok::<_, matter::error::Error>(())
+    })?;
+
+    Ok::<_, matter::error::Error>(())
 }
 
 fn handler<'a>(matter: &'a Matter<'a>, dev_att: &'a dyn DevAttDataFetcher) -> impl Handler + 'a {

@@ -277,7 +277,7 @@ impl<'a> NocCluster<'a> {
                     }
                     _ => {
                         error!("Attribute not supported: this shouldn't happen");
-                        Err(Error::AttributeNotFound)
+                        Err(ErrorCode::AttributeNotFound.into())
                     }
                 }
             }
@@ -563,7 +563,7 @@ impl<'a> NocCluster<'a> {
         info!("Received CSR Nonce:{:?}", req.str);
 
         if !self.failsafe.borrow().is_armed() {
-            return Err(Error::UnsupportedAccess);
+            Err(ErrorCode::UnsupportedAccess)?;
         }
 
         let noc_keypair = KeyPair::new()?;
@@ -602,7 +602,7 @@ impl<'a> NocCluster<'a> {
     ) -> Result<(), Error> {
         cmd_enter!("AddTrustedRootCert");
         if !self.failsafe.borrow().is_armed() {
-            return Err(Error::UnsupportedAccess);
+            Err(ErrorCode::UnsupportedAccess)?;
         }
 
         // This may happen on CASE or PASE. For PASE, the existence of NOC Data is necessary
@@ -612,13 +612,13 @@ impl<'a> NocCluster<'a> {
                 let noc_data = transaction
                     .session_mut()
                     .get_noc_data::<NocData>()
-                    .ok_or(Error::NoSession)?;
+                    .ok_or(ErrorCode::NoSession)?;
 
                 let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
                 info!("Received Trusted Cert:{:x?}", req.str);
 
                 noc_data.root_ca =
-                    heapless::Vec::from_slice(req.str.0).map_err(|_| Error::BufferTooSmall)?;
+                    heapless::Vec::from_slice(req.str.0).map_err(|_| ErrorCode::BufferTooSmall)?;
                 // TODO
             }
             _ => (),
@@ -720,6 +720,6 @@ fn get_certchainrequest_params(data: &TLVElement) -> Result<DataType, Error> {
     match cert_type {
         CERT_TYPE_DAC => Ok(dev_att::DataType::DAC),
         CERT_TYPE_PAI => Ok(dev_att::DataType::PAI),
-        _ => Err(Error::Invalid),
+        _ => Err(ErrorCode::Invalid.into()),
     }
 }

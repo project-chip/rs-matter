@@ -164,7 +164,7 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
     pub fn str8(&mut self, tag_type: TagType, data: &[u8]) -> Result<(), Error> {
         if data.len() > 256 {
             error!("use str16() instead");
-            return Err(Error::Invalid);
+            return Err(ErrorCode::Invalid.into());
         }
         self.put_control_tag(tag_type, WriteElementType::Str8l)?;
         self.buf.le_u8(data.len() as u8)?;

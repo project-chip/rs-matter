@@ -57,7 +57,7 @@ impl<'a> SecureChannel<'a> {
 
     pub fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<(bool, Option<CloneData>), Error> {
         let proto_opcode: OpCode =
-            num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(Error::Invalid)?;
+            num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(ErrorCode::Invalid)?;
         ctx.tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
         info!("Received Opcode: {:?}", proto_opcode);
         info!("Received Data:");
@@ -82,7 +82,7 @@ impl<'a> SecureChannel<'a> {
             OpCode::CASESigma3 => self.case.casesigma3_handler(ctx),
             _ => {
                 error!("OpCode Not Handled: {:?}", proto_opcode);
-                Err(Error::InvalidOpcode)
+                Err(ErrorCode::InvalidOpcode.into())
             }
         }?;
 

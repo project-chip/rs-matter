@@ -16,7 +16,7 @@
  */
 
 use matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
-use matter::error::Error;
+use matter::error::{Error, ErrorCode};
 
 pub struct HardCodedDevAtt {}
 
@@ -159,7 +159,7 @@ impl DevAttDataFetcher for HardCodedDevAtt {
             data.copy_from_slice(src);
             Ok(src.len())
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 }

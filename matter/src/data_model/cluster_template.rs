@@ -17,7 +17,7 @@
 
 use crate::{
     data_model::objects::{Cluster, Handler},
-    error::Error,
+    error::{Error, ErrorCode},
     utils::rand::Rand,
 };
 
@@ -51,7 +51,7 @@ impl TemplateCluster {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
             } else {
-                Err(Error::AttributeNotFound)
+                Err(ErrorCode::AttributeNotFound.into())
             }
         } else {
             Ok(())

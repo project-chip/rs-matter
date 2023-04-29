@@ -46,6 +46,7 @@ pub fn create_status_report(
     proto_code: u16,
     proto_data: Option<&[u8]>,
 ) -> Result<(), Error> {
+    proto_tx.reset();
     proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
     proto_tx.set_proto_opcode(OpCode::StatusReport as u8);
     let wb = proto_tx.get_writebuf()?;

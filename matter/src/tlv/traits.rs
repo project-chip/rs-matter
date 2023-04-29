@@ -16,7 +16,7 @@
  */
 
 use super::{ElementType, TLVContainerIterator, TLVElement, TLVWriter, TagType};
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use core::fmt::Debug;
 use core::slice::Iter;
 use log::error;
@@ -31,7 +31,7 @@ pub trait FromTLV<'a> {
     where
         Self: Sized,
     {
-        Err(Error::TLVNotFound)
+        Err(ErrorCode::TLVNotFound.into())
     }
 }
 
@@ -45,7 +45,8 @@ impl<'a, T: FromTLV<'a> + Default, const N: usize> FromTLV<'a> for [T; N] {
         let mut a = heapless::Vec::<T, N>::new();
         if let Some(tlv_iter) = t.enter() {
             for element in tlv_iter {
-                a.push(T::from_tlv(&element)?).map_err(|_| Error::NoSpace)?;
+                a.push(T::from_tlv(&element)?)
+                    .map_err(|_| ErrorCode::NoSpace)?;
             }
         }
 
@@ -53,10 +54,10 @@ impl<'a, T: FromTLV<'a> + Default, const N: usize> FromTLV<'a> for [T; N] {
         // implementation on top of heapless::Vec (to avoid requiring Copy)
         // Not sure why we actually need that yet, but without it unit tests fail
         while a.len() < N {
-            a.push(Default::default()).map_err(|_| Error::NoSpace)?;
+            a.push(Default::default()).map_err(|_| ErrorCode::NoSpace)?;
         }
 
-        a.into_array().map_err(|_| Error::Invalid)
+        a.into_array().map_err(|_| ErrorCode::Invalid.into())
     }
 }
 
@@ -131,7 +132,7 @@ impl<'a> UtfStr<'a> {
     }
 
     pub fn as_str(&self) -> Result<&str, Error> {
-        core::str::from_utf8(self.0).map_err(|_| Error::Invalid)
+        core::str::from_utf8(self.0).map_err(|_| ErrorCode::Invalid.into())
     }
 }
 
@@ -172,7 +173,7 @@ impl<'a> ToTLV for OctetStr<'a> {
 /// Implements the Owned version of Octet String
 impl<const N: usize> FromTLV<'_> for heapless::Vec<u8, N> {
     fn from_tlv(t: &TLVElement) -> Result<heapless::Vec<u8, N>, Error> {
-        heapless::Vec::from_slice(t.slice()?).map_err(|_| Error::NoSpace)
+        heapless::Vec::from_slice(t.slice()?).map_err(|_| ErrorCode::NoSpace.into())
     }
 }
 
@@ -189,7 +190,7 @@ impl<const N: usize> FromTLV<'_> for heapless::String<N> {
 
         string
             .push_str(core::str::from_utf8(t.slice()?)?)
-            .map_err(|_| Error::NoSpace)?;
+            .map_err(|_| ErrorCode::NoSpace)?;
 
         Ok(string)
     }
@@ -411,7 +412,7 @@ impl<'a> ToTLV for TLVElement<'a> {
             ElementType::EndCnt => tw.end_container(),
             _ => {
                 error!("ToTLV Not supported");
-                Err(Error::Invalid)
+                Err(ErrorCode::Invalid.into())
             }
         }
     }
@@ -419,7 +420,7 @@ impl<'a> ToTLV for TLVElement<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV};
+    use super::{FromTLV, OctetStr, TLVWriter, TagType, ToTLV};
     use crate::{error::Error, tlv::TLVList, utils::writebuf::WriteBuf};
     use matter_macro_derive::{FromTLV, ToTLV};
 

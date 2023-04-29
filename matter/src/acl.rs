@@ -19,7 +19,7 @@ use core::{cell::RefCell, fmt::Display};
 
 use crate::{
     data_model::objects::{Access, ClusterId, EndptId, Privilege},
-    error::Error,
+    error::{Error, ErrorCode},
     fabric,
     interaction_model::messages::GenericPath,
     tlv::{FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
@@ -50,7 +50,7 @@ impl FromTLV<'_> for AuthMode {
     {
         num::FromPrimitive::from_u32(t.u32()?)
             .filter(|a| *a != AuthMode::Invalid)
-            .ok_or(Error::Invalid)
+            .ok_or_else(|| ErrorCode::Invalid.into())
     }
 }
 
@@ -112,7 +112,7 @@ impl AccessorSubjects {
                 return Ok(());
             }
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     /// Match the match_subject with any of the current subjects
@@ -314,7 +314,7 @@ impl AclEntry {
             .subjects
             .iter()
             .position(|s| s.is_none())
-            .ok_or(Error::NoSpace)?;
+            .ok_or(ErrorCode::NoSpace)?;
         self.subjects[index] = Some(subject);
         Ok(())
     }
@@ -328,7 +328,7 @@ impl AclEntry {
             .targets
             .iter()
             .position(|s| s.is_none())
-            .ok_or(Error::NoSpace)?;
+            .ok_or(ErrorCode::NoSpace)?;
         self.targets[index] = Some(target);
         Ok(())
     }
@@ -425,13 +425,13 @@ impl AclMgr {
             .filter(|a| a.fab_idx == entry.fab_idx)
             .count();
         if cnt >= ENTRIES_PER_FABRIC {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         let index = self
             .entries
             .iter()
             .position(|a| a.is_none())
-            .ok_or(Error::NoSpace)?;
+            .ok_or(ErrorCode::NoSpace)?;
         self.entries[index] = Some(entry);
 
         self.changed = true;
@@ -503,7 +503,7 @@ impl AclMgr {
     }
 
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        let root = TLVList::new(data).iter().next().ok_or(Error::Invalid)?;
+        let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
         self.entries = AclEntries::from_tlv(&root)?;
         self.changed = false;
@@ -547,7 +547,7 @@ impl AclMgr {
                 return Ok(entry);
             }
         }
-        Err(Error::NotFound)
+        Err(ErrorCode::NotFound.into())
     }
 }
 

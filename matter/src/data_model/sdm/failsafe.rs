@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
-use crate::{error::Error, transport::session::SessionMode};
+use crate::{
+    error::{Error, ErrorCode},
+    transport::session::SessionMode,
+};
 use log::error;
 
 #[derive(PartialEq)]
@@ -62,7 +65,7 @@ impl FailSafe {
             State::Armed(c) => {
                 if c.session_mode != session_mode {
                     error!("Received Fail-Safe Arm with different session modes; current {:?}, incoming {:?}", c.session_mode, session_mode);
-                    return Err(Error::Invalid);
+                    Err(ErrorCode::Invalid)?;
                 }
                 // re-arm
                 c.timeout = timeout;
@@ -75,22 +78,22 @@ impl FailSafe {
         match &mut self.state {
             State::Idle => {
                 error!("Received Fail-Safe Disarm without it being armed");
-                return Err(Error::Invalid);
+                Err(ErrorCode::Invalid)?;
             }
             State::Armed(c) => {
                 match c.noc_state {
-                    NocState::NocNotRecvd => return Err(Error::Invalid),
+                    NocState::NocNotRecvd => Err(ErrorCode::Invalid)?,
                     NocState::AddNocRecvd(idx) | NocState::UpdateNocRecvd(idx) => {
                         if let SessionMode::Case(c) = session_mode {
                             if c.fab_idx != idx {
                                 error!(
                                     "Received disarm in separate session from previous Add/Update NOC"
                                 );
-                                return Err(Error::Invalid);
+                                Err(ErrorCode::Invalid)?;
                             }
                         } else {
                             error!("Received disarm in a non-CASE session");
-                            return Err(Error::Invalid);
+                            Err(ErrorCode::Invalid)?;
                         }
                     }
                 }
@@ -106,13 +109,13 @@ impl FailSafe {
 
     pub fn record_add_noc(&mut self, fabric_index: u8) -> Result<(), Error> {
         match &mut self.state {
-            State::Idle => Err(Error::Invalid),
+            State::Idle => Err(ErrorCode::Invalid.into()),
             State::Armed(c) => {
                 if c.noc_state == NocState::NocNotRecvd {
                     c.noc_state = NocState::AddNocRecvd(fabric_index);
                     Ok(())
                 } else {
-                    Err(Error::Invalid)
+                    Err(ErrorCode::Invalid.into())
                 }
             }
         }

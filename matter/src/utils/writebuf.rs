@@ -70,9 +70,9 @@ impl<'a> WriteBuf<'a> {
 
     pub fn reserve(&mut self, reserve: usize) -> Result<(), Error> {
         if self.end != 0 || self.start != 0 || self.buf_size != self.buf.len() {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         } else if reserve > self.buf_size {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         } else {
             self.start = reserve;
             self.end = reserve;
@@ -85,7 +85,7 @@ impl<'a> WriteBuf<'a> {
             self.buf_size -= with;
             Ok(())
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 
@@ -94,7 +94,7 @@ impl<'a> WriteBuf<'a> {
             self.buf_size += by;
             Ok(())
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 
@@ -107,7 +107,7 @@ impl<'a> WriteBuf<'a> {
             self.start -= size;
             return Ok(());
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn prepend(&mut self, src: &[u8]) -> Result<(), Error> {
@@ -126,7 +126,7 @@ impl<'a> WriteBuf<'a> {
             self.end += size;
             return Ok(());
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn append(&mut self, src: &[u8]) -> Result<(), Error> {

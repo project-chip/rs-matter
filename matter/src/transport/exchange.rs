@@ -21,11 +21,10 @@ use core::fmt;
 use core::time::Duration;
 use log::{error, info, trace};
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use crate::interaction_model::core::{ResumeReadReq, ResumeSubscribeReq};
 use crate::secure_channel;
 use crate::secure_channel::case::CaseSession;
-use crate::tlv::print_tlv_list;
 use crate::utils::epoch::Epoch;
 use crate::utils::rand::Rand;
 
@@ -227,7 +226,8 @@ impl Exchange {
             tx.get_proto_id(),
             tx.get_proto_opcode(),
         );
-        print_tlv_list(tx.as_slice());
+
+        //print_tlv_list(tx.as_slice());
 
         tx.proto.exch_id = self.id;
         if self.role == Role::Initiator {
@@ -317,10 +317,10 @@ impl ExchangeMgr {
                 info!("Creating new exchange");
                 let e = Exchange::new(id, sess_idx, role);
                 if exchanges.insert(id, e).is_err() {
-                    return Err(Error::NoSpace);
+                    Err(ErrorCode::NoSpace)?;
                 }
             } else {
-                return Err(Error::NoSpace);
+                Err(ErrorCode::NoSpace)?;
             }
         }
 
@@ -330,11 +330,11 @@ impl ExchangeMgr {
             if result.get_role() == role && sess_idx == result.sess_idx {
                 Ok(result)
             } else {
-                Err(Error::NoExchange)
+                Err(ErrorCode::NoExchange.into())
             }
         } else {
             error!("This should never happen");
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 
@@ -375,7 +375,7 @@ impl ExchangeMgr {
 
     pub fn send(&mut self, exch_id: u16, tx: &mut Packet) -> Result<bool, Error> {
         let exchange =
-            ExchangeMgr::_get_with_id(&mut self.exchanges, exch_id).ok_or(Error::NoExchange)?;
+            ExchangeMgr::_get_with_id(&mut self.exchanges, exch_id).ok_or(ErrorCode::NoExchange)?;
         let mut session = self.sess_mgr.get_session_handle(exchange.sess_idx);
         exchange.send(tx, &mut session)
     }
@@ -474,7 +474,7 @@ impl fmt::Display for ExchangeMgr {
 #[allow(clippy::bool_assert_comparison)]
 mod tests {
     use crate::{
-        error::Error,
+        error::ErrorCode,
         transport::{
             network::Address,
             session::{CloneData, SessionMode},
@@ -532,9 +532,12 @@ mod tests {
             let clone_data = get_clone_data(peer_sess_id, local_sess_id);
             match mgr.add_session(&clone_data) {
                 Ok(s) => assert_eq!(peer_sess_id, s.get_peer_sess_id()),
-                Err(Error::NoSpace) => break,
-                _ => {
-                    panic!("Couldn't, create session");
+                Err(e) => {
+                    if e.code() == ErrorCode::NoSpace {
+                        break;
+                    } else {
+                        panic!("Could not create sessions");
+                    }
                 }
             }
             local_sess_id += 1;
@@ -576,7 +579,10 @@ mod tests {
         for i in 1..(MAX_SESSIONS + 1) {
             // Now purposefully overflow the sessions by adding another session
             let result = mgr.add_session(&get_clone_data(new_peer_sess_id, new_local_sess_id));
-            assert!(matches!(result, Err(Error::NoSpace)));
+            assert!(matches!(
+                result.map_err(|e| e.code()),
+                Err(ErrorCode::NoSpace)
+            ));
 
             let mut buf = [0; MAX_TX_BUF_SIZE];
             let tx = &mut Packet::new_tx(&mut buf);

@@ -25,7 +25,7 @@ use subtle::ConstantTimeEq;
 
 use crate::{
     crypto::{pbkdf2_hmac, Sha256},
-    error::Error,
+    error::{Error, ErrorCode},
 };
 
 use super::{common::SCStatusCodes, crypto::CryptoSpake2};
@@ -198,7 +198,7 @@ impl Spake2P {
     #[allow(non_snake_case)]
     pub fn handle_pA(&mut self, pA: &[u8], pB: &mut [u8], cB: &mut [u8]) -> Result<(), Error> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::Init) {
-            return Err(Error::InvalidState);
+            Err(ErrorCode::InvalidState)?;
         }
 
         if let Some(crypto_spake2) = &mut self.crypto_spake2 {
@@ -251,13 +251,13 @@ impl Spake2P {
         if ke_internal.len() == Ke.len() {
             Ke.copy_from_slice(ke_internal);
         } else {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
 
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
         let mut KcAKcB: [u8; 32] = [0; 32];
         crypto::hkdf_sha256(&[], Ka, &SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
-            .map_err(|_x| Error::NoSpace)?;
+            .map_err(|_x| ErrorCode::NoSpace)?;
 
         let KcA = &KcAKcB[0..(KcAKcB.len() / 2)];
         let KcB = &KcAKcB[(KcAKcB.len() / 2)..];

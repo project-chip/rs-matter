@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 use foreign_types::ForeignTypeRef;
 use log::error;
@@ -46,7 +46,8 @@ pub struct HmacSha256 {
 impl HmacSha256 {
     pub fn new(key: &[u8]) -> Result<Self, Error> {
         Ok(Self {
-            ctx: Hmac::<sha2::Sha256>::new_from_slice(key).map_err(|_x| Error::InvalidKeyLength)?,
+            ctx: Hmac::<sha2::Sha256>::new_from_slice(key)
+                .map_err(|_x| ErrorCode::InvalidKeyLength)?,
         })
     }
 
@@ -107,7 +108,7 @@ impl KeyPair {
 
     fn private_key(&self) -> Result<&EcKey<Private>, Error> {
         match &self.key {
-            KeyType::Public(_) => Err(Error::Invalid),
+            KeyType::Public(_) => Err(ErrorCode::Invalid.into()),
             KeyType::Private(k) => Ok(&k),
         }
     }
@@ -167,7 +168,7 @@ impl KeyPair {
             a.copy_from_slice(csr);
             Ok(a)
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 
@@ -178,7 +179,7 @@ impl KeyPair {
         let msg = h.finish()?;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         safemem::write_bytes(signature, 0);
 
@@ -205,11 +206,11 @@ impl KeyPair {
             KeyType::Public(key) => key,
             _ => {
                 error!("Not yet supported");
-                return Err(Error::Invalid);
+                Err(ErrorCode::Invalid)?;
             }
         };
         if !sig.verify(&msg, k)? {
-            Err(Error::InvalidSignature)
+            Err(ErrorCode::InvalidSignature.into())
         } else {
             Ok(())
         }
@@ -220,7 +221,7 @@ const P256_KEY_LEN: usize = 256 / 8;
 pub fn pubkey_from_der<'a>(der: &'a [u8], out_key: &mut [u8]) -> Result<(), Error> {
     if out_key.len() != P256_KEY_LEN {
         error!("Insufficient length");
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     } else {
         let key = X509::from_der(der)?.public_key()?.public_key_to_der()?;
         let len = key.len();
@@ -232,7 +233,7 @@ pub fn pubkey_from_der<'a>(der: &'a [u8], out_key: &mut [u8]) -> Result<(), Erro
 
 pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
     openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, MessageDigest::sha256(), key)
-        .map_err(|_e| Error::TLSStack)
+        .map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), Error> {
@@ -372,7 +373,9 @@ impl Sha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.hasher.update(data).map_err(|_| Error::TLSStack)
+        self.hasher
+            .update(data)
+            .map_err(|_| ErrorCode::TLSStack.into())
     }
 
     pub fn finish(mut self, data: &mut [u8]) -> Result<(), Error> {

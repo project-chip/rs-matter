@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 use byteorder::{ByteOrder, LittleEndian};
 use core::fmt;
@@ -284,7 +284,7 @@ fn read_length_value<'a>(
     // We'll consume the current offset (len) + the entire string
     if length + size_of_length_field > t.left {
         // Return Error
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     } else {
         Ok((
             // return the additional size only
@@ -390,14 +390,14 @@ impl<'a> TLVElement<'a> {
     pub fn i8(&self) -> Result<i8, Error> {
         match self.element_type {
             ElementType::S8(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn u8(&self) -> Result<u8, Error> {
         match self.element_type {
             ElementType::U8(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -405,7 +405,7 @@ impl<'a> TLVElement<'a> {
         match self.element_type {
             ElementType::U8(a) => Ok(a.into()),
             ElementType::U16(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -414,7 +414,7 @@ impl<'a> TLVElement<'a> {
             ElementType::U8(a) => Ok(a.into()),
             ElementType::U16(a) => Ok(a.into()),
             ElementType::U32(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -424,7 +424,7 @@ impl<'a> TLVElement<'a> {
             ElementType::U16(a) => Ok(a.into()),
             ElementType::U32(a) => Ok(a.into()),
             ElementType::U64(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -434,7 +434,7 @@ impl<'a> TLVElement<'a> {
             | ElementType::Utf8l(s)
             | ElementType::Str16l(s)
             | ElementType::Utf16l(s) => Ok(s),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -444,9 +444,9 @@ impl<'a> TLVElement<'a> {
             | ElementType::Utf8l(s)
             | ElementType::Str16l(s)
             | ElementType::Utf16l(s) => {
-                Ok(core::str::from_utf8(s).map_err(|_| Error::InvalidData)?)
+                Ok(core::str::from_utf8(s).map_err(|_| Error::from(ErrorCode::InvalidData))?)
             }
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -454,48 +454,48 @@ impl<'a> TLVElement<'a> {
         match self.element_type {
             ElementType::False => Ok(false),
             ElementType::True => Ok(true),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn null(&self) -> Result<(), Error> {
         match self.element_type {
             ElementType::Null => Ok(()),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn confirm_struct(&self) -> Result<TLVElement<'a>, Error> {
         match self.element_type {
             ElementType::Struct(_) => Ok(*self),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn confirm_array(&self) -> Result<TLVElement<'a>, Error> {
         match self.element_type {
             ElementType::Array(_) => Ok(*self),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn confirm_list(&self) -> Result<TLVElement<'a>, Error> {
         match self.element_type {
             ElementType::List(_) => Ok(*self),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn find_tag(&self, tag: u32) -> Result<TLVElement<'a>, Error> {
         let match_tag: TagType = TagType::Context(tag as u8);
 
-        let iter = self.enter().ok_or(Error::TLVTypeMismatch)?;
+        let iter = self.enter().ok_or(ErrorCode::TLVTypeMismatch)?;
         for a in iter {
             if match_tag == a.tag_type {
                 return Ok(a);
             }
         }
-        Err(Error::NoTagFound)
+        Err(ErrorCode::NoTagFound.into())
     }
 
     pub fn get_tag(&self) -> TagType {
@@ -721,14 +721,17 @@ impl<'a> Iterator for TLVContainerIterator<'a> {
 }
 
 pub fn get_root_node(b: &[u8]) -> Result<TLVElement, Error> {
-    TLVList::new(b).iter().next().ok_or(Error::InvalidData)
+    Ok(TLVList::new(b)
+        .iter()
+        .next()
+        .ok_or(ErrorCode::InvalidData)?)
 }
 
 pub fn get_root_node_struct(b: &[u8]) -> Result<TLVElement, Error> {
     TLVList::new(b)
         .iter()
         .next()
-        .ok_or(Error::InvalidData)?
+        .ok_or(ErrorCode::InvalidData)?
         .confirm_struct()
 }
 
@@ -736,7 +739,7 @@ pub fn get_root_node_list(b: &[u8]) -> Result<TLVElement, Error> {
     TLVList::new(b)
         .iter()
         .next()
-        .ok_or(Error::InvalidData)?
+        .ok_or(ErrorCode::InvalidData)?
         .confirm_list()
 }
 
@@ -802,7 +805,7 @@ mod tests {
         get_root_node_list, get_root_node_struct, ElementType, Pointer, TLVElement, TLVList,
         TagType,
     };
-    use crate::error::Error;
+    use crate::error::ErrorCode;
 
     #[test]
     fn test_short_length_tag() {
@@ -1146,7 +1149,10 @@ mod tests {
                 element_type: ElementType::U32(1),
             }
         );
-        assert_eq!(cmd_path.find_tag(3), Err(Error::NoTagFound));
+        assert_eq!(
+            cmd_path.find_tag(3).map_err(|e| e.code()),
+            Err(ErrorCode::NoTagFound)
+        );
 
         // This is the variable of the invoke command
         assert_eq!(

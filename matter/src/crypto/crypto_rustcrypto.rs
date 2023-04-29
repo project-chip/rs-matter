@@ -39,7 +39,7 @@ use x509_cert::{
     spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned},
 };
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 use super::CryptoKeyPair;
 
@@ -79,7 +79,7 @@ impl HmacSha256 {
         Ok(Self {
             inner: HmacSha256I::new_from_slice(key).map_err(|e| {
                 error!("Error creating HmacSha256 {:?}", e);
-                Error::TLSStack
+                ErrorCode::TLSStack
             })?,
         })
     }
@@ -143,7 +143,7 @@ impl KeyPair {
     fn private_key(&self) -> Result<&SecretKey, Error> {
         match &self.key {
             KeyType::Private(key) => Ok(key),
-            KeyType::Public(_) => Err(Error::Crypto),
+            KeyType::Public(_) => Err(ErrorCode::Crypto.into()),
         }
     }
 }
@@ -158,7 +158,7 @@ impl CryptoKeyPair for KeyPair {
                 priv_key[..slice.len()].copy_from_slice(slice);
                 Ok(len)
             }
-            KeyType::Public(_) => Err(Error::Crypto),
+            KeyType::Public(_) => Err(ErrorCode::Crypto.into()),
         }
     }
     fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
@@ -251,7 +251,7 @@ impl CryptoKeyPair for KeyPair {
         use p256::ecdsa::signature::Signer;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(Error::NoSpace);
+            return Err(ErrorCode::NoSpace.into());
         }
 
         match &self.key {
@@ -274,7 +274,7 @@ impl CryptoKeyPair for KeyPair {
 
         verifying_key
             .verify(msg, &signature)
-            .map_err(|_| Error::InvalidSignature)?;
+            .map_err(|_| ErrorCode::InvalidSignature)?;
 
         Ok(())
     }
@@ -291,7 +291,7 @@ pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Resu
         .expand(info, key)
         .map_err(|e| {
             error!("Error with hkdf_sha256 {:?}", e);
-            Error::TLSStack
+            ErrorCode::TLSStack.into()
         })
 }
 

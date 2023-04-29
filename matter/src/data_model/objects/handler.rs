@@ -15,7 +15,11 @@
  *    limitations under the License.
  */
 
-use crate::{error::Error, interaction_model::core::Transaction, tlv::TLVElement};
+use crate::{
+    error::{Error, ErrorCode},
+    interaction_model::core::Transaction,
+    tlv::TLVElement,
+};
 
 use super::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails};
 
@@ -27,7 +31,7 @@ pub trait Handler {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error>;
 
     fn write(&mut self, _attr: &AttrDetails, _data: AttrData) -> Result<(), Error> {
-        Err(Error::AttributeNotFound)
+        Err(ErrorCode::AttributeNotFound.into())
     }
 
     fn invoke(
@@ -37,7 +41,7 @@ pub trait Handler {
         _data: &TLVElement,
         _encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        Err(Error::CommandNotFound)
+        Err(ErrorCode::CommandNotFound.into())
     }
 }
 
@@ -88,7 +92,7 @@ impl EmptyHandler {
 
 impl Handler for EmptyHandler {
     fn read(&self, _attr: &AttrDetails, _encoder: AttrDataEncoder) -> Result<(), Error> {
-        Err(Error::AttributeNotFound)
+        Err(ErrorCode::AttributeNotFound.into())
     }
 }
 
@@ -202,7 +206,7 @@ macro_rules! handler_chain_type {
 pub mod asynch {
     use crate::{
         data_model::objects::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails},
-        error::Error,
+        error::{Error, ErrorCode},
         interaction_model::core::Transaction,
         tlv::TLVElement,
     };
@@ -221,7 +225,7 @@ pub mod asynch {
             _attr: &'a AttrDetails<'_>,
             _data: AttrData<'a>,
         ) -> Result<(), Error> {
-            Err(Error::AttributeNotFound)
+            Err(ErrorCode::AttributeNotFound.into())
         }
 
         async fn invoke<'a>(
@@ -231,7 +235,7 @@ pub mod asynch {
             _data: &'a TLVElement<'_>,
             _encoder: CmdDataEncoder<'a, '_, '_>,
         ) -> Result<(), Error> {
-            Err(Error::CommandNotFound)
+            Err(ErrorCode::CommandNotFound.into())
         }
     }
 
@@ -305,7 +309,7 @@ pub mod asynch {
             _attr: &'a AttrDetails<'_>,
             _encoder: AttrDataEncoder<'a, '_, '_>,
         ) -> Result<(), Error> {
-            Err(Error::AttributeNotFound)
+            Err(ErrorCode::AttributeNotFound.into())
         }
     }
 

@@ -17,7 +17,7 @@
 
 use log::error;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 pub fn hkdf_sha256(_salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> Result<(), Error> {
     error!("This API should never get called");
@@ -79,7 +79,7 @@ impl KeyPair {
 
     pub fn get_csr<'a>(&self, _out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     pub fn get_public_key(&self, _pub_key: &mut [u8]) -> Result<usize, Error> {
@@ -92,17 +92,17 @@ impl KeyPair {
 
     pub fn derive_secret(self, _peer_pub_key: &[u8], _secret: &mut [u8]) -> Result<usize, Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     pub fn sign_msg(&self, _msg: &[u8], _signature: &mut [u8]) -> Result<usize, Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 
     pub fn verify_msg(&self, _msg: &[u8], _signature: &[u8]) -> Result<(), Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 }
 

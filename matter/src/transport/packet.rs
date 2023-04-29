@@ -18,7 +18,7 @@
 use log::error;
 
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
 };
 
@@ -109,7 +109,7 @@ impl<'a> Packet<'a> {
         if let Direction::Rx(pbuf, _) = &mut self.data {
             Ok(pbuf)
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 
@@ -117,7 +117,7 @@ impl<'a> Packet<'a> {
         if let Direction::Tx(wbuf) = &mut self.data {
             Ok(wbuf)
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 
@@ -158,10 +158,10 @@ impl<'a> Packet<'a> {
                         .decrypt_and_decode(&self.plain, pb, peer_nodeid, dec_key)
                 } else {
                     error!("Invalid state for proto_decode");
-                    Err(Error::InvalidState)
+                    Err(ErrorCode::InvalidState.into())
                 }
             }
-            _ => Err(Error::InvalidState),
+            _ => Err(ErrorCode::InvalidState.into()),
         }
     }
 
@@ -171,7 +171,7 @@ impl<'a> Packet<'a> {
                 RxState::Uninit => Ok(false),
                 _ => Ok(true),
             },
-            _ => Err(Error::InvalidState),
+            _ => Err(ErrorCode::InvalidState.into()),
         }
     }
 
@@ -183,10 +183,10 @@ impl<'a> Packet<'a> {
                     self.plain.decode(pb)
                 } else {
                     error!("Invalid state for plain_decode");
-                    Err(Error::InvalidState)
+                    Err(ErrorCode::InvalidState.into())
                 }
             }
-            _ => Err(Error::InvalidState),
+            _ => Err(ErrorCode::InvalidState.into()),
         }
     }
 }

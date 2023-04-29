@@ -34,7 +34,7 @@ use crate::{
     // TODO: We should move ASN1Writer out of Cert,
     // so Crypto doesn't have to depend on Cert
     cert::{ASN1Writer, CertConsumer},
-    error::Error,
+    error::{Error, ErrorCode},
 };
 
 pub struct HmacSha256 {
@@ -49,11 +49,13 @@ impl HmacSha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.inner.update(data).map_err(|_| Error::TLSStack)
+        self.inner
+            .update(data)
+            .map_err(|_| ErrorCode::TLSStack.into())
     }
 
     pub fn finish(self, out: &mut [u8]) -> Result<(), Error> {
-        self.inner.finish(out).map_err(|_| Error::TLSStack)?;
+        self.inner.finish(out).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
     }
 }
@@ -102,11 +104,11 @@ impl KeyPair {
             Ok(Some(a)) => Ok(a),
             Ok(None) => {
                 error!("Error in writing CSR: None received");
-                Err(Error::Invalid)
+                Err(ErrorCode::Invalid.into())
             }
             Err(e) => {
                 error!("Error in writing CSR {}", e);
-                Err(Error::TLSStack)
+                Err(ErrorCode::TLSStack.into())
             }
         }
     }
@@ -161,7 +163,7 @@ impl KeyPair {
         let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         safemem::write_bytes(signature, 0);
 
@@ -192,7 +194,7 @@ impl KeyPair {
 
         if let Err(e) = tmp_key.verify(hash::Type::Sha256, &msg_hash, mbedtls_sign) {
             info!("The error is {}", e);
-            Err(Error::InvalidSignature)
+            Err(ErrorCode::InvalidSignature.into())
         } else {
             Ok(())
         }
@@ -229,7 +231,7 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 
         // Type 0x2 is Integer (first integer is r)
         if signature[offset] != 2 {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         offset += 1;
 
@@ -254,7 +256,7 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 
         // Type 0x2 is Integer (this integer is s)
         if signature[offset] != 2 {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         offset += 1;
 
@@ -273,17 +275,17 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 
         Ok(64)
     } else {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 }
 
 pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
     mbedtls::hash::pbkdf2_hmac(Type::Sha256, pass, salt, iter as u32, key)
-        .map_err(|_e| Error::TLSStack)
+        .map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    Hkdf::hkdf(Type::Sha256, salt, ikm, info, key).map_err(|_e| Error::TLSStack)
+    Hkdf::hkdf(Type::Sha256, salt, ikm, info, key).map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn encrypt_in_place(
@@ -304,7 +306,7 @@ pub fn encrypt_in_place(
     cipher
         .encrypt_auth_inplace(ad, data, tag)
         .map(|(len, _)| len)
-        .map_err(|_e| Error::TLSStack)
+        .map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn decrypt_in_place(
@@ -326,7 +328,7 @@ pub fn decrypt_in_place(
         .map(|(len, _)| len)
         .map_err(|e| {
             error!("Error during decryption: {:?}", e);
-            Error::TLSStack
+            ErrorCode::TLSStack.into()
         })
 }
 
@@ -343,12 +345,12 @@ impl Sha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.ctx.update(data).map_err(|_| Error::TLSStack)?;
+        self.ctx.update(data).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
     }
 
     pub fn finish(self, digest: &mut [u8]) -> Result<(), Error> {
-        self.ctx.finish(digest).map_err(|_| Error::TLSStack)?;
+        self.ctx.finish(digest).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
     }
 }

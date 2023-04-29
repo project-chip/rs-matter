@@ -22,11 +22,11 @@ use log::{error, trace};
 use crate::{
     cert::Cert,
     crypto::{self, KeyPair, Sha256},
-    error::Error,
+    error::{Error, ErrorCode},
     fabric::{Fabric, FabricMgr},
     secure_channel::common::SCStatusCodes,
     secure_channel::common::{self, OpCode},
-    tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType},
+    tlv::{get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType},
     transport::{
         network::Address,
         proto_ctx::ProtoCtx,
@@ -90,9 +90,9 @@ impl<'a> Case<'a> {
             .exch_ctx
             .exch
             .take_case_session::<CaseSession>()
-            .ok_or(Error::InvalidState)?;
+            .ok_or(ErrorCode::InvalidState)?;
         if case_session.state != State::Sigma1Rx {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         case_session.state = State::Sigma3Rx;
 
@@ -117,7 +117,7 @@ impl<'a> Case<'a> {
         let mut decrypted: [u8; 800] = [0; 800];
         if encrypted.len() > decrypted.len() {
             error!("Data too large");
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         let decrypted = &mut decrypted[..encrypted.len()];
         decrypted.copy_from_slice(encrypted);
@@ -204,7 +204,7 @@ impl<'a> Case<'a> {
         case_session.local_fabric_idx = local_fabric_idx?;
         if r.peer_pub_key.0.len() != crypto::EC_POINT_LEN_BYTES {
             error!("Invalid public key length");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         case_session.peer_pub_key.copy_from_slice(r.peer_pub_key.0);
         trace!(
@@ -220,7 +220,7 @@ impl<'a> Case<'a> {
         let len = key_pair.derive_secret(r.peer_pub_key.0, &mut case_session.shared_secret)?;
         if len != 32 {
             error!("Derived secret length incorrect");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         //        println!("Derived secret: {:x?} len: {}", secret, len);
 
@@ -348,14 +348,14 @@ impl<'a> Case<'a> {
         let mut verifier = noc.verify_chain_start(utc_calendar);
 
         if fabric.get_fabric_id() != noc.get_fabric_id()? {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
 
         if let Some(icac) = icac {
             // If ICAC is present handle it
             if let Ok(fid) = icac.get_fabric_id() {
                 if fid != fabric.get_fabric_id() {
-                    return Err(Error::Invalid);
+                    Err(ErrorCode::Invalid)?;
                 }
             }
             verifier = verifier.add_cert(icac)?;
@@ -377,7 +377,7 @@ impl<'a> Case<'a> {
             0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x4b, 0x65, 0x79, 0x73,
         ];
         if key.len() < 48 {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
         salt.extend_from_slice(ipk).unwrap();
@@ -388,7 +388,7 @@ impl<'a> Case<'a> {
         //        println!("Session Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &SEKEYS_INFO, key)
-            .map_err(|_x| Error::NoSpace)?;
+            .map_err(|_x| ErrorCode::NoSpace)?;
         //        println!("Session Key: key: {:x?}", key);
 
         Ok(())
@@ -425,7 +425,7 @@ impl<'a> Case<'a> {
     ) -> Result<(), Error> {
         const S3K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x33];
         if key.len() < 16 {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
         salt.extend_from_slice(ipk).unwrap();
@@ -438,7 +438,7 @@ impl<'a> Case<'a> {
         //        println!("Sigma3Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &S3K_INFO, key)
-            .map_err(|_x| Error::NoSpace)?;
+            .map_err(|_x| ErrorCode::NoSpace)?;
         //        println!("Sigma3Key: key: {:x?}", key);
 
         Ok(())
@@ -452,7 +452,7 @@ impl<'a> Case<'a> {
     ) -> Result<(), Error> {
         const S2K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x32];
         if key.len() < 16 {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
         salt.extend_from_slice(ipk).unwrap();
@@ -467,7 +467,7 @@ impl<'a> Case<'a> {
         //        println!("Sigma2Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), &case_session.shared_secret, &S2K_INFO, key)
-            .map_err(|_x| Error::NoSpace)?;
+            .map_err(|_x| ErrorCode::NoSpace)?;
         //        println!("Sigma2Key: key: {:x?}", key);
 
         Ok(())

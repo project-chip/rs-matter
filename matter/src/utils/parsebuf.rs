@@ -65,7 +65,7 @@ impl<'a> ParseBuf<'a> {
             self.left -= size;
             return Ok(tail);
         }
-        Err(Error::TruncatedPacket)
+        Err(ErrorCode::TruncatedPacket.into())
     }
 
     fn advance(&mut self, len: usize) {
@@ -82,7 +82,7 @@ impl<'a> ParseBuf<'a> {
             self.advance(size);
             return Ok(data);
         }
-        Err(Error::TruncatedPacket)
+        Err(ErrorCode::TruncatedPacket.into())
     }
 
     pub fn le_u8(&mut self) -> Result<u8, Error> {

@@ -15,8 +15,9 @@ name = "matter"
 path = "src/lib.rs"
 
 [features]
-default = ["std", "crypto_mbedtls"]
+default = ["std", "crypto_mbedtls", "backtrace"]
 std = ["alloc", "env_logger", "chrono", "rand", "qrcode", "libmdns", "simple-mdns", "simple-dns", "smol"]
+backtrace = []
 alloc = []
 nightly = []
 crypto_openssl = ["openssl", "foreign-types", "hmac", "sha2"]
@@ -32,7 +33,7 @@ heapless = "0.7.16"
 num = "0.4"
 num-derive = "0.3.3"
 num-traits = "0.2.15"
-strum = { version = "0.24", features = ["derive"], default-features = false, no-default-feature = true }
+strum = { version = "0.24", features = ["derive"], default-features = false }
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_debug"] }
 no-std-net = "0.6"
 subtle = "2.4.1"

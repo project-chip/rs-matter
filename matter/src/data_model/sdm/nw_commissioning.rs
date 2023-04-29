@@ -20,7 +20,7 @@ use crate::{
         AttrDataEncoder, AttrDetails, ChangeNotifier, Cluster, Dataver, Handler,
         NonBlockingHandler, ATTRIBUTE_LIST, FEATURE_MAP,
     },
-    error::Error,
+    error::{Error, ErrorCode},
     utils::rand::Rand,
 };
 
@@ -57,7 +57,7 @@ impl Handler for NwCommCluster {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
             } else {
-                Err(Error::AttributeNotFound)
+                Err(ErrorCode::AttributeNotFound.into())
             }
         } else {
             Ok(())

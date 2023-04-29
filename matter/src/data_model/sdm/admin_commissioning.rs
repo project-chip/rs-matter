@@ -144,7 +144,7 @@ impl<'a> AdminCommCluster<'a> {
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
             Commands::OpenCommWindow => self.handle_command_opencomm_win(data)?,
-            _ => Err(Error::CommandNotFound)?,
+            _ => Err(ErrorCode::CommandNotFound)?,
         }
 
         self.data_ver.changed();

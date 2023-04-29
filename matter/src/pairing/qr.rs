@@ -16,6 +16,7 @@
  */
 
 use crate::{
+    error::ErrorCode,
     tlv::{TLVWriter, TagType},
     utils::writebuf::WriteBuf,
 };
@@ -134,7 +135,7 @@ impl<'data> QrSetupPayload<'data> {
         if is_vendor_tag(tag) {
             self.add_optional_data(tag, data)
         } else {
-            Err(Error::InvalidArgument)
+            Err(ErrorCode::InvalidArgument.into())
         }
     }
 
@@ -150,7 +151,7 @@ impl<'data> QrSetupPayload<'data> {
         if is_common_tag(tag) {
             self.add_optional_data(tag, data)
         } else {
-            Err(Error::InvalidArgument)
+            Err(ErrorCode::InvalidArgument.into())
         }
     }
 
@@ -163,7 +164,7 @@ impl<'data> QrSetupPayload<'data> {
         } else {
             self.optional_data.push(item)
         }
-        .map_err(|_| Error::NoSpace)
+        .map_err(|_| ErrorCode::NoSpace.into())
     }
 
     pub fn get_all_optional_data(&self) -> &[OptionalQRCodeInfo] {
@@ -267,7 +268,7 @@ pub(super) fn payload_base38_representation<const N: usize>(
 
         payload_base38_representation_with_tlv(payload, bits_buf, tlv_buf)
     } else {
-        Err(Error::InvalidArgument)
+        Err(ErrorCode::InvalidArgument.into())
     }
 }
 
@@ -299,7 +300,7 @@ pub fn estimate_buffer_size(payload: &QrSetupPayload) -> Result<usize, Error> {
     estimate = estimate_struct_overhead(estimate);
 
     if estimate > u32::MAX as usize {
-        return Err(Error::NoMemory);
+        Err(ErrorCode::NoMemory)?;
     }
 
     Ok(estimate)
@@ -352,11 +353,11 @@ fn populate_bits(
     total_payload_data_size_in_bits: usize,
 ) -> Result<(), Error> {
     if *offset + number_of_bits > total_payload_data_size_in_bits {
-        return Err(Error::InvalidArgument);
+        Err(ErrorCode::InvalidArgument)?;
     }
 
     if input >= 1u64 << number_of_bits {
-        return Err(Error::InvalidArgument);
+        Err(ErrorCode::InvalidArgument)?;
     }
 
     let mut index = *offset;
@@ -390,7 +391,7 @@ fn payload_base38_representation_with_tlv<const N: usize>(
     let mut base38_encoded: heapless::String<N> = "MT:".into();
 
     for c in base38::encode(bits) {
-        base38_encoded.push(c).map_err(|_| Error::NoSpace)?;
+        base38_encoded.push(c).map_err(|_| ErrorCode::NoSpace)?;
     }
 
     Ok(base38_encoded)
@@ -431,7 +432,7 @@ fn generate_bit_set<'a>(
         TOTAL_PAYLOAD_DATA_SIZE_IN_BITS + tlv_data.map(|tlv_data| tlv_data.len() * 8).unwrap_or(0);
 
     if bits_buf.len() * 8 < total_payload_size_in_bits {
-        return Err(Error::BufferTooSmall);
+        Err(ErrorCode::BufferTooSmall)?;
     };
 
     let passwd = passwd_from_comm_data(payload.comm_data);
