@@ -54,8 +54,8 @@ fn main() -> Result<(), impl Error> {
         device_name: "OnOff Light",
     };
 
-    let mut mdns = matter::mdns::astro::AstroMdns::new()?;
-    //let mut mdns = matter::mdns::libmdns::LibMdns::new()?;
+    //let mut mdns = matter::mdns::astro::AstroMdns::new()?;
+    let mut mdns = matter::mdns::libmdns::LibMdns::new()?;
     //let mut mdns = matter::mdns::DummyMdns {};
 
     let matter = Matter::new_default(&dev_info, &mut mdns, matter::transport::udp::MATTER_PORT);
@@ -77,7 +77,7 @@ fn main() -> Result<(), impl Error> {
         matter.load_fabrics(data)?;
     }
 
-    matter.start::<4096>(
+    matter.start(
         CommissioningData {
             // TODO: Hard-coded for now
             verifier: VerifierData::new_with_pw(123456, *matter.borrow()),

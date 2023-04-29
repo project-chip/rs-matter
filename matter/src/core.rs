@@ -116,19 +116,15 @@ impl<'a> Matter<'a> {
         self.acl_mgr.borrow_mut().store(buf)
     }
 
-    pub fn start<const N: usize>(
-        &self,
-        dev_comm: CommissioningData,
-        buf: &mut [u8],
-    ) -> Result<(), Error> {
+    pub fn start(&self, dev_comm: CommissioningData, buf: &mut [u8]) -> Result<(), Error> {
         let open_comm_window = self.fabric_mgr.borrow().is_empty();
         if open_comm_window {
-            print_pairing_code_and_qr::<N>(
+            print_pairing_code_and_qr(
                 self.dev_det,
                 &dev_comm,
                 DiscoveryCapabilities::default(),
                 buf,
-            );
+            )?;
 
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,

@@ -19,7 +19,7 @@ use core::fmt::Write;
 
 use super::*;
 
-pub(super) fn compute_pairing_code(comm_data: &CommissioningData) -> heapless::String<32> {
+pub fn compute_pairing_code(comm_data: &CommissioningData) -> heapless::String<32> {
     // 0: no Vendor ID and Product ID present in Manual Pairing Code
     const VID_PID_PRESENT: u8 = 0;
 

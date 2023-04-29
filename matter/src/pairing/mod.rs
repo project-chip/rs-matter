@@ -31,7 +31,7 @@ use crate::{
 
 use self::{
     code::{compute_pairing_code, pretty_print_pairing_code},
-    qr::{payload_base38_representation, print_qr_code, QrSetupPayload},
+    qr::{compute_qr_code, print_qr_code},
 };
 
 pub struct DiscoveryCapabilities {
@@ -81,19 +81,19 @@ impl DiscoveryCapabilities {
 }
 
 /// Prepares and prints the pairing code and the QR code for easy pairing.
-pub fn print_pairing_code_and_qr<const N: usize>(
+pub fn print_pairing_code_and_qr(
     dev_det: &BasicInfoConfig,
     comm_data: &CommissioningData,
     discovery_capabilities: DiscoveryCapabilities,
     buf: &mut [u8],
-) {
+) -> Result<(), Error> {
     let pairing_code = compute_pairing_code(comm_data);
-    let qr_code_data = QrSetupPayload::new(dev_det, comm_data, discovery_capabilities);
-    let data_str =
-        payload_base38_representation::<N>(&qr_code_data, buf).expect("Failed to encode");
+    let qr_code = compute_qr_code(dev_det, comm_data, discovery_capabilities, buf)?;
 
     pretty_print_pairing_code(&pairing_code);
-    print_qr_code(&data_str);
+    print_qr_code(&qr_code);
+
+    Ok(())
 }
 
 pub(self) fn passwd_from_comm_data(comm_data: &CommissioningData) -> u32 {
