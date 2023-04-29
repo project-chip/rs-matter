@@ -253,20 +253,24 @@ pub enum CommissionningFlowType {
     Custom = 2,
 }
 
-pub(super) fn payload_base38_representation<const N: usize>(
+pub(super) fn payload_base38_representation<'a>(
     payload: &QrSetupPayload,
-    buf: &mut [u8],
-) -> Result<heapless::String<N>, Error> {
+    buf: &'a mut [u8],
+) -> Result<&'a str, Error> {
     if payload.is_valid() {
-        let (bits_buf, tlv_buf) = if payload.has_tlv() {
-            let (bits_buf, tlv_buf) = buf.split_at_mut(buf.len() / 2);
+        let (str_buf, bits_buf, tlv_buf) = if payload.has_tlv() {
+            let (str_buf, buf) = buf.split_at_mut(buf.len() / 3 * 2);
 
-            (bits_buf, Some(tlv_buf))
+            let (bits_buf, tlv_buf) = buf.split_at_mut(buf.len() / 3);
+
+            (str_buf, bits_buf, Some(tlv_buf))
         } else {
-            (buf, None)
+            let (str_buf, buf) = buf.split_at_mut(buf.len() / 3 * 2);
+
+            (str_buf, buf, None)
         };
 
-        payload_base38_representation_with_tlv(payload, bits_buf, tlv_buf)
+        payload_base38_representation_with_tlv(payload, str_buf, bits_buf, tlv_buf)
     } else {
         Err(ErrorCode::InvalidArgument.into())
     }
@@ -315,16 +319,16 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
     first_field_size + 4 + 2
 }
 
-pub(super) fn print_qr_code(qr_data: &str) {
-    info!("QR Code: {}", qr_data);
+pub(super) fn print_qr_code(qr_code: &str) {
+    info!("QR Code: {}", qr_code);
 
     #[cfg(feature = "std")]
     {
         use qrcode::{render::unicode, QrCode, Version};
 
-        let needed_version = compute_qr_version(qr_data);
+        let needed_version = compute_qr_version(qr_code);
         let code =
-            QrCode::with_version(qr_data, Version::Normal(needed_version), qrcode::EcLevel::M)
+            QrCode::with_version(qr_code, Version::Normal(needed_version), qrcode::EcLevel::M)
                 .unwrap();
         let image = code
             .render::<unicode::Dense1x2>()
@@ -334,6 +338,16 @@ pub(super) fn print_qr_code(qr_data: &str) {
 
         info!("\n{}", image);
     }
+}
+
+pub fn compute_qr_code<'a>(
+    dev_det: &BasicInfoConfig,
+    comm_data: &CommissioningData,
+    discovery_capabilities: DiscoveryCapabilities,
+    buf: &'a mut [u8],
+) -> Result<&'a str, Error> {
+    let qr_code_data = QrSetupPayload::new(dev_det, comm_data, discovery_capabilities);
+    payload_base38_representation(&qr_code_data, buf)
 }
 
 fn compute_qr_version(qr_data: &str) -> i16 {
@@ -375,11 +389,12 @@ fn populate_bits(
     Ok(())
 }
 
-fn payload_base38_representation_with_tlv<const N: usize>(
+fn payload_base38_representation_with_tlv<'a>(
     payload: &QrSetupPayload,
+    str_buf: &'a mut [u8],
     bits_buf: &mut [u8],
     tlv_buf: Option<&mut [u8]>,
-) -> Result<heapless::String<N>, Error> {
+) -> Result<&'a str, Error> {
     let tlv_data = if let Some(tlv_buf) = tlv_buf {
         Some(generate_tlv_from_optional_data(payload, tlv_buf)?)
     } else {
@@ -388,13 +403,30 @@ fn payload_base38_representation_with_tlv<const N: usize>(
 
     let bits = generate_bit_set(payload, bits_buf, tlv_data)?;
 
-    let mut base38_encoded: heapless::String<N> = "MT:".into();
+    let prefix = "MT:";
 
-    for c in base38::encode(bits) {
-        base38_encoded.push(c).map_err(|_| ErrorCode::NoSpace)?;
+    if str_buf.len() < prefix.as_bytes().len() {
+        Err(ErrorCode::NoSpace)?;
     }
 
-    Ok(base38_encoded)
+    str_buf[..prefix.as_bytes().len()].copy_from_slice(prefix.as_bytes());
+
+    let mut offset = prefix.len();
+
+    for c in base38::encode(bits) {
+        let mut char_buf = [0; 4];
+        let str = c.encode_utf8(&mut char_buf);
+
+        if str_buf.len() - offset < str.as_bytes().len() {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        str_buf[offset..offset + str.as_bytes().len()].copy_from_slice(str.as_bytes());
+
+        offset += str.as_bytes().len();
+    }
+
+    Ok(core::str::from_utf8(&str_buf[..offset])?)
 }
 
 fn generate_tlv_from_optional_data<'a>(
@@ -557,8 +589,8 @@ mod tests {
         let disc_cap = DiscoveryCapabilities::new(false, true, false);
         let qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
         let mut buf = [0; 1024];
-        let data_str = payload_base38_representation::<128>(&qr_code_data, &mut buf)
-            .expect("Failed to encode");
+        let data_str =
+            payload_base38_representation(&qr_code_data, &mut buf).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
     }
 
@@ -580,8 +612,8 @@ mod tests {
         let disc_cap = DiscoveryCapabilities::new(true, false, false);
         let qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap);
         let mut buf = [0; 1024];
-        let data_str = payload_base38_representation::<128>(&qr_code_data, &mut buf)
-            .expect("Failed to encode");
+        let data_str =
+            payload_base38_representation(&qr_code_data, &mut buf).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
     }
 
@@ -626,8 +658,8 @@ mod tests {
             .expect("Failed to add optional data");
 
         let mut buf = [0; 1024];
-        let data_str = payload_base38_representation::<{ QR_CODE.len() }>(&qr_code_data, &mut buf)
-            .expect("Failed to encode");
+        let data_str =
+            payload_base38_representation(&qr_code_data, &mut buf).expect("Failed to encode");
         assert_eq!(data_str, QR_CODE)
     }
 }
