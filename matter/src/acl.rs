@@ -22,7 +22,6 @@ use crate::{
     error::Error,
     fabric,
     interaction_model::messages::GenericPath,
-    persist::Psm,
     tlv::{FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
     transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC},
     utils::writebuf::WriteBuf,
@@ -390,10 +389,8 @@ impl AclEntry {
 }
 
 const MAX_ACL_ENTRIES: usize = ENTRIES_PER_FABRIC * fabric::MAX_SUPPORTED_FABRICS;
-type AclEntries = [Option<AclEntry>; MAX_ACL_ENTRIES];
 
-const ACL_KV_ENTRY: &str = "acl";
-const ACL_KV_MAX_SIZE: usize = 300;
+type AclEntries = [Option<AclEntry>; MAX_ACL_ENTRIES];
 
 pub struct AclMgr {
     entries: AclEntries,
@@ -505,30 +502,8 @@ impl AclMgr {
         false
     }
 
-    pub fn store<T>(&mut self, mut psm: T) -> Result<(), Error>
-    where
-        T: Psm,
-    {
-        if self.changed {
-            let mut buf = [0u8; ACL_KV_MAX_SIZE];
-            let mut wb = WriteBuf::new(&mut buf);
-            let mut tw = TLVWriter::new(&mut wb);
-            self.entries.to_tlv(&mut tw, TagType::Anonymous)?;
-            psm.set_kv_slice(ACL_KV_ENTRY, wb.as_slice())?;
-
-            self.changed = false;
-        }
-
-        Ok(())
-    }
-
-    pub fn load<T>(&mut self, psm: T) -> Result<(), Error>
-    where
-        T: Psm,
-    {
-        let mut buf = [0u8; ACL_KV_MAX_SIZE];
-        let acl_tlvs = psm.get_kv_slice(ACL_KV_ENTRY, &mut buf)?;
-        let root = TLVList::new(acl_tlvs).iter().next().ok_or(Error::Invalid)?;
+    pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
+        let root = TLVList::new(data).iter().next().ok_or(Error::Invalid)?;
 
         self.entries = AclEntries::from_tlv(&root)?;
         self.changed = false;
@@ -536,37 +511,20 @@ impl AclMgr {
         Ok(())
     }
 
-    #[cfg(feature = "nightly")]
-    pub async fn store_async<T>(&mut self, mut psm: T) -> Result<(), Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
+    pub fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         if self.changed {
-            let mut buf = [0u8; ACL_KV_MAX_SIZE];
-            let mut wb = WriteBuf::new(&mut buf);
+            let mut wb = WriteBuf::new(buf);
             let mut tw = TLVWriter::new(&mut wb);
             self.entries.to_tlv(&mut tw, TagType::Anonymous)?;
-            psm.set_kv_slice(ACL_KV_ENTRY, wb.as_slice()).await?;
 
             self.changed = false;
+
+            let len = tw.get_tail();
+
+            Ok(Some(&buf[..len]))
+        } else {
+            Ok(None)
         }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "nightly")]
-    pub async fn load_async<T>(&mut self, psm: T) -> Result<(), Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
-        let mut buf = [0u8; ACL_KV_MAX_SIZE];
-        let acl_tlvs = psm.get_kv_slice(ACL_KV_ENTRY, &mut buf).await?;
-        let root = TLVList::new(acl_tlvs).iter().next().ok_or(Error::Invalid)?;
-
-        self.entries = AclEntries::from_tlv(&root)?;
-        self.changed = false;
-
-        Ok(())
     }
 
     /// Traverse fabric specific entries to find the index

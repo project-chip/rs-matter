@@ -98,6 +98,24 @@ impl<'a> Matter<'a> {
         self.dev_det
     }
 
+    pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
+        self.fabric_mgr
+            .borrow_mut()
+            .load(data, &mut self.mdns_mgr.borrow_mut())
+    }
+
+    pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
+        self.acl_mgr.borrow_mut().load(data)
+    }
+
+    pub fn store_fabrics<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        self.fabric_mgr.borrow_mut().store(buf)
+    }
+
+    pub fn store_acls<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        self.acl_mgr.borrow_mut().store(buf)
+    }
+
     pub fn start<const N: usize>(
         &self,
         dev_comm: CommissioningData,

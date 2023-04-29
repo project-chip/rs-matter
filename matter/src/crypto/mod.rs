@@ -14,6 +14,10 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
+use crate::{
+    error::Error,
+    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
+};
 
 pub const SYMM_KEY_LEN_BITS: usize = 128;
 pub const SYMM_KEY_LEN_BYTES: usize = SYMM_KEY_LEN_BITS / 8;
@@ -67,6 +71,38 @@ pub mod crypto_dummy;
     feature = "crypto_rustcrypto"
 )))]
 pub use self::crypto_dummy::*;
+
+impl<'a> FromTLV<'a> for KeyPair {
+    fn from_tlv(t: &crate::tlv::TLVElement<'a>) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        t.confirm_array()?.enter();
+
+        if let Some(mut array) = t.enter() {
+            let pub_key = array.next().ok_or(Error::Invalid)?.slice()?;
+            let priv_key = array.next().ok_or(Error::Invalid)?.slice()?;
+
+            KeyPair::new_from_components(pub_key, priv_key)
+        } else {
+            Err(Error::Invalid)
+        }
+    }
+}
+
+impl ToTLV for KeyPair {
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        let mut buf = [0; 1024]; // TODO
+
+        tw.start_array(tag)?;
+
+        let size = self.get_public_key(&mut buf)?;
+        tw.str16(TagType::Anonymous, &buf[..size])?;
+
+        let size = self.get_private_key(&mut buf)?;
+        tw.str16(TagType::Anonymous, &buf[..size])
+    }
+}
 
 #[cfg(test)]
 mod tests {

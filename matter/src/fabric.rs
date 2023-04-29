@@ -18,7 +18,8 @@
 use core::fmt::Write;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
-use log::{error, info};
+use heapless::{String, Vec};
+use log::info;
 
 use crate::{
     cert::{Cert, MAX_CERT_TLV_LEN},
@@ -26,31 +27,11 @@ use crate::{
     error::Error,
     group_keys::KeySet,
     mdns::{MdnsMgr, ServiceMode},
-    persist::Psm,
-    tlv::{OctetStr, TLVWriter, TagType, ToTLV, UtfStr},
+    tlv::{FromTLV, OctetStr, TLVElement, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
+    utils::writebuf::WriteBuf,
 };
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
-
-macro_rules! fb_key {
-    ($index:ident, $key:ident, $buf:expr) => {{
-        use core::fmt::Write;
-
-        $buf = "".into();
-        write!(&mut $buf, "fb{}{}", $index, $key).unwrap();
-
-        &$buf
-    }};
-}
-
-const ST_VID: &str = "vid";
-const ST_RCA: &str = "rca";
-const ST_ICA: &str = "ica";
-const ST_NOC: &str = "noc";
-const ST_IPK: &str = "ipk";
-const ST_LBL: &str = "label";
-const ST_PBKEY: &str = "pubkey";
-const ST_PRKEY: &str = "privkey";
 
 #[allow(dead_code)]
 #[derive(Debug, ToTLV)]
@@ -66,18 +47,18 @@ pub struct FabricDescriptor<'a> {
     pub fab_idx: Option<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToTLV, FromTLV)]
 pub struct Fabric {
     node_id: u64,
     fabric_id: u64,
     vendor_id: u16,
     key_pair: KeyPair,
-    pub root_ca: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
-    pub icac: Option<heapless::Vec<u8, { MAX_CERT_TLV_LEN }>>,
-    pub noc: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
+    pub root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
+    pub icac: Option<Vec<u8, { MAX_CERT_TLV_LEN }>>,
+    pub noc: Vec<u8, { MAX_CERT_TLV_LEN }>,
     pub ipk: KeySet,
-    label: heapless::String<32>,
-    mdns_service_name: heapless::String<33>,
+    label: String<32>,
+    mdns_service_name: String<33>,
 }
 
 impl Fabric {
@@ -199,234 +180,14 @@ impl Fabric {
 
         Ok(desc)
     }
-
-    fn store<T>(&self, index: usize, mut psm: T) -> Result<(), Error>
-    where
-        T: Psm,
-    {
-        let mut _kb = heapless::String::<32>::new();
-
-        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &self.root_ca)?;
-        psm.set_kv_slice(
-            fb_key!(index, ST_ICA, _kb),
-            self.icac.as_deref().unwrap_or(&[]),
-        )?;
-
-        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &self.noc)?;
-        psm.set_kv_slice(fb_key!(index, ST_IPK, _kb), self.ipk.epoch_key())?;
-        psm.set_kv_slice(fb_key!(index, ST_LBL, _kb), self.label.as_bytes())?;
-
-        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
-        let len = self.key_pair.get_public_key(&mut buf)?;
-        let key = &buf[..len];
-        psm.set_kv_slice(fb_key!(index, ST_PBKEY, _kb), key)?;
-
-        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
-        let len = self.key_pair.get_private_key(&mut buf)?;
-        let key = &buf[..len];
-        psm.set_kv_slice(fb_key!(index, ST_PRKEY, _kb), key)?;
-
-        psm.set_kv_u64(fb_key!(index, ST_VID, _kb), self.vendor_id.into())?;
-        Ok(())
-    }
-
-    fn load<T>(index: usize, psm: T) -> Result<Self, Error>
-    where
-        T: Psm,
-    {
-        let mut _kb = heapless::String::<32>::new();
-
-        let mut buf = [0u8; MAX_CERT_TLV_LEN];
-
-        let root_ca =
-            heapless::Vec::from_slice(psm.get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)?)
-                .unwrap();
-
-        let icac = psm.get_kv_slice(fb_key!(index, ST_ICA, _kb), &mut buf)?;
-        let icac = if !icac.is_empty() {
-            Some(heapless::Vec::from_slice(icac).unwrap())
-        } else {
-            None
-        };
-
-        let noc =
-            heapless::Vec::from_slice(psm.get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)?)
-                .unwrap();
-
-        let label = psm.get_kv_slice(fb_key!(index, ST_LBL, _kb), &mut buf)?;
-        let label: heapless::String<32> = core::str::from_utf8(label)
-            .map_err(|_| {
-                error!("Couldn't read label");
-                Error::Invalid
-            })?
-            .into();
-
-        let ipk = psm.get_kv_slice(fb_key!(index, ST_IPK, _kb), &mut buf)?;
-
-        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
-        let pub_key = psm.get_kv_slice(fb_key!(index, ST_PBKEY, _kb), &mut buf)?;
-
-        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
-        let priv_key = psm.get_kv_slice(fb_key!(index, ST_PRKEY, _kb), &mut buf)?;
-        let keypair = KeyPair::new_from_components(pub_key, priv_key)?;
-
-        let vendor_id = psm.get_kv_u64(fb_key!(index, ST_VID, _kb))?;
-
-        Fabric::new(keypair, root_ca, icac, noc, ipk, vendor_id as u16, &label)
-    }
-
-    fn remove<T>(index: usize, mut psm: T) -> Result<(), Error>
-    where
-        T: Psm,
-    {
-        let mut _kb = heapless::String::<32>::new();
-
-        psm.remove(fb_key!(index, ST_RCA, _kb))?;
-        psm.remove(fb_key!(index, ST_ICA, _kb))?;
-
-        psm.remove(fb_key!(index, ST_NOC, _kb))?;
-
-        psm.remove(fb_key!(index, ST_LBL, _kb))?;
-
-        psm.remove(fb_key!(index, ST_IPK, _kb))?;
-
-        psm.remove(fb_key!(index, ST_PBKEY, _kb))?;
-        psm.remove(fb_key!(index, ST_PRKEY, _kb))?;
-
-        psm.remove(fb_key!(index, ST_VID, _kb))?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "nightly")]
-    async fn store_async<T>(&self, index: usize, mut psm: T) -> Result<(), Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
-        let mut _kb = heapless::String::<32>::new();
-
-        psm.set_kv_slice(fb_key!(index, ST_RCA, _kb), &self.root_ca)
-            .await?;
-
-        psm.set_kv_slice(
-            fb_key!(index, ST_ICA, _kb),
-            self.icac.as_deref().unwrap_or(&[]),
-        )
-        .await?;
-
-        psm.set_kv_slice(fb_key!(index, ST_NOC, _kb), &self.noc)
-            .await?;
-        psm.set_kv_slice(fb_key!(index, ST_IPK, _kb), self.ipk.epoch_key())
-            .await?;
-        psm.set_kv_slice(fb_key!(index, ST_LBL, _kb), self.label.as_bytes())
-            .await?;
-
-        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
-        let len = self.key_pair.get_public_key(&mut buf)?;
-        let key = &buf[..len];
-        psm.set_kv_slice(fb_key!(index, ST_PBKEY, _kb), key).await?;
-
-        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
-        let len = self.key_pair.get_private_key(&mut buf)?;
-        let key = &buf[..len];
-        psm.set_kv_slice(fb_key!(index, ST_PRKEY, _kb), key).await?;
-
-        psm.set_kv_u64(fb_key!(index, ST_VID, _kb), self.vendor_id.into())
-            .await?;
-        Ok(())
-    }
-
-    #[cfg(feature = "nightly")]
-    async fn load_async<T>(index: usize, psm: T) -> Result<Self, Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
-        let mut _kb = heapless::String::<32>::new();
-
-        let mut buf = [0u8; MAX_CERT_TLV_LEN];
-
-        let root_ca = heapless::Vec::from_slice(
-            psm.get_kv_slice(fb_key!(index, ST_RCA, _kb), &mut buf)
-                .await?,
-        )
-        .unwrap();
-
-        let icac = psm
-            .get_kv_slice(fb_key!(index, ST_ICA, _kb), &mut buf)
-            .await?;
-        let icac = if !icac.is_empty() {
-            Some(heapless::Vec::from_slice(icac).unwrap())
-        } else {
-            None
-        };
-
-        let noc = heapless::Vec::from_slice(
-            psm.get_kv_slice(fb_key!(index, ST_NOC, _kb), &mut buf)
-                .await?,
-        )
-        .unwrap();
-
-        let label = psm
-            .get_kv_slice(fb_key!(index, ST_LBL, _kb), &mut buf)
-            .await?;
-        let label: heapless::String<32> = core::str::from_utf8(label)
-            .map_err(|_| {
-                error!("Couldn't read label");
-                Error::Invalid
-            })?
-            .into();
-
-        let ipk = psm
-            .get_kv_slice(fb_key!(index, ST_IPK, _kb), &mut buf)
-            .await?;
-
-        let mut buf = [0_u8; crypto::EC_POINT_LEN_BYTES];
-        let pub_key = psm
-            .get_kv_slice(fb_key!(index, ST_PBKEY, _kb), &mut buf)
-            .await?;
-
-        let mut buf = [0_u8; crypto::BIGNUM_LEN_BYTES];
-        let priv_key = psm
-            .get_kv_slice(fb_key!(index, ST_PRKEY, _kb), &mut buf)
-            .await?;
-        let keypair = KeyPair::new_from_components(pub_key, priv_key)?;
-
-        let vendor_id = psm.get_kv_u64(fb_key!(index, ST_VID, _kb)).await?;
-
-        Fabric::new(keypair, root_ca, icac, noc, ipk, vendor_id as u16, &label)
-    }
-
-    #[cfg(feature = "nightly")]
-    async fn remove_async<T>(index: usize, mut psm: T) -> Result<(), Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
-        let mut _kb = heapless::String::<32>::new();
-
-        psm.remove(fb_key!(index, ST_RCA, _kb)).await?;
-        psm.remove(fb_key!(index, ST_ICA, _kb)).await?;
-
-        psm.remove(fb_key!(index, ST_NOC, _kb)).await?;
-
-        psm.remove(fb_key!(index, ST_LBL, _kb)).await?;
-
-        psm.remove(fb_key!(index, ST_IPK, _kb)).await?;
-
-        psm.remove(fb_key!(index, ST_PBKEY, _kb)).await?;
-        psm.remove(fb_key!(index, ST_PRKEY, _kb)).await?;
-
-        psm.remove(fb_key!(index, ST_VID, _kb)).await?;
-
-        Ok(())
-    }
 }
 
 pub const MAX_SUPPORTED_FABRICS: usize = 3;
 
+type FabricEntries = [Option<Fabric>; MAX_SUPPORTED_FABRICS];
+
 pub struct FabricMgr {
-    // The outside world expects Fabric Index to be one more than the actual one
-    // since 0 is not allowed. Need to handle this cleanly somehow
-    fabrics: [Option<Fabric>; MAX_SUPPORTED_FABRICS],
+    fabrics: FabricEntries,
     changed: bool,
 }
 
@@ -440,41 +201,20 @@ impl FabricMgr {
         }
     }
 
-    pub fn store<T>(&mut self, mut psm: T) -> Result<(), Error>
-    where
-        T: Psm,
-    {
-        if self.changed {
-            for i in 1..MAX_SUPPORTED_FABRICS {
-                if let Some(fabric) = self.fabrics[i].as_mut() {
-                    info!("Storing fabric at index {}", i);
-                    fabric.store(i, &mut psm)?;
-                } else {
-                    let _ = Fabric::remove(i, &mut psm);
-                }
+    pub fn load(&mut self, data: &[u8], mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
+        for fabric in &self.fabrics {
+            if let Some(fabric) = fabric {
+                mdns_mgr.unpublish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
             }
-
-            self.changed = false;
         }
 
-        Ok(())
-    }
+        let root = TLVList::new(data).iter().next().ok_or(Error::Invalid)?;
 
-    pub fn load<T>(&mut self, mut psm: T, mdns_mgr: &mut MdnsMgr) -> Result<(), Error>
-    where
-        T: Psm,
-    {
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            let result = Fabric::load(i, &mut psm);
-            if let Ok(fabric) = result {
-                info!("Adding new fabric at index {}", i);
-                self.fabrics[i] = Some(fabric);
-                mdns_mgr.publish_service(
-                    &self.fabrics[i].as_ref().unwrap().mdns_service_name,
-                    ServiceMode::Commissioned,
-                )?;
-            } else {
-                self.fabrics[i] = None;
+        self.fabrics = FabricEntries::from_tlv(&root)?;
+
+        for fabric in &self.fabrics {
+            if let Some(fabric) = fabric {
+                mdns_mgr.publish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
             }
         }
 
@@ -483,67 +223,32 @@ impl FabricMgr {
         Ok(())
     }
 
-    #[cfg(feature = "nightly")]
-    pub async fn store_async<T>(&mut self, mut psm: T) -> Result<(), Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
+    pub fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
         if self.changed {
-            for i in 1..MAX_SUPPORTED_FABRICS {
-                if let Some(fabric) = self.fabrics[i].as_mut() {
-                    info!("Storing fabric at index {}", i);
-                    fabric.store_async(i, &mut psm).await?;
-                } else {
-                    let _ = Fabric::remove_async(i, &mut psm).await;
-                }
-            }
+            let mut wb = WriteBuf::new(buf);
+            let mut tw = TLVWriter::new(&mut wb);
+            self.fabrics.to_tlv(&mut tw, TagType::Anonymous)?;
 
             self.changed = false;
+
+            let len = tw.get_tail();
+
+            Ok(Some(&buf[..len]))
+        } else {
+            Ok(None)
         }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "nightly")]
-    pub async fn load_async<T>(
-        &mut self,
-        mut psm: T,
-        mdns_mgr: &mut MdnsMgr<'_>,
-    ) -> Result<(), Error>
-    where
-        T: crate::persist::asynch::AsyncPsm,
-    {
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            let result = Fabric::load_async(i, &mut psm).await;
-            if let Ok(fabric) = result {
-                info!("Adding new fabric at index {}", i);
-                self.fabrics[i] = Some(fabric);
-                mdns_mgr.publish_service(
-                    &self.fabrics[i].as_ref().unwrap().mdns_service_name,
-                    ServiceMode::Commissioned,
-                )?;
-            } else {
-                self.fabrics[i] = None;
-            }
-        }
-
-        self.changed = false;
-
-        Ok(())
     }
 
     pub fn add(&mut self, f: Fabric, mdns_mgr: &mut MdnsMgr) -> Result<u8, Error> {
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            if self.fabrics[i].is_none() {
-                self.fabrics[i] = Some(f);
-                mdns_mgr.publish_service(
-                    &self.fabrics[i].as_ref().unwrap().mdns_service_name,
-                    ServiceMode::Commissioned,
-                )?;
+        for (index, fabric) in self.fabrics.iter_mut().enumerate() {
+            if fabric.is_none() {
+                mdns_mgr.publish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+
+                *fabric = Some(f);
 
                 self.changed = true;
 
-                return Ok(i as u8);
+                return Ok((index + 1) as u8);
             }
         }
 
@@ -551,20 +256,24 @@ impl FabricMgr {
     }
 
     pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
-        if let Some(f) = self.fabrics[fab_idx as usize].take() {
-            mdns_mgr.unpublish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
-            self.changed = true;
-            Ok(())
+        if fab_idx > 0 && fab_idx as usize <= self.fabrics.len() {
+            if let Some(f) = self.fabrics[(fab_idx - 1) as usize].take() {
+                mdns_mgr.unpublish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+                self.changed = true;
+                Ok(())
+            } else {
+                Err(Error::NotFound)
+            }
         } else {
             Err(Error::NotFound)
         }
     }
 
     pub fn match_dest_id(&self, random: &[u8], target: &[u8]) -> Result<usize, Error> {
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            if let Some(fabric) = &self.fabrics[i] {
+        for (index, fabric) in self.fabrics.iter().enumerate() {
+            if let Some(fabric) = fabric {
                 if fabric.match_dest_id(random, target).is_ok() {
-                    return Ok(i);
+                    return Ok(index + 1);
                 }
             }
         }
@@ -572,26 +281,19 @@ impl FabricMgr {
     }
 
     pub fn get_fabric(&self, idx: usize) -> Result<Option<&Fabric>, Error> {
-        Ok(self.fabrics[idx].as_ref())
+        if idx == 0 {
+            Ok(None)
+        } else {
+            Ok(self.fabrics[idx - 1].as_ref())
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            if self.fabrics[i].is_some() {
-                return false;
-            }
-        }
-        true
+        !self.fabrics.iter().any(Option::is_some)
     }
 
     pub fn used_count(&self) -> usize {
-        let mut count = 0;
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            if self.fabrics[i].is_some() {
-                count += 1;
-            }
-        }
-        count
+        self.fabrics.iter().filter(|f| f.is_some()).count()
     }
 
     // Parameters to T are the Fabric and its Fabric Index
@@ -599,25 +301,27 @@ impl FabricMgr {
     where
         T: FnMut(&Fabric, u8) -> Result<(), Error>,
     {
-        for i in 1..MAX_SUPPORTED_FABRICS {
-            if let Some(fabric) = &self.fabrics[i] {
-                f(fabric, i as u8)?;
+        for (index, fabric) in self.fabrics.iter().enumerate() {
+            if let Some(fabric) = fabric {
+                f(fabric, (index + 1) as u8)?;
             }
         }
         Ok(())
     }
 
     pub fn set_label(&mut self, index: u8, label: &str) -> Result<(), Error> {
-        let index = index as usize;
         if !label.is_empty() {
-            for i in 1..MAX_SUPPORTED_FABRICS {
-                if let Some(fabric) = &self.fabrics[i] {
-                    if fabric.label == label {
-                        return Err(Error::Invalid);
-                    }
-                }
+            if self
+                .fabrics
+                .iter()
+                .filter_map(|f| f.as_ref())
+                .any(|f| f.label == label)
+            {
+                return Err(Error::Invalid);
             }
         }
+
+        let index = (index - 1) as usize;
         if let Some(fabric) = &mut self.fabrics[index] {
             fabric.label = label.into();
             self.changed = true;

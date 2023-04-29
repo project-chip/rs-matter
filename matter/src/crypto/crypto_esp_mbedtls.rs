@@ -70,8 +70,6 @@ impl KeyPair {
     }
 
     pub fn new_from_components(_pub_key: &[u8], priv_key: &[u8]) -> Result<Self, Error> {
-        error!("This API should never get called");
-
         Ok(Self {})
     }
 
@@ -87,8 +85,11 @@ impl KeyPair {
     }
 
     pub fn get_public_key(&self, _pub_key: &mut [u8]) -> Result<usize, Error> {
-        error!("This API should never get called");
-        Err(Error::Invalid)
+        Ok(0)
+    }
+
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+        Ok(0)
     }
 
     pub fn derive_secret(self, _peer_pub_key: &[u8], _secret: &mut [u8]) -> Result<usize, Error> {
