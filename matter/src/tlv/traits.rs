@@ -35,7 +35,7 @@ pub trait FromTLV<'a> {
     }
 }
 
-impl<'a, T: FromTLV<'a>, const N: usize> FromTLV<'a> for [T; N] {
+impl<'a, T: FromTLV<'a> + Default, const N: usize> FromTLV<'a> for [T; N] {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error>
     where
         Self: Sized,
@@ -47,6 +47,13 @@ impl<'a, T: FromTLV<'a>, const N: usize> FromTLV<'a> for [T; N] {
             for element in tlv_iter {
                 a.push(T::from_tlv(&element)?).map_err(|_| Error::NoSpace)?;
             }
+        }
+
+        // TODO: This was the old behavior before rebasing the
+        // implementation on top of heapless::Vec (to avoid requiring Copy)
+        // Not sure why we actually need that yet, but without it unit tests fail
+        while a.len() < N {
+            a.push(Default::default()).map_err(|_| Error::NoSpace)?;
         }
 
         a.into_array().map_err(|_| Error::Invalid)
