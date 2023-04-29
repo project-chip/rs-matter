@@ -15,12 +15,18 @@
  *    limitations under the License.
  */
 
-use crate::{crypto, error::Error};
+use crate::{
+    crypto::{self, SYMM_KEY_LEN_BYTES},
+    error::Error,
+    tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
+};
 
-#[derive(Debug, Default)]
+type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
+
+#[derive(Debug, Default, FromTLV, ToTLV)]
 pub struct KeySet {
-    pub epoch_key: [u8; crypto::SYMM_KEY_LEN_BYTES],
-    pub op_key: [u8; crypto::SYMM_KEY_LEN_BYTES],
+    pub epoch_key: KeySetKey,
+    pub op_key: KeySetKey,
 }
 
 impl KeySet {

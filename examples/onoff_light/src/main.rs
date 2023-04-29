@@ -27,6 +27,7 @@ use matter::data_model::root_endpoint;
 use matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use matter::data_model::system_model::descriptor;
 use matter::interaction_model::core::InteractionModel;
+use matter::persist;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::{
     mgr::RecvAction, mgr::TransportMgr, packet::MAX_RX_BUF_SIZE, packet::MAX_TX_BUF_SIZE,
@@ -56,6 +57,18 @@ fn main() {
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 
+    let psm = persist::FilePsm::new(std::env::temp_dir().join("matter-iot")).unwrap();
+
+    let mut buf = [0; 4096];
+
+    if let Some(data) = psm.load("fabrics", &mut buf).unwrap() {
+        matter.load_fabrics(data).unwrap();
+    }
+
+    if let Some(data) = psm.load("acls", &mut buf).unwrap() {
+        matter.load_acls(data).unwrap();
+    }
+
     matter
         .start::<4096>(
             CommissioningData {
@@ -63,7 +76,7 @@ fn main() {
                 verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
                 discriminator: 250,
             },
-            &mut [0; 4096],
+            &mut buf,
         )
         .unwrap();
 
@@ -113,6 +126,14 @@ fn main() {
                         }
                     }
                 }
+            }
+
+            if let Some(data) = matter.store_fabrics(&mut buf).unwrap() {
+                psm.store("fabrics", data).unwrap();
+            }
+
+            if let Some(data) = matter.store_acls(&mut buf).unwrap() {
+                psm.store("acls", data).unwrap();
             }
         }
     });
