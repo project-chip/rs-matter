@@ -100,7 +100,9 @@ impl ToTLV for KeyPair {
         tw.str16(TagType::Anonymous, &buf[..size])?;
 
         let size = self.get_private_key(&mut buf)?;
-        tw.str16(TagType::Anonymous, &buf[..size])
+        tw.str16(TagType::Anonymous, &buf[..size])?;
+
+        tw.end_container()
     }
 }
 
