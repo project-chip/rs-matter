@@ -22,7 +22,7 @@ pub mod handlers;
 pub mod im_engine;
 
 pub fn init_env_logger() {
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
     {
         let _ = env_logger::try_init();
     }

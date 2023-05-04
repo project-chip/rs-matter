@@ -475,7 +475,7 @@ pub mod astro {
 //     }
 // }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_os = "espidf")))]
 pub mod libmdns {
     use super::Mdns;
     use crate::error::Error;

@@ -157,9 +157,17 @@ impl From<openssl::error::ErrorStack> for Error {
     }
 }
 
-#[cfg(feature = "crypto_mbedtls")]
+#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
 impl From<mbedtls::Error> for Error {
     fn from(e: mbedtls::Error) -> Self {
+        ::log::error!("Error in TLS: {}", e);
+        Self::new(ErrorCode::TLSStack)
+    }
+}
+
+#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
+impl From<esp_idf_sys::EspError> for Error {
+    fn from(e: esp_idf_sys::EspError) -> Self {
         ::log::error!("Error in TLS: {}", e);
         Self::new(ErrorCode::TLSStack)
     }

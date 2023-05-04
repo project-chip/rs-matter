@@ -37,14 +37,14 @@ pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
 
 pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
 
-#[cfg(feature = "crypto_esp_mbedtls")]
+#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
 mod crypto_esp_mbedtls;
-#[cfg(feature = "crypto_esp_mbedtls")]
+#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
 pub use self::crypto_esp_mbedtls::*;
 
-#[cfg(feature = "crypto_mbedtls")]
+#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
 mod crypto_mbedtls;
-#[cfg(feature = "crypto_mbedtls")]
+#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
 pub use self::crypto_mbedtls::*;
 
 #[cfg(feature = "crypto_openssl")]
@@ -60,14 +60,12 @@ pub use self::crypto_rustcrypto::*;
 #[cfg(not(any(
     feature = "crypto_openssl",
     feature = "crypto_mbedtls",
-    feature = "crypto_esp_mbedtls",
     feature = "crypto_rustcrypto"
 )))]
 pub mod crypto_dummy;
 #[cfg(not(any(
     feature = "crypto_openssl",
     feature = "crypto_mbedtls",
-    feature = "crypto_esp_mbedtls",
     feature = "crypto_rustcrypto"
 )))]
 pub use self::crypto_dummy::*;
