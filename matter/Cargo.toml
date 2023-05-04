@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["std", "crypto_mbedtls", "backtrace"]
-std = ["alloc", "env_logger", "chrono", "time", "rand", "qrcode", "libmdns", "simple-mdns", "simple-dns", "async-io", "smol"]
+std = ["alloc", "env_logger", "rand", "qrcode", "libmdns", "simple-mdns", "simple-dns", "async-io", "smol"]
 backtrace = []
 alloc = []
 nightly = []
@@ -38,11 +38,10 @@ no-std-net = "0.6"
 subtle = "2.4.1"
 safemem = "0.3.3"
 owo-colors = "3"
+time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 
 # STD-only dependencies
-chrono = { version = "=0.4.19", optional = true, default-features = false, features = ["clock", "std"] } # =0.4.19 for compatibility with ESP IDF
-time = { version = "0.1", optional = true, default-features = false }
 rand = { version = "0.8.5", optional = true }
 qrcode = { version = "0.12", default-features = false, optional = true } # Print QR code
 simple-mdns = { version = "0.4", features = ["sync"], optional = true }

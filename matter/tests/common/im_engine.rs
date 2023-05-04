@@ -106,15 +106,11 @@ pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, Descript
 pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
     #[cfg(feature = "std")]
     use matter::utils::epoch::sys_epoch as epoch;
-    #[cfg(feature = "std")]
-    use matter::utils::epoch::sys_utc_calendar as utc_calendar;
 
     #[cfg(not(feature = "std"))]
     use matter::utils::epoch::dummy_epoch as epoch;
-    #[cfg(not(feature = "std"))]
-    use matter::utils::epoch::dummy_utc_calendar as utc_calendar;
 
-    Matter::new(&BASIC_INFO, mdns, epoch, dummy_rand, utc_calendar, 5540)
+    Matter::new(&BASIC_INFO, mdns, epoch, dummy_rand, 5540)
 }
 
 /// An Interaction Model Engine to facilitate easy testing

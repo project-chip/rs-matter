@@ -15,12 +15,11 @@
  *    limitations under the License.
  */
 
+use time::OffsetDateTime;
+
 use super::{CertConsumer, MAX_DEPTH};
-use crate::{
-    error::Error,
-    utils::epoch::{UtcCalendar, MATTER_EPOCH_SECS},
-};
-use core::{fmt, time::Duration};
+use crate::{error::Error, utils::epoch::MATTER_EPOCH_SECS};
+use core::fmt;
 
 pub struct CertPrinter<'a, 'b> {
     level: usize,
@@ -123,10 +122,10 @@ impl<'a, 'b> CertConsumer for CertPrinter<'a, 'b> {
         }
         Ok(())
     }
-    fn utctime(&mut self, tag: &str, epoch: u32, utc_calendar: UtcCalendar) -> Result<(), Error> {
+    fn utctime(&mut self, tag: &str, epoch: u32) -> Result<(), Error> {
         let matter_epoch = MATTER_EPOCH_SECS + epoch as u64;
 
-        let dt = utc_calendar(Duration::from_secs(matter_epoch as _));
+        let dt = OffsetDateTime::from_unix_timestamp(matter_epoch as _).unwrap();
 
         let _ = writeln!(self.f, "{} {} {:?}", SPACE[self.level], tag, dt);
         Ok(())

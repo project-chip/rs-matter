@@ -32,7 +32,7 @@ use crate::{
         proto_ctx::ProtoCtx,
         session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
-    utils::{epoch::UtcCalendar, rand::Rand, writebuf::WriteBuf},
+    utils::{rand::Rand, writebuf::WriteBuf},
 };
 
 #[derive(PartialEq)]
@@ -70,16 +70,11 @@ impl CaseSession {
 pub struct Case<'a> {
     fabric_mgr: &'a RefCell<FabricMgr>,
     rand: Rand,
-    utc_calendar: UtcCalendar,
 }
 
 impl<'a> Case<'a> {
-    pub fn new(fabric_mgr: &'a RefCell<FabricMgr>, rand: Rand, utc_calendar: UtcCalendar) -> Self {
-        Self {
-            fabric_mgr,
-            rand,
-            utc_calendar,
-        }
+    pub fn new(fabric_mgr: &'a RefCell<FabricMgr>, rand: Rand) -> Self {
+        Self { fabric_mgr, rand }
     }
 
     pub fn casesigma3_handler(
@@ -133,9 +128,7 @@ impl<'a> Case<'a> {
         if let Some(icac) = d.initiator_icac {
             initiator_icac = Some(Cert::new(icac.0)?);
         }
-        if let Err(e) =
-            Case::validate_certs(fabric, &initiator_noc, &initiator_icac, self.utc_calendar)
-        {
+        if let Err(e) = Case::validate_certs(fabric, &initiator_noc, &initiator_icac) {
             error!("Certificate Chain doesn't match: {}", e);
             common::create_sc_status_report(ctx.tx, common::SCStatusCodes::InvalidParameter, None)?;
             ctx.exch_ctx.exch.close();
@@ -339,13 +332,8 @@ impl<'a> Case<'a> {
         Ok(())
     }
 
-    fn validate_certs(
-        fabric: &Fabric,
-        noc: &Cert,
-        icac: &Option<Cert>,
-        utc_calendar: UtcCalendar,
-    ) -> Result<(), Error> {
-        let mut verifier = noc.verify_chain_start(utc_calendar);
+    fn validate_certs(fabric: &Fabric, noc: &Cert, icac: &Option<Cert>) -> Result<(), Error> {
+        let mut verifier = noc.verify_chain_start();
 
         if fabric.get_fabric_id() != noc.get_fabric_id()? {
             Err(ErrorCode::Invalid)?;

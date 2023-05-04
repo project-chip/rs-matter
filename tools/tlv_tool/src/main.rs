@@ -18,7 +18,6 @@
 use clap::{App, Arg};
 use matter::cert;
 use matter::tlv;
-use matter::utils::epoch::sys_utc_calendar;
 use simple_logger::SimpleLogger;
 use std::process;
 
@@ -95,7 +94,7 @@ fn main() {
     } else if m.is_present("as-asn1") {
         let mut asn1_cert = [0_u8; 1024];
         let cert = cert::Cert::new(&tlv_list[..index]).unwrap();
-        let len = cert.as_asn1(&mut asn1_cert, sys_utc_calendar).unwrap();
+        let len = cert.as_asn1(&mut asn1_cert).unwrap();
         println!("{:02x?}", &asn1_cert[..len]);
     } else {
         tlv::print_tlv_list(&tlv_list[..index]);
