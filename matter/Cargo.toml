@@ -38,7 +38,7 @@ log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_de
 no-std-net = "0.6"
 subtle = "2.4.1"
 safemem = "0.3.3"
-colored = "2.0.0" # TODO: Requires STD
+owo-colors = "3"
 
 # STD-only dependencies
 env_logger = { version = "0.10.0", default-features = false, optional = true }

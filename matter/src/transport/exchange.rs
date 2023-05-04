@@ -15,11 +15,11 @@
  *    limitations under the License.
  */
 
-use colored::*;
 use core::any::Any;
 use core::fmt;
 use core::time::Duration;
 use log::{error, info, trace};
+use owo_colors::OwoColorize;
 
 use crate::error::{Error, ErrorCode};
 use crate::interaction_model::core::{ResumeReadReq, ResumeSubscribeReq};
