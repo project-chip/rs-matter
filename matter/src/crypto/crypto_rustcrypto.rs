@@ -15,9 +15,10 @@
  *    limitations under the License.
  */
 
-use std::convert::{TryFrom, TryInto};
+use core::convert::{TryFrom, TryInto};
 
 use aes::Aes128;
+use alloc::vec;
 use ccm::{
     aead::generic_array::GenericArray,
     consts::{U13, U16},
@@ -39,12 +40,16 @@ use x509_cert::{
     spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned},
 };
 
-use crate::error::{Error, ErrorCode};
-
-use super::CryptoKeyPair;
+use crate::{
+    error::{Error, ErrorCode},
+    secure_channel::crypto_rustcrypto::RandRngCore,
+    utils::rand::Rand,
+};
 
 type HmacSha256I = hmac::Hmac<sha2::Sha256>;
 type AesCcm = Ccm<Aes128, U16, U13>;
+
+extern crate alloc;
 
 #[derive(Clone)]
 pub struct Sha256 {
@@ -96,18 +101,20 @@ impl HmacSha256 {
     }
 }
 
+#[derive(Debug)]
 pub enum KeyType {
     Private(SecretKey),
     Public(PublicKey),
 }
 
+#[derive(Debug)]
 pub struct KeyPair {
     key: KeyType,
 }
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
-        let mut rng = rand::thread_rng();
+    pub fn new(rand: Rand) -> Result<Self, Error> {
+        let mut rng = RandRngCore(rand);
         let secret_key = SecretKey::random(&mut rng);
 
         Ok(Self {
@@ -146,10 +153,8 @@ impl KeyPair {
             KeyType::Public(_) => Err(ErrorCode::Crypto.into()),
         }
     }
-}
 
-impl CryptoKeyPair for KeyPair {
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
         match &self.key {
             KeyType::Private(key) => {
                 let bytes = key.to_bytes();
@@ -161,7 +166,7 @@ impl CryptoKeyPair for KeyPair {
             KeyType::Public(_) => Err(ErrorCode::Crypto.into()),
         }
     }
-    fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         use p256::ecdsa::signature::Signer;
 
         let subject = RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(
@@ -224,14 +229,14 @@ impl CryptoKeyPair for KeyPair {
 
         Ok(a)
     }
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
         let point = self.public_key_point().to_encoded_point(false);
         let bytes = point.as_bytes();
         let len = bytes.len();
         pub_key[..len].copy_from_slice(bytes);
         Ok(len)
     }
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
+    pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
         let encoded_point = EncodedPoint::from_bytes(peer_pub_key).unwrap();
         let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap();
         let private_key = self.private_key()?;
@@ -247,7 +252,7 @@ impl CryptoKeyPair for KeyPair {
 
         Ok(len)
     }
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
+    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
         use p256::ecdsa::signature::Signer;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
@@ -266,7 +271,7 @@ impl CryptoKeyPair for KeyPair {
             KeyType::Public(_) => todo!(),
         }
     }
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
+    pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
         use p256::ecdsa::signature::Verifier;
 
         let verifying_key = VerifyingKey::from_affine(self.public_key_point()).unwrap();

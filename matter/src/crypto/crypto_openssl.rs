@@ -16,7 +16,9 @@
  */
 
 use crate::error::{Error, ErrorCode};
+use crate::utils::rand::Rand;
 
+use alloc::vec;
 use foreign_types::ForeignTypeRef;
 use log::error;
 use openssl::asn1::Asn1Type;
@@ -39,6 +41,9 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder, X509};
 // problem while using OpenSSL's Signer
 // TODO: Use proper OpenSSL method for this
 use hmac::{Hmac, Mac};
+
+extern crate alloc;
+
 pub struct HmacSha256 {
     ctx: Hmac<sha2::Sha256>,
 }
@@ -62,16 +67,18 @@ impl HmacSha256 {
     }
 }
 
+#[derive(Debug)]
 pub enum KeyType {
     Public(EcKey<pkey::Public>),
     Private(EcKey<pkey::Private>),
 }
+#[derive(Debug)]
 pub struct KeyPair {
     key: KeyType,
 }
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(_rand: Rand) -> Result<Self, Error> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
         let key = EcKey::generate(&group)?;
         Ok(Self {
@@ -206,7 +213,7 @@ impl KeyPair {
             KeyType::Public(key) => key,
             _ => {
                 error!("Not yet supported");
-                Err(ErrorCode::Invalid)?;
+                return Err(ErrorCode::Invalid.into());
             }
         };
         if !sig.verify(&msg, k)? {
@@ -293,7 +300,7 @@ pub fn lowlevel_encrypt_aead(
     aad: &[u8],
     data: &[u8],
     tag: &mut [u8],
-) -> Result<Vec<u8>, ErrorStack> {
+) -> Result<alloc::vec::Vec<u8>, ErrorStack> {
     let t = symm::Cipher::aes_128_ccm();
     let mut ctx = CipherCtx::new()?;
     CipherCtxRef::encrypt_init(
@@ -329,7 +336,7 @@ pub fn lowlevel_decrypt_aead(
     aad: &[u8],
     data: &[u8],
     tag: &[u8],
-) -> Result<Vec<u8>, ErrorStack> {
+) -> Result<alloc::vec::Vec<u8>, ErrorStack> {
     let t = symm::Cipher::aes_128_ccm();
     let mut ctx = CipherCtx::new()?;
     CipherCtxRef::decrypt_init(

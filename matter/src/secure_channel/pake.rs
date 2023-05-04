@@ -282,7 +282,7 @@ impl Pake {
         let mut pB: [u8; 65] = [0; 65];
         let mut cB: [u8; 32] = [0; 32];
         sd.spake2p.start_verifier(&self.verifier)?;
-        sd.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
+        sd.spake2p.handle_pA(pA, &mut pB, &mut cB, self.rand)?;
 
         let mut tw = TLVWriter::new(ctx.tx.get_writebuf()?);
         let resp = Pake1Resp {

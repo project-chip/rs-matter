@@ -18,7 +18,10 @@
 use alloc::sync::Arc;
 use core::ops::{Mul, Sub};
 
-use crate::error::{Error, ErrorCode};
+use crate::{
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
+};
 
 use byteorder::{ByteOrder, LittleEndian};
 use log::error;
@@ -132,7 +135,7 @@ impl CryptoSpake2 {
     }
 
     #[allow(non_snake_case)]
-    pub fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
+    pub fn get_pB(&mut self, pB: &mut [u8], _rand: Rand) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p

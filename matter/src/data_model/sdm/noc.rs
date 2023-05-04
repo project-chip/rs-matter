@@ -217,6 +217,7 @@ struct RemoveFabricReq {
 pub struct NocCluster<'a> {
     data_ver: Dataver,
     epoch: Epoch,
+    rand: Rand,
     dev_att: &'a dyn DevAttDataFetcher,
     fabric_mgr: &'a RefCell<FabricMgr>,
     acl_mgr: &'a RefCell<AclMgr>,
@@ -237,6 +238,7 @@ impl<'a> NocCluster<'a> {
         Self {
             data_ver: Dataver::new(rand),
             epoch,
+            rand,
             dev_att,
             fabric_mgr,
             acl_mgr,
@@ -566,7 +568,7 @@ impl<'a> NocCluster<'a> {
             Err(ErrorCode::UnsupportedAccess)?;
         }
 
-        let noc_keypair = KeyPair::new()?;
+        let noc_keypair = KeyPair::new(self.rand)?;
         let mut attest_challenge = [0u8; crypto::SYMM_KEY_LEN_BYTES];
         attest_challenge.copy_from_slice(transaction.session().get_att_challenge());
 

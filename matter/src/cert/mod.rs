@@ -859,7 +859,6 @@ mod tests {
 
     #[test]
     fn test_tlv_conversions() {
-        let _ = env_logger::try_init();
         let test_input: [&[u8]; 3] = [
             &test_vectors::NOC1_SUCCESS,
             &test_vectors::ICAC1_SUCCESS,

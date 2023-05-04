@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
-use crate::error::{Error, ErrorCode};
+use crate::{
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
+};
 
 #[allow(non_snake_case)]
 
@@ -56,7 +59,7 @@ impl CryptoSpake2 {
     }
 
     #[allow(non_snake_case)]
-    pub fn get_pB(&mut self, _pB: &mut [u8]) -> Result<(), Error> {
+    pub fn get_pB(&mut self, _pB: &mut [u8], _rand: Rand) -> Result<(), Error> {
         Err(ErrorCode::Invalid.into())
     }
 

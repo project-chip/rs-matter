@@ -350,6 +350,7 @@ pub fn compute_qr_code<'a>(
     payload_base38_representation(&qr_code_data, buf)
 }
 
+#[cfg(feature = "std")]
 fn compute_qr_version(qr_data: &str) -> i16 {
     match qr_data.len() {
         0..=38 => 2,

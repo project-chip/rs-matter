@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
-use crate::error::{Error, ErrorCode};
+use crate::{
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
+};
 
 use byteorder::{ByteOrder, LittleEndian};
 use log::error;
@@ -116,6 +119,7 @@ impl CryptoSpake2 {
         Ok(())
     }
 
+    #[allow(non_snake_case)]
     pub fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
         self.L = EcPoint::from_bytes(&self.group, l, &mut self.bn_ctx)?;
         Ok(())
@@ -134,7 +138,7 @@ impl CryptoSpake2 {
     }
 
     #[allow(non_snake_case)]
-    pub fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
+    pub fn get_pB(&mut self, pB: &mut [u8], _rand: Rand) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
@@ -331,7 +335,6 @@ impl CryptoSpake2 {
 mod tests {
 
     use super::CryptoSpake2;
-    use crate::secure_channel::crypto::CryptoSpake2;
     use crate::secure_channel::spake2p_test_vectors::test_vectors::*;
     use openssl::bn::BigNum;
     use openssl::ec::{EcPoint, PointConversionForm};
