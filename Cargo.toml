@@ -8,5 +8,3 @@ exclude = ["examples/*"]
 smol = { git = "https://github.com/esp-rs-compat/smol" }
 polling = { git = "https://github.com/esp-rs-compat/polling" }
 socket2 = { git = "https://github.com/esp-rs-compat/socket2" }
-chrono = { git = "https://github.com/ivmarkov/chrono" }
-time = { git = "https://github.com/ivmarkov/time", branch = "master" }

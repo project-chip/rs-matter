@@ -24,7 +24,7 @@ use crate::{
     secure_channel::common::*,
     tlv,
     transport::{proto_ctx::ProtoCtx, session::CloneData},
-    utils::{epoch::UtcCalendar, rand::Rand},
+    utils::rand::Rand,
 };
 use log::{error, info};
 use num;
@@ -46,10 +46,9 @@ impl<'a> SecureChannel<'a> {
         fabric_mgr: &'a RefCell<FabricMgr>,
         mdns: &'a RefCell<MdnsMgr<'a>>,
         rand: Rand,
-        utc_calendar: UtcCalendar,
     ) -> Self {
         SecureChannel {
-            case: Case::new(fabric_mgr, rand, utc_calendar),
+            case: Case::new(fabric_mgr, rand),
             pase,
             mdns,
         }

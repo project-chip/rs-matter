@@ -25,10 +25,7 @@ use crate::{
     mdns::{Mdns, MdnsMgr},
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
-    utils::{
-        epoch::{Epoch, UtcCalendar},
-        rand::Rand,
-    },
+    utils::{epoch::Epoch, rand::Rand},
 };
 
 /// Device Commissioning Data
@@ -48,17 +45,16 @@ pub struct Matter<'a> {
     pub mdns_mgr: RefCell<MdnsMgr<'a>>,
     pub epoch: Epoch,
     pub rand: Rand,
-    pub utc_calendar: UtcCalendar,
     pub dev_det: &'a BasicInfoConfig<'a>,
 }
 
 impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
     pub fn new_default(dev_det: &'a BasicInfoConfig, mdns: &'a mut dyn Mdns, port: u16) -> Self {
-        use crate::utils::epoch::{sys_epoch, sys_utc_calendar};
+        use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
 
-        Self::new(dev_det, mdns, sys_epoch, sys_rand, sys_utc_calendar, port)
+        Self::new(dev_det, mdns, sys_epoch, sys_rand, port)
     }
 
     /// Creates a new Matter object
@@ -72,7 +68,6 @@ impl<'a> Matter<'a> {
         mdns: &'a mut dyn Mdns,
         epoch: Epoch,
         rand: Rand,
-        utc_calendar: UtcCalendar,
         port: u16,
     ) -> Self {
         Self {
@@ -89,7 +84,6 @@ impl<'a> Matter<'a> {
             )),
             epoch,
             rand,
-            utc_calendar,
             dev_det,
         }
     }
@@ -176,11 +170,5 @@ impl<'a> Borrow<Epoch> for Matter<'a> {
 impl<'a> Borrow<Rand> for Matter<'a> {
     fn borrow(&self) -> &Rand {
         &self.rand
-    }
-}
-
-impl<'a> Borrow<UtcCalendar> for Matter<'a> {
-    fn borrow(&self) -> &UtcCalendar {
-        &self.utc_calendar
     }
 }

@@ -15,12 +15,14 @@
  *    limitations under the License.
  */
 
+use time::OffsetDateTime;
+
 use super::{CertConsumer, MAX_DEPTH};
 use crate::{
     error::{Error, ErrorCode},
-    utils::epoch::{UtcCalendar, MATTER_EPOCH_SECS},
+    utils::epoch::MATTER_EPOCH_SECS,
 };
-use core::{fmt::Write, time::Duration};
+use core::fmt::Write;
 
 #[derive(Debug)]
 pub struct ASN1Writer<'a> {
@@ -262,19 +264,24 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
         self.write_str(0x06, oid)
     }
 
-    fn utctime(&mut self, _tag: &str, epoch: u32, utc_calendar: UtcCalendar) -> Result<(), Error> {
+    fn utctime(&mut self, _tag: &str, epoch: u32) -> Result<(), Error> {
         let matter_epoch = MATTER_EPOCH_SECS + epoch as u64;
 
-        let dt = utc_calendar(Duration::from_secs(matter_epoch as _));
+        let dt = OffsetDateTime::from_unix_timestamp(matter_epoch as _).unwrap();
 
         let mut time_str: heapless::String<32> = heapless::String::<32>::new();
 
-        if dt.year >= 2050 {
+        if dt.year() >= 2050 {
             // If year is >= 2050, ASN.1 requires it to be Generalised Time
             write!(
                 &mut time_str,
                 "{:04}{:02}{:02}{:02}{:02}{:02}Z",
-                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+                dt.year(),
+                dt.month() as u8,
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second()
             )
             .unwrap();
             self.write_str(0x18, time_str.as_bytes())
@@ -282,12 +289,12 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
             write!(
                 &mut time_str,
                 "{:02}{:02}{:02}{:02}{:02}{:02}Z",
-                dt.year % 100,
-                dt.month,
-                dt.day,
-                dt.hour,
-                dt.minute,
-                dt.second
+                dt.year() % 100,
+                dt.month() as u8,
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second()
             )
             .unwrap();
             self.write_str(0x17, time_str.as_bytes())

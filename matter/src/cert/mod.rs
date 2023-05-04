@@ -21,7 +21,7 @@ use crate::{
     crypto::KeyPair,
     error::{Error, ErrorCode},
     tlv::{self, FromTLV, OctetStr, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
-    utils::{epoch::UtcCalendar, writebuf::WriteBuf},
+    utils::writebuf::WriteBuf,
 };
 use log::error;
 use num_derive::FromPrimitive;
@@ -621,21 +621,17 @@ impl<'a> Cert<'a> {
         Ok(wb.as_slice().len())
     }
 
-    pub fn as_asn1(&self, buf: &mut [u8], utc_calendar: UtcCalendar) -> Result<usize, Error> {
+    pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut w = ASN1Writer::new(buf);
-        self.encode(&mut w, Some(utc_calendar))?;
+        self.encode(&mut w)?;
         Ok(w.as_slice().len())
     }
 
-    pub fn verify_chain_start(&self, utc_calendar: UtcCalendar) -> CertVerifier {
-        CertVerifier::new(self, utc_calendar)
+    pub fn verify_chain_start(&self) -> CertVerifier {
+        CertVerifier::new(self)
     }
 
-    fn encode(
-        &self,
-        w: &mut dyn CertConsumer,
-        utc_calendar: Option<UtcCalendar>,
-    ) -> Result<(), Error> {
+    fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
         w.start_seq("")?;
 
         w.start_ctx("Version:", 0)?;
@@ -654,10 +650,8 @@ impl<'a> Cert<'a> {
         self.issuer.encode("Issuer:", w)?;
 
         w.start_seq("Validity:")?;
-        if let Some(utc_calendar) = utc_calendar {
-            w.utctime("Not Before:", self.not_before, utc_calendar)?;
-            w.utctime("Not After:", self.not_after, utc_calendar)?;
-        }
+        w.utctime("Not Before:", self.not_before)?;
+        w.utctime("Not After:", self.not_after)?;
         w.end_seq()?;
 
         self.subject.encode("Subject:", w)?;
@@ -689,7 +683,7 @@ impl<'a> fmt::Display for Cert<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut printer = CertPrinter::new(f);
         let _ = self
-            .encode(&mut printer, None)
+            .encode(&mut printer)
             .map_err(|e| error!("Error decoding certificate: {}", e));
         // Signature is not encoded by the Cert Decoder
         writeln!(f, "Signature: {:x?}", self.get_signature())
@@ -698,12 +692,11 @@ impl<'a> fmt::Display for Cert<'a> {
 
 pub struct CertVerifier<'a> {
     cert: &'a Cert<'a>,
-    utc_calendar: UtcCalendar,
 }
 
 impl<'a> CertVerifier<'a> {
-    pub fn new(cert: &'a Cert, utc_calendar: UtcCalendar) -> Self {
-        Self { cert, utc_calendar }
+    pub fn new(cert: &'a Cert) -> Self {
+        Self { cert }
     }
 
     pub fn add_cert(self, parent: &'a Cert) -> Result<CertVerifier<'a>, Error> {
@@ -711,7 +704,7 @@ impl<'a> CertVerifier<'a> {
             Err(ErrorCode::InvalidAuthKey)?;
         }
         let mut asn1 = [0u8; MAX_ASN1_CERT_SIZE];
-        let len = self.cert.as_asn1(&mut asn1, self.utc_calendar)?;
+        let len = self.cert.as_asn1(&mut asn1)?;
         let asn1 = &asn1[..len];
 
         let k = KeyPair::new_from_public(parent.get_pubkey())?;
@@ -724,7 +717,7 @@ impl<'a> CertVerifier<'a> {
         })?;
 
         // TODO: other validation checks
-        Ok(CertVerifier::new(parent, self.utc_calendar))
+        Ok(CertVerifier::new(parent))
     }
 
     pub fn finalise(self) -> Result<(), Error> {
@@ -751,7 +744,7 @@ pub trait CertConsumer {
     fn start_ctx(&mut self, tag: &str, id: u8) -> Result<(), Error>;
     fn end_ctx(&mut self) -> Result<(), Error>;
     fn oid(&mut self, tag: &str, oid: &[u8]) -> Result<(), Error>;
-    fn utctime(&mut self, tag: &str, epoch: u32, utc_calendar: UtcCalendar) -> Result<(), Error>;
+    fn utctime(&mut self, tag: &str, epoch: u32) -> Result<(), Error>;
 }
 
 const MAX_DEPTH: usize = 10;
@@ -768,44 +761,36 @@ mod tests {
     use crate::tlv::{self, FromTLV, TLVWriter, TagType, ToTLV};
     use crate::utils::writebuf::WriteBuf;
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_asn1_encode_success() {
         {
             let mut asn1_buf = [0u8; 1000];
             let c = Cert::new(&test_vectors::CHIP_CERT_INPUT1).unwrap();
-            let len = c
-                .as_asn1(&mut asn1_buf, crate::utils::epoch::sys_utc_calendar)
-                .unwrap();
+            let len = c.as_asn1(&mut asn1_buf).unwrap();
             assert_eq!(&test_vectors::ASN1_OUTPUT1, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = Cert::new(&test_vectors::CHIP_CERT_INPUT2).unwrap();
-            let len = c
-                .as_asn1(&mut asn1_buf, crate::utils::epoch::sys_utc_calendar)
-                .unwrap();
+            let len = c.as_asn1(&mut asn1_buf).unwrap();
             assert_eq!(&test_vectors::ASN1_OUTPUT2, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = Cert::new(&test_vectors::CHIP_CERT_TXT_IN_DN).unwrap();
-            let len = c
-                .as_asn1(&mut asn1_buf, crate::utils::epoch::sys_utc_calendar)
-                .unwrap();
+            let len = c.as_asn1(&mut asn1_buf).unwrap();
             assert_eq!(&test_vectors::ASN1_OUTPUT_TXT_IN_DN, &asn1_buf[..len]);
         }
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_verify_chain_success() {
         let noc = Cert::new(&test_vectors::NOC1_SUCCESS).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let rca = Cert::new(&test_vectors::RCA1_SUCCESS).unwrap();
-        let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
+        let a = noc.verify_chain_start();
         a.add_cert(&icac)
             .unwrap()
             .add_cert(&rca)
@@ -814,7 +799,6 @@ mod tests {
             .unwrap();
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_verify_chain_incomplete() {
         // The chain doesn't lead up to a self-signed certificate
@@ -822,35 +806,33 @@ mod tests {
         use crate::error::ErrorCode;
         let noc = Cert::new(&test_vectors::NOC1_SUCCESS).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
-        let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
+        let a = noc.verify_chain_start();
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
             a.add_cert(&icac).unwrap().finalise().map_err(|e| e.code())
         );
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_auth_key_chain_incorrect() {
         use crate::error::ErrorCode;
 
         let noc = Cert::new(&test_vectors::NOC1_AUTH_KEY_FAIL).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
-        let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
+        let a = noc.verify_chain_start();
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
             a.add_cert(&icac).map(|_| ()).map_err(|e| e.code())
         );
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn test_cert_corrupted() {
         use crate::error::ErrorCode;
 
         let noc = Cert::new(&test_vectors::NOC1_CORRUPT_CERT).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
-        let a = noc.verify_chain_start(crate::utils::epoch::sys_utc_calendar);
+        let a = noc.verify_chain_start();
         assert_eq!(
             Err(ErrorCode::InvalidSignature),
             a.add_cert(&icac).map(|_| ()).map_err(|e| e.code())
