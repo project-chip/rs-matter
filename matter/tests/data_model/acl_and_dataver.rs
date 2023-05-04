@@ -36,6 +36,7 @@ use crate::{
         attributes::*,
         echo_cluster::{self, ATTR_WRITE_DEFAULT_VALUE},
         im_engine::{matter, ImEngine},
+        init_env_logger,
     },
 };
 
@@ -43,7 +44,7 @@ use crate::{
 /// Ensure that wildcard read attributes don't include error response
 /// and silently drop the data when access is not granted
 fn wc_read_attribute() {
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let wc_att1 = GenericPath::new(
         None,
@@ -101,7 +102,7 @@ fn wc_read_attribute() {
 /// Ensure that exact read attribute includes error response
 /// when access is not granted
 fn exact_read_attribute() {
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let wc_att1 = GenericPath::new(
         Some(0),
@@ -139,7 +140,7 @@ fn exact_read_attribute() {
 /// Ensure that an write attribute with a wildcard either performs the operation,
 /// if allowed, or silently drops the request
 fn wc_write_attribute() {
-    let _ = env_logger::try_init();
+    init_env_logger();
     let val0 = 10;
     let val1 = 20;
     let attr_data0 = |tag, t: &mut TLVWriter| {
@@ -228,7 +229,7 @@ fn wc_write_attribute() {
 /// Ensure that an write attribute without a wildcard returns an error when the
 /// ACL disallows the access, and returns success once access is granted
 fn exact_write_attribute() {
-    let _ = env_logger::try_init();
+    init_env_logger();
     let val0 = 10;
     let attr_data0 = |tag, t: &mut TLVWriter| {
         let _ = t.u16(tag, val0);
@@ -278,7 +279,7 @@ fn exact_write_attribute() {
 /// ACL disallows the access, and returns success once access is granted to the CAT ID
 /// The Accessor CAT version is one more than that in the ACL
 fn exact_write_attribute_noc_cat() {
-    let _ = env_logger::try_init();
+    init_env_logger();
     let val0 = 10;
     let attr_data0 = |tag, t: &mut TLVWriter| {
         let _ = t.u16(tag, val0);
@@ -330,7 +331,7 @@ fn exact_write_attribute_noc_cat() {
 #[test]
 /// Ensure that a write attribute with insufficient permissions is rejected
 fn insufficient_perms_write() {
-    let _ = env_logger::try_init();
+    init_env_logger();
     let val0 = 10;
     let attr_data0 = |tag, t: &mut TLVWriter| {
         let _ = t.u16(tag, val0);
@@ -379,7 +380,7 @@ fn insufficient_perms_write() {
 ///    - Write Attr to ACL Cluster (allowed, this ACL also grants universal access)
 ///    - Write Attr to Echo Cluster again (successful this time)
 fn write_with_runtime_acl_add() {
-    let _ = env_logger::try_init();
+    init_env_logger();
     let peer = 98765;
     let mut mdns = DummyMdns {};
     let matter = matter(&mut mdns);
@@ -446,7 +447,7 @@ fn test_read_data_ver() {
     // 1 Attr Read Requests
     // - wildcard endpoint, att1
     // - 2 responses are expected
-    let _ = env_logger::try_init();
+    init_env_logger();
     let peer = 98765;
     let mut mdns = DummyMdns {};
     let matter = matter(&mut mdns);
@@ -549,7 +550,7 @@ fn test_write_data_ver() {
     // 1 Attr Read Requests
     // - wildcard endpoint, att1
     // - 2 responses are expected
-    let _ = env_logger::try_init();
+    init_env_logger();
     let peer = 98765;
     let mut mdns = DummyMdns {};
     let matter = matter(&mut mdns);

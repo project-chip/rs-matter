@@ -44,19 +44,14 @@ use matter::{
     transport::packet::Packet,
     transport::{
         exchange::{self, Exchange, ExchangeCtx},
-        network::Address,
+        network::{Address, IpAddr, Ipv4Addr, SocketAddr},
         packet::MAX_RX_BUF_SIZE,
         proto_ctx::ProtoCtx,
         session::{CaseDetails, CloneData, NocCatIds, SessionMgr, SessionMode},
     },
-    utils::{
-        epoch::{sys_epoch, sys_utc_calendar},
-        rand::dummy_rand,
-        writebuf::WriteBuf,
-    },
+    utils::{rand::dummy_rand, writebuf::WriteBuf},
     Matter,
 };
-use std::net::{Ipv4Addr, SocketAddr};
 
 use super::echo_cluster::EchoCluster;
 
@@ -109,14 +104,17 @@ impl<'a> ImInput<'a> {
 pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster, EchoCluster | RootEndpointHandler<'a>);
 
 pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
-    Matter::new(
-        &BASIC_INFO,
-        mdns,
-        sys_epoch,
-        dummy_rand,
-        sys_utc_calendar,
-        5540,
-    )
+    #[cfg(feature = "std")]
+    use matter::utils::epoch::sys_epoch as epoch;
+    #[cfg(feature = "std")]
+    use matter::utils::epoch::sys_utc_calendar as utc_calendar;
+
+    #[cfg(not(feature = "std"))]
+    use matter::utils::epoch::dummy_epoch as epoch;
+    #[cfg(not(feature = "std"))]
+    use matter::utils::epoch::dummy_utc_calendar as utc_calendar;
+
+    Matter::new(&BASIC_INFO, mdns, epoch, dummy_rand, utc_calendar, 5540)
 }
 
 /// An Interaction Model Engine to facilitate easy testing
@@ -203,7 +201,7 @@ impl<'a> ImEngine<'a> {
             10,
             30,
             Address::Udp(SocketAddr::new(
-                std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 5542,
             )),
             SessionMode::Case(CaseDetails::new(1, &input.cat_ids)),

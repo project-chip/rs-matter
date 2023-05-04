@@ -24,6 +24,9 @@ use matter::interaction_model::core::Transaction;
 use matter::transport::exchange::Exchange;
 use matter::transport::exchange::ExchangeCtx;
 use matter::transport::network::Address;
+use matter::transport::network::IpAddr;
+use matter::transport::network::Ipv4Addr;
+use matter::transport::network::SocketAddr;
 use matter::transport::packet::Packet;
 use matter::transport::packet::MAX_RX_BUF_SIZE;
 use matter::transport::packet::MAX_TX_BUF_SIZE;
@@ -31,8 +34,6 @@ use matter::transport::proto_ctx::ProtoCtx;
 use matter::transport::session::SessionMgr;
 use matter::utils::epoch::dummy_epoch;
 use matter::utils::rand::dummy_rand;
-use std::net::Ipv4Addr;
-use std::net::SocketAddr;
 
 struct Node {
     pub endpoint: u16,
@@ -95,7 +96,7 @@ fn handle_data(action: OpCode, data_in: &[u8], data_out: &mut [u8]) -> (DataMode
         .get_or_add(
             0,
             Address::Udp(SocketAddr::new(
-                std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 5542,
             )),
             None,

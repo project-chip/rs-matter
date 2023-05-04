@@ -21,6 +21,7 @@ use crate::{
         commands::*,
         echo_cluster,
         im_engine::{matter, ImEngine},
+        init_env_logger,
     },
     echo_req, echo_resp,
 };
@@ -39,7 +40,7 @@ fn test_invoke_cmds_success() {
     // 2 echo Requests
     // - one on endpoint 0 with data 5,
     // - another on endpoint 1 with data 10
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
@@ -54,7 +55,7 @@ fn test_invoke_cmds_unsupported_fields() {
     // - cluster doesn't exist and endpoint is wildcard - UnsupportedCluster
     // - command doesn't exist - UnsupportedCommand
     // - command doesn't exist and endpoint is wildcard - UnsupportedCommand
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let invalid_endpoint = CmdPath::new(
         Some(2),
@@ -105,7 +106,7 @@ fn test_invoke_cmds_unsupported_fields() {
 fn test_invoke_cmd_wc_endpoint_all_have_clusters() {
     // 1 echo Request with wildcard endpoint
     // should generate 2 responses from the echo clusters on both
-    let _ = env_logger::try_init();
+    init_env_logger();
     let path = CmdPath::new(
         None,
         Some(echo_cluster::ID),
@@ -120,7 +121,7 @@ fn test_invoke_cmd_wc_endpoint_all_have_clusters() {
 fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     // 1 on command for on/off cluster with wildcard endpoint
     // should generate 1 response from the on-off cluster
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let target = CmdPath::new(
         None,

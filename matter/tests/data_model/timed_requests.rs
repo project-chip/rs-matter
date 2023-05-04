@@ -32,6 +32,7 @@ use crate::{
         echo_cluster,
         handlers::{TimedInvResponse, WriteResponse},
         im_engine::{matter, ImEngine},
+        init_env_logger,
     },
     echo_req, echo_resp,
 };
@@ -41,7 +42,7 @@ fn test_timed_write_fail_and_success() {
     // - 1 Timed Attr Write Transaction should fail due to timeout
     // - 1 Timed Attr Write Transaction should succeed
     let val0 = 10;
-    let _ = env_logger::try_init();
+    init_env_logger();
     let attr_data0 = |tag, t: &mut TLVWriter| {
         let _ = t.u16(tag, val0);
     };
@@ -98,7 +99,7 @@ fn test_timed_write_fail_and_success() {
 #[test]
 fn test_timed_cmd_success() {
     // A timed request that works
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
@@ -115,7 +116,7 @@ fn test_timed_cmd_success() {
 #[test]
 fn test_timed_cmd_timeout() {
     // A timed request that is executed after t imeout
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     ImEngine::new_with_timed_commands(
@@ -131,7 +132,7 @@ fn test_timed_cmd_timeout() {
 #[test]
 fn test_timed_cmd_timedout_mismatch() {
     // A timed request with timeout mismatch
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     ImEngine::new_with_timed_commands(
