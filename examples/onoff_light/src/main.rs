@@ -58,7 +58,7 @@ fn main() -> Result<(), impl Error> {
     let mut mdns = matter::mdns::libmdns::LibMdns::new()?;
     //let mut mdns = matter::mdns::DummyMdns {};
 
-    let matter = Matter::new_default(&dev_info, &mut mdns, matter::transport::udp::MATTER_PORT);
+    let matter = Matter::new_default(&dev_info, &mut mdns, matter::MATTER_PORT);
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 

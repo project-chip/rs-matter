@@ -28,6 +28,9 @@ use crate::{
     utils::{epoch::Epoch, rand::Rand},
 };
 
+/* The Matter Port */
+pub const MATTER_PORT: u16 = 5540;
+
 /// Device Commissioning Data
 pub struct CommissioningData {
     /// The data like password or verifier that is required to authenticate
