@@ -16,6 +16,7 @@
  */
 
 use crate::error::Error;
+use crate::utils::rand::Rand;
 
 const MATTER_M_BIN: [u8; 65] = [
     0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
@@ -77,7 +78,16 @@ impl CryptoSpake2 {
     }
 
     #[allow(non_snake_case)]
-    pub fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
+    #[allow(dead_code)]
+    pub fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+        // From the Matter spec,
+        //        L = w1 * P
+        //    where P is the generator of the underlying elliptic curve
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn get_pB(&mut self, pB: &mut [u8], _rand: Rand) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
