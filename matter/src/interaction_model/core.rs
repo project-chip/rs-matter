@@ -29,10 +29,10 @@ use crate::{
         session::Session,
     },
 };
-use colored::Colorize;
 use log::{error, info};
 use num;
 use num_derive::FromPrimitive;
+use owo_colors::OwoColorize;
 
 use super::messages::{
     ib::{AttrPath, DataVersionFilter},
@@ -43,7 +43,7 @@ use super::messages::{
 #[macro_export]
 macro_rules! cmd_enter {
     ($e:expr) => {{
-        use colored::Colorize;
+        use owo_colors::OwoColorize;
         info! {"{} {}", "Handling Command".cyan(), $e.cyan()}
     }};
 }
