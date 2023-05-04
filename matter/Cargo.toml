@@ -69,7 +69,7 @@ p256 = { version = "0.13.0", default-features = false, features = ["arithmetic",
 elliptic-curve = { version = "0.13.2", optional = true }
 crypto-bigint = { version = "0.4", default-features = false, optional = true }
 rand_core = { version = "0.6", default-features = false, optional = true }
-x509-cert = { version = "0.2.0", default-features = false, features = ["pem", "std"], optional = true } # TODO: requires `alloc`
+x509-cert = { version = "0.2.0", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
 
 # to compute the check digit
 verhoeff = "1"
