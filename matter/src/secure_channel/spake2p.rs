@@ -196,13 +196,19 @@ impl Spake2P {
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_pA(&mut self, pA: &[u8], pB: &mut [u8], cB: &mut [u8]) -> Result<(), Error> {
+    pub fn handle_pA(
+        &mut self,
+        pA: &[u8],
+        pB: &mut [u8],
+        cB: &mut [u8],
+        rand: Rand,
+    ) -> Result<(), Error> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::Init) {
             Err(ErrorCode::InvalidState)?;
         }
 
         if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-            crypto_spake2.get_pB(pB)?;
+            crypto_spake2.get_pB(pB, rand)?;
             if let Some(context) = self.context.take() {
                 let mut hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
                 context.finish(&mut hash)?;

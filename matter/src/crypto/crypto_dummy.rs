@@ -17,7 +17,10 @@
 
 use log::error;
 
-use crate::error::{Error, ErrorCode};
+use crate::{
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
+};
 
 pub fn hkdf_sha256(_salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> Result<(), Error> {
     error!("This API should never get called");
@@ -60,10 +63,11 @@ impl HmacSha256 {
     }
 }
 
+#[derive(Debug)]
 pub struct KeyPair;
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(_rand: Rand) -> Result<Self, Error> {
         Ok(Self)
     }
 

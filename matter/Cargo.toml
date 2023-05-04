@@ -20,10 +20,10 @@ std = ["alloc", "env_logger", "chrono", "rand", "qrcode", "libmdns", "simple-mdn
 backtrace = []
 alloc = []
 nightly = []
-crypto_openssl = ["openssl", "foreign-types", "hmac", "sha2"]
-crypto_mbedtls = ["mbedtls", "alloc"]
+crypto_openssl = ["alloc", "openssl", "foreign-types", "hmac", "sha2"]
+crypto_mbedtls = ["alloc", "mbedtls"]
 crypto_esp_mbedtls = ["esp-idf-sys"]
-crypto_rustcrypto = ["sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert"]
+crypto_rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
 
 [dependencies]
 matter_macro_derive = { path = "../matter_macro_derive" }
@@ -56,6 +56,8 @@ smol = { version = "1.3.0", optional = true}
 openssl = { git = "https://github.com/sfackler/rust-openssl", optional = true }
 mbedtls = { git = "https://github.com/fortanix/rust-mbedtls", optional = true }
 esp-idf-sys = { version = "0.32", optional = true }
+
+# rust-crypto
 foreign-types = { version = "0.3.2", optional = true }
 sha2 = { version = "0.10", default-features = false, optional = true }
 hmac = { version = "0.12", optional = true }
@@ -66,8 +68,8 @@ ccm = { version = "0.5", default-features = false, features = ["alloc"], optiona
 p256 = { version = "0.13.0", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
 elliptic-curve = { version = "0.13.2", optional = true }
 crypto-bigint = { version = "0.4", default-features = false, optional = true }
-# TODO: requires STD
-x509-cert = { version = "0.2.0", default-features = false, features = ["pem", "std"], optional = true }
+rand_core = { version = "0.6", default-features = false, optional = true }
+x509-cert = { version = "0.2.0", default-features = false, features = ["pem", "std"], optional = true } # TODO: requires `alloc`
 
 # to compute the check digit
 verhoeff = "1"

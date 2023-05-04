@@ -213,7 +213,7 @@ impl<'a> Case<'a> {
         );
 
         // Create an ephemeral Key Pair
-        let key_pair = KeyPair::new()?;
+        let key_pair = KeyPair::new(self.rand)?;
         let _ = key_pair.get_public_key(&mut case_session.our_pub_key)?;
 
         // Derive the Shared Secret

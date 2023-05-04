@@ -35,6 +35,7 @@ use crate::{
     // so Crypto doesn't have to depend on Cert
     cert::{ASN1Writer, CertConsumer},
     error::{Error, ErrorCode},
+    utils::rand::Rand,
 };
 
 pub struct HmacSha256 {
@@ -65,7 +66,7 @@ pub struct KeyPair {
 }
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(_rand: Rand) -> Result<Self, Error> {
         let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         Ok(Self {
             key: Pk::generate_ec(&mut ctr_drbg, EcGroupId::SecP256R1)?,
