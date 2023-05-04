@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::error::*;
+use crate::{error::*, MATTER_PORT};
 use log::{info, warn};
 use smol::net::{Ipv6Addr, UdpSocket};
 
@@ -26,12 +26,6 @@ use super::network::Address;
 pub struct UdpListener {
     socket: UdpSocket,
 }
-
-// Currently matches with the one in connectedhomeip repo
-pub const MAX_RX_BUF_SIZE: usize = 1583;
-
-/* The Matter Port */
-pub const MATTER_PORT: u16 = 5540;
 
 impl UdpListener {
     pub async fn new() -> Result<UdpListener, Error> {
