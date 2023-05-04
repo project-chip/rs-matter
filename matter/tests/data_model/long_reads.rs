@@ -34,7 +34,7 @@ use matter::{
     tlv::{self, ElementType, FromTLV, TLVElement, TagType, ToTLV},
     transport::{
         exchange::{self, Exchange},
-        udp::MAX_RX_BUF_SIZE,
+        packet::MAX_RX_BUF_SIZE,
     },
     Matter,
 };
@@ -45,6 +45,7 @@ use crate::{
         attributes::*,
         echo_cluster as echo,
         im_engine::{matter, ImEngine, ImInput},
+        init_env_logger,
     },
 };
 
@@ -251,7 +252,7 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
 #[test]
 fn test_long_read_success() {
     // Read the entire attribute database, which requires 2 reads to complete
-    let _ = env_logger::try_init();
+    init_env_logger();
     let mut mdns = DummyMdns;
     let matter = matter(&mut mdns);
     let mut lr = LongRead::new(&matter);
@@ -285,7 +286,7 @@ fn test_long_read_success() {
 #[test]
 fn test_long_read_subscription_success() {
     // Subscribe to the entire attribute database, which requires 2 reads to complete
-    let _ = env_logger::try_init();
+    init_env_logger();
     let mut mdns = DummyMdns;
     let matter = matter(&mut mdns);
     let mut lr = LongRead::new(&matter);

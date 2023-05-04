@@ -20,3 +20,10 @@ pub mod commands;
 pub mod echo_cluster;
 pub mod handlers;
 pub mod im_engine;
+
+pub fn init_env_logger() {
+    #[cfg(feature = "std")]
+    {
+        let _ = env_logger::try_init();
+    }
+}

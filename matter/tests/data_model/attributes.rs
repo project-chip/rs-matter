@@ -35,6 +35,7 @@ use crate::{
         attributes::*,
         echo_cluster,
         im_engine::{matter, ImEngine},
+        init_env_logger,
     },
 };
 
@@ -44,7 +45,7 @@ fn test_read_success() {
     // - first on endpoint 0, att1
     // - second on endpoint 1, att2
     // - third on endpoint 1, attcustom a custom attribute
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let ep0_att1 = GenericPath::new(
         Some(0),
@@ -86,7 +87,7 @@ fn test_read_unsupported_fields() {
     // - attribute doesn't exist - UnsupportedAttribute
     // - attribute doesn't exist and endpoint is wildcard - Silently ignore
     // - attribute doesn't exist and cluster is wildcard - Silently ignore
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let invalid_endpoint = GenericPath::new(
         Some(2),
@@ -129,7 +130,7 @@ fn test_read_wc_endpoint_all_have_clusters() {
     // 1 Attr Read Requests
     // - wildcard endpoint, att1
     // - 2 responses are expected
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let wc_ep_att1 = GenericPath::new(
         None,
@@ -160,7 +161,7 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
     // 1 Attr Read Requests
     // - wildcard endpoint, on/off Cluster OnOff Attribute
     // - 1 response are expected
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let wc_ep_onoff = GenericPath::new(
         None,
@@ -185,7 +186,7 @@ fn test_read_wc_endpoint_wc_attribute() {
     // 1 Attr Read Request
     // - wildcard endpoint, wildcard attribute
     // - 8 responses are expected, 1+3 attributes on endpoint 0, 1+3 on endpoint 1
-    let _ = env_logger::try_init();
+    init_env_logger();
     let wc_ep_wc_attr = GenericPath::new(None, Some(echo_cluster::ID), None);
     let input = &[AttrPath::new(&wc_ep_wc_attr)];
 
@@ -294,7 +295,7 @@ fn test_write_success() {
     // - second on endpoint 1, AttWrite
     let val0 = 10;
     let val1 = 15;
-    let _ = env_logger::try_init();
+    init_env_logger();
     let attr_data0 = |tag, t: &mut TLVWriter| {
         let _ = t.u16(tag, val0);
     };
@@ -342,7 +343,7 @@ fn test_write_wc_endpoint() {
     // 1 Attr Write Request
     // - wildcard endpoint, AttWrite
     let val0 = 10;
-    let _ = env_logger::try_init();
+    init_env_logger();
     let attr_data0 = |tag, t: &mut TLVWriter| {
         let _ = t.u16(tag, val0);
     };
@@ -390,7 +391,7 @@ fn test_write_unsupported_fields() {
     // - attribute doesn't exist and endpoint is wildcard - Silently ignore
     // - cluster is wildcard - Cluster cannot be wildcard - UnsupportedCluster
     // - attribute is wildcard - Attribute cannot be wildcard - UnsupportedAttribute
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let val0 = 50;
     let attr_data0 = |tag, t: &mut TLVWriter| {

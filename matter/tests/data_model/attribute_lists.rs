@@ -29,6 +29,7 @@ use matter::{
 use crate::common::{
     echo_cluster::{self, TestChecker},
     im_engine::{matter, ImEngine},
+    init_env_logger,
 };
 
 // Helper for handling Write Attribute sequences
@@ -40,7 +41,7 @@ fn attr_list_ops() {
     let val1: u16 = 15;
     let tc_handle = TestChecker::get().unwrap();
 
-    let _ = env_logger::try_init();
+    init_env_logger();
 
     let delete_item = EncodeValue::Closure(&|tag, t| {
         let _ = t.null(tag);
