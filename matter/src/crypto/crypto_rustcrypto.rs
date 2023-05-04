@@ -34,7 +34,7 @@ use p256::{
 use sha2::Digest;
 use x509_cert::{
     attr::AttributeType,
-    der::{asn1::BitString, Any, Encode},
+    der::{asn1::BitString, Any, Encode, Writer},
     name::RdnSequence,
     request::CertReq,
     spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned},
@@ -205,7 +205,7 @@ impl KeyPair {
             attributes: Default::default(),
         };
         let mut message = vec![];
-        info.encode(&mut message).unwrap();
+        info.encode(&mut VecWriter(&mut message)).unwrap();
 
         // Can't use self.sign_msg as the signature has to be in DER format
         let private_key = self.private_key()?;
@@ -373,5 +373,15 @@ impl<'a> ccm::aead::Buffer for SliceBuffer<'a> {
 
     fn truncate(&mut self, len: usize) {
         self.len = len;
+    }
+}
+
+struct VecWriter<'a>(&'a mut alloc::vec::Vec<u8>);
+
+impl<'a> Writer for VecWriter<'a> {
+    fn write(&mut self, slice: &[u8]) -> x509_cert::der::Result<()> {
+        self.0.extend_from_slice(slice);
+
+        Ok(())
     }
 }
