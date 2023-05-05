@@ -155,7 +155,7 @@ impl CryptoKeyPair for KeyPair {
                 let bytes = key.to_bytes();
                 let slice = bytes.as_slice();
                 let len = slice.len();
-                priv_key.copy_from_slice(slice);
+                priv_key[..slice.len()].copy_from_slice(slice);
                 Ok(len)
             }
             KeyType::Public(_) => Err(Error::Crypto),

@@ -226,7 +226,7 @@ impl CryptoSpake2 for CryptoRustCrypto {
 
 impl CryptoRustCrypto {
     fn add_to_tt(tt: &mut sha2::Sha256, buf: &[u8]) -> Result<(), Error> {
-        tt.update(buf.len().to_le_bytes());
+        tt.update((buf.len() as u64).to_le_bytes());
         if !buf.is_empty() {
             tt.update(buf);
         }
