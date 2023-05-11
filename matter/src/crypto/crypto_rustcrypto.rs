@@ -258,7 +258,7 @@ impl CryptoKeyPair for KeyPair {
             KeyType::Private(k) => {
                 let signing_key = SigningKey::from(k);
                 let sig: Signature = signing_key.sign(msg);
-                let bytes = sig.to_bytes().to_vec();
+                let bytes = sig.to_bytes();
                 let len = bytes.len();
                 signature[..len].copy_from_slice(&bytes);
                 Ok(len)
@@ -308,13 +308,10 @@ pub fn encrypt_in_place(
     let key = GenericArray::from_slice(key);
     let nonce = GenericArray::from_slice(nonce);
     let cipher = AesCcm::new(key);
-    // This is probably incorrect
-    let mut buffer = data[0..data_len].to_vec();
-    cipher.encrypt_in_place(nonce, ad, &mut buffer)?;
-    let len = buffer.len();
-    data.clone_from_slice(&buffer[..]);
 
-    Ok(len)
+    let mut buffer = SliceBuffer::new(data, data_len);
+    cipher.encrypt_in_place(nonce, ad, &mut buffer)?;
+    Ok(buffer.len())
 }
 
 pub fn decrypt_in_place(
@@ -328,11 +325,48 @@ pub fn decrypt_in_place(
     let key = GenericArray::from_slice(key);
     let nonce = GenericArray::from_slice(nonce);
     let cipher = AesCcm::new(key);
-    // This is probably incorrect
-    let mut buffer = data.to_vec();
-    cipher.decrypt_in_place(nonce, ad, &mut buffer)?;
-    let len = buffer.len();
-    data[..len].copy_from_slice(&buffer[..]);
 
-    Ok(len)
+    let mut buffer = SliceBuffer::new(data, data.len());
+    cipher.decrypt_in_place(nonce, ad, &mut buffer)?;
+    Ok(buffer.len())
+}
+
+#[derive(Debug)]
+struct SliceBuffer<'a> {
+    slice: &'a mut [u8],
+    len: usize,
+}
+
+impl<'a> SliceBuffer<'a> {
+    fn new(slice: &'a mut [u8], len: usize) -> Self {
+        Self { slice, len }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<'a> AsMut<[u8]> for SliceBuffer<'a> {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.slice[..self.len]
+    }
+}
+
+impl<'a> AsRef<[u8]> for SliceBuffer<'a> {
+    fn as_ref(&self) -> &[u8] {
+        &self.slice[..self.len]
+    }
+}
+
+impl<'a> ccm::aead::Buffer for SliceBuffer<'a> {
+    fn extend_from_slice(&mut self, other: &[u8]) -> ccm::aead::Result<()> {
+        self.slice[self.len..][..other.len()].copy_from_slice(other);
+        self.len += other.len();
+        Ok(())
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.len = len;
+    }
 }
