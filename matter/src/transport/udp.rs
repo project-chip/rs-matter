@@ -15,64 +15,103 @@
  *    limitations under the License.
  */
 
-use crate::{error::*, MATTER_PORT};
-use log::{info, warn};
-use smol::net::{Ipv6Addr, UdpSocket};
+#[cfg(feature = "std")]
+pub use smol_udp::*;
 
-use super::network::Address;
+#[cfg(not(feature = "std"))]
+pub use dummy_udp::*;
 
-// We could get rid of the smol here, but keeping it around in case we have to process
-// any other events in this thread's context
-pub struct UdpListener {
-    socket: UdpSocket,
+#[cfg(feature = "std")]
+mod smol_udp {
+    use crate::error::*;
+    use log::{debug, info, warn};
+    use smol::net::UdpSocket;
+
+    use crate::transport::network::SocketAddr;
+
+    pub struct UdpListener {
+        socket: UdpSocket,
+    }
+
+    impl UdpListener {
+        pub async fn new(addr: SocketAddr) -> Result<UdpListener, Error> {
+            let listener = UdpListener {
+                socket: UdpSocket::bind((addr.ip(), addr.port())).await?,
+            };
+
+            info!("Listening on {:?}", addr);
+
+            Ok(listener)
+        }
+
+        pub async fn recv(&self, in_buf: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
+            info!("Waiting for incoming packets");
+
+            let (size, addr) = self.socket.recv_from(in_buf).await.map_err(|e| {
+                warn!("Error on the network: {:?}", e);
+                ErrorCode::Network
+            })?;
+
+            debug!("Got packet {:?} from addr {:?}", &in_buf[..size], addr);
+
+            Ok((size, addr))
+        }
+
+        pub async fn send(&self, addr: SocketAddr, out_buf: &[u8]) -> Result<usize, Error> {
+            let len = self.socket.send_to(out_buf, addr).await.map_err(|e| {
+                warn!("Error on the network: {:?}", e);
+                ErrorCode::Network
+            })?;
+
+            debug!(
+                "Send packet {:?} ({}/{}) to addr {:?}",
+                out_buf,
+                out_buf.len(),
+                len,
+                addr
+            );
+
+            Ok(len)
+        }
+    }
 }
 
-impl UdpListener {
-    pub async fn new() -> Result<UdpListener, Error> {
-        let listener = UdpListener {
-            socket: UdpSocket::bind((Ipv6Addr::UNSPECIFIED, MATTER_PORT)).await?,
-        };
+#[cfg(not(feature = "std"))]
+mod dummy_udp {
+    use core::future::pending;
 
-        info!(
-            "Listening on {:?} port {}",
-            Ipv6Addr::UNSPECIFIED,
-            MATTER_PORT
-        );
+    use crate::error::*;
+    use log::{debug, info};
 
-        Ok(listener)
-    }
+    use crate::transport::network::SocketAddr;
 
-    pub async fn recv(&self, in_buf: &mut [u8]) -> Result<(usize, Address), Error> {
-        info!("Waiting for incoming packets");
+    pub struct UdpListener {}
 
-        let (size, addr) = self.socket.recv_from(in_buf).await.map_err(|e| {
-            warn!("Error on the network: {:?}", e);
-            ErrorCode::Network
-        })?;
+    impl UdpListener {
+        pub async fn new(addr: SocketAddr) -> Result<UdpListener, Error> {
+            let listener = UdpListener {};
 
-        info!("Got packet: {:?} from addr {:?}", &in_buf[..size], addr);
+            info!("Pretending to listen on {:?}", addr);
 
-        Ok((size, Address::Udp(addr)))
-    }
+            Ok(listener)
+        }
 
-    pub async fn send(&self, addr: Address, out_buf: &[u8]) -> Result<usize, Error> {
-        match addr {
-            Address::Udp(addr) => {
-                let len = self.socket.send_to(out_buf, addr).await.map_err(|e| {
-                    warn!("Error on the network: {:?}", e);
-                    ErrorCode::Network
-                })?;
+        pub async fn recv(&self, _in_buf: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
+            info!("Pretending to wait for incoming packets (looping forever)");
 
-                info!(
-                    "Send packet: {:?} ({}/{}) to addr {:?}",
-                    out_buf,
-                    out_buf.len(),
-                    len,
-                    addr
-                );
+            pending().await
+        }
 
-                Ok(len)
-            }
+        pub async fn send(&self, addr: SocketAddr, out_buf: &[u8]) -> Result<usize, Error> {
+            debug!(
+                "Send packet {:?} ({}/{}) to addr {:?}",
+                out_buf,
+                out_buf.len(),
+                out_buf.len(),
+                addr
+            );
+
+            Ok(out_buf.len())
         }
     }
 }

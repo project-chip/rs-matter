@@ -53,6 +53,7 @@ pub struct Matter<'a> {
 
 impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
+    #[inline(always)]
     pub fn new_default(dev_det: &'a BasicInfoConfig, mdns: &'a mut dyn Mdns, port: u16) -> Self {
         use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
@@ -66,6 +67,7 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     /// requires a set of device attestation certificates and keys. It is the responsibility of
     /// this object to return the device attestation details when queried upon.
+    #[inline(always)]
     pub fn new(
         dev_det: &'a BasicInfoConfig,
         mdns: &'a mut dyn Mdns,
@@ -111,6 +113,10 @@ impl<'a> Matter<'a> {
 
     pub fn store_acls<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
         self.acl_mgr.borrow_mut().store(buf)
+    }
+
+    pub fn is_changed(&self) -> bool {
+        self.acl_mgr.borrow().is_changed() || self.fabric_mgr.borrow().is_changed()
     }
 
     pub fn start(&self, dev_comm: CommissioningData, buf: &mut [u8]) -> Result<(), Error> {

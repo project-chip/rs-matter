@@ -51,7 +51,7 @@ type AesCcm = Ccm<Aes128, U16, U13>;
 
 extern crate alloc;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Sha256 {
     hasher: sha2::Sha256,
 }

@@ -49,6 +49,7 @@ pub struct FailSafe {
 }
 
 impl FailSafe {
+    #[inline(always)]
     pub const fn new() -> Self {
         Self { state: State::Idle }
     }

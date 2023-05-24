@@ -19,11 +19,8 @@ use crate::data_model::sdm::noc::NocData;
 use crate::utils::epoch::Epoch;
 use crate::utils::rand::Rand;
 use core::fmt;
+use core::ops::{Deref, DerefMut};
 use core::time::Duration;
-use core::{
-    any::Any,
-    ops::{Deref, DerefMut},
-};
 
 use crate::{
     error::*,
@@ -166,7 +163,7 @@ impl Session {
         self.data = None;
     }
 
-    pub fn get_noc_data<T: Any>(&mut self) -> Option<&mut NocData> {
+    pub fn get_noc_data(&mut self) -> Option<&mut NocData> {
         self.data.as_mut()
     }
 
@@ -325,17 +322,16 @@ pub const MAX_SESSIONS: usize = 16;
 
 pub struct SessionMgr {
     next_sess_id: u16,
-    sessions: [Option<Session>; MAX_SESSIONS],
+    sessions: heapless::Vec<Option<Session>, MAX_SESSIONS>,
     epoch: Epoch,
     rand: Rand,
 }
 
 impl SessionMgr {
+    #[inline(always)]
     pub fn new(epoch: Epoch, rand: Rand) -> Self {
-        const INIT: Option<Session> = None;
-
         Self {
-            sessions: [INIT; MAX_SESSIONS],
+            sessions: heapless::Vec::new(),
             next_sess_id: 1,
             epoch,
             rand,
@@ -343,10 +339,10 @@ impl SessionMgr {
     }
 
     pub fn mut_by_index(&mut self, index: usize) -> Option<&mut Session> {
-        self.sessions[index].as_mut()
+        self.sessions.get_mut(index).and_then(Option::as_mut)
     }
 
-    fn get_next_sess_id(&mut self) -> u16 {
+    pub fn get_next_sess_id(&mut self) -> u16 {
         let mut next_sess_id: u16;
         loop {
             next_sess_id = self.next_sess_id;
@@ -366,7 +362,7 @@ impl SessionMgr {
     }
 
     pub fn get_session_for_eviction(&self) -> Option<usize> {
-        if self.get_empty_slot().is_none() {
+        if self.sessions.len() == MAX_SESSIONS && self.get_empty_slot().is_none() {
             Some(self.get_lru())
         } else {
             None
@@ -380,8 +376,8 @@ impl SessionMgr {
     fn get_lru(&self) -> usize {
         let mut lru_index = 0;
         let mut lru_ts = (self.epoch)();
-        for i in 0..MAX_SESSIONS {
-            if let Some(s) = &self.sessions[i] {
+        for (i, s) in self.sessions.iter().enumerate() {
+            if let Some(s) = s {
                 if s.last_use < lru_ts {
                     lru_ts = s.last_use;
                     lru_index = i;
@@ -405,10 +401,17 @@ impl SessionMgr {
     /// We could have returned a SessionHandle here. But the borrow checker doesn't support
     /// non-lexical lifetimes. This makes it harder for the caller of this function to take
     /// action in the error return path
-    pub fn add_session(&mut self, session: Session) -> Result<usize, Error> {
+    fn add_session(&mut self, session: Session) -> Result<usize, Error> {
         if let Some(index) = self.get_empty_slot() {
             self.sessions[index] = Some(session);
             Ok(index)
+        } else if self.sessions.len() < MAX_SESSIONS {
+            self.sessions
+                .push(Some(session))
+                .map_err(|_| ErrorCode::NoSpace)
+                .unwrap();
+
+            Ok(self.sessions.len() - 1)
         } else {
             Err(ErrorCode::NoSpace.into())
         }
@@ -419,7 +422,7 @@ impl SessionMgr {
         self.add_session(session)
     }
 
-    fn _get(
+    pub fn get(
         &self,
         sess_id: u16,
         peer_addr: Address,
@@ -451,14 +454,14 @@ impl SessionMgr {
         Some(self.get_session_handle(index))
     }
 
-    pub fn get_or_add(
+    fn get_or_add(
         &mut self,
         sess_id: u16,
         peer_addr: Address,
         peer_nodeid: Option<u64>,
         is_encrypted: bool,
     ) -> Result<usize, Error> {
-        if let Some(index) = self._get(sess_id, peer_addr, peer_nodeid, is_encrypted) {
+        if let Some(index) = self.get(sess_id, peer_addr, peer_nodeid, is_encrypted) {
             Ok(index)
         } else if sess_id == 0 && !is_encrypted {
             // We must create a new session for this case
@@ -538,7 +541,7 @@ impl fmt::Display for SessionMgr {
 }
 
 pub struct SessionHandle<'a> {
-    sess_mgr: &'a mut SessionMgr,
+    pub(crate) sess_mgr: &'a mut SessionMgr,
     sess_idx: usize,
 }
 

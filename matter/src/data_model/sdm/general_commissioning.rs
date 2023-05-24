@@ -138,7 +138,7 @@ impl<'a> GenCommCluster<'a> {
     }
 
     pub fn failsafe(&self) -> &RefCell<FailSafe> {
-        &self.failsafe
+        self.failsafe
     }
 
     pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {

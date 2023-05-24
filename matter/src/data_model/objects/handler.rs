@@ -49,7 +49,7 @@ impl<T> Handler for &mut T
 where
     T: Handler,
 {
-    fn read<'a>(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         (**self).read(attr, encoder)
     }
 

@@ -22,7 +22,7 @@ use crate::{
     error::{Error, ErrorCode},
     fabric,
     interaction_model::messages::GenericPath,
-    tlv::{FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
+    tlv::{self, FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
     transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC},
     utils::writebuf::WriteBuf,
 };
@@ -390,7 +390,7 @@ impl AclEntry {
 
 const MAX_ACL_ENTRIES: usize = ENTRIES_PER_FABRIC * fabric::MAX_SUPPORTED_FABRICS;
 
-type AclEntries = [Option<AclEntry>; MAX_ACL_ENTRIES];
+type AclEntries = heapless::Vec<Option<AclEntry>, MAX_ACL_ENTRIES>;
 
 pub struct AclMgr {
     entries: AclEntries,
@@ -398,20 +398,16 @@ pub struct AclMgr {
 }
 
 impl AclMgr {
+    #[inline(always)]
     pub const fn new() -> Self {
-        const INIT: Option<AclEntry> = None;
-
         Self {
-            entries: [INIT; MAX_ACL_ENTRIES],
+            entries: AclEntries::new(),
             changed: false,
         }
     }
 
     pub fn erase_all(&mut self) -> Result<(), Error> {
-        for i in 0..MAX_ACL_ENTRIES {
-            self.entries[i] = None;
-        }
-
+        self.entries.clear();
         self.changed = true;
 
         Ok(())
@@ -427,14 +423,21 @@ impl AclMgr {
         if cnt >= ENTRIES_PER_FABRIC {
             Err(ErrorCode::NoSpace)?;
         }
-        let index = self
-            .entries
-            .iter()
-            .position(|a| a.is_none())
-            .ok_or(ErrorCode::NoSpace)?;
-        self.entries[index] = Some(entry);
 
-        self.changed = true;
+        let slot = self.entries.iter().position(|a| a.is_none());
+
+        if slot.is_some() || self.entries.len() < MAX_ACL_ENTRIES {
+            if let Some(index) = slot {
+                self.entries[index] = Some(entry);
+            } else {
+                self.entries
+                    .push(Some(entry))
+                    .map_err(|_| ErrorCode::NoSpace)
+                    .unwrap();
+            }
+
+            self.changed = true;
+        }
 
         Ok(())
     }
@@ -459,16 +462,12 @@ impl AclMgr {
     }
 
     pub fn delete_for_fabric(&mut self, fab_idx: u8) -> Result<(), Error> {
-        for i in 0..MAX_ACL_ENTRIES {
-            if self.entries[i]
-                .filter(|e| e.fab_idx == Some(fab_idx))
-                .is_some()
-            {
-                self.entries[i] = None;
+        for entry in &mut self.entries {
+            if entry.map(|e| e.fab_idx == Some(fab_idx)).unwrap_or(false) {
+                *entry = None;
+                self.changed = true;
             }
         }
-
-        self.changed = true;
 
         Ok(())
     }
@@ -505,7 +504,7 @@ impl AclMgr {
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
-        self.entries = AclEntries::from_tlv(&root)?;
+        tlv::from_tlv(&mut self.entries, &root)?;
         self.changed = false;
 
         Ok(())
@@ -515,7 +514,9 @@ impl AclMgr {
         if self.changed {
             let mut wb = WriteBuf::new(buf);
             let mut tw = TLVWriter::new(&mut wb);
-            self.entries.to_tlv(&mut tw, TagType::Anonymous)?;
+            self.entries
+                .as_slice()
+                .to_tlv(&mut tw, TagType::Anonymous)?;
 
             self.changed = false;
 
@@ -525,6 +526,10 @@ impl AclMgr {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn is_changed(&self) -> bool {
+        self.changed
     }
 
     /// Traverse fabric specific entries to find the index

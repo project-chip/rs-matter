@@ -165,11 +165,11 @@ impl From<mbedtls::Error> for Error {
     }
 }
 
-#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
+#[cfg(target_os = "espidf")]
 impl From<esp_idf_sys::EspError> for Error {
     fn from(e: esp_idf_sys::EspError) -> Self {
-        ::log::error!("Error in TLS: {}", e);
-        Self::new(ErrorCode::TLSStack)
+        ::log::error!("Error in ESP: {}", e);
+        Self::new(ErrorCode::TLSStack) // TODO: Not a good mapping
     }
 }
 
@@ -208,9 +208,9 @@ impl fmt::Debug for Error {
 
         #[cfg(all(feature = "std", feature = "backtrace"))]
         {
-            write!(f, "Error::{} {{\n", self)?;
+            writeln!(f, "Error::{} {{", self)?;
             write!(f, "{}", self.backtrace())?;
-            write!(f, "}}\n")?;
+            writeln!(f, "}}")?;
         }
 
         Ok(())

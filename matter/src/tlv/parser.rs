@@ -711,11 +711,7 @@ impl<'a> Iterator for TLVContainerIterator<'a> {
             return None;
         }
 
-        if is_container(element.element_type) {
-            self.prev_container = true;
-        } else {
-            self.prev_container = false;
-        }
+        self.prev_container = is_container(element.element_type);
         Some(element)
     }
 }

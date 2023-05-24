@@ -21,7 +21,7 @@ use crate::utils::writebuf::WriteBuf;
 use bitflags::bitflags;
 use log::info;
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq, Eq, Default, Copy, Clone)]
 pub enum SessionType {
     #[default]
     None,
@@ -38,7 +38,7 @@ bitflags! {
 }
 
 // This is the unencrypted message
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PlainHdr {
     pub flags: MsgFlags,
     pub sess_type: SessionType,

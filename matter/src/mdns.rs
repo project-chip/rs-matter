@@ -109,6 +109,7 @@ pub struct MdnsMgr<'a> {
 }
 
 impl<'a> MdnsMgr<'a> {
+    #[inline(always)]
     pub fn new(
         vid: u16,
         pid: u16,
@@ -209,6 +210,428 @@ impl<'a> MdnsMgr<'a> {
         const SHORT_DISCRIMINATOR_SHIFT: u16 = 8;
 
         (discriminator & SHORT_DISCRIMINATOR_MASK) >> SHORT_DISCRIMINATOR_SHIFT
+    }
+}
+
+pub mod builtin {
+    use core::cell::RefCell;
+    use core::fmt::Write;
+    use core::pin::pin;
+    use core::str::FromStr;
+
+    use domain::base::header::Flags;
+    use domain::base::iana::Class;
+    use domain::base::octets::{Octets256, Octets64, OctetsBuilder};
+    use domain::base::{Dname, MessageBuilder, Record, ShortBuf};
+    use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
+    use embassy_futures::select::select;
+    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use embassy_time::{Duration, Timer};
+    use log::info;
+
+    use crate::error::{Error, ErrorCode};
+    use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use crate::transport::udp::UdpListener;
+    use crate::utils::select::EitherUnwrap;
+
+    const IP_BROADCAST_ADDRS: [SocketAddr; 2] = [
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)), 5353),
+        SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb)),
+            5353,
+        ),
+    ];
+
+    const IP_BIND_ADDR: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
+
+    pub fn create_record(
+        id: u16,
+        hostname: &str,
+        ip: [u8; 4],
+        ipv6: Option<[u8; 16]>,
+
+        ttl_sec: u32,
+
+        name: &str,
+        service: &str,
+        protocol: &str,
+        port: u16,
+        service_subtypes: &[&str],
+        txt_kvs: &[(&str, &str)],
+
+        buffer: &mut [u8],
+    ) -> Result<usize, ShortBuf> {
+        let target = domain::base::octets::Octets2048::new();
+        let message = MessageBuilder::from_target(target)?;
+
+        let mut message = message.answer();
+
+        let mut ptr_str = heapless::String::<40>::new();
+        write!(ptr_str, "{}.{}.local", service, protocol).unwrap();
+
+        let mut dname = heapless::String::<60>::new();
+        write!(dname, "{}.{}.{}.local", name, service, protocol).unwrap();
+
+        let mut hname = heapless::String::<40>::new();
+        write!(hname, "{}.local", hostname).unwrap();
+
+        let ptr: Dname<Octets64> = Dname::from_str(&ptr_str).unwrap();
+        let record: Record<Dname<Octets64>, Ptr<_>> = Record::new(
+            Dname::from_str("_services._dns-sd._udp.local").unwrap(),
+            Class::In,
+            ttl_sec,
+            Ptr::new(ptr),
+        );
+        message.push(record)?;
+
+        let t: Dname<Octets64> = Dname::from_str(&dname).unwrap();
+        let record: Record<Dname<Octets64>, Ptr<_>> = Record::new(
+            Dname::from_str(&ptr_str).unwrap(),
+            Class::In,
+            ttl_sec,
+            Ptr::new(t),
+        );
+        message.push(record)?;
+
+        for sub_srv in service_subtypes {
+            let mut ptr_str = heapless::String::<40>::new();
+            write!(ptr_str, "{}._sub.{}.{}.local", sub_srv, service, protocol).unwrap();
+
+            let ptr: Dname<Octets64> = Dname::from_str(&ptr_str).unwrap();
+            let record: Record<Dname<Octets64>, Ptr<_>> = Record::new(
+                Dname::from_str("_services._dns-sd._udp.local").unwrap(),
+                Class::In,
+                ttl_sec,
+                Ptr::new(ptr),
+            );
+            message.push(record)?;
+
+            let t: Dname<Octets64> = Dname::from_str(&dname).unwrap();
+            let record: Record<Dname<Octets64>, Ptr<_>> = Record::new(
+                Dname::from_str(&ptr_str).unwrap(),
+                Class::In,
+                ttl_sec,
+                Ptr::new(t),
+            );
+            message.push(record)?;
+        }
+
+        let target: Dname<Octets64> = Dname::from_str(&hname).unwrap();
+        let record: Record<Dname<Octets64>, Srv<_>> = Record::new(
+            Dname::from_str(&dname).unwrap(),
+            Class::In,
+            ttl_sec,
+            Srv::new(0, 0, port, target),
+        );
+        message.push(record)?;
+
+        // only way I found to create multiple parts in a Txt
+        // each slice is the length and then the data
+        let mut octets = Octets256::new();
+        //octets.append_slice(&[1u8, b'X']).unwrap();
+        //octets.append_slice(&[2u8, b'A', b'B']).unwrap();
+        //octets.append_slice(&[0u8]).unwrap();
+        for (k, v) in txt_kvs {
+            octets
+                .append_slice(&[(k.len() + v.len() + 1) as u8])
+                .unwrap();
+            octets.append_slice(k.as_bytes()).unwrap();
+            octets.append_slice(&[b'=']).unwrap();
+            octets.append_slice(v.as_bytes()).unwrap();
+        }
+
+        let txt = Txt::from_octets(&mut octets).unwrap();
+
+        let record: Record<Dname<Octets64>, Txt<_>> =
+            Record::new(Dname::from_str(&dname).unwrap(), Class::In, ttl_sec, txt);
+        message.push(record)?;
+
+        let record: Record<Dname<Octets64>, A> = Record::new(
+            Dname::from_str(&hname).unwrap(),
+            Class::In,
+            ttl_sec,
+            A::from_octets(ip[0], ip[1], ip[2], ip[3]),
+        );
+        message.push(record)?;
+
+        if let Some(ipv6) = ipv6 {
+            let record: Record<Dname<Octets64>, Aaaa> = Record::new(
+                Dname::from_str(&hname).unwrap(),
+                Class::In,
+                ttl_sec,
+                Aaaa::new(ipv6.into()),
+            );
+            message.push(record)?;
+        }
+
+        let headerb = message.header_mut();
+        headerb.set_id(id);
+        headerb.set_opcode(domain::base::iana::Opcode::Query);
+        headerb.set_rcode(domain::base::iana::Rcode::NoError);
+
+        let mut flags = Flags::new();
+        flags.qr = true;
+        flags.aa = true;
+        headerb.set_flags(flags);
+
+        let target = message.finish();
+
+        buffer[..target.len()].copy_from_slice(target.as_ref());
+
+        Ok(target.len())
+    }
+
+    pub type Notification = embassy_sync::signal::Signal<NoopRawMutex, ()>;
+
+    #[derive(Debug, Clone)]
+    struct MdnsEntry {
+        key: heapless::String<64>,
+        record: heapless::Vec<u8, 1024>,
+    }
+
+    impl MdnsEntry {
+        #[inline(always)]
+        const fn new() -> Self {
+            Self {
+                key: heapless::String::new(),
+                record: heapless::Vec::new(),
+            }
+        }
+    }
+
+    pub struct Mdns<'a> {
+        id: u16,
+        hostname: &'a str,
+        ip: [u8; 4],
+        ipv6: Option<[u8; 16]>,
+        entries: RefCell<heapless::Vec<MdnsEntry, 4>>,
+        notification: Notification,
+        udp: RefCell<Option<UdpListener>>,
+    }
+
+    impl<'a> Mdns<'a> {
+        #[inline(always)]
+        pub const fn new(id: u16, hostname: &'a str, ip: [u8; 4], ipv6: Option<[u8; 16]>) -> Self {
+            Self {
+                id,
+                hostname,
+                ip,
+                ipv6,
+                entries: RefCell::new(heapless::Vec::new()),
+                notification: Notification::new(),
+                udp: RefCell::new(None),
+            }
+        }
+
+        pub fn split(&mut self) -> (MdnsApi<'_, 'a>, MdnsRunner<'_, 'a>) {
+            (MdnsApi(&*self), MdnsRunner(&*self))
+        }
+
+        async fn bind(&self) -> Result<(), Error> {
+            if self.udp.borrow().is_none() {
+                *self.udp.borrow_mut() = Some(UdpListener::new(IP_BIND_ADDR).await?);
+            }
+
+            Ok(())
+        }
+
+        pub fn close(&mut self) {
+            *self.udp.borrow_mut() = None;
+        }
+
+        fn key(
+            &self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> heapless::String<64> {
+            let mut key = heapless::String::new();
+
+            write!(&mut key, "{name}.{service}.{protocol}.{port}").unwrap();
+
+            key
+        }
+    }
+
+    pub struct MdnsApi<'a, 'b>(&'a Mdns<'b>);
+
+    impl<'a, 'b> MdnsApi<'a, 'b> {
+        pub fn add(
+            &self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+            service_subtypes: &[&str],
+            txt_kvs: &[(&str, &str)],
+        ) -> Result<(), Error> {
+            info!(
+                "Registering mDNS service {}/{}.{} [{:?}]/{}, keys [{:?}]",
+                name, service, protocol, service_subtypes, port, txt_kvs
+            );
+
+            let key = self.0.key(name, service, protocol, port);
+
+            let mut entries = self.0.entries.borrow_mut();
+
+            entries.retain(|entry| entry.key != key);
+            entries
+                .push(MdnsEntry::new())
+                .map_err(|_| ErrorCode::NoSpace)?;
+
+            let entry = entries.iter_mut().last().unwrap();
+            entry
+                .record
+                .resize(1024, 0)
+                .map_err(|_| ErrorCode::NoSpace)
+                .unwrap();
+
+            match create_record(
+                self.0.id,
+                self.0.hostname,
+                self.0.ip,
+                self.0.ipv6,
+                60, /*ttl_sec*/
+                name,
+                service,
+                protocol,
+                port,
+                service_subtypes,
+                txt_kvs,
+                &mut entry.record,
+            ) {
+                Ok(len) => entry.record.truncate(len),
+                Err(_) => {
+                    entries.pop();
+                    Err(ErrorCode::NoSpace)?;
+                }
+            }
+
+            self.0.notification.signal(());
+
+            Ok(())
+        }
+
+        pub fn remove(
+            &self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
+            info!(
+                "Deregistering mDNS service {}/{}.{}/{}",
+                name, service, protocol, port
+            );
+
+            let key = self.0.key(name, service, protocol, port);
+
+            let mut entries = self.0.entries.borrow_mut();
+
+            let old_len = entries.len();
+
+            entries.retain(|entry| entry.key != key);
+
+            if entries.len() != old_len {
+                self.0.notification.signal(());
+            }
+
+            Ok(())
+        }
+    }
+
+    pub struct MdnsRunner<'a, 'b>(&'a Mdns<'b>);
+
+    impl<'a, 'b> MdnsRunner<'a, 'b> {
+        pub async fn run(&mut self) -> Result<(), Error> {
+            let mut broadcast = pin!(self.broadcast());
+            let mut respond = pin!(self.respond());
+
+            select(&mut broadcast, &mut respond).await.unwrap()
+        }
+
+        async fn broadcast(&self) -> Result<(), Error> {
+            loop {
+                select(
+                    self.0.notification.wait(),
+                    Timer::after(Duration::from_secs(30)),
+                )
+                .await;
+
+                let mut index = 0;
+
+                while let Some(entry) = self
+                    .0
+                    .entries
+                    .borrow()
+                    .get(index)
+                    .map(|entry| entry.clone())
+                {
+                    info!("Broadasting mDNS entry {}", &entry.key);
+
+                    self.0.bind().await?;
+
+                    let udp = self.0.udp.borrow();
+                    let udp = udp.as_ref().unwrap();
+
+                    for addr in IP_BROADCAST_ADDRS {
+                        udp.send(addr, &entry.record).await?;
+                    }
+
+                    index += 1;
+                }
+            }
+        }
+
+        async fn respond(&self) -> Result<(), Error> {
+            loop {
+                let mut buf = [0; 1580];
+
+                let udp = self.0.udp.borrow();
+                let udp = udp.as_ref().unwrap();
+
+                let (_len, _addr) = udp.recv(&mut buf).await?;
+
+                info!("Received UDP packet");
+
+                // TODO: Process the incoming packed and only answer what we are being queried about
+
+                self.0.notification.signal(());
+            }
+        }
+    }
+
+    impl<'a, 'b> super::Mdns for MdnsApi<'a, 'b> {
+        fn add(
+            &mut self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+            service_subtypes: &[&str],
+            txt_kvs: &[(&str, &str)],
+        ) -> Result<(), Error> {
+            MdnsApi::add(
+                self,
+                name,
+                service,
+                protocol,
+                port,
+                service_subtypes,
+                txt_kvs,
+            )
+        }
+
+        fn remove(
+            &mut self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
+            MdnsApi::remove(self, name, service, protocol, port)
+        }
     }
 }
 
@@ -341,399 +764,6 @@ pub mod astro {
         }
     }
 }
-
-// TODO: Maybe future
-// #[cfg(all(feature = "std", feature = "zeroconf"))]
-// pub mod zeroconf {
-//     use std::collections::HashMap;
-
-//     use super::Mdns;
-//     use crate::error::{Error, ErrorCode};
-//     use log::info;
-//     use zeroconf::prelude::*;
-//     use zeroconf::{MdnsService, ServiceType, TxtRecord};
-
-//     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-//     pub struct ServiceId {
-//         name: String,
-//         service: String,
-//         protocol: String,
-//         port: u16,
-//     }
-
-//     pub struct ZeroconfMdns {
-//         services: HashMap<ServiceId, MdnsService>,
-//     }
-
-//     impl ZeroconfMdns {
-//         pub fn new() -> Result<Self, Error> {
-//             Ok(Self {
-//                 services: HashMap::new(),
-//             })
-//         }
-
-//         pub fn add(
-//             &mut self,
-//             name: &str,
-//             service: &str,
-//             protocol: &str,
-//             port: u16,
-//             service_subtypes: &[&str],
-//             txt_kvs: &[(&str, &str)],
-//         ) -> Result<(), Error> {
-//             info!(
-//                 "Registering mDNS service {}/{}.{} [{:?}]/{}",
-//                 name, service, protocol, service_subtypes, port
-//             );
-
-//             let _ = self.remove(name, service, protocol, port);
-
-//             let mut svc = MdnsService::new(
-//                 ServiceType::with_sub_types(service, protocol, service_subtypes.into()).unwrap(),
-//                 port,
-//             );
-
-//             let mut txt = TxtRecord::new();
-
-//             for kvs in txt_kvs {
-//                 info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
-//                 txt.insert(kvs.0, kvs.1);
-//             }
-
-//             svc.set_txt_record(txt);
-
-//             //let event_loop = svc.register().map_err(|_| ErrorCode::MdnsError)?;
-
-//             self.services.insert(
-//                 ServiceId {
-//                     name: name.into(),
-//                     service: service.into(),
-//                     protocol: protocol.into(),
-//                     port,
-//                 },
-//                 svc,
-//             );
-
-//             Ok(())
-//         }
-
-//         pub fn remove(
-//             &mut self,
-//             name: &str,
-//             service: &str,
-//             protocol: &str,
-//             port: u16,
-//         ) -> Result<(), Error> {
-//             let id = ServiceId {
-//                 name: name.into(),
-//                 service: service.into(),
-//                 protocol: protocol.into(),
-//                 port,
-//             };
-
-//             if self.services.remove(&id).is_some() {
-//                 info!(
-//                     "Deregistering mDNS service {}.{}/{}/{}",
-//                     name, service, protocol, port
-//                 );
-//             }
-
-//             Ok(())
-//         }
-//     }
-
-//     impl Mdns for ZeroconfMdns {
-//         fn add(
-//             &mut self,
-//             name: &str,
-//             service: &str,
-//             protocol: &str,
-//             port: u16,
-//             service_subtypes: &[&str],
-//             txt_kvs: &[(&str, &str)],
-//         ) -> Result<(), Error> {
-//             ZeroconfMdns::add(
-//                 self,
-//                 name,
-//                 service,
-//                 protocol,
-//                 port,
-//                 service_subtypes,
-//                 txt_kvs,
-//             )
-//         }
-
-//         fn remove(
-//             &mut self,
-//             name: &str,
-//             service: &str,
-//             protocol: &str,
-//             port: u16,
-//         ) -> Result<(), Error> {
-//             ZeroconfMdns::remove(self, name, service, protocol, port)
-//         }
-//     }
-// }
-
-#[cfg(all(feature = "std", not(target_os = "espidf")))]
-pub mod libmdns {
-    use super::Mdns;
-    use crate::error::Error;
-    use libmdns::{Responder, Service};
-    use log::info;
-    use std::collections::HashMap;
-    use std::vec::Vec;
-
-    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-    pub struct ServiceId {
-        name: String,
-        service: String,
-        protocol: String,
-        port: u16,
-    }
-
-    pub struct LibMdns {
-        responder: Responder,
-        services: HashMap<ServiceId, Service>,
-    }
-
-    impl LibMdns {
-        pub fn new() -> Result<Self, Error> {
-            let responder = Responder::new()?;
-
-            Ok(Self {
-                responder,
-                services: HashMap::new(),
-            })
-        }
-
-        pub fn add(
-            &mut self,
-            name: &str,
-            service: &str,
-            protocol: &str,
-            port: u16,
-            txt_kvs: &[(&str, &str)],
-        ) -> Result<(), Error> {
-            info!(
-                "Registering mDNS service {}/{}.{}/{}",
-                name, service, protocol, port
-            );
-
-            let _ = self.remove(name, service, protocol, port);
-
-            let mut properties = Vec::new();
-            for kvs in txt_kvs {
-                info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
-                properties.push(format!("{}={}", kvs.0, kvs.1));
-            }
-            let properties: Vec<&str> = properties.iter().map(|entry| entry.as_str()).collect();
-
-            let svc = self.responder.register(
-                format!("{}.{}", service, protocol),
-                name.to_owned(),
-                port,
-                &properties,
-            );
-
-            self.services.insert(
-                ServiceId {
-                    name: name.into(),
-                    service: service.into(),
-                    protocol: protocol.into(),
-                    port,
-                },
-                svc,
-            );
-
-            Ok(())
-        }
-
-        pub fn remove(
-            &mut self,
-            name: &str,
-            service: &str,
-            protocol: &str,
-            port: u16,
-        ) -> Result<(), Error> {
-            let id = ServiceId {
-                name: name.into(),
-                service: service.into(),
-                protocol: protocol.into(),
-                port,
-            };
-
-            if self.services.remove(&id).is_some() {
-                info!(
-                    "Deregistering mDNS service {}/{}.{}/{}",
-                    name, service, protocol, port
-                );
-            }
-
-            Ok(())
-        }
-    }
-
-    impl Mdns for LibMdns {
-        fn add(
-            &mut self,
-            name: &str,
-            service: &str,
-            protocol: &str,
-            port: u16,
-            _service_subtypes: &[&str],
-            txt_kvs: &[(&str, &str)],
-        ) -> Result<(), Error> {
-            LibMdns::add(self, name, service, protocol, port, txt_kvs)
-        }
-
-        fn remove(
-            &mut self,
-            name: &str,
-            service: &str,
-            protocol: &str,
-            port: u16,
-        ) -> Result<(), Error> {
-            LibMdns::remove(self, name, service, protocol, port)
-        }
-    }
-}
-
-// TODO: Maybe future
-// #[cfg(feature = "std")]
-// pub mod simplemdns {
-//     use std::net::Ipv4Addr;
-
-//     use crate::error::{Error, ErrorCode};
-//     use super::Mdns;
-//     use log::info;
-//     use simple_dns::{
-//         rdata::{RData, A, SRV, TXT, PTR},
-//         CharacterString, Name, ResourceRecord, CLASS,
-//     };
-//     use simple_mdns::sync_discovery::SimpleMdnsResponder;
-
-//     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-//     pub struct ServiceId {
-//         name: String,
-//         service_type: String,
-//         port: u16,
-//     }
-
-//     pub struct SimpleMdns {
-//         responder: SimpleMdnsResponder,
-//     }
-
-//     impl SimpleMdns {
-//         pub fn new() -> Result<Self, Error> {
-//             Ok(Self {
-//                 responder: Default::default(),
-//             })
-//         }
-
-//         pub fn add(
-//             &mut self,
-//             name: &str,
-//             service_type: &str,
-//             port: u16,
-//             txt_kvs: &[(&str, &str)],
-//         ) -> Result<(), Error> {
-//             info!(
-//                 "Registering mDNS service {}/{}/{}",
-//                 name, service_type, port
-//             );
-
-//             let _ = self.remove(name, service_type, port);
-
-//             let mut txt = TXT::new();
-//             for kvs in txt_kvs {
-//                 info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
-
-//                 let string = format!("{}={}", kvs.0, kvs.1);
-//                 txt.add_char_string(
-//                     CharacterString::new(string.as_bytes())
-//                         .unwrap()
-//                         .into_owned(),
-//                 );
-//             }
-
-//             let name = Name::new_unchecked(name).into_owned();
-//             let service_type = Name::new_unchecked(service_type).into_owned();
-
-//             self.responder.add_resource(ResourceRecord::new(
-//                 name.clone(),
-//                 CLASS::IN,
-//                 10,
-//                 RData::A(A {
-//                     address: Ipv4Addr::new(192, 168, 10, 189).into(),
-//                 }),
-//             ));
-
-//             self.responder.add_resource(ResourceRecord::new(
-//                 name.clone(),
-//                 CLASS::IN,
-//                 10,
-//                 RData::SRV(SRV {
-//                     port: port,
-//                     priority: 0,
-//                     weight: 0,
-//                     target: service_type.clone(),
-//                 }),
-//             ));
-
-//             self.responder.add_resource(ResourceRecord::new(
-//                 srv_name.clone(),
-//                 CLASS::IN,
-//                 10,
-//                 RData::PTR(PTR(srv_name.clone()),
-//             )));
-
-//             self.responder.add_resource(ResourceRecord::new(
-//                 srv_name,
-//                 CLASS::IN,
-//                 10,
-//                 RData::TXT(txt),
-//             ));
-
-//             Ok(())
-//         }
-
-//         pub fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
-//             // TODO
-//             // let id = ServiceId {
-//             //     name: name.into(),
-//             //     service_type: service_type.into(),
-//             //     port,
-//             // };
-
-//             // if self.responder.remove_resource_record(resource).remove(&id).is_some() {
-//             //     info!(
-//             //         "Deregistering mDNS service {}/{}/{}",
-//             //         name, service_type, port
-//             //     );
-//             // }
-
-//             Ok(())
-//         }
-//     }
-
-//     impl Mdns for SimpleMdns {
-//         fn add(
-//             &mut self,
-//             name: &str,
-//             service_type: &str,
-//             port: u16,
-//             _service_subtypes: &[&str],
-//             txt_kvs: &[(&str, &str)],
-//         ) -> Result<(), Error> {
-//             SimpleMdns::add(self, name, service_type, port, txt_kvs)
-//         }
-
-//         fn remove(&mut self, name: &str, service_type: &str, port: u16) -> Result<(), Error> {
-//             SimpleMdns::remove(self, name, service_type, port)
-//         }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
