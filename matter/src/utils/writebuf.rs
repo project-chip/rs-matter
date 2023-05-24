@@ -68,6 +68,18 @@ impl<'a> WriteBuf<'a> {
         self.end = 0;
     }
 
+    pub fn load(&mut self, wb: &WriteBuf) -> Result<(), Error> {
+        if self.buf_size < wb.end {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        self.buf[0..wb.end].copy_from_slice(&wb.buf[..wb.end]);
+        self.start = wb.start;
+        self.end = wb.end;
+
+        Ok(())
+    }
+
     pub fn reserve(&mut self, reserve: usize) -> Result<(), Error> {
         if self.end != 0 || self.start != 0 || self.buf_size != self.buf.len() {
             Err(ErrorCode::Invalid.into())

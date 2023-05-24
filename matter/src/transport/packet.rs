@@ -31,7 +31,7 @@ use super::{
 pub const MAX_RX_BUF_SIZE: usize = 1583;
 pub const MAX_TX_BUF_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum RxState {
     Uninit,
     PlainDecode,
@@ -41,6 +41,30 @@ enum RxState {
 enum Direction<'a> {
     Tx(WriteBuf<'a>),
     Rx(ParseBuf<'a>, RxState),
+}
+
+impl<'a> Direction<'a> {
+    pub fn load(&mut self, direction: &Direction) -> Result<(), Error> {
+        if matches!(self, Self::Tx(_)) != matches!(direction, Direction::Tx(_)) {
+            Err(ErrorCode::Invalid)?;
+        }
+
+        match self {
+            Self::Tx(wb) => match direction {
+                Direction::Tx(src_wb) => wb.load(src_wb)?,
+                Direction::Rx(_, _) => Err(ErrorCode::Invalid)?,
+            },
+            Self::Rx(pb, state) => match direction {
+                Direction::Tx(_) => Err(ErrorCode::Invalid)?,
+                Direction::Rx(src_pb, src_state) => {
+                    pb.load(src_pb)?;
+                    *state = *src_state;
+                }
+            },
+        }
+
+        Ok(())
+    }
 }
 
 pub struct Packet<'a> {
@@ -78,7 +102,7 @@ impl<'a> Packet<'a> {
         }
     }
 
-    pub fn reset(&mut self) -> () {
+    pub fn reset(&mut self) {
         if let Direction::Tx(wb) = &mut self.data {
             wb.reset();
             wb.reserve(Packet::HDR_RESERVE).unwrap();
@@ -89,6 +113,13 @@ impl<'a> Packet<'a> {
 
             self.proto.set_reliable();
         }
+    }
+
+    pub fn load(&mut self, packet: &Packet) -> Result<(), Error> {
+        self.plain = packet.plain.clone();
+        self.proto = packet.proto.clone();
+        self.peer = packet.peer;
+        self.data.load(&packet.data)
     }
 
     pub fn as_slice(&self) -> &[u8] {

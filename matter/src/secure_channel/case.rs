@@ -35,12 +35,13 @@ use crate::{
     utils::{rand::Rand, writebuf::WriteBuf},
 };
 
-#[derive(PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum State {
     Sigma1Rx,
     Sigma3Rx,
 }
 
+#[derive(Debug, Clone)]
 pub struct CaseSession {
     state: State,
     peer_sessid: u16,
@@ -84,7 +85,7 @@ impl<'a> Case<'a> {
         let mut case_session = ctx
             .exch_ctx
             .exch
-            .take_case_session::<CaseSession>()
+            .take_case_session()
             .ok_or(ErrorCode::InvalidState)?;
         if case_session.state != State::Sigma1Rx {
             Err(ErrorCode::Invalid)?;

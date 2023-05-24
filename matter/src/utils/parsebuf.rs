@@ -35,13 +35,25 @@ impl<'a> ParseBuf<'a> {
         }
     }
 
-    pub fn set_len(&mut self, left: usize) {
-        self.left = left;
+    pub fn reset(&mut self) {
+        self.read_off = 0;
+        self.left = self.buf.len();
     }
 
-    // Return the data that is valid as a slice, consume self
-    pub fn into_slice(self) -> &'a mut [u8] {
-        &mut self.buf[self.read_off..(self.read_off + self.left)]
+    pub fn load(&mut self, pb: &ParseBuf) -> Result<(), Error> {
+        if self.buf.len() < pb.read_off + pb.left {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        self.buf[0..pb.read_off + pb.left].copy_from_slice(&pb.buf[..pb.read_off + pb.left]);
+        self.read_off = pb.read_off;
+        self.left = pb.left;
+
+        Ok(())
+    }
+
+    pub fn set_len(&mut self, left: usize) {
+        self.left = left;
     }
 
     // Return the data that is valid as a slice
@@ -114,7 +126,7 @@ mod tests {
         assert_eq!(buf.le_u8().unwrap(), 0x01);
         assert_eq!(buf.le_u16().unwrap(), 65);
         assert_eq!(buf.le_u32().unwrap(), 0xcafebabe);
-        assert_eq!(buf.into_slice(), [0xa, 0xb, 0xc, 0xd]);
+        assert_eq!(buf.as_slice(), [0xa, 0xb, 0xc, 0xd]);
     }
 
     #[test]
@@ -138,7 +150,7 @@ mod tests {
         if buf.le_u8().is_ok() {
             panic!("This should have returned error")
         }
-        assert_eq!(buf.into_slice(), []);
+        assert_eq!(buf.as_slice(), [] as [u8; 0]);
     }
 
     #[test]
@@ -154,7 +166,7 @@ mod tests {
         assert_eq!(buf.as_mut_slice(), [0xa, 0xb]);
 
         assert_eq!(buf.tail(2).unwrap(), [0xa, 0xb]);
-        assert_eq!(buf.into_slice(), []);
+        assert_eq!(buf.as_slice(), [] as [u8; 0]);
     }
 
     #[test]
@@ -176,7 +188,7 @@ mod tests {
         let mut test_slice = [0x01, 65, 0, 0xbe, 0xba, 0xfe, 0xca, 0xa, 0xb, 0xc, 0xd];
         let mut buf = ParseBuf::new(&mut test_slice);
 
-        assert_eq!(buf.parsed_as_slice(), []);
+        assert_eq!(buf.parsed_as_slice(), [] as [u8; 0]);
         assert_eq!(buf.le_u8().unwrap(), 0x1);
         assert_eq!(buf.le_u16().unwrap(), 65);
         assert_eq!(buf.le_u32().unwrap(), 0xcafebabe);

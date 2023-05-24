@@ -605,6 +605,7 @@ impl<'a> SubscribeReq<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct ResumeReadReq {
     pub paths: heapless::Vec<AttrPath, MAX_RESUME_PATHS>,
     pub filters: heapless::Vec<DataVersionFilter, MAX_RESUME_DATAVER_FILTERS>,
@@ -664,6 +665,7 @@ impl ResumeReadReq {
     }
 }
 
+#[derive(Debug)]
 pub struct ResumeSubscribeReq {
     pub subscription_id: u32,
     pub paths: heapless::Vec<AttrPath, MAX_RESUME_PATHS>,

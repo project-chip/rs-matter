@@ -27,7 +27,7 @@ use crate::{
     error::{Error, ErrorCode},
     group_keys::KeySet,
     mdns::{MdnsMgr, ServiceMode},
-    tlv::{FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
+    tlv::{self, FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
     utils::writebuf::WriteBuf,
 };
 
@@ -184,7 +184,7 @@ impl Fabric {
 
 pub const MAX_SUPPORTED_FABRICS: usize = 3;
 
-type FabricEntries = [Option<Fabric>; MAX_SUPPORTED_FABRICS];
+type FabricEntries = Vec<Option<Fabric>, MAX_SUPPORTED_FABRICS>;
 
 pub struct FabricMgr {
     fabrics: FabricEntries,
@@ -192,30 +192,25 @@ pub struct FabricMgr {
 }
 
 impl FabricMgr {
+    #[inline(always)]
     pub const fn new() -> Self {
-        const INIT: Option<Fabric> = None;
-
         Self {
-            fabrics: [INIT; MAX_SUPPORTED_FABRICS],
+            fabrics: FabricEntries::new(),
             changed: false,
         }
     }
 
     pub fn load(&mut self, data: &[u8], mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
-        for fabric in &self.fabrics {
-            if let Some(fabric) = fabric {
-                mdns_mgr.unpublish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
-            }
+        for fabric in self.fabrics.iter().flatten() {
+            mdns_mgr.unpublish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
         }
 
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
-        self.fabrics = FabricEntries::from_tlv(&root)?;
+        tlv::from_tlv(&mut self.fabrics, &root)?;
 
-        for fabric in &self.fabrics {
-            if let Some(fabric) = fabric {
-                mdns_mgr.publish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
-            }
+        for fabric in self.fabrics.iter().flatten() {
+            mdns_mgr.publish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
         }
 
         self.changed = false;
@@ -228,7 +223,9 @@ impl FabricMgr {
             let mut wb = WriteBuf::new(buf);
             let mut tw = TLVWriter::new(&mut wb);
 
-            self.fabrics.to_tlv(&mut tw, TagType::Anonymous)?;
+            self.fabrics
+                .as_slice()
+                .to_tlv(&mut tw, TagType::Anonymous)?;
 
             self.changed = false;
 
@@ -240,20 +237,32 @@ impl FabricMgr {
         }
     }
 
+    pub fn is_changed(&self) -> bool {
+        self.changed
+    }
+
     pub fn add(&mut self, f: Fabric, mdns_mgr: &mut MdnsMgr) -> Result<u8, Error> {
-        for (index, fabric) in self.fabrics.iter_mut().enumerate() {
-            if fabric.is_none() {
-                mdns_mgr.publish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+        let slot = self.fabrics.iter().position(|x| x.is_none());
 
-                *fabric = Some(f);
+        if slot.is_some() || self.fabrics.len() < MAX_SUPPORTED_FABRICS {
+            mdns_mgr.publish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+            self.changed = true;
 
-                self.changed = true;
+            if let Some(index) = slot {
+                self.fabrics[index] = Some(f);
 
-                return Ok((index + 1) as u8);
+                Ok((index + 1) as u8)
+            } else {
+                self.fabrics
+                    .push(Some(f))
+                    .map_err(|_| ErrorCode::NoSpace)
+                    .unwrap();
+
+                Ok(self.fabrics.len() as u8)
             }
+        } else {
+            Err(ErrorCode::NoSpace.into())
         }
-
-        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
@@ -311,15 +320,14 @@ impl FabricMgr {
     }
 
     pub fn set_label(&mut self, index: u8, label: &str) -> Result<(), Error> {
-        if !label.is_empty() {
-            if self
+        if !label.is_empty()
+            && self
                 .fabrics
                 .iter()
                 .filter_map(|f| f.as_ref())
                 .any(|f| f.label == label)
-            {
-                return Err(ErrorCode::Invalid.into());
-            }
+        {
+            return Err(ErrorCode::Invalid.into());
         }
 
         let index = (index - 1) as usize;

@@ -613,7 +613,7 @@ impl<'a> NocCluster<'a> {
             SessionMode::Pase => {
                 let noc_data = transaction
                     .session_mut()
-                    .get_noc_data::<NocData>()
+                    .get_noc_data()
                     .ok_or(ErrorCode::NoSession)?;
 
                 let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;

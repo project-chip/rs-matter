@@ -77,7 +77,7 @@ pub mod msg {
         EventPath,
     };
 
-    #[derive(Default, FromTLV, ToTLV)]
+    #[derive(Debug, Default, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct SubscribeReq<'a> {
         pub keep_subs: bool,

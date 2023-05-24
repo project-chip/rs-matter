@@ -15,13 +15,14 @@ name = "matter"
 path = "src/lib.rs"
 
 [features]
-default = ["std", "crypto_mbedtls", "backtrace"]
-std = ["alloc", "env_logger", "rand", "qrcode", "libmdns", "simple-mdns", "simple-dns", "async-io", "smol"]
+default = ["os", "crypto_rustcrypto"]
+os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
+std = ["alloc", "env_logger", "rand", "qrcode", "async-io", "smol", "esp-idf-sys/std"]
 backtrace = []
 alloc = []
 nightly = []
 crypto_openssl = ["alloc", "openssl", "foreign-types", "hmac", "sha2"]
-crypto_mbedtls = ["alloc", "mbedtls", "esp-idf-sys"]
+crypto_mbedtls = ["alloc", "mbedtls"]
 crypto_rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
 
 [dependencies]
@@ -40,14 +41,16 @@ safemem = { version = "0.3.3", default-features = false }
 owo-colors = "3"
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
+embassy-futures = "0.1"
+embassy-time = { version = "0.1.1", features = ["generic-queue-8"] }
+embassy-sync = "0.2"
+critical-section = "1.1.1"
+domain = { version = "0.7.2", default_features = false }
 
 # STD-only dependencies
 rand = { version = "0.8.5", optional = true }
 qrcode = { version = "0.12", default-features = false, optional = true } # Print QR code
-simple-mdns = { version = "0.4", features = ["sync"], optional = true }
-simple-dns = { version = "0.5", optional = true }
 astro-dnssd = { version = "0.3", optional = true } # On Linux needs avahi-compat-libdns_sd, i.e. on Ubuntu/Debian do `sudo apt-get install libavahi-compat-libdnssd-dev`
-zeroconf = { version = "0.10", optional = true }
 smol = { version = "1.2", optional = true } # =1.2 for compatibility with ESP IDF
 async-io = { version = "=1.12", optional = true } # =1.2 for compatibility with ESP IDF
 
@@ -71,14 +74,9 @@ x509-cert = { version = "0.2.0", default-features = false, features = ["pem"], o
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
 mbedtls = { git = "https://github.com/fortanix/rust-mbedtls", optional = true }
 env_logger = { version = "0.10.0", optional = true }
-libmdns = { version = "0.7", optional = true }
 
 [target.'cfg(target_os = "espidf")'.dependencies]
-esp-idf-sys = { version = "0.32", default-features = false, features = ["native"], optional = true }
-
-[[example]]
-name = "onoff_light"
-path = "../examples/onoff_light/src/main.rs"
+esp-idf-sys = { version = "0.33", default-features = false, features = ["native"] }
 
 
 [[example]]

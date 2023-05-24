@@ -61,6 +61,24 @@ impl<'a, T: FromTLV<'a> + Default, const N: usize> FromTLV<'a> for [T; N] {
     }
 }
 
+pub fn from_tlv<'a, T: FromTLV<'a>, const N: usize>(
+    vec: &mut heapless::Vec<T, N>,
+    t: &TLVElement<'a>,
+) -> Result<(), Error> {
+    vec.clear();
+
+    t.confirm_array()?;
+
+    if let Some(tlv_iter) = t.enter() {
+        for element in tlv_iter {
+            vec.push(T::from_tlv(&element)?)
+                .map_err(|_| ErrorCode::NoSpace)?;
+        }
+    }
+
+    Ok(())
+}
+
 macro_rules! fromtlv_for {
     ($($t:ident)*) => {
         $(
@@ -104,6 +122,16 @@ impl<T: ToTLV, const N: usize> ToTLV for [T; N] {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.start_array(tag)?;
         for i in self {
+            i.to_tlv(tw, TagType::Anonymous)?;
+        }
+        tw.end_container()
+    }
+}
+
+impl<'a, T: ToTLV> ToTLV for &'a [T] {
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        tw.start_array(tag)?;
+        for i in *self {
             i.to_tlv(tw, TagType::Anonymous)?;
         }
         tw.end_container()

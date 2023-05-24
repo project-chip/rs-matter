@@ -56,6 +56,8 @@ pub fn create_sc_status_report(
     status_code: SCStatusCodes,
     proto_data: Option<&[u8]>,
 ) -> Result<(), Error> {
+    proto_tx.reset();
+
     let general_code = match status_code {
         SCStatusCodes::SessionEstablishmentSuccess => GeneralCode::Success,
         SCStatusCodes::CloseSession => {
@@ -79,6 +81,7 @@ pub fn create_sc_status_report(
 }
 
 pub fn create_mrp_standalone_ack(proto_tx: &mut Packet) {
+    proto_tx.reset();
     proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
     proto_tx.set_proto_opcode(OpCode::MRPStandAloneAck as u8);
     proto_tx.unset_reliable();

@@ -91,7 +91,7 @@ pub fn print_pairing_code_and_qr(
     let qr_code = compute_qr_code(dev_det, comm_data, discovery_capabilities, buf)?;
 
     pretty_print_pairing_code(&pairing_code);
-    print_qr_code(&qr_code);
+    print_qr_code(qr_code);
 
     Ok(())
 }

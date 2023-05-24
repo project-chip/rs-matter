@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::any::Any;
 use core::fmt;
 use core::time::Duration;
 use log::{error, info, trace};
@@ -144,7 +143,7 @@ impl Exchange {
         }
     }
 
-    pub fn take_case_session<T: Any>(&mut self) -> Option<CaseSession> {
+    pub fn take_case_session(&mut self) -> Option<CaseSession> {
         let old = core::mem::replace(&mut self.data, DataOption::None);
         if let DataOption::CaseSession(session) = old {
             Some(session)

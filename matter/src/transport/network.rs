@@ -17,13 +17,21 @@
 
 use core::fmt::{Debug, Display};
 #[cfg(not(feature = "std"))]
-pub use no_std_net::{IpAddr, Ipv4Addr, SocketAddr};
+pub use no_std_net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 #[cfg(feature = "std")]
-pub use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub enum Address {
     Udp(SocketAddr),
+}
+
+impl Address {
+    pub fn unwrap_udp(self) -> SocketAddr {
+        match self {
+            Self::Udp(addr) => addr,
+        }
+    }
 }
 
 impl Default for Address {
