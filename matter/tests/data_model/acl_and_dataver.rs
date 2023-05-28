@@ -429,7 +429,7 @@ fn write_with_runtime_acl_add() {
         peer,
         None,
         // write to echo-cluster attribute, write to acl attribute, write to echo-cluster attribute
-        &[input0, acl_input, input0],
+        &[input0.clone(), acl_input, input0],
         &[
             AttrStatus::new(&ep0_att, IMStatusCode::UnsupportedAccess, 0),
             AttrStatus::new(&acl_att, IMStatusCode::Success, 0),
@@ -597,7 +597,7 @@ fn test_write_data_ver() {
     let input_correct_dataver = &[AttrData::new(
         Some(initial_data_ver),
         AttrPath::new(&ep0_attwrite),
-        attr_data1,
+        attr_data1.clone(),
     )];
     im.handle_write_reqs(
         peer,

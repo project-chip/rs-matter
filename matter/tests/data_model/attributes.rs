@@ -218,7 +218,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlv.get_element_type()
+            attr_list_tlv.get_element_type().clone()
         ),
         attr_data_path!(
             GenericPath::new(
@@ -258,7 +258,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlv.get_element_type()
+            attr_list_tlv.get_element_type().clone()
         ),
         attr_data_path!(
             GenericPath::new(

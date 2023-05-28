@@ -255,8 +255,8 @@ mod tests {
             AclEntry::new(1, Privilege::VIEW, AuthMode::Case),
             AclEntry::new(2, Privilege::ADMIN, AuthMode::Case),
         ];
-        for i in verifier {
-            acl_mgr.borrow_mut().add(i).unwrap();
+        for i in &verifier {
+            acl_mgr.borrow_mut().add(i.clone()).unwrap();
         }
         let mut acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
 
@@ -292,8 +292,8 @@ mod tests {
             AclEntry::new(1, Privilege::VIEW, AuthMode::Case),
             AclEntry::new(2, Privilege::ADMIN, AuthMode::Case),
         ];
-        for i in input {
-            acl_mgr.borrow_mut().add(i).unwrap();
+        for i in &input {
+            acl_mgr.borrow_mut().add(i.clone()).unwrap();
         }
         let mut acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
         // data is don't-care actually
@@ -303,7 +303,7 @@ mod tests {
         let result = acl.write_acl_attr(&ListOperation::DeleteItem(0), &data, 1);
         assert!(result.is_ok());
 
-        let verifier = [input[0], input[2]];
+        let verifier = [input[0].clone(), input[2].clone()];
         // Also validate in the acl_mgr that the entries are in the right order
         let mut index = 0;
         acl_mgr

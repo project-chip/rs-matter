@@ -205,7 +205,10 @@ impl<'a> GenCommCluster<'a> {
         let status = if self
             .failsafe
             .borrow_mut()
-            .arm(p.expiry_len, transaction.session().get_session_mode())
+            .arm(
+                p.expiry_len,
+                transaction.session().get_session_mode().clone(),
+            )
             .is_err()
         {
             CommissioningError::ErrBusyWithOtherAdmin as u8
@@ -271,7 +274,7 @@ impl<'a> GenCommCluster<'a> {
         if self
             .failsafe
             .borrow_mut()
-            .disarm(transaction.session().get_session_mode())
+            .disarm(transaction.session().get_session_mode().clone())
             .is_err()
         {
             status = CommissioningError::ErrInvalidAuth as u8;

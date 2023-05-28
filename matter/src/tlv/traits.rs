@@ -298,7 +298,7 @@ impl<T: ToTLV> ToTLV for Nullable<T> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum TLVArray<'a, T> {
     // This is used for the to-tlv path
     Slice(&'a [T]),
@@ -317,7 +317,7 @@ impl<'a, T: ToTLV> TLVArray<'a, T> {
     }
 
     pub fn iter(&self) -> TLVArrayIter<'a, T> {
-        match *self {
+        match self {
             Self::Slice(s) => TLVArrayIter::Slice(s.iter()),
             Self::Ptr(p) => TLVArrayIter::Ptr(p.enter()),
         }
@@ -401,7 +401,7 @@ impl<'a, T: FromTLV<'a> + Clone + ToTLV> ToTLV for TLVArray<'a, T> {
 impl<'a, T> FromTLV<'a> for TLVArray<'a, T> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
         t.confirm_array()?;
-        Ok(Self::Ptr(*t))
+        Ok(Self::Ptr(t.clone()))
     }
 }
 

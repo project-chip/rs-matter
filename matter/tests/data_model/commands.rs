@@ -75,10 +75,10 @@ fn test_invoke_cmds_unsupported_fields() {
     let invalid_command = CmdPath::new(Some(0), Some(echo_cluster::ID), Some(0x1234));
     let invalid_command_wc_endpoint = CmdPath::new(None, Some(echo_cluster::ID), Some(0x1234));
     let input = &[
-        cmd_data!(invalid_endpoint, 5),
-        cmd_data!(invalid_cluster, 5),
+        cmd_data!(invalid_endpoint.clone(), 5),
+        cmd_data!(invalid_cluster.clone(), 5),
         cmd_data!(invalid_cluster_wc_endpoint, 5),
-        cmd_data!(invalid_command, 5),
+        cmd_data!(invalid_command.clone(), 5),
         cmd_data!(invalid_command_wc_endpoint, 5),
     ];
 
