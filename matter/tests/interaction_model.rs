@@ -68,7 +68,7 @@ impl DataHandler for DataModel {
                         continue;
                     };
                     let cmd_path_ib = i.path;
-                    let mut common_data = &mut self.node;
+                    let common_data = &mut self.node;
                     common_data.endpoint = cmd_path_ib.path.endpoint.unwrap_or(1);
                     common_data.cluster = cmd_path_ib.path.cluster.unwrap_or(0);
                     common_data.command = cmd_path_ib.path.leaf.unwrap_or(0) as u16;

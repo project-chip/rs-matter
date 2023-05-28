@@ -244,6 +244,7 @@ pub mod builtin {
 
     const IP_BIND_ADDR: (IpAddr, u16) = (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_record(
         id: u16,
         hostname: &str,
@@ -552,6 +553,7 @@ pub mod builtin {
             select(&mut broadcast, &mut respond).await.unwrap()
         }
 
+        #[allow(clippy::await_holding_refcell_ref)]
         async fn broadcast(&self) -> Result<(), Error> {
             loop {
                 select(
@@ -562,29 +564,30 @@ pub mod builtin {
 
                 let mut index = 0;
 
-                while let Some(entry) = self
-                    .0
-                    .entries
-                    .borrow()
-                    .get(index)
-                    .map(|entry| entry.clone())
-                {
-                    info!("Broadasting mDNS entry {}", &entry.key);
+                loop {
+                    let entry = self.0.entries.borrow().get(index).cloned();
 
-                    self.0.bind().await?;
+                    if let Some(entry) = entry {
+                        info!("Broadasting mDNS entry {}", &entry.key);
 
-                    let udp = self.0.udp.borrow();
-                    let udp = udp.as_ref().unwrap();
+                        self.0.bind().await?;
 
-                    for (addr, port) in IP_BROADCAST_ADDRS {
-                        udp.send(SocketAddr::new(addr, port), &entry.record).await?;
+                        let udp = self.0.udp.borrow();
+                        let udp = udp.as_ref().unwrap();
+
+                        for (addr, port) in IP_BROADCAST_ADDRS {
+                            udp.send(SocketAddr::new(addr, port), &entry.record).await?;
+                        }
+
+                        index += 1;
+                    } else {
+                        break;
                     }
-
-                    index += 1;
                 }
             }
         }
 
+        #[allow(clippy::await_holding_refcell_ref)]
         async fn respond(&self) -> Result<(), Error> {
             loop {
                 let mut buf = [0; 1580];
