@@ -41,6 +41,7 @@ pub struct SecureChannel<'a> {
 }
 
 impl<'a> SecureChannel<'a> {
+    #[inline(always)]
     pub fn new(
         pase: &'a RefCell<PaseMgr>,
         fabric_mgr: &'a RefCell<FabricMgr>,

@@ -43,7 +43,6 @@ enum PaseMgrState {
     Disabled,
 }
 
-// Could this lock be avoided?
 pub struct PaseMgr {
     state: PaseMgrState,
     epoch: Epoch,
@@ -51,6 +50,7 @@ pub struct PaseMgr {
 }
 
 impl PaseMgr {
+    #[inline(always)]
     pub fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
             state: PaseMgrState::Disabled,

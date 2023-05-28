@@ -74,6 +74,7 @@ pub struct Case<'a> {
 }
 
 impl<'a> Case<'a> {
+    #[inline(always)]
     pub fn new(fabric_mgr: &'a RefCell<FabricMgr>, rand: Rand) -> Self {
         Self { fabric_mgr, rand }
     }
