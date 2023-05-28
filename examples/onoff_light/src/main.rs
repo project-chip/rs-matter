@@ -15,9 +15,10 @@
  *    limitations under the License.
  */
 
-use std::borrow::Borrow;
-use std::error::Error;
+use core::borrow::Borrow;
+use core::pin::pin;
 
+use embassy_futures::select::select;
 use log::info;
 use matter::core::{CommissioningData, Matter};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -28,37 +29,74 @@ use matter::data_model::objects::*;
 use matter::data_model::root_endpoint;
 use matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use matter::data_model::system_model::descriptor;
+use matter::error::Error;
 use matter::interaction_model::core::InteractionModel;
+use matter::mdns::builtin::Mdns;
 use matter::persist;
 use matter::secure_channel::spake2p::VerifierData;
+use matter::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use matter::transport::{
     mgr::RecvAction, mgr::TransportMgr, packet::MAX_RX_BUF_SIZE, packet::MAX_TX_BUF_SIZE,
     udp::UdpListener,
 };
+use matter::utils::select::EitherUnwrap;
 
 mod dev_att;
 
-fn main() -> Result<(), impl Error> {
-    env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+#[cfg(feature = "std")]
+fn main() -> Result<(), Error> {
+    let thread = std::thread::Builder::new()
+        .stack_size(120 * 1024)
+        .spawn(move || run())
+        .unwrap();
+
+    thread.join().unwrap()
+    // run()
+}
+
+#[cfg(not(feature = "std"))]
+#[no_mangle]
+fn main() {
+    run().unwrap();
+}
+
+fn run() -> Result<(), Error> {
+    initialize_logger();
+
+    info!(
+        "Matter memory: mDNS={}, Transport={} (of which Matter={})",
+        core::mem::size_of::<Mdns>(),
+        core::mem::size_of::<TransportMgr>(),
+        core::mem::size_of::<Matter>(),
     );
 
-    // vid/pid should match those in the DAC
-    let dev_info = BasicInfoConfig {
-        vid: 0xFFF1,
-        pid: 0x8000,
-        hw_ver: 2,
-        sw_ver: 1,
-        sw_ver_str: "1",
-        serial_no: "aabbccdd",
-        device_name: "OnOff Light",
-    };
+    let (ipv4_addr, ipv6_addr) = initialize_network()?;
 
-    //let mut mdns = matter::mdns::astro::AstroMdns::new()?;
-    let mut mdns = matter::mdns::libmdns::LibMdns::new()?;
-    //let mut mdns = matter::mdns::DummyMdns {};
+    let mut mdns = matter::mdns::builtin::Mdns::new(
+        0,
+        "matter-demo",
+        ipv4_addr.octets(),
+        Some(ipv6_addr.octets()),
+    );
 
-    let matter = Matter::new_default(&dev_info, &mut mdns, matter::MATTER_PORT);
+    let (mut mdns, mut mdns_runner) = mdns.split();
+    //let (mut mdns, mdns_runner) = (matter::mdns::astro::AstroMdns::new()?, core::future::pending::pending());
+    //let (mut mdns, mdns_runner) = (matter::mdns::DummyMdns {}, core::future::pending::pending());
+
+    let matter = Matter::new_default(
+        // vid/pid should match those in the DAC
+        &BasicInfoConfig {
+            vid: 0xFFF1,
+            pid: 0x8000,
+            hw_ver: 2,
+            sw_ver: 1,
+            sw_ver_str: "1",
+            serial_no: "aabbccdd",
+            device_name: "OnOff Light",
+        },
+        &mut mdns,
+        matter::MATTER_PORT,
+    );
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 
@@ -88,11 +126,17 @@ fn main() -> Result<(), impl Error> {
 
     let matter = &matter;
     let dev_att = &dev_att;
+    let mdns_runner = &mut mdns_runner;
 
     let mut transport = TransportMgr::new(matter);
+    let transport = &mut transport;
 
-    smol::block_on(async move {
-        let udp = UdpListener::new().await?;
+    let mut io_fut = pin!(async move {
+        let udp = UdpListener::new(SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            matter::MATTER_PORT,
+        ))
+        .await?;
 
         loop {
             let mut rx_buf = [0; MAX_RX_BUF_SIZE];
@@ -100,12 +144,13 @@ fn main() -> Result<(), impl Error> {
 
             let (len, addr) = udp.recv(&mut rx_buf).await?;
 
-            let mut completion = transport.recv(addr, &mut rx_buf[..len], &mut tx_buf);
+            let mut completion =
+                transport.recv(Address::Udp(addr), &mut rx_buf[..len], &mut tx_buf);
 
             while let Some(action) = completion.next_action()? {
                 match action {
                     RecvAction::Send(addr, buf) => {
-                        udp.send(addr, buf).await?;
+                        udp.send(addr.unwrap_udp(), buf).await?;
                     }
                     RecvAction::Interact(mut ctx) => {
                         let node = Node {
@@ -127,7 +172,8 @@ fn main() -> Result<(), impl Error> {
 
                         if im.handle(&mut ctx)? {
                             if ctx.send()? {
-                                udp.send(ctx.tx.peer, ctx.tx.as_slice()).await?;
+                                udp.send(ctx.tx.peer.unwrap_udp(), ctx.tx.as_slice())
+                                    .await?;
                             }
                         }
                     }
@@ -145,7 +191,13 @@ fn main() -> Result<(), impl Error> {
 
         #[allow(unreachable_code)]
         Ok::<_, matter::error::Error>(())
-    })?;
+    });
+
+    let mut mdns_fut = pin!(async move { mdns_runner.run().await });
+
+    let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut,).await.unwrap() });
+
+    smol::block_on(&mut fut)?;
 
     Ok::<_, matter::error::Error>(())
 }
@@ -162,4 +214,169 @@ fn handler<'a>(matter: &'a Matter<'a>, dev_att: &'a dyn DevAttDataFetcher) -> im
             cluster_on_off::ID,
             cluster_on_off::OnOffCluster::new(*matter.borrow()),
         )
+}
+
+#[cfg(not(target_os = "espidf"))]
+#[inline(never)]
+fn initialize_logger() {
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
+}
+
+#[cfg(not(target_os = "espidf"))]
+#[inline(never)]
+fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr), Error> {
+    use log::error;
+    use matter::error::ErrorCode;
+    use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
+
+    let interfaces = || {
+        nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {
+            ia.flags
+                .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
+                && !ia
+                    .flags
+                    .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
+        })
+    };
+
+    // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
+    // Most likely, this is the interface we need
+    // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
+    let (iname, ip, ipv6) = interfaces()
+        .filter_map(|ia| {
+            ia.address
+                .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
+                .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
+                .map(|ipv6| (ia.interface_name, ipv6))
+        })
+        .filter_map(|(iname, ipv6)| {
+            interfaces()
+                .filter(|ia2| ia2.interface_name == iname)
+                .find_map(|ia2| {
+                    ia2.address
+                        .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
+                        .map(|ip| (iname.clone(), ip, ipv6))
+                })
+        })
+        .next()
+        .ok_or_else(|| {
+            error!("Cannot find network interface suitable for mDNS broadcasting");
+            ErrorCode::Network
+        })?;
+
+    info!(
+        "Will use network interface {} with {}/{} for mDNS",
+        iname, ip, ipv6
+    );
+
+    Ok((ip, ipv6))
+}
+
+#[cfg(target_os = "espidf")]
+#[inline(never)]
+fn initialize_logger() {
+    esp_idf_svc::log::EspLogger::initialize_default();
+}
+
+#[cfg(target_os = "espidf")]
+#[inline(never)]
+fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr), Error> {
+    use core::time::Duration;
+
+    use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
+    use esp_idf_hal::prelude::Peripherals;
+    use esp_idf_svc::handle::RawHandle;
+    use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
+    use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
+    use esp_idf_sys::{
+        self as _, esp, esp_ip6_addr_t, esp_netif_create_ip6_linklocal, esp_netif_get_ip6_linklocal,
+    }; // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
+
+    const SSID: &'static str = env!("WIFI_SSID");
+    const PASSWORD: &'static str = env!("WIFI_PASS");
+
+    #[allow(clippy::needless_update)]
+    {
+        // VFS is necessary for poll-based async IO
+        esp_idf_sys::esp!(unsafe {
+            esp_idf_sys::esp_vfs_eventfd_register(&esp_idf_sys::esp_vfs_eventfd_config_t {
+                max_fds: 5,
+                ..Default::default()
+            })
+        })?;
+    }
+
+    let peripherals = Peripherals::take().unwrap();
+    let sys_loop = EspSystemEventLoop::take()?;
+    let nvs = EspDefaultNvsPartition::take()?;
+
+    let mut wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?;
+
+    let mut bwifi = BlockingWifi::wrap(&mut wifi, sys_loop)?;
+
+    let wifi_configuration: Configuration = Configuration::Client(ClientConfiguration {
+        ssid: SSID.into(),
+        bssid: None,
+        auth_method: AuthMethod::WPA2Personal,
+        password: PASSWORD.into(),
+        channel: None,
+    });
+
+    bwifi.set_configuration(&wifi_configuration)?;
+
+    bwifi.start()?;
+    info!("Wifi started");
+
+    bwifi.connect()?;
+    info!("Wifi connected");
+
+    esp!(unsafe {
+        esp_netif_create_ip6_linklocal(bwifi.wifi_mut().sta_netif_mut().handle() as _)
+    })?;
+
+    bwifi.wait_netif_up()?;
+    info!("Wifi netif up");
+
+    let ip_info = wifi.sta_netif().get_ip_info()?;
+
+    let mut ipv6: esp_ip6_addr_t = Default::default();
+
+    info!("Waiting for IPv6 address");
+
+    while esp!(unsafe { esp_netif_get_ip6_linklocal(wifi.sta_netif().handle() as _, &mut ipv6) })
+        .is_err()
+    {
+        info!("Waiting...");
+        std::thread::sleep(Duration::from_secs(2));
+    }
+
+    info!("Wifi DHCP info: {:?}, IPv6: {:?}", ip_info, ipv6.addr);
+
+    let ipv4_octets = ip_info.ip.octets();
+    let ipv6_octets = [
+        ipv6.addr[0].to_le_bytes()[0],
+        ipv6.addr[0].to_le_bytes()[1],
+        ipv6.addr[0].to_le_bytes()[2],
+        ipv6.addr[0].to_le_bytes()[3],
+        ipv6.addr[1].to_le_bytes()[0],
+        ipv6.addr[1].to_le_bytes()[1],
+        ipv6.addr[1].to_le_bytes()[2],
+        ipv6.addr[1].to_le_bytes()[3],
+        ipv6.addr[2].to_le_bytes()[0],
+        ipv6.addr[2].to_le_bytes()[1],
+        ipv6.addr[2].to_le_bytes()[2],
+        ipv6.addr[2].to_le_bytes()[3],
+        ipv6.addr[3].to_le_bytes()[0],
+        ipv6.addr[3].to_le_bytes()[1],
+        ipv6.addr[3].to_le_bytes()[2],
+        ipv6.addr[3].to_le_bytes()[3],
+    ];
+
+    // Not OK of course, but for a demo this is good enough
+    // Wifi will continue to be available and working in the background
+    core::mem::forget(wifi);
+
+    Ok((ipv4_octets.into(), ipv6_octets.into()))
 }

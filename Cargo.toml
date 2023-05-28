@@ -8,3 +8,10 @@ exclude = ["examples/*"]
 smol = { git = "https://github.com/esp-rs-compat/smol" }
 polling = { git = "https://github.com/esp-rs-compat/polling" }
 socket2 = { git = "https://github.com/esp-rs-compat/socket2" }
+
+[profile.release]
+opt-level = 3
+
+[profile.dev]
+debug = true
+opt-level = 3
