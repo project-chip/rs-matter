@@ -77,163 +77,228 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
     // For brevity, we only check the AttrPath, not the actual 'data'
     let dont_care = ElementType::U8(0);
     let part1 = vec![
-        attr_data!(0, 29, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 29, GlobalElements::AttributeList, dont_care),
-        attr_data!(0, 29, descriptor::Attributes::DeviceTypeList, dont_care),
-        attr_data!(0, 29, descriptor::Attributes::ServerList, dont_care),
-        attr_data!(0, 29, descriptor::Attributes::PartsList, dont_care),
-        attr_data!(0, 29, descriptor::Attributes::ClientList, dont_care),
-        attr_data!(0, 40, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 40, GlobalElements::AttributeList, dont_care),
+        attr_data!(0, 29, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 29, GlobalElements::AttributeList, dont_care.clone()),
+        attr_data!(
+            0,
+            29,
+            descriptor::Attributes::DeviceTypeList,
+            dont_care.clone()
+        ),
+        attr_data!(0, 29, descriptor::Attributes::ServerList, dont_care.clone()),
+        attr_data!(0, 29, descriptor::Attributes::PartsList, dont_care.clone()),
+        attr_data!(0, 29, descriptor::Attributes::ClientList, dont_care.clone()),
+        attr_data!(0, 40, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 40, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
             0,
             40,
             basic_info::AttributesDiscriminants::DMRevision,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             40,
             basic_info::AttributesDiscriminants::VendorId,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             40,
             basic_info::AttributesDiscriminants::ProductId,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, 40, basic_info::AttributesDiscriminants::HwVer, dont_care),
-        attr_data!(0, 40, basic_info::AttributesDiscriminants::SwVer, dont_care),
+        attr_data!(
+            0,
+            40,
+            basic_info::AttributesDiscriminants::HwVer,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            40,
+            basic_info::AttributesDiscriminants::SwVer,
+            dont_care.clone()
+        ),
         attr_data!(
             0,
             40,
             basic_info::AttributesDiscriminants::SwVerString,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             40,
             basic_info::AttributesDiscriminants::SerialNo,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, 48, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 48, GlobalElements::AttributeList, dont_care),
+        attr_data!(0, 48, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 48, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
             0,
             48,
             gen_comm::AttributesDiscriminants::BreadCrumb,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             48,
             gen_comm::AttributesDiscriminants::RegConfig,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             48,
             gen_comm::AttributesDiscriminants::LocationCapability,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             48,
             gen_comm::AttributesDiscriminants::BasicCommissioningInfo,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, 49, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 49, GlobalElements::AttributeList, dont_care),
-        attr_data!(0, 60, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 60, GlobalElements::AttributeList, dont_care),
+        attr_data!(0, 49, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 49, GlobalElements::AttributeList, dont_care.clone()),
+        attr_data!(0, 60, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 60, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
             0,
             60,
             adm_comm::AttributesDiscriminants::WindowStatus,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             60,
             adm_comm::AttributesDiscriminants::AdminFabricIndex,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             60,
             adm_comm::AttributesDiscriminants::AdminVendorId,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, 62, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 62, GlobalElements::AttributeList, dont_care),
+        attr_data!(0, 62, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 62, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
             0,
             62,
             noc::AttributesDiscriminants::CurrentFabricIndex,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, 62, noc::AttributesDiscriminants::Fabrics, dont_care),
+        attr_data!(
+            0,
+            62,
+            noc::AttributesDiscriminants::Fabrics,
+            dont_care.clone()
+        ),
         attr_data!(
             0,
             62,
             noc::AttributesDiscriminants::SupportedFabrics,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             62,
             noc::AttributesDiscriminants::CommissionedFabrics,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, 31, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, 31, GlobalElements::AttributeList, dont_care),
-        attr_data!(0, 31, acl::AttributesDiscriminants::Acl, dont_care),
-        attr_data!(0, 31, acl::AttributesDiscriminants::Extension, dont_care),
+        attr_data!(0, 31, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(0, 31, GlobalElements::AttributeList, dont_care.clone()),
+        attr_data!(0, 31, acl::AttributesDiscriminants::Acl, dont_care.clone()),
+        attr_data!(
+            0,
+            31,
+            acl::AttributesDiscriminants::Extension,
+            dont_care.clone()
+        ),
         attr_data!(
             0,
             31,
             acl::AttributesDiscriminants::SubjectsPerEntry,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             31,
             acl::AttributesDiscriminants::TargetsPerEntry,
-            dont_care
+            dont_care.clone()
         ),
         attr_data!(
             0,
             31,
             acl::AttributesDiscriminants::EntriesPerFabric,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(0, echo::ID, GlobalElements::FeatureMap, dont_care),
-        attr_data!(0, echo::ID, GlobalElements::AttributeList, dont_care),
-        attr_data!(0, echo::ID, echo::AttributesDiscriminants::Att1, dont_care),
-        attr_data!(0, echo::ID, echo::AttributesDiscriminants::Att2, dont_care),
+        attr_data!(0, echo::ID, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(
+            0,
+            echo::ID,
+            GlobalElements::AttributeList,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            echo::ID,
+            echo::AttributesDiscriminants::Att1,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            echo::ID,
+            echo::AttributesDiscriminants::Att2,
+            dont_care.clone()
+        ),
         attr_data!(
             0,
             echo::ID,
             echo::AttributesDiscriminants::AttCustom,
-            dont_care
+            dont_care.clone()
         ),
-        attr_data!(1, 29, GlobalElements::FeatureMap, dont_care),
-        attr_data!(1, 29, GlobalElements::AttributeList, dont_care),
-        attr_data!(1, 29, descriptor::Attributes::DeviceTypeList, dont_care),
+        attr_data!(1, 29, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(1, 29, GlobalElements::AttributeList, dont_care.clone()),
+        attr_data!(
+            1,
+            29,
+            descriptor::Attributes::DeviceTypeList,
+            dont_care.clone()
+        ),
     ];
 
     let part2 = vec![
-        attr_data!(1, 29, descriptor::Attributes::ServerList, dont_care),
-        attr_data!(1, 29, descriptor::Attributes::PartsList, dont_care),
-        attr_data!(1, 29, descriptor::Attributes::ClientList, dont_care),
-        attr_data!(1, 6, GlobalElements::FeatureMap, dont_care),
-        attr_data!(1, 6, GlobalElements::AttributeList, dont_care),
-        attr_data!(1, 6, onoff::AttributesDiscriminants::OnOff, dont_care),
-        attr_data!(1, echo::ID, GlobalElements::FeatureMap, dont_care),
-        attr_data!(1, echo::ID, GlobalElements::AttributeList, dont_care),
-        attr_data!(1, echo::ID, echo::AttributesDiscriminants::Att1, dont_care),
-        attr_data!(1, echo::ID, echo::AttributesDiscriminants::Att2, dont_care),
+        attr_data!(1, 29, descriptor::Attributes::ServerList, dont_care.clone()),
+        attr_data!(1, 29, descriptor::Attributes::PartsList, dont_care.clone()),
+        attr_data!(1, 29, descriptor::Attributes::ClientList, dont_care.clone()),
+        attr_data!(1, 6, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(1, 6, GlobalElements::AttributeList, dont_care.clone()),
+        attr_data!(
+            1,
+            6,
+            onoff::AttributesDiscriminants::OnOff,
+            dont_care.clone()
+        ),
+        attr_data!(1, echo::ID, GlobalElements::FeatureMap, dont_care.clone()),
+        attr_data!(
+            1,
+            echo::ID,
+            GlobalElements::AttributeList,
+            dont_care.clone()
+        ),
+        attr_data!(
+            1,
+            echo::ID,
+            echo::AttributesDiscriminants::Att1,
+            dont_care.clone()
+        ),
+        attr_data!(
+            1,
+            echo::ID,
+            echo::AttributesDiscriminants::Att2,
+            dont_care.clone()
+        ),
         attr_data!(
             1,
             echo::ID,

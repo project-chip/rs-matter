@@ -84,11 +84,11 @@ impl<'a> Iterable for Option<&'a TLVArray<'a, DataVersionFilter>> {
 impl<'a> Iterable for &'a [DataVersionFilter] {
     type Item = DataVersionFilter;
 
-    type Iterator<'i> = core::iter::Copied<core::slice::Iter<'i, DataVersionFilter>> where Self: 'i;
+    type Iterator<'i> = core::iter::Cloned<core::slice::Iter<'i, DataVersionFilter>> where Self: 'i;
 
     fn iter(&self) -> Self::Iterator<'_> {
         let slice: &[DataVersionFilter] = self;
-        slice.iter().copied()
+        slice.iter().cloned()
     }
 }
 
@@ -127,11 +127,11 @@ impl<'a> Node<'a> {
         's: 'm,
     {
         self.read_attr_requests(
-            req.paths.iter().copied(),
+            req.paths.iter().cloned(),
             req.filters.as_slice(),
             req.fabric_filtered,
             accessor,
-            Some(req.resume_path),
+            Some(req.resume_path.clone()),
         )
     }
 
@@ -163,11 +163,11 @@ impl<'a> Node<'a> {
         's: 'm,
     {
         self.read_attr_requests(
-            req.paths.iter().copied(),
+            req.paths.iter().cloned(),
             req.filters.as_slice(),
             req.fabric_filtered,
             accessor,
-            Some(req.resume_path.unwrap()),
+            Some(req.resume_path.clone().unwrap()),
         )
     }
 
@@ -187,7 +187,7 @@ impl<'a> Node<'a> {
         attr_requests.flat_map(move |path| {
             if path.to_gp().is_wildcard() {
                 let dataver_filters = dataver_filters.clone();
-                let from = from;
+                let from = from.clone();
 
                 let iter = self
                     .match_attributes(path.endpoint, path.cluster, path.attr)
@@ -302,7 +302,7 @@ impl<'a> Node<'a> {
                                 dataver: attr_data.data_ver,
                                 wildcard: true,
                             },
-                            attr_data.data.unwrap_tlv().unwrap(),
+                            attr_data.data.clone().unwrap_tlv().unwrap(),
                         ))
                     });
 
@@ -367,7 +367,7 @@ impl<'a> Node<'a> {
                                     cmd_id: cmd,
                                     wildcard: true,
                                 },
-                                cmd_data.data.unwrap_tlv().unwrap(),
+                                cmd_data.data.clone().unwrap_tlv().unwrap(),
                             ))
                         });
 

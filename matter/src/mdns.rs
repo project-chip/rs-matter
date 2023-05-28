@@ -234,15 +234,15 @@ pub mod builtin {
     use crate::transport::udp::UdpListener;
     use crate::utils::select::EitherUnwrap;
 
-    const IP_BROADCAST_ADDRS: [SocketAddr; 2] = [
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)), 5353),
-        SocketAddr::new(
+    const IP_BROADCAST_ADDRS: [(IpAddr, u16); 2] = [
+        (IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)), 5353),
+        (
             IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb)),
             5353,
         ),
     ];
 
-    const IP_BIND_ADDR: SocketAddr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
+    const IP_BIND_ADDR: (IpAddr, u16) = (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
 
     pub fn create_record(
         id: u16,
@@ -429,7 +429,8 @@ pub mod builtin {
 
         async fn bind(&self) -> Result<(), Error> {
             if self.udp.borrow().is_none() {
-                *self.udp.borrow_mut() = Some(UdpListener::new(IP_BIND_ADDR).await?);
+                *self.udp.borrow_mut() =
+                    Some(UdpListener::new(SocketAddr::new(IP_BIND_ADDR.0, IP_BIND_ADDR.1)).await?);
             }
 
             Ok(())
@@ -575,8 +576,8 @@ pub mod builtin {
                     let udp = self.0.udp.borrow();
                     let udp = udp.as_ref().unwrap();
 
-                    for addr in IP_BROADCAST_ADDRS {
-                        udp.send(addr, &entry.record).await?;
+                    for (addr, port) in IP_BROADCAST_ADDRS {
+                        udp.send(SocketAddr::new(addr, port), &entry.record).await?;
                     }
 
                     index += 1;

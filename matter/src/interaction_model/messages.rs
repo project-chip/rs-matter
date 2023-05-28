@@ -23,7 +23,7 @@ use crate::{
 
 // A generic path with endpoint, clusters, and a leaf
 // The leaf could be command, attribute, event
-#[derive(Default, Clone, Copy, Debug, PartialEq, FromTLV, ToTLV)]
+#[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
 #[tlvargs(datatype = "list")]
 pub struct GenericPath {
     pub endpoint: Option<EndptId>,
@@ -105,16 +105,6 @@ pub mod msg {
         pub fn set_attr_requests(mut self, requests: &'a [AttrPath]) -> Self {
             self.attr_requests = Some(TLVArray::new(requests));
             self
-        }
-
-        pub fn to_read_req(&self) -> ReadReq<'a> {
-            ReadReq {
-                attr_requests: self.attr_requests,
-                event_requests: self.event_requests,
-                event_filters: self.event_filters,
-                fabric_filtered: self.fabric_filtered,
-                dataver_filters: self.dataver_filters,
-            }
         }
     }
 
@@ -268,7 +258,7 @@ pub mod ib {
     use super::GenericPath;
 
     // Command Response
-    #[derive(Clone, Copy, FromTLV, ToTLV, Debug)]
+    #[derive(Clone, FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub enum InvResp<'a> {
         Cmd(CmdData<'a>),
@@ -301,7 +291,7 @@ pub mod ib {
         }
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone, PartialEq, Debug)]
+    #[derive(FromTLV, ToTLV, Clone, PartialEq, Debug)]
     pub struct CmdStatus {
         path: CmdPath,
         status: Status,
@@ -319,7 +309,7 @@ pub mod ib {
         }
     }
 
-    #[derive(Debug, Clone, Copy, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct CmdData<'a> {
         pub path: CmdPath,
@@ -338,7 +328,7 @@ pub mod ib {
     }
 
     // Status
-    #[derive(Debug, Clone, Copy, PartialEq, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
     pub struct Status {
         pub status: IMStatusCode,
         pub cluster_status: u16,
@@ -354,7 +344,7 @@ pub mod ib {
     }
 
     // Attribute Response
-    #[derive(Clone, Copy, FromTLV, ToTLV, PartialEq, Debug)]
+    #[derive(Clone, FromTLV, ToTLV, PartialEq, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub enum AttrResp<'a> {
         Status(AttrStatus),
@@ -390,7 +380,7 @@ pub mod ib {
     }
 
     // Attribute Data
-    #[derive(Clone, Copy, PartialEq, FromTLV, ToTLV, Debug)]
+    #[derive(Clone, PartialEq, FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct AttrData<'a> {
         pub data_ver: Option<u32>,
@@ -458,7 +448,7 @@ pub mod ib {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
     pub struct AttrStatus {
         path: AttrPath,
         status: Status,
@@ -474,7 +464,7 @@ pub mod ib {
     }
 
     // Attribute Path
-    #[derive(Default, Clone, Copy, Debug, PartialEq, FromTLV, ToTLV)]
+    #[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
     #[tlvargs(datatype = "list")]
     pub struct AttrPath {
         pub tag_compression: Option<bool>,
@@ -501,7 +491,7 @@ pub mod ib {
     }
 
     // Command Path
-    #[derive(Default, Debug, Copy, Clone, PartialEq)]
+    #[derive(Default, Debug, Clone, PartialEq)]
     pub struct CmdPath {
         pub path: GenericPath,
     }
@@ -557,20 +547,20 @@ pub mod ib {
         }
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone, Debug)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     pub struct ClusterPath {
         pub node: Option<u64>,
         pub endpoint: EndptId,
         pub cluster: ClusterId,
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone, Debug)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     pub struct DataVersionFilter {
         pub path: ClusterPath,
         pub data_ver: u32,
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone, Debug)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     #[tlvargs(datatype = "list")]
     pub struct EventPath {
         pub node: Option<u64>,
@@ -580,7 +570,7 @@ pub mod ib {
         pub is_urgent: Option<bool>,
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone, Debug)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     pub struct EventFilter {
         pub node: Option<u64>,
         pub event_min: Option<u64>,

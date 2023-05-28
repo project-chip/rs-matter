@@ -260,7 +260,7 @@ impl<'a> AccessReq<'a> {
     }
 }
 
-#[derive(FromTLV, ToTLV, Copy, Clone, Debug, PartialEq)]
+#[derive(FromTLV, ToTLV, Clone, Debug, PartialEq)]
 pub struct Target {
     cluster: Option<ClusterId>,
     endpoint: Option<EndptId>,
@@ -283,7 +283,7 @@ impl Target {
 
 type Subjects = [Option<u64>; SUBJECTS_PER_ENTRY];
 type Targets = [Option<Target>; TARGETS_PER_ENTRY];
-#[derive(ToTLV, FromTLV, Copy, Clone, Debug, PartialEq)]
+#[derive(ToTLV, FromTLV, Clone, Debug, PartialEq)]
 #[tlvargs(start = 1)]
 pub struct AclEntry {
     privilege: Privilege,
@@ -463,7 +463,11 @@ impl AclMgr {
 
     pub fn delete_for_fabric(&mut self, fab_idx: u8) -> Result<(), Error> {
         for entry in &mut self.entries {
-            if entry.map(|e| e.fab_idx == Some(fab_idx)).unwrap_or(false) {
+            if entry
+                .as_ref()
+                .map(|e| e.fab_idx == Some(fab_idx))
+                .unwrap_or(false)
+            {
                 *entry = None;
                 self.changed = true;
             }
@@ -545,7 +549,11 @@ impl AclMgr {
         for (curr_index, entry) in self
             .entries
             .iter_mut()
-            .filter(|e| e.filter(|e1| e1.fab_idx == Some(fab_idx)).is_some())
+            .filter(|e| {
+                e.as_ref()
+                    .filter(|e1| e1.fab_idx == Some(fab_idx))
+                    .is_some()
+            })
             .enumerate()
         {
             if curr_index == index as usize {
@@ -779,7 +787,7 @@ mod tests {
         am.borrow_mut().add(new).unwrap();
 
         // Write on an RWVA without admin access - deny
-        let mut req = AccessReq::new(&accessor, path, Access::WRITE);
+        let mut req = AccessReq::new(&accessor, path.clone(), Access::WRITE);
         req.set_target_perms(Access::RWVA);
         assert_eq!(req.allow(), false);
 
@@ -806,7 +814,7 @@ mod tests {
         am.borrow_mut().erase_all().unwrap();
         let path = GenericPath::new(Some(1), Some(1234), None);
         let accessor2 = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, &am);
-        let mut req2 = AccessReq::new(&accessor2, path, Access::READ);
+        let mut req2 = AccessReq::new(&accessor2, path.clone(), Access::READ);
         req2.set_target_perms(Access::RWVA);
         let accessor3 = Accessor::new(3, AccessorSubjects::new(112233), AuthMode::Case, &am);
         let mut req3 = AccessReq::new(&accessor3, path, Access::READ);

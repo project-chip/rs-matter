@@ -41,7 +41,7 @@ impl RetransEntry {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct AckEntry {
     // The msg counter that we should acknowledge
     msg_ctr: u32,
@@ -92,7 +92,7 @@ impl ReliableMessage {
     // Check any pending acknowledgements / retransmissions and take action
     pub fn is_ack_ready(&self, epoch: Epoch) -> bool {
         // Acknowledgements
-        if let Some(ack_entry) = self.ack {
+        if let Some(ack_entry) = &self.ack {
             ack_entry.has_timed_out(epoch)
         } else {
             false
@@ -107,7 +107,7 @@ impl ReliableMessage {
         // Check if any acknowledgements are pending for this exchange,
 
         // if so, piggy back in the encoded header here
-        if let Some(ack_entry) = self.ack {
+        if let Some(ack_entry) = &self.ack {
             // Ack Entry exists, set ACK bit and remove from table
             proto_tx.proto.set_ack(ack_entry.get_msg_ctr());
             self.ack = None;

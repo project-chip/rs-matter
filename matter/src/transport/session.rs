@@ -37,7 +37,7 @@ pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
 const MATTER_AES128_KEY_SIZE: usize = 16;
 
-#[derive(Debug, Default, Copy, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct CaseDetails {
     pub fab_idx: u8,
     pub cat_ids: NocCatIds,
@@ -52,7 +52,7 @@ impl CaseDetails {
     }
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub enum SessionMode {
     // The Case session will capture the local fabric index
     Case(CaseDetails),
@@ -149,7 +149,7 @@ impl Session {
             peer_sess_id: clone_from.peer_sess_id,
             msg_ctr: Self::rand_msg_ctr(rand),
             rx_ctr_state: RxCtrState::new(0),
-            mode: clone_from.mode,
+            mode: clone_from.mode.clone(),
             data: None,
             last_use: epoch(),
         }
@@ -207,14 +207,14 @@ impl Session {
     }
 
     pub fn get_local_fabric_idx(&self) -> Option<u8> {
-        match self.mode {
+        match &self.mode {
             SessionMode::Case(a) => Some(a.fab_idx),
             _ => None,
         }
     }
 
-    pub fn get_session_mode(&self) -> SessionMode {
-        self.mode
+    pub fn get_session_mode(&self) -> &SessionMode {
+        &self.mode
     }
 
     pub fn get_msg_ctr(&mut self) -> u32 {
@@ -454,7 +454,7 @@ impl SessionMgr {
         Some(self.get_session_handle(index))
     }
 
-    fn get_or_add(
+    pub fn get_or_add(
         &mut self,
         sess_id: u16,
         peer_addr: Address,

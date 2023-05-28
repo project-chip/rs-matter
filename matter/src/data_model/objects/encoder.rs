@@ -39,7 +39,7 @@ use super::{AttrDetails, CmdDetails, Handler};
 // the tw.rewind() in that case, if we add this support
 pub type EncodeValueGen<'a> = &'a dyn Fn(TagType, &mut TLVWriter);
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 /// A structure for encoding various types of values
 pub enum EncodeValue<'a> {
     /// This indicates a value that is dynamically generated. This variant
@@ -66,13 +66,13 @@ impl<'a> EncodeValue<'a> {
 
 impl<'a> PartialEq for EncodeValue<'a> {
     fn eq(&self, other: &Self) -> bool {
-        match *self {
+        match self {
             EncodeValue::Closure(_) => {
                 error!("PartialEq not yet supported");
                 false
             }
             EncodeValue::Tlv(a) => {
-                if let EncodeValue::Tlv(b) = *other {
+                if let EncodeValue::Tlv(b) = other {
                     a == b
                 } else {
                     false
@@ -89,7 +89,7 @@ impl<'a> PartialEq for EncodeValue<'a> {
 
 impl<'a> Debug for EncodeValue<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), core::fmt::Error> {
-        match *self {
+        match self {
             EncodeValue::Closure(_) => write!(f, "Contains closure"),
             EncodeValue::Tlv(t) => write!(f, "{:?}", t),
             EncodeValue::Value(_) => write!(f, "Contains EncodeValue"),
@@ -113,7 +113,7 @@ impl<'a> ToTLV for EncodeValue<'a> {
 
 impl<'a> FromTLV<'a> for EncodeValue<'a> {
     fn from_tlv(data: &TLVElement<'a>) -> Result<Self, Error> {
-        Ok(EncodeValue::Tlv(*data))
+        Ok(EncodeValue::Tlv(data.clone()))
     }
 }
 

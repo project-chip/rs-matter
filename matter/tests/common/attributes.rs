@@ -28,7 +28,7 @@ pub fn __assert_attr_report(received: &ReportDataMsg, expected: &[AttrResp], ski
     // We can't use assert_eq because it will also try to match data-version
     for inv_response in received.attr_reports.as_ref().unwrap().iter() {
         println!("Validating index {}", index);
-        match expected[index] {
+        match &expected[index] {
             AttrResp::Data(e_d) => match inv_response {
                 AttrResp::Data(d) => {
                     // We don't match the data-version
@@ -41,7 +41,7 @@ pub fn __assert_attr_report(received: &ReportDataMsg, expected: &[AttrResp], ski
                     panic!("Invalid response, expected AttrRespIn::Data");
                 }
             },
-            AttrResp::Status(s) => assert_eq!(AttrResp::Status(s), inv_response),
+            AttrResp::Status(s) => assert_eq!(AttrResp::Status(s.clone()), inv_response),
         }
         println!("Index {} success", index);
         index += 1;
