@@ -392,9 +392,9 @@ pub mod builtin {
 
     impl MdnsEntry {
         #[inline(always)]
-        const fn new() -> Self {
+        const fn new(key: heapless::String<64>) -> Self {
             Self {
-                key: heapless::String::new(),
+                key,
                 record: heapless::Vec::new(),
             }
         }
@@ -479,7 +479,7 @@ pub mod builtin {
 
             entries.retain(|entry| entry.key != key);
             entries
-                .push(MdnsEntry::new())
+                .push(MdnsEntry::new(key))
                 .map_err(|_| ErrorCode::NoSpace)?;
 
             let entry = entries.iter_mut().last().unwrap();
