@@ -27,7 +27,6 @@ use matter::data_model::core::DataModel;
 use matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use matter::data_model::objects::*;
 use matter::data_model::root_endpoint;
-use matter::data_model::sdm::dev_att::DevAttDataFetcher;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
 use matter::interaction_model::core::InteractionModel;
@@ -36,7 +35,7 @@ use matter::persist;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use matter::transport::{
-    mgr::RecvAction, mgr::TransportMgr, packet::MAX_RX_BUF_SIZE, packet::MAX_TX_BUF_SIZE,
+    core::RecvAction, core::Transport, packet::MAX_RX_BUF_SIZE, packet::MAX_TX_BUF_SIZE,
     udp::UdpListener,
 };
 use matter::utils::select::EitherUnwrap;
@@ -66,7 +65,7 @@ fn run() -> Result<(), Error> {
     info!(
         "Matter memory: mDNS={}, Transport={} (of which Matter={})",
         core::mem::size_of::<Mdns>(),
-        core::mem::size_of::<TransportMgr>(),
+        core::mem::size_of::<Transport>(),
         core::mem::size_of::<Matter>(),
     );
 
@@ -83,9 +82,11 @@ fn run() -> Result<(), Error> {
     //let (mut mdns, mdns_runner) = (matter::mdns::astro::AstroMdns::new()?, core::future::pending::pending());
     //let (mut mdns, mdns_runner) = (matter::mdns::DummyMdns {}, core::future::pending::pending());
 
+    let dev_att = dev_att::HardCodedDevAtt::new();
+
     let matter = Matter::new_default(
         // vid/pid should match those in the DAC
-        &BasicInfoConfig {
+        BasicInfoConfig {
             vid: 0xFFF1,
             pid: 0x8000,
             hw_ver: 2,
@@ -94,11 +95,10 @@ fn run() -> Result<(), Error> {
             serial_no: "aabbccdd",
             device_name: "OnOff Light",
         },
+        &dev_att,
         &mut mdns,
         matter::MATTER_PORT,
     );
-
-    let dev_att = dev_att::HardCodedDevAtt::new();
 
     let psm_path = std::env::temp_dir().join("matter-iot");
     info!("Persisting from/to {}", psm_path.display());
@@ -115,7 +115,9 @@ fn run() -> Result<(), Error> {
         matter.load_fabrics(data)?;
     }
 
-    matter.start(
+    let mut transport = Transport::new(&matter);
+
+    transport.start(
         CommissioningData {
             // TODO: Hard-coded for now
             verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
@@ -125,10 +127,7 @@ fn run() -> Result<(), Error> {
     )?;
 
     let matter = &matter;
-    let dev_att = &dev_att;
     let mdns_runner = &mut mdns_runner;
-
-    let mut transport = TransportMgr::new(matter);
     let transport = &mut transport;
 
     let mut io_fut = pin!(async move {
@@ -165,7 +164,7 @@ fn run() -> Result<(), Error> {
                             ],
                         };
 
-                        let mut handler = handler(matter, dev_att);
+                        let mut handler = handler(matter);
 
                         let mut im =
                             InteractionModel(DataModel::new(matter.borrow(), &node, &mut handler));
@@ -180,11 +179,11 @@ fn run() -> Result<(), Error> {
                 }
             }
 
-            if let Some(data) = matter.store_fabrics(&mut buf)? {
+            if let Some(data) = transport.matter().store_fabrics(&mut buf)? {
                 psm.store("fabrics", data)?;
             }
 
-            if let Some(data) = matter.store_acls(&mut buf)? {
+            if let Some(data) = transport.matter().store_acls(&mut buf)? {
                 psm.store("acls", data)?;
             }
         }
@@ -202,8 +201,8 @@ fn run() -> Result<(), Error> {
     Ok::<_, matter::error::Error>(())
 }
 
-fn handler<'a>(matter: &'a Matter<'a>, dev_att: &'a dyn DevAttDataFetcher) -> impl Handler + 'a {
-    root_endpoint::handler(0, dev_att, matter)
+fn handler<'a>(matter: &'a Matter<'a>) -> impl Handler + 'a {
+    root_endpoint::handler(0, matter)
         .chain(
             1,
             descriptor::ID,

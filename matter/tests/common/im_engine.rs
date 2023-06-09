@@ -65,7 +65,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     device_name: "Test Device",
 };
 
-pub struct DummyDevAtt {}
+struct DummyDevAtt;
 
 impl DevAttDataFetcher for DummyDevAtt {
     fn get_devatt_data(&self, _data_type: DataType, _data: &mut [u8]) -> Result<usize, Error> {
@@ -110,7 +110,7 @@ pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
     #[cfg(not(feature = "std"))]
     use matter::utils::epoch::dummy_epoch as epoch;
 
-    Matter::new(&BASIC_INFO, mdns, epoch, dummy_rand, 5540)
+    Matter::new(BASIC_INFO, &DummyDevAtt, mdns, epoch, dummy_rand, 5540)
 }
 
 /// An Interaction Model Engine to facilitate easy testing
@@ -161,7 +161,7 @@ impl<'a> ImEngine<'a> {
                     },
                 ],
             },
-            root_endpoint::handler(0, &DummyDevAtt {}, matter)
+            root_endpoint::handler(0, matter)
                 .chain(0, echo_cluster::ID, EchoCluster::new(2, *matter.borrow()))
                 .chain(1, descriptor::ID, DescriptorCluster::new(*matter.borrow()))
                 .chain(1, echo_cluster::ID, EchoCluster::new(3, *matter.borrow()))

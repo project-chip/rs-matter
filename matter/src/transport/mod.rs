@@ -15,9 +15,9 @@
  *    limitations under the License.
  */
 
+pub mod core;
 mod dedup;
 pub mod exchange;
-pub mod mgr;
 pub mod mrp;
 pub mod network;
 pub mod packet;

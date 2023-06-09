@@ -19,7 +19,10 @@ use core::{borrow::Borrow, cell::RefCell};
 
 use crate::{
     acl::AclMgr,
-    data_model::{cluster_basic_information::BasicInfoConfig, sdm::failsafe::FailSafe},
+    data_model::{
+        cluster_basic_information::BasicInfoConfig,
+        sdm::{dev_att::DevAttDataFetcher, failsafe::FailSafe},
+    },
     error::*,
     fabric::FabricMgr,
     mdns::{Mdns, MdnsMgr},
@@ -48,17 +51,24 @@ pub struct Matter<'a> {
     pub mdns_mgr: RefCell<MdnsMgr<'a>>,
     pub epoch: Epoch,
     pub rand: Rand,
-    pub dev_det: &'a BasicInfoConfig<'a>,
+    pub dev_det: BasicInfoConfig<'a>,
+    pub dev_att: &'a dyn DevAttDataFetcher,
+    pub port: u16,
 }
 
 impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
     #[inline(always)]
-    pub fn new_default(dev_det: &'a BasicInfoConfig, mdns: &'a mut dyn Mdns, port: u16) -> Self {
+    pub fn new_default(
+        dev_det: BasicInfoConfig<'a>,
+        dev_att: &'a dyn DevAttDataFetcher,
+        mdns: &'a mut dyn Mdns,
+        port: u16,
+    ) -> Self {
         use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
 
-        Self::new(dev_det, mdns, sys_epoch, sys_rand, port)
+        Self::new(dev_det, dev_att, mdns, sys_epoch, sys_rand, port)
     }
 
     /// Creates a new Matter object
@@ -69,7 +79,8 @@ impl<'a> Matter<'a> {
     /// this object to return the device attestation details when queried upon.
     #[inline(always)]
     pub fn new(
-        dev_det: &'a BasicInfoConfig,
+        dev_det: BasicInfoConfig<'a>,
+        dev_att: &'a dyn DevAttDataFetcher,
         mdns: &'a mut dyn Mdns,
         epoch: Epoch,
         rand: Rand,
@@ -90,11 +101,21 @@ impl<'a> Matter<'a> {
             epoch,
             rand,
             dev_det,
+            dev_att,
+            port,
         }
     }
 
-    pub fn dev_det(&self) -> &BasicInfoConfig {
-        self.dev_det
+    pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
+        &self.dev_det
+    }
+
+    pub fn dev_att(&self) -> &dyn DevAttDataFetcher {
+        self.dev_att
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
@@ -119,11 +140,15 @@ impl<'a> Matter<'a> {
         self.acl_mgr.borrow().is_changed() || self.fabric_mgr.borrow().is_changed()
     }
 
-    pub fn start(&self, dev_comm: CommissioningData, buf: &mut [u8]) -> Result<(), Error> {
-        let open_comm_window = self.fabric_mgr.borrow().is_empty();
-        if open_comm_window {
+    pub fn start_comissioning(
+        &self,
+        dev_comm: CommissioningData,
+        buf: &mut [u8],
+    ) -> Result<bool, Error> {
+        if !self.pase_mgr.borrow().is_pase_session_enabled() && self.fabric_mgr.borrow().is_empty()
+        {
             print_pairing_code_and_qr(
-                self.dev_det,
+                &self.dev_det,
                 &dev_comm,
                 DiscoveryCapabilities::default(),
                 buf,
@@ -134,9 +159,11 @@ impl<'a> Matter<'a> {
                 dev_comm.discriminator,
                 &mut self.mdns_mgr.borrow_mut(),
             )?;
-        }
 
-        Ok(())
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 

@@ -279,6 +279,7 @@ pub struct ExchangeMgr {
 pub const MAX_MRP_ENTRIES: usize = 4;
 
 impl ExchangeMgr {
+    #[inline(always)]
     pub fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
             sess_mgr: SessionMgr::new(epoch, rand),
