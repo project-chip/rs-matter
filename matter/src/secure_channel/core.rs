@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use core::{borrow::Borrow, cell::RefCell};
 
 use crate::{
     error::*,
@@ -24,7 +24,7 @@ use crate::{
     secure_channel::common::*,
     tlv,
     transport::{proto_ctx::ProtoCtx, session::CloneData},
-    utils::rand::Rand,
+    utils::{epoch::Epoch, rand::Rand},
 };
 use log::{error, info};
 use num;
@@ -42,14 +42,32 @@ pub struct SecureChannel<'a> {
 
 impl<'a> SecureChannel<'a> {
     #[inline(always)]
-    pub fn new(
+    pub fn new<
+        T: Borrow<RefCell<FabricMgr>>
+            + Borrow<RefCell<PaseMgr>>
+            + Borrow<RefCell<MdnsMgr<'a>>>
+            + Borrow<Epoch>
+            + Borrow<Rand>,
+    >(
+        matter: &'a T,
+    ) -> Self {
+        Self::wrap(
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            *matter.borrow(),
+        )
+    }
+
+    #[inline(always)]
+    pub fn wrap(
         pase: &'a RefCell<PaseMgr>,
-        fabric_mgr: &'a RefCell<FabricMgr>,
+        fabric: &'a RefCell<FabricMgr>,
         mdns: &'a RefCell<MdnsMgr<'a>>,
         rand: Rand,
     ) -> Self {
-        SecureChannel {
-            case: Case::new(fabric_mgr, rand),
+        Self {
+            case: Case::new(fabric, rand),
             pase,
             mdns,
         }

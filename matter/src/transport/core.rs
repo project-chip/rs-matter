@@ -15,22 +15,14 @@
  *    limitations under the License.
  */
 
-use core::borrow::Borrow;
-use core::cell::RefCell;
-
 use log::info;
 
-use crate::error::*;
-use crate::fabric::FabricMgr;
-use crate::mdns::MdnsMgr;
-use crate::secure_channel::pake::PaseMgr;
+use crate::{error::*, CommissioningData, Matter};
 
 use crate::secure_channel::common::PROTO_ID_SECURE_CHANNEL;
 use crate::secure_channel::core::SecureChannel;
 use crate::transport::mrp::ReliableMessage;
 use crate::transport::{exchange, network::Address, packet::Packet};
-use crate::utils::epoch::Epoch;
-use crate::utils::rand::Rand;
 
 use super::proto_ctx::ProtoCtx;
 use super::session::CloneData;
@@ -50,7 +42,7 @@ pub enum RecvAction<'r, 'p> {
 }
 
 pub struct RecvCompletion<'r, 'a, 'p> {
-    mgr: &'r mut TransportMgr<'a>,
+    transport: &'r mut Transport<'a>,
     rx: Packet<'p>,
     tx: Packet<'p>,
     state: RecvState,
@@ -69,20 +61,25 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
     }
 
     fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'p>>>, Error> {
-        self.mgr.exch_mgr.purge();
+        self.transport.exch_mgr.purge();
         self.tx.reset();
 
         let (state, next) = match core::mem::replace(&mut self.state, RecvState::New) {
             RecvState::New => {
-                self.mgr.exch_mgr.get_sess_mgr().decode(&mut self.rx)?;
+                self.transport
+                    .exch_mgr
+                    .get_sess_mgr()
+                    .decode(&mut self.rx)?;
                 (RecvState::OpenExchange, None)
             }
-            RecvState::OpenExchange => match self.mgr.exch_mgr.recv(&mut self.rx) {
+            RecvState::OpenExchange => match self.transport.exch_mgr.recv(&mut self.rx) {
                 Ok(Some(exch_ctx)) => {
                     if self.rx.get_proto_id() == PROTO_ID_SECURE_CHANNEL {
                         let mut proto_ctx = ProtoCtx::new(exch_ctx, &self.rx, &mut self.tx);
 
-                        let (reply, clone_data) = self.mgr.secure_channel.handle(&mut proto_ctx)?;
+                        let mut secure_channel = SecureChannel::new(self.transport.matter);
+
+                        let (reply, clone_data) = secure_channel.handle(&mut proto_ctx)?;
 
                         let state = if let Some(clone_data) = clone_data {
                             RecvState::AddSession(clone_data)
@@ -115,15 +112,17 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                     _ => Err(e)?,
                 },
             },
-            RecvState::AddSession(clone_data) => match self.mgr.exch_mgr.add_session(&clone_data) {
-                Ok(_) => (RecvState::Ack, None),
-                Err(e) => match e.code() {
-                    ErrorCode::NoSpace => (RecvState::EvictSession2(clone_data), None),
-                    _ => Err(e)?,
-                },
-            },
+            RecvState::AddSession(clone_data) => {
+                match self.transport.exch_mgr.add_session(&clone_data) {
+                    Ok(_) => (RecvState::Ack, None),
+                    Err(e) => match e.code() {
+                        ErrorCode::NoSpace => (RecvState::EvictSession2(clone_data), None),
+                        _ => Err(e)?,
+                    },
+                }
+            }
             RecvState::EvictSession => {
-                if self.mgr.exch_mgr.evict_session(&mut self.tx)? {
+                if self.transport.exch_mgr.evict_session(&mut self.tx)? {
                     (
                         RecvState::OpenExchange,
                         Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
@@ -133,7 +132,7 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                 }
             }
             RecvState::EvictSession2(clone_data) => {
-                if self.mgr.exch_mgr.evict_session(&mut self.tx)? {
+                if self.transport.exch_mgr.evict_session(&mut self.tx)? {
                     (
                         RecvState::AddSession(clone_data),
                         Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
@@ -143,12 +142,12 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
                 }
             }
             RecvState::Ack => {
-                if let Some(exch_id) = self.mgr.exch_mgr.pending_ack() {
+                if let Some(exch_id) = self.transport.exch_mgr.pending_ack() {
                     info!("Sending MRP Standalone ACK for  exch {}", exch_id);
 
                     ReliableMessage::prepare_ack(exch_id, &mut self.tx);
 
-                    if self.mgr.exch_mgr.send(exch_id, &mut self.tx)? {
+                    if self.transport.exch_mgr.send(exch_id, &mut self.tx)? {
                         (
                             RecvState::Ack,
                             Some(Some(RecvAction::Send(self.tx.peer, self.tx.as_slice()))),
@@ -176,7 +175,7 @@ pub enum NotifyAction<'r, 'p> {
 
 pub struct NotifyCompletion<'r, 'a, 'p> {
     // TODO
-    _mgr: &'r mut TransportMgr<'a>,
+    _transport: &'r mut Transport<'a>,
     _rx: &'r mut Packet<'p>,
     _tx: &'r mut Packet<'p>,
     _state: NotifyState,
@@ -199,38 +198,35 @@ impl<'r, 'a, 'p> NotifyCompletion<'r, 'a, 'p> {
     }
 }
 
-pub struct TransportMgr<'a> {
+pub struct Transport<'a> {
+    matter: &'a Matter<'a>,
     exch_mgr: exchange::ExchangeMgr,
-    secure_channel: SecureChannel<'a>,
 }
 
-impl<'a> TransportMgr<'a> {
-    pub fn new<
-        T: Borrow<RefCell<FabricMgr>>
-            + Borrow<RefCell<PaseMgr>>
-            + Borrow<RefCell<MdnsMgr<'a>>>
-            + Borrow<Epoch>
-            + Borrow<Rand>,
-    >(
-        matter: &'a T,
-    ) -> Self {
-        Self::wrap(
-            SecureChannel::new(
-                matter.borrow(),
-                matter.borrow(),
-                matter.borrow(),
-                *matter.borrow(),
-            ),
-            *matter.borrow(),
-            *matter.borrow(),
-        )
+impl<'a> Transport<'a> {
+    #[inline(always)]
+    pub fn new(matter: &'a Matter<'a>) -> Self {
+        let epoch = matter.epoch;
+        let rand = matter.rand;
+
+        Self {
+            matter,
+            exch_mgr: exchange::ExchangeMgr::new(epoch, rand),
+        }
     }
 
-    pub fn wrap(secure_channel: SecureChannel<'a>, epoch: Epoch, rand: Rand) -> Self {
-        Self {
-            exch_mgr: exchange::ExchangeMgr::new(epoch, rand),
-            secure_channel,
+    pub fn matter(&self) -> &Matter<'a> {
+        &self.matter
+    }
+
+    pub fn start(&mut self, dev_comm: CommissioningData, buf: &mut [u8]) -> Result<(), Error> {
+        info!("Starting Matter transport");
+
+        if self.matter().start_comissioning(dev_comm, buf)? {
+            info!("Comissioning started");
         }
+
+        Ok(())
     }
 
     pub fn recv<'r, 'p>(
@@ -245,7 +241,7 @@ impl<'a> TransportMgr<'a> {
         rx.peer = addr;
 
         RecvCompletion {
-            mgr: self,
+            transport: self,
             rx,
             tx,
             state: RecvState::New,

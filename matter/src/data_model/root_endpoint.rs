@@ -55,15 +55,11 @@ pub fn endpoint(id: EndptId) -> Endpoint<'static> {
     }
 }
 
-pub fn handler<'a>(
-    endpoint_id: u16,
-    dev_att: &'a dyn DevAttDataFetcher,
-    matter: &'a Matter<'a>,
-) -> RootEndpointHandler<'a> {
+pub fn handler<'a>(endpoint_id: u16, matter: &'a Matter<'a>) -> RootEndpointHandler<'a> {
     wrap(
         endpoint_id,
         matter.dev_det(),
-        dev_att,
+        matter.dev_att(),
         matter.borrow(),
         matter.borrow(),
         matter.borrow(),

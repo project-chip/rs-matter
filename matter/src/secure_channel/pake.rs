@@ -59,6 +59,10 @@ impl PaseMgr {
         }
     }
 
+    pub fn is_pase_session_enabled(&self) -> bool {
+        matches!(&self.state, PaseMgrState::Enabled(_, _, _))
+    }
+
     pub fn enable_pase_session(
         &mut self,
         verifier: VerifierData,
