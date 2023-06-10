@@ -54,6 +54,39 @@ where
     }
 }
 
+impl<T> Mdns for &T
+where
+    T: Mdns,
+{
+    fn add(
+        &self,
+        name: &str,
+        service: &str,
+        protocol: &str,
+        port: u16,
+        service_subtypes: &[&str],
+        txt_kvs: &[(&str, &str)],
+    ) -> Result<(), Error> {
+        (**self).add(name, service, protocol, port, service_subtypes, txt_kvs)
+    }
+
+    fn remove(&self, name: &str, service: &str, protocol: &str, port: u16) -> Result<(), Error> {
+        (**self).remove(name, service, protocol, port)
+    }
+}
+
+#[cfg(all(feature = "std", feature = "astro-dnssd"))]
+pub type DefaultMdns = astro::Mdns;
+
+#[cfg(all(feature = "std", feature = "astro-dnssd"))]
+pub type DefaultMdnsRunner<'a> = astro::MdnsRunner<'a>;
+
+#[cfg(not(all(feature = "std", feature = "astro-dnssd")))]
+pub type DefaultMdns<'a> = builtin::Mdns<'a>;
+
+#[cfg(not(all(feature = "std", feature = "astro-dnssd")))]
+pub type DefaultMdnsRunner<'a> = builtin::MdnsRunner<'a>;
+
 pub struct DummyMdns;
 
 impl Mdns for DummyMdns {
@@ -239,8 +272,8 @@ pub mod builtin {
 
     const IP_BIND_ADDR: (IpAddr, u16) = (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
 
-    pub type MdnsTxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
-    pub type MdnsRxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
+    type MdnsTxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
+    type MdnsRxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
 
     #[allow(clippy::too_many_arguments)]
     pub fn create_record(
@@ -418,8 +451,87 @@ pub mod builtin {
             }
         }
 
-        pub fn split(&mut self) -> (MdnsApi<'_, 'a>, MdnsRunner<'_, 'a>) {
-            (MdnsApi(&*self), MdnsRunner(&*self))
+        pub fn add(
+            &self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+            service_subtypes: &[&str],
+            txt_kvs: &[(&str, &str)],
+        ) -> Result<(), Error> {
+            info!(
+                "Registering mDNS service {}/{}.{} [{:?}]/{}, keys [{:?}]",
+                name, service, protocol, service_subtypes, port, txt_kvs
+            );
+
+            let key = self.key(name, service, protocol, port);
+
+            let mut entries = self.entries.borrow_mut();
+
+            entries.retain(|entry| entry.key != key);
+            entries
+                .push(MdnsEntry::new(key))
+                .map_err(|_| ErrorCode::NoSpace)?;
+
+            let entry = entries.iter_mut().last().unwrap();
+            entry
+                .record
+                .resize(1024, 0)
+                .map_err(|_| ErrorCode::NoSpace)
+                .unwrap();
+
+            match create_record(
+                self.id,
+                self.hostname,
+                self.ip,
+                self.ipv6,
+                60, /*ttl_sec*/
+                name,
+                service,
+                protocol,
+                port,
+                service_subtypes,
+                txt_kvs,
+                &mut entry.record,
+            ) {
+                Ok(len) => entry.record.truncate(len),
+                Err(_) => {
+                    entries.pop();
+                    Err(ErrorCode::NoSpace)?;
+                }
+            }
+
+            self.notification.signal(());
+
+            Ok(())
+        }
+
+        pub fn remove(
+            &self,
+            name: &str,
+            service: &str,
+            protocol: &str,
+            port: u16,
+        ) -> Result<(), Error> {
+            info!(
+                "Deregistering mDNS service {}/{}.{}/{}",
+                name, service, protocol, port
+            );
+
+            let key = self.key(name, service, protocol, port);
+
+            let mut entries = self.entries.borrow_mut();
+
+            let old_len = entries.len();
+
+            entries.retain(|entry| entry.key != key);
+
+            if entries.len() != old_len {
+                self.notification.signal(());
+            }
+
+            Ok(())
         }
 
         fn key(
@@ -437,108 +549,27 @@ pub mod builtin {
         }
     }
 
-    pub struct MdnsApi<'a, 'b>(&'a Mdns<'b>);
+    pub struct MdnsRunner<'a>(&'a Mdns<'a>);
 
-    impl<'a, 'b> MdnsApi<'a, 'b> {
-        pub fn add(
-            &self,
-            name: &str,
-            service: &str,
-            protocol: &str,
-            port: u16,
-            service_subtypes: &[&str],
-            txt_kvs: &[(&str, &str)],
-        ) -> Result<(), Error> {
-            info!(
-                "Registering mDNS service {}/{}.{} [{:?}]/{}, keys [{:?}]",
-                name, service, protocol, service_subtypes, port, txt_kvs
-            );
-
-            let key = self.0.key(name, service, protocol, port);
-
-            let mut entries = self.0.entries.borrow_mut();
-
-            entries.retain(|entry| entry.key != key);
-            entries
-                .push(MdnsEntry::new(key))
-                .map_err(|_| ErrorCode::NoSpace)?;
-
-            let entry = entries.iter_mut().last().unwrap();
-            entry
-                .record
-                .resize(1024, 0)
-                .map_err(|_| ErrorCode::NoSpace)
-                .unwrap();
-
-            match create_record(
-                self.0.id,
-                self.0.hostname,
-                self.0.ip,
-                self.0.ipv6,
-                60, /*ttl_sec*/
-                name,
-                service,
-                protocol,
-                port,
-                service_subtypes,
-                txt_kvs,
-                &mut entry.record,
-            ) {
-                Ok(len) => entry.record.truncate(len),
-                Err(_) => {
-                    entries.pop();
-                    Err(ErrorCode::NoSpace)?;
-                }
-            }
-
-            self.0.notification.signal(());
-
-            Ok(())
+    impl<'a> MdnsRunner<'a> {
+        pub const fn new(mdns: &'a Mdns<'a>) -> Self {
+            Self(mdns)
         }
 
-        pub fn remove(
-            &self,
-            name: &str,
-            service: &str,
-            protocol: &str,
-            port: u16,
-        ) -> Result<(), Error> {
-            info!(
-                "Deregistering mDNS service {}/{}.{}/{}",
-                name, service, protocol, port
-            );
+        pub async fn run_udp(&mut self) -> Result<(), Error> {
+            let mut tx_buf = MdnsTxBuf::uninit();
+            let mut rx_buf = MdnsRxBuf::uninit();
 
-            let key = self.0.key(name, service, protocol, port);
-
-            let mut entries = self.0.entries.borrow_mut();
-
-            let old_len = entries.len();
-
-            entries.retain(|entry| entry.key != key);
-
-            if entries.len() != old_len {
-                self.0.notification.signal(());
-            }
-
-            Ok(())
-        }
-    }
-
-    pub struct MdnsRunner<'a, 'b>(&'a Mdns<'b>);
-
-    impl<'a, 'b> MdnsRunner<'a, 'b> {
-        pub async fn run_udp(
-            &mut self,
-            tx_buf: &mut MdnsTxBuf,
-            rx_buf: &mut MdnsRxBuf,
-        ) -> Result<(), Error> {
-            let udp = UdpListener::new(SocketAddr::new(IP_BIND_ADDR.0, IP_BIND_ADDR.1)).await?;
+            let tx_buf = &mut tx_buf;
+            let rx_buf = &mut rx_buf;
 
             let tx_pipe = Pipe::new(unsafe { tx_buf.assume_init_mut() });
             let rx_pipe = Pipe::new(unsafe { rx_buf.assume_init_mut() });
 
             let tx_pipe = &tx_pipe;
             let rx_pipe = &rx_pipe;
+
+            let udp = UdpListener::new(SocketAddr::new(IP_BIND_ADDR.0, IP_BIND_ADDR.1)).await?;
             let udp = &udp;
 
             let mut tx = pin!(async move {
@@ -584,7 +615,7 @@ pub mod builtin {
             select3(&mut tx, &mut rx, &mut run).await.unwrap()
         }
 
-        pub async fn run(&mut self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
+        pub async fn run(&self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
             let mut broadcast = pin!(self.broadcast(tx_pipe));
             let mut respond = pin!(self.respond(rx_pipe, tx_pipe));
 
@@ -667,7 +698,7 @@ pub mod builtin {
         }
     }
 
-    impl<'a, 'b> super::Mdns for MdnsApi<'a, 'b> {
+    impl<'a, 'b> super::Mdns for Mdns<'a> {
         fn add(
             &self,
             name: &str,
@@ -677,7 +708,7 @@ pub mod builtin {
             service_subtypes: &[&str],
             txt_kvs: &[(&str, &str)],
         ) -> Result<(), Error> {
-            MdnsApi::add(
+            Mdns::add(
                 self,
                 name,
                 service,
@@ -695,7 +726,7 @@ pub mod builtin {
             protocol: &str,
             port: u16,
         ) -> Result<(), Error> {
-            MdnsApi::remove(self, name, service, protocol, port)
+            Mdns::remove(self, name, service, protocol, port)
         }
     }
 }
@@ -705,28 +736,34 @@ pub mod astro {
     use core::cell::RefCell;
     use std::collections::HashMap;
 
-    use super::Mdns;
-    use crate::error::{Error, ErrorCode};
+    use crate::{
+        error::{Error, ErrorCode},
+        transport::pipe::Pipe,
+    };
     use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
     use log::info;
 
     #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-    pub struct ServiceId {
+    struct ServiceId {
         name: String,
         service: String,
         protocol: String,
         port: u16,
     }
 
-    pub struct AstroMdns {
+    pub struct Mdns {
         services: RefCell<HashMap<ServiceId, RegisteredDnsService>>,
     }
 
-    impl AstroMdns {
-        pub fn new() -> Result<Self, Error> {
-            Ok(Self {
+    impl Mdns {
+        pub fn new(_id: u16, _hostname: &str, _ip: [u8; 4], _ipv6: Option<[u8; 16]>) -> Self {
+            Self::native_new()
+        }
+
+        pub fn native_new() -> Self {
+            Self {
                 services: RefCell::new(HashMap::new()),
-            })
+            }
         }
 
         pub fn add(
@@ -798,7 +835,23 @@ pub mod astro {
         }
     }
 
-    impl Mdns for AstroMdns {
+    pub struct MdnsRunner<'a>(&'a Mdns);
+
+    impl<'a> MdnsRunner<'a> {
+        pub const fn new(mdns: &'a Mdns) -> Self {
+            Self(mdns)
+        }
+
+        pub async fn run_udp(&mut self) -> Result<(), Error> {
+            core::future::pending::<Result<(), Error>>().await
+        }
+
+        pub async fn run(&self, _tx_pipe: &Pipe<'_>, _rx_pipe: &Pipe<'_>) -> Result<(), Error> {
+            core::future::pending::<Result<(), Error>>().await
+        }
+    }
+
+    impl super::Mdns for Mdns {
         fn add(
             &self,
             name: &str,
@@ -808,7 +861,7 @@ pub mod astro {
             service_subtypes: &[&str],
             txt_kvs: &[(&str, &str)],
         ) -> Result<(), Error> {
-            AstroMdns::add(
+            Mdns::add(
                 self,
                 name,
                 service,
@@ -826,7 +879,7 @@ pub mod astro {
             protocol: &str,
             port: u16,
         ) -> Result<(), Error> {
-            AstroMdns::remove(self, name, service, protocol, port)
+            Mdns::remove(self, name, service, protocol, port)
         }
     }
 }
