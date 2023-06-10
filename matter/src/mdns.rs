@@ -698,7 +698,7 @@ pub mod builtin {
         }
     }
 
-    impl<'a, 'b> super::Mdns for Mdns<'a> {
+    impl<'a> super::Mdns for Mdns<'a> {
         fn add(
             &self,
             name: &str,
