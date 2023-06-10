@@ -19,12 +19,12 @@ use core::fmt::{Debug, Formatter};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use crate::interaction_model::core::{IMStatusCode, Transaction};
+use crate::interaction_model::core::IMStatusCode;
 use crate::interaction_model::messages::ib::{
     AttrPath, AttrResp, AttrStatus, CmdDataTag, CmdPath, CmdStatus, InvResp, InvRespTag,
 };
-use crate::interaction_model::messages::GenericPath;
 use crate::tlv::UtfStr;
+use crate::transport::exchange::Exchange;
 use crate::{
     error::{Error, ErrorCode},
     interaction_model::messages::ib::{AttrDataTag, AttrRespTag},
@@ -32,7 +32,7 @@ use crate::{
 };
 use log::error;
 
-use super::{AttrDetails, CmdDetails, Handler};
+use super::{AttrDetails, CmdDetails, DataModelHandler};
 
 // TODO: Should this return an IMStatusCode Error? But if yes, the higher layer
 // may have already started encoding the 'success' headers, we might not want to manage
@@ -124,106 +124,79 @@ pub struct AttrDataEncoder<'a, 'b, 'c> {
 }
 
 impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
-    pub fn handle_read<T: Handler>(
-        item: Result<AttrDetails, AttrStatus>,
+    pub async fn handle_read<T: DataModelHandler>(
+        item: &Result<AttrDetails<'_>, AttrStatus>,
         handler: &T,
-        tw: &mut TLVWriter,
-    ) -> Result<Option<GenericPath>, Error> {
+        tw: &mut TLVWriter<'_, '_>,
+    ) -> Result<bool, Error> {
         let status = match item {
             Ok(attr) => {
-                let encoder = AttrDataEncoder::new(&attr, tw);
+                let encoder = AttrDataEncoder::new(attr, tw);
 
-                match handler.read(&attr, encoder) {
+                let result = {
+                    #[cfg(not(feature = "nightly"))]
+                    {
+                        handler.read(attr, encoder)
+                    }
+
+                    #[cfg(feature = "nightly")]
+                    {
+                        handler.read(&attr, encoder).await
+                    }
+                };
+
+                match result {
                     Ok(()) => None,
                     Err(e) => {
                         if e.code() == ErrorCode::NoSpace {
-                            return Ok(Some(attr.path().to_gp()));
+                            return Ok(false);
                         } else {
                             attr.status(e.into())?
                         }
                     }
                 }
             }
-            Err(status) => Some(status),
+            Err(status) => Some(status.clone()),
         };
 
         if let Some(status) = status {
             AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
         }
 
-        Ok(None)
+        Ok(true)
     }
 
-    pub fn handle_write<T: Handler>(
-        item: Result<(AttrDetails, TLVElement), AttrStatus>,
-        handler: &mut T,
-        tw: &mut TLVWriter,
+    pub async fn handle_write<T: DataModelHandler>(
+        item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
+        handler: &T,
+        tw: &mut TLVWriter<'_, '_>,
     ) -> Result<(), Error> {
         let status = match item {
-            Ok((attr, data)) => match handler.write(&attr, AttrData::new(attr.dataver, &data)) {
-                Ok(()) => attr.status(IMStatusCode::Success)?,
-                Err(error) => attr.status(error.into())?,
-            },
-            Err(status) => Some(status),
+            Ok((attr, data)) => {
+                let result = {
+                    #[cfg(not(feature = "nightly"))]
+                    {
+                        handler.write(attr, AttrData::new(attr.dataver, data))
+                    }
+
+                    #[cfg(feature = "nightly")]
+                    {
+                        handler
+                            .write(&attr, AttrData::new(attr.dataver, &data))
+                            .await
+                    }
+                };
+
+                match result {
+                    Ok(()) => attr.status(IMStatusCode::Success)?,
+                    Err(error) => attr.status(error.into())?,
+                }
+            }
+            Err(status) => Some(status.clone()),
         };
 
         if let Some(status) = status {
             status.to_tlv(tw, TagType::Anonymous)?;
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "nightly")]
-    pub async fn handle_read_async<T: super::asynch::AsyncHandler>(
-        item: Result<AttrDetails<'_>, AttrStatus>,
-        handler: &T,
-        tw: &mut TLVWriter<'_, '_>,
-    ) -> Result<Option<GenericPath>, Error> {
-        let status = match item {
-            Ok(attr) => {
-                let encoder = AttrDataEncoder::new(&attr, tw);
-
-                match handler.read(&attr, encoder).await {
-                    Ok(()) => None,
-                    Err(e) => {
-                        if e.code() == ErrorCode::NoSpace {
-                            return Ok(Some(attr.path().to_gp()));
-                        } else {
-                            attr.status(e.into())?
-                        }
-                    }
-                }
-            }
-            Err(status) => Some(status),
-        };
-
-        if let Some(status) = status {
-            AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
-        }
-
-        Ok(None)
-    }
-
-    #[cfg(feature = "nightly")]
-    pub async fn handle_write_async<T: super::asynch::AsyncHandler>(
-        item: Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
-        handler: &mut T,
-        tw: &mut TLVWriter<'_, '_>,
-    ) -> Result<(), Error> {
-        let status = match item {
-            Ok((attr, data)) => match handler
-                .write(&attr, AttrData::new(attr.dataver, &data))
-                .await
-            {
-                Ok(()) => attr.status(IMStatusCode::Success)?,
-                Err(error) => attr.status(error.into())?,
-            },
-            Err(status) => Some(status),
-        };
-
-        if let Some(status) = status {
-            AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
         }
 
         Ok(())
@@ -365,18 +338,30 @@ pub struct CmdDataEncoder<'a, 'b, 'c> {
 }
 
 impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
-    pub fn handle<T: Handler>(
-        item: Result<(CmdDetails, TLVElement), CmdStatus>,
-        handler: &mut T,
-        transaction: &mut Transaction,
-        tw: &mut TLVWriter,
+    pub async fn handle<T: DataModelHandler>(
+        item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
+        handler: &T,
+        tw: &mut TLVWriter<'_, '_>,
+        exchange: &Exchange<'_>,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((cmd, data)) => {
                 let mut tracker = CmdDataTracker::new();
-                let encoder = CmdDataEncoder::new(&cmd, &mut tracker, tw);
+                let encoder = CmdDataEncoder::new(cmd, &mut tracker, tw);
 
-                match handler.invoke(transaction, &cmd, &data, encoder) {
+                let result = {
+                    #[cfg(not(feature = "nightly"))]
+                    {
+                        handler.invoke(exchange, cmd, data, encoder)
+                    }
+
+                    #[cfg(feature = "nightly")]
+                    {
+                        handler.invoke(exchange, &cmd, &data, encoder).await
+                    }
+                };
+
+                match result {
                     Ok(()) => cmd.success(&tracker),
                     Err(error) => {
                         error!("Error invoking command: {}", error);
@@ -386,35 +371,8 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
             }
             Err(status) => {
                 error!("Error invoking command: {:?}", status);
-                Some(status)
+                Some(status.clone())
             }
-        };
-
-        if let Some(status) = status {
-            InvResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
-        }
-
-        Ok(())
-    }
-
-    #[cfg(feature = "nightly")]
-    pub async fn handle_async<T: super::asynch::AsyncHandler>(
-        item: Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
-        handler: &mut T,
-        transaction: &mut Transaction<'_, '_>,
-        tw: &mut TLVWriter<'_, '_>,
-    ) -> Result<(), Error> {
-        let status = match item {
-            Ok((cmd, data)) => {
-                let mut tracker = CmdDataTracker::new();
-                let encoder = CmdDataEncoder::new(&cmd, &mut tracker, tw);
-
-                match handler.invoke(transaction, &cmd, &data, encoder).await {
-                    Ok(()) => cmd.success(&tracker),
-                    Err(error) => cmd.status(error.into()),
-                }
-            }
-            Err(status) => Some(status),
         };
 
         if let Some(status) = status {

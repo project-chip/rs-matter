@@ -19,11 +19,11 @@ use core::cell::RefCell;
 use core::convert::TryInto;
 
 use crate::data_model::objects::*;
-use crate::interaction_model::core::Transaction;
 use crate::mdns::Mdns;
 use crate::secure_channel::pake::PaseMgr;
 use crate::secure_channel::spake2p::VerifierData;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
+use crate::transport::exchange::Exchange;
 use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
@@ -84,8 +84,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     ],
     commands: &[
         Commands::OpenCommWindow as _,
-        Commands::OpenBasicCommWindow as _,
-        Commands::RevokeComm as _,
+        // Commands::OpenBasicCommWindow as _,
+        // Commands::RevokeComm as _,
     ],
 };
 
@@ -133,7 +133,7 @@ impl<'a> AdminCommCluster<'a> {
     }
 
     pub fn invoke(
-        &mut self,
+        &self,
         cmd: &CmdDetails,
         data: &TLVElement,
         _encoder: CmdDataEncoder,
@@ -148,7 +148,7 @@ impl<'a> AdminCommCluster<'a> {
         Ok(())
     }
 
-    fn handle_command_opencomm_win(&mut self, data: &TLVElement) -> Result<(), Error> {
+    fn handle_command_opencomm_win(&self, data: &TLVElement) -> Result<(), Error> {
         cmd_enter!("Open Commissioning Window");
         let req = OpenCommWindowReq::from_tlv(data)?;
         let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
@@ -166,8 +166,8 @@ impl<'a> Handler for AdminCommCluster<'a> {
     }
 
     fn invoke(
-        &mut self,
-        _transaction: &mut Transaction,
+        &self,
+        _exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,

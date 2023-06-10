@@ -69,6 +69,7 @@
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", feature(async_fn_in_trait))]
+#![cfg_attr(feature = "nightly", feature(impl_trait_projections))]
 #![cfg_attr(feature = "nightly", allow(incomplete_features))]
 
 pub mod acl;
@@ -90,3 +91,22 @@ pub mod transport;
 pub mod utils;
 
 pub use crate::core::*;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+#[macro_export]
+macro_rules! alloc {
+    ($val:expr) => {
+        alloc::boxed::Box::new($val)
+    };
+}
+
+#[cfg(not(feature = "alloc"))]
+#[macro_export]
+macro_rules! alloc {
+    ($val:expr) => {
+        $val
+    };
+}

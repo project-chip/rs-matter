@@ -15,11 +15,13 @@
  *    limitations under the License.
  */
 
+use core::cell::Cell;
+
 use crate::utils::rand::Rand;
 
 pub struct Dataver {
-    ver: u32,
-    changed: bool,
+    ver: Cell<u32>,
+    changed: Cell<bool>,
 }
 
 impl Dataver {
@@ -28,25 +30,25 @@ impl Dataver {
         rand(&mut buf);
 
         Self {
-            ver: u32::from_be_bytes(buf),
-            changed: false,
+            ver: Cell::new(u32::from_be_bytes(buf)),
+            changed: Cell::new(false),
         }
     }
 
     pub fn get(&self) -> u32 {
-        self.ver
+        self.ver.get()
     }
 
-    pub fn changed(&mut self) -> u32 {
-        (self.ver, _) = self.ver.overflowing_add(1);
-        self.changed = true;
+    pub fn changed(&self) -> u32 {
+        self.ver.set(self.ver.get().overflowing_add(1).0);
+        self.changed.set(true);
 
         self.get()
     }
 
-    pub fn consume_change<T>(&mut self, change: T) -> Option<T> {
-        if self.changed {
-            self.changed = false;
+    pub fn consume_change<T>(&self, change: T) -> Option<T> {
+        if self.changed.get() {
+            self.changed.set(false);
             Some(change)
         } else {
             None

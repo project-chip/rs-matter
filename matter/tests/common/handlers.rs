@@ -1,8 +1,6 @@
-use core::time;
-use std::thread;
-
 use log::{info, warn};
 use matter::{
+    error::ErrorCode,
     interaction_model::{
         core::{IMStatusCode, OpCode},
         messages::{
@@ -14,17 +12,12 @@ use matter::{
         },
     },
     tlv::{self, FromTLV, TLVArray, ToTLV},
-    transport::{
-        exchange::{self, Exchange},
-        session::NocCatIds,
-    },
-    Matter,
 };
 
 use super::{
     attributes::assert_attr_report,
     commands::{assert_inv_response, ExpectedInvResp},
-    im_engine::{ImEngine, ImInput, IM_ENGINE_PEER_ID},
+    im_engine::{ImEngine, ImEngineHandler, ImInput, ImOutput},
 };
 
 pub enum WriteResponse<'a> {
@@ -38,72 +31,71 @@ pub enum TimedInvResponse<'a> {
 }
 
 impl<'a> ImEngine<'a> {
+    pub fn read_reqs(input: &[AttrPath], expected: &[AttrResp]) {
+        let im = ImEngine::new_default();
+
+        im.add_default_acl();
+        im.handle_read_reqs(&im.handler(), input, expected);
+    }
+
     // Helper for handling Read Req sequences for this file
     pub fn handle_read_reqs(
-        &mut self,
-        peer_node_id: u64,
+        &self,
+        handler: &ImEngineHandler,
         input: &[AttrPath],
         expected: &[AttrResp],
     ) {
-        let mut out_buf = [0u8; 400];
-        let received = self.gen_read_reqs_output(peer_node_id, input, None, &mut out_buf);
+        let mut out = heapless::Vec::<_, 1>::new();
+        let received = self.gen_read_reqs_output(handler, input, None, &mut out);
         assert_attr_report(&received, expected)
     }
 
-    pub fn new_with_read_reqs(
-        matter: &'a Matter<'a>,
+    pub fn gen_read_reqs_output<'c, const N: usize>(
+        &self,
+        handler: &ImEngineHandler,
         input: &[AttrPath],
-        expected: &[AttrResp],
-    ) -> Self {
-        let mut im = Self::new(matter);
-
-        let mut out_buf = [0u8; 400];
-        let received = im.gen_read_reqs_output(IM_ENGINE_PEER_ID, input, None, &mut out_buf);
-        assert_attr_report(&received, expected);
-
-        im
-    }
-
-    pub fn gen_read_reqs_output<'b>(
-        &mut self,
-        peer_node_id: u64,
-        input: &[AttrPath],
-        dataver_filters: Option<TLVArray<'b, DataVersionFilter>>,
-        out_buf: &'b mut [u8],
-    ) -> ReportDataMsg<'b> {
+        dataver_filters: Option<TLVArray<'_, DataVersionFilter>>,
+        out: &'c mut heapless::Vec<ImOutput, N>,
+    ) -> ReportDataMsg<'c> {
         let mut read_req = ReadReq::new(true).set_attr_requests(input);
         read_req.dataver_filters = dataver_filters;
 
-        let mut input = ImInput::new(OpCode::ReadRequest, &read_req);
-        input.set_peer_node_id(peer_node_id);
+        let input = ImInput::new(OpCode::ReadRequest, &read_req);
 
-        let (_, out_buf) = self.process(&input, out_buf);
+        self.process(handler, &[&input], out).unwrap();
 
-        tlv::print_tlv_list(out_buf);
-        let root = tlv::get_root_node_struct(out_buf).unwrap();
+        for o in &*out {
+            tlv::print_tlv_list(&o.data);
+        }
+
+        let root = tlv::get_root_node_struct(&out[0].data).unwrap();
         ReportDataMsg::from_tlv(&root).unwrap()
     }
 
+    pub fn write_reqs(input: &[AttrData], expected: &[AttrStatus]) {
+        let im = ImEngine::new_default();
+
+        im.add_default_acl();
+        im.handle_write_reqs(&im.handler(), input, expected);
+    }
+
     pub fn handle_write_reqs(
-        &mut self,
-        peer_node_id: u64,
-        peer_cat_ids: Option<&NocCatIds>,
+        &self,
+        handler: &ImEngineHandler,
         input: &[AttrData],
         expected: &[AttrStatus],
     ) {
-        let mut out_buf = [0u8; 400];
         let write_req = WriteReq::new(false, input);
 
-        let mut input = ImInput::new(OpCode::WriteRequest, &write_req);
-        input.set_peer_node_id(peer_node_id);
-        if let Some(cat_ids) = peer_cat_ids {
-            input.set_cat_ids(cat_ids);
+        let input = ImInput::new(OpCode::WriteRequest, &write_req);
+        let mut out = heapless::Vec::<_, 1>::new();
+        self.process(handler, &[&input], &mut out).unwrap();
+
+        for o in &out {
+            tlv::print_tlv_list(&o.data);
         }
 
-        let (_, out_buf) = self.process(&input, &mut out_buf);
-
-        tlv::print_tlv_list(out_buf);
-        let root = tlv::get_root_node_struct(out_buf).unwrap();
+        let root = tlv::get_root_node_struct(&out[0].data).unwrap();
 
         let mut index = 0;
         let response_iter = root
@@ -124,194 +116,184 @@ impl<'a> ImEngine<'a> {
         assert_eq!(index, expected.len());
     }
 
-    pub fn new_with_write_reqs(
-        matter: &'a Matter<'a>,
-        input: &[AttrData],
-        expected: &[AttrStatus],
-    ) -> Self {
-        let mut im = Self::new(matter);
+    pub fn commands(input: &[CmdData], expected: &[ExpectedInvResp]) {
+        let im = ImEngine::new_default();
 
-        im.handle_write_reqs(IM_ENGINE_PEER_ID, None, input, expected);
-
-        im
+        im.add_default_acl();
+        im.handle_commands(&im.handler(), input, expected)
     }
 
     // Helper for handling Invoke Command sequences
     pub fn handle_commands(
-        &mut self,
-        peer_node_id: u64,
+        &self,
+        handler: &ImEngineHandler,
         input: &[CmdData],
         expected: &[ExpectedInvResp],
     ) {
-        let mut out_buf = [0u8; 400];
         let req = InvReq {
             suppress_response: Some(false),
             timed_request: Some(false),
             inv_requests: Some(TLVArray::Slice(input)),
         };
 
-        let mut input = ImInput::new(OpCode::InvokeRequest, &req);
-        input.set_peer_node_id(peer_node_id);
+        let input = ImInput::new(OpCode::InvokeRequest, &req);
 
-        let (_, out_buf) = self.process(&input, &mut out_buf);
-        tlv::print_tlv_list(out_buf);
-        let root = tlv::get_root_node_struct(out_buf).unwrap();
+        let mut out = heapless::Vec::<_, 1>::new();
+        self.process(handler, &[&input], &mut out).unwrap();
+
+        for o in &out {
+            tlv::print_tlv_list(&o.data);
+        }
+
+        let root = tlv::get_root_node_struct(&out[0].data).unwrap();
         let resp = msg::InvResp::from_tlv(&root).unwrap();
         assert_inv_response(&resp, expected)
     }
 
-    pub fn new_with_commands(
-        matter: &'a Matter<'a>,
-        input: &[CmdData],
-        expected: &[ExpectedInvResp],
-    ) -> Self {
-        let mut im = ImEngine::new(matter);
-
-        im.handle_commands(IM_ENGINE_PEER_ID, input, expected);
-
-        im
-    }
-
-    fn handle_timed_reqs<'b>(
-        &mut self,
+    fn gen_timed_reqs_output<const N: usize>(
+        &self,
+        handler: &ImEngineHandler,
         opcode: OpCode,
         request: &dyn ToTLV,
         timeout: u16,
         delay: u16,
-        output: &'b mut [u8],
-    ) -> (u8, &'b [u8]) {
-        // Use the same exchange for all parts of the transaction
-        self.exch = Some(Exchange::new(1, 0, exchange::Role::Responder));
+        out: &mut heapless::Vec<ImOutput, N>,
+    ) {
+        let mut inp = heapless::Vec::<_, 2>::new();
+
+        let timed_req = TimedReq { timeout };
+        let im_input = ImInput::new_delayed(OpCode::TimedRequest, &timed_req, Some(delay));
 
         if timeout != 0 {
             // Send Timed Req
-            let mut tmp_buf = [0u8; 400];
-            let timed_req = TimedReq { timeout };
-            let im_input = ImInput::new(OpCode::TimedRequest, &timed_req);
-            let (_, out_buf) = self.process(&im_input, &mut tmp_buf);
-            tlv::print_tlv_list(out_buf);
+            inp.push(&im_input).map_err(|_| ErrorCode::NoSpace).unwrap();
         } else {
             warn!("Skipping timed request");
         }
 
-        // Process any delays
-        let delay = time::Duration::from_millis(delay.into());
-        thread::sleep(delay);
-
         // Send Write Req
         let input = ImInput::new(opcode, request);
-        let (resp_opcode, output) = self.process(&input, output);
-        (resp_opcode, output)
+        inp.push(&input).map_err(|_| ErrorCode::NoSpace).unwrap();
+
+        self.process(handler, &inp, out).unwrap();
+
+        drop(inp);
+
+        for o in out {
+            tlv::print_tlv_list(&o.data);
+        }
     }
 
-    // Helper for handling Write Attribute sequences
-    pub fn handle_timed_write_reqs(
-        &mut self,
+    pub fn timed_write_reqs(
         input: &[AttrData],
         expected: &WriteResponse,
         timeout: u16,
         delay: u16,
     ) {
-        let mut out_buf = [0u8; 400];
+        let im = ImEngine::new_default();
+
+        im.add_default_acl();
+        im.handle_timed_write_reqs(&im.handler(), input, expected, timeout, delay);
+    }
+
+    // Helper for handling Write Attribute sequences
+    pub fn handle_timed_write_reqs(
+        &self,
+        handler: &ImEngineHandler,
+        input: &[AttrData],
+        expected: &WriteResponse,
+        timeout: u16,
+        delay: u16,
+    ) {
+        let mut out = heapless::Vec::<_, 2>::new();
         let write_req = WriteReq::new(false, input);
 
-        let (resp_opcode, out_buf) = self.handle_timed_reqs(
+        self.gen_timed_reqs_output(
+            handler,
             OpCode::WriteRequest,
             &write_req,
             timeout,
             delay,
-            &mut out_buf,
+            &mut out,
         );
-        tlv::print_tlv_list(out_buf);
-        let root = tlv::get_root_node_struct(out_buf).unwrap();
+
+        let out = &out[out.len() - 1];
+        let root = tlv::get_root_node_struct(&out.data).unwrap();
 
         match expected {
             WriteResponse::TransactionSuccess(t) => {
-                assert_eq!(
-                    num::FromPrimitive::from_u8(resp_opcode),
-                    Some(OpCode::WriteResponse)
-                );
+                assert_eq!(out.action, OpCode::WriteResponse);
                 let resp = WriteResp::from_tlv(&root).unwrap();
                 assert_eq!(resp.write_responses, t);
             }
             WriteResponse::TransactionError => {
-                assert_eq!(
-                    num::FromPrimitive::from_u8(resp_opcode),
-                    Some(OpCode::StatusResponse)
-                );
+                assert_eq!(out.action, OpCode::StatusResponse);
                 let status_resp = StatusResp::from_tlv(&root).unwrap();
                 assert_eq!(status_resp.status, IMStatusCode::Timeout);
             }
         }
     }
 
-    pub fn new_with_timed_write_reqs(
-        matter: &'a Matter<'a>,
-        input: &[AttrData],
-        expected: &WriteResponse,
-        timeout: u16,
-        delay: u16,
-    ) -> Self {
-        let mut im = ImEngine::new(matter);
-
-        im.handle_timed_write_reqs(input, expected, timeout, delay);
-
-        im
-    }
-
-    // Helper for handling Invoke Command sequences
-    pub fn handle_timed_commands(
-        &mut self,
+    pub fn timed_commands(
         input: &[CmdData],
         expected: &TimedInvResponse,
         timeout: u16,
         delay: u16,
         set_timed_request: bool,
     ) {
-        let mut out_buf = [0u8; 400];
+        let im = ImEngine::new_default();
+
+        im.add_default_acl();
+        im.handle_timed_commands(
+            &im.handler(),
+            input,
+            expected,
+            timeout,
+            delay,
+            set_timed_request,
+        );
+    }
+
+    // Helper for handling Invoke Command sequences
+    pub fn handle_timed_commands(
+        &self,
+        handler: &ImEngineHandler,
+        input: &[CmdData],
+        expected: &TimedInvResponse,
+        timeout: u16,
+        delay: u16,
+        set_timed_request: bool,
+    ) {
+        let mut out = heapless::Vec::<_, 2>::new();
         let req = InvReq {
             suppress_response: Some(false),
             timed_request: Some(set_timed_request),
             inv_requests: Some(TLVArray::Slice(input)),
         };
 
-        let (resp_opcode, out_buf) =
-            self.handle_timed_reqs(OpCode::InvokeRequest, &req, timeout, delay, &mut out_buf);
-        tlv::print_tlv_list(out_buf);
-        let root = tlv::get_root_node_struct(out_buf).unwrap();
+        self.gen_timed_reqs_output(
+            handler,
+            OpCode::InvokeRequest,
+            &req,
+            timeout,
+            delay,
+            &mut out,
+        );
+
+        let out = &out[out.len() - 1];
+        let root = tlv::get_root_node_struct(&out.data).unwrap();
 
         match expected {
             TimedInvResponse::TransactionSuccess(t) => {
-                assert_eq!(
-                    num::FromPrimitive::from_u8(resp_opcode),
-                    Some(OpCode::InvokeResponse)
-                );
+                assert_eq!(out.action, OpCode::InvokeResponse);
                 let resp = msg::InvResp::from_tlv(&root).unwrap();
                 assert_inv_response(&resp, t)
             }
             TimedInvResponse::TransactionError(e) => {
-                assert_eq!(
-                    num::FromPrimitive::from_u8(resp_opcode),
-                    Some(OpCode::StatusResponse)
-                );
+                assert_eq!(out.action, OpCode::StatusResponse);
                 let status_resp = StatusResp::from_tlv(&root).unwrap();
                 assert_eq!(status_resp.status, *e);
             }
         }
-    }
-
-    pub fn new_with_timed_commands(
-        matter: &'a Matter<'a>,
-        input: &[CmdData],
-        expected: &TimedInvResponse,
-        timeout: u16,
-        delay: u16,
-        set_timed_request: bool,
-    ) -> Self {
-        let mut im = ImEngine::new(matter);
-
-        im.handle_timed_commands(input, expected, timeout, delay, set_timed_request);
-
-        im
     }
 }

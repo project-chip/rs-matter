@@ -22,7 +22,6 @@ use matter::{
         messages::ib::{AttrData, AttrPath, AttrStatus},
         messages::{ib::CmdData, ib::CmdPath, GenericPath},
     },
-    mdns::DummyMdns,
     tlv::TLVWriter,
 };
 
@@ -31,7 +30,7 @@ use crate::{
         commands::*,
         echo_cluster,
         handlers::{TimedInvResponse, WriteResponse},
-        im_engine::{matter, ImEngine},
+        im_engine::ImEngine,
         init_env_logger,
     },
     echo_req, echo_resp,
@@ -75,25 +74,20 @@ fn test_timed_write_fail_and_success() {
     ];
 
     // Test with incorrect handling
-    ImEngine::new_with_timed_write_reqs(
-        &matter(&mut DummyMdns),
-        input,
-        &WriteResponse::TransactionError,
-        400,
-        500,
-    );
+    ImEngine::timed_write_reqs(input, &WriteResponse::TransactionError, 100, 500);
 
     // Test with correct handling
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let im = ImEngine::new_with_timed_write_reqs(
-        &matter,
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+    im.add_default_acl();
+    im.handle_timed_write_reqs(
+        &handler,
         input,
         &WriteResponse::TransactionSuccess(expected),
         400,
         0,
     );
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 }
 
 #[test]
@@ -103,8 +97,7 @@ fn test_timed_cmd_success() {
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
-    ImEngine::new_with_timed_commands(
-        &matter(&mut DummyMdns),
+    ImEngine::timed_commands(
         input,
         &TimedInvResponse::TransactionSuccess(expected),
         400,
@@ -119,11 +112,10 @@ fn test_timed_cmd_timeout() {
     init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    ImEngine::new_with_timed_commands(
-        &matter(&mut DummyMdns),
+    ImEngine::timed_commands(
         input,
         &TimedInvResponse::TransactionError(IMStatusCode::Timeout),
-        400,
+        100,
         500,
         true,
     );
@@ -135,8 +127,7 @@ fn test_timed_cmd_timedout_mismatch() {
     init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    ImEngine::new_with_timed_commands(
-        &matter(&mut DummyMdns),
+    ImEngine::timed_commands(
         input,
         &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
         400,
@@ -145,8 +136,7 @@ fn test_timed_cmd_timedout_mismatch() {
     );
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    ImEngine::new_with_timed_commands(
-        &matter(&mut DummyMdns),
+    ImEngine::timed_commands(
         input,
         &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
         0,

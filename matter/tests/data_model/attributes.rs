@@ -25,18 +25,12 @@ use matter::{
         messages::ib::{AttrData, AttrPath, AttrResp, AttrStatus},
         messages::GenericPath,
     },
-    mdns::DummyMdns,
     tlv::{ElementType, TLVElement, TLVWriter, TagType},
 };
 
 use crate::{
     attr_data, attr_data_path, attr_status,
-    common::{
-        attributes::*,
-        echo_cluster,
-        im_engine::{matter, ImEngine},
-        init_env_logger,
-    },
+    common::{attributes::*, echo_cluster, im_engine::ImEngine, init_env_logger},
 };
 
 #[test]
@@ -75,7 +69,7 @@ fn test_read_success() {
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
     ];
-    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
+    ImEngine::read_reqs(input, expected);
 }
 
 #[test]
@@ -122,7 +116,7 @@ fn test_read_unsupported_fields() {
         attr_status!(&invalid_cluster, IMStatusCode::UnsupportedCluster),
         attr_status!(&invalid_attribute, IMStatusCode::UnsupportedAttribute),
     ];
-    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
+    ImEngine::read_reqs(input, expected);
 }
 
 #[test]
@@ -153,7 +147,7 @@ fn test_read_wc_endpoint_all_have_clusters() {
             ElementType::U16(0x1234)
         ),
     ];
-    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
+    ImEngine::read_reqs(input, expected);
 }
 
 #[test]
@@ -178,7 +172,7 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
         ),
         ElementType::False
     )];
-    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
+    ImEngine::read_reqs(input, expected);
 }
 
 #[test]
@@ -285,7 +279,7 @@ fn test_read_wc_endpoint_wc_attribute() {
             ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
         ),
     ];
-    ImEngine::new_with_read_reqs(&matter(&mut DummyMdns), input, expected);
+    ImEngine::read_reqs(input, expected);
 }
 
 #[test]
@@ -331,11 +325,14 @@ fn test_write_success() {
         AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let im = ImEngine::new_with_write_reqs(&matter, input, expected);
-    assert_eq!(val0, im.echo_cluster(0).att_write);
-    assert_eq!(val1, im.echo_cluster(1).att_write);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
+    im.handle_write_reqs(&handler, input, expected);
+
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
+    assert_eq!(val1, handler.echo_cluster(1).att_write.get());
 }
 
 #[test]
@@ -375,10 +372,13 @@ fn test_write_wc_endpoint() {
         AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let im = ImEngine::new_with_write_reqs(&matter, input, expected);
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
+    im.handle_write_reqs(&handler, input, expected);
+
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 }
 
 #[test]
@@ -467,11 +467,14 @@ fn test_write_unsupported_fields() {
         AttrStatus::new(&wc_cluster, IMStatusCode::UnsupportedCluster, 0),
         AttrStatus::new(&wc_attribute, IMStatusCode::UnsupportedAttribute, 0),
     ];
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let im = ImEngine::new_with_write_reqs(&matter, input, expected);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
+    im.handle_write_reqs(&handler, input, expected);
+
     assert_eq!(
         echo_cluster::ATTR_WRITE_DEFAULT_VALUE,
-        im.echo_cluster(0).att_write
+        handler.echo_cluster(0).att_write.get()
     );
 }

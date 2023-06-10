@@ -15,287 +15,127 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::objects::*;
 use crate::{
-    acl::{Accessor, AclMgr},
+    alloc,
     error::*,
-    interaction_model::core::{Interaction, Transaction},
-    tlv::TLVWriter,
-    transport::packet::Packet,
+    interaction_model::core::Interaction,
+    transport::{exchange::Exchange, packet::Packet},
 };
 
-pub struct DataModel<'a, T> {
-    pub acl_mgr: &'a RefCell<AclMgr>,
-    pub node: &'a Node<'a>,
-    pub handler: T,
-}
+// TODO: For now...
+static SUBS_ID: AtomicU32 = AtomicU32::new(1);
 
-impl<'a, T> DataModel<'a, T> {
-    pub const fn new(acl_mgr: &'a RefCell<AclMgr>, node: &'a Node<'a>, handler: T) -> Self {
-        Self {
-            acl_mgr,
-            node,
-            handler,
-        }
+pub struct DataModel<T>(T);
+
+impl<T> DataModel<T> {
+    pub fn new(handler: T) -> Self {
+        Self(handler)
     }
 
-    pub fn handle(
-        &mut self,
-        interaction: Interaction,
-        tx: &mut Packet,
-        transaction: &mut Transaction,
-    ) -> Result<bool, Error>
+    pub async fn handle<'r, 'p>(
+        &self,
+        exchange: &'r mut Exchange<'_>,
+        rx: &'r mut Packet<'p>,
+        tx: &'r mut Packet<'p>,
+        rx_status: &'r mut Packet<'p>,
+    ) -> Result<(), Error>
     where
-        T: Handler,
+        T: DataModelHandler,
     {
-        let accessor = Accessor::for_session(transaction.session(), self.acl_mgr);
-        let mut tw = TLVWriter::new(tx.get_writebuf()?);
+        let timeout = Interaction::timeout(exchange, rx, tx).await?;
 
-        match interaction {
-            Interaction::Read(req) => {
-                let mut resume_path = None;
+        let mut interaction = alloc!(Interaction::new(
+            exchange,
+            rx,
+            tx,
+            rx_status,
+            || SUBS_ID.fetch_add(1, Ordering::SeqCst),
+            timeout,
+        )?);
 
-                for item in self.node.read(&req, &accessor) {
-                    if let Some(path) = AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?
-                    {
-                        resume_path = Some(path);
-                        break;
+        #[cfg(feature = "alloc")]
+        let interaction = &mut *interaction;
+
+        #[cfg(not(feature = "alloc"))]
+        let interaction = &mut interaction;
+
+        #[cfg(feature = "nightly")]
+        let metadata = self.0.lock().await;
+
+        #[cfg(not(feature = "nightly"))]
+        let metadata = self.0.lock();
+
+        if interaction.start().await? {
+            match interaction {
+                Interaction::Read {
+                    req,
+                    ref mut driver,
+                } => {
+                    let accessor = driver.accessor()?;
+
+                    'outer: for item in metadata.node().read(req, None, &accessor) {
+                        while !AttrDataEncoder::handle_read(&item, &self.0, &mut driver.writer()?)
+                            .await?
+                        {
+                            if !driver.send_chunk(req).await? {
+                                break 'outer;
+                            }
+                        }
                     }
+
+                    driver.complete(req).await?;
                 }
+                Interaction::Write {
+                    req,
+                    ref mut driver,
+                } => {
+                    let accessor = driver.accessor()?;
 
-                req.complete(tx, transaction, resume_path)
-            }
-            Interaction::Write(req) => {
-                for item in self.node.write(&req, &accessor) {
-                    AttrDataEncoder::handle_write(item, &mut self.handler, &mut tw)?;
-                }
-
-                req.complete(tx, transaction)
-            }
-            Interaction::Invoke(req) => {
-                for item in self.node.invoke(&req, &accessor) {
-                    CmdDataEncoder::handle(item, &mut self.handler, transaction, &mut tw)?;
-                }
-
-                req.complete(tx, transaction)
-            }
-            Interaction::Subscribe(req) => {
-                let mut resume_path = None;
-
-                for item in self.node.subscribing_read(&req, &accessor) {
-                    if let Some(path) = AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?
-                    {
-                        resume_path = Some(path);
-                        break;
+                    for item in metadata.node().write(req, &accessor) {
+                        AttrDataEncoder::handle_write(&item, &self.0, &mut driver.writer()?)
+                            .await?;
                     }
+
+                    driver.complete(req).await?;
                 }
+                Interaction::Invoke {
+                    req,
+                    ref mut driver,
+                } => {
+                    let accessor = driver.accessor()?;
 
-                req.complete(tx, transaction, resume_path)
-            }
-            Interaction::Timed(_) => Ok(false),
-            Interaction::ResumeRead(req) => {
-                let mut resume_path = None;
+                    for item in metadata.node().invoke(req, &accessor) {
+                        let (mut tw, exchange) = driver.writer_exchange()?;
 
-                for item in self.node.resume_read(&req, &accessor) {
-                    if let Some(path) = AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?
-                    {
-                        resume_path = Some(path);
-                        break;
+                        CmdDataEncoder::handle(&item, &self.0, &mut tw, exchange).await?;
                     }
+
+                    driver.complete(req).await?;
                 }
+                Interaction::Subscribe {
+                    req,
+                    ref mut driver,
+                } => {
+                    let accessor = driver.accessor()?;
 
-                req.complete(tx, transaction, resume_path)
-            }
-            Interaction::ResumeSubscribe(req) => {
-                let mut resume_path = None;
-
-                for item in self.node.resume_subscribing_read(&req, &accessor) {
-                    if let Some(path) = AttrDataEncoder::handle_read(item, &self.handler, &mut tw)?
-                    {
-                        resume_path = Some(path);
-                        break;
+                    'outer: for item in metadata.node().subscribing_read(req, None, &accessor) {
+                        while !AttrDataEncoder::handle_read(&item, &self.0, &mut driver.writer()?)
+                            .await?
+                        {
+                            if !driver.send_chunk(req).await? {
+                                break 'outer;
+                            }
+                        }
                     }
-                }
 
-                req.complete(tx, transaction, resume_path)
+                    driver.complete(req).await?;
+                }
             }
         }
-    }
 
-    #[cfg(feature = "nightly")]
-    pub async fn handle_async<'p>(
-        &mut self,
-        interaction: Interaction<'_>,
-        tx: &'p mut Packet<'_>,
-        transaction: &mut Transaction<'_, '_>,
-    ) -> Result<bool, Error>
-    where
-        T: super::objects::asynch::AsyncHandler,
-    {
-        let accessor = Accessor::for_session(transaction.session(), self.acl_mgr);
-        let mut tw = TLVWriter::new(tx.get_writebuf()?);
-
-        match interaction {
-            Interaction::Read(req) => {
-                let mut resume_path = None;
-
-                for item in self.node.read(&req, &accessor) {
-                    if let Some(path) =
-                        AttrDataEncoder::handle_read_async(item, &self.handler, &mut tw).await?
-                    {
-                        resume_path = Some(path);
-                        break;
-                    }
-                }
-
-                req.complete(tx, transaction, resume_path)
-            }
-            Interaction::Write(req) => {
-                for item in self.node.write(&req, &accessor) {
-                    AttrDataEncoder::handle_write_async(item, &mut self.handler, &mut tw).await?;
-                }
-
-                req.complete(tx, transaction)
-            }
-            Interaction::Invoke(req) => {
-                for item in self.node.invoke(&req, &accessor) {
-                    CmdDataEncoder::handle_async(item, &mut self.handler, transaction, &mut tw)
-                        .await?;
-                }
-
-                req.complete(tx, transaction)
-            }
-            Interaction::Subscribe(req) => {
-                let mut resume_path = None;
-
-                for item in self.node.subscribing_read(&req, &accessor) {
-                    if let Some(path) =
-                        AttrDataEncoder::handle_read_async(item, &self.handler, &mut tw).await?
-                    {
-                        resume_path = Some(path);
-                        break;
-                    }
-                }
-
-                req.complete(tx, transaction, resume_path)
-            }
-            Interaction::Timed(_) => Ok(false),
-            Interaction::ResumeRead(req) => {
-                let mut resume_path = None;
-
-                for item in self.node.resume_read(&req, &accessor) {
-                    if let Some(path) =
-                        AttrDataEncoder::handle_read_async(item, &self.handler, &mut tw).await?
-                    {
-                        resume_path = Some(path);
-                        break;
-                    }
-                }
-
-                req.complete(tx, transaction, resume_path)
-            }
-            Interaction::ResumeSubscribe(req) => {
-                let mut resume_path = None;
-
-                for item in self.node.resume_subscribing_read(&req, &accessor) {
-                    if let Some(path) =
-                        AttrDataEncoder::handle_read_async(item, &self.handler, &mut tw).await?
-                    {
-                        resume_path = Some(path);
-                        break;
-                    }
-                }
-
-                req.complete(tx, transaction, resume_path)
-            }
-        }
-    }
-}
-
-pub trait DataHandler {
-    fn handle(
-        &mut self,
-        interaction: Interaction,
-        tx: &mut Packet,
-        transaction: &mut Transaction,
-    ) -> Result<bool, Error>;
-}
-
-impl<T> DataHandler for &mut T
-where
-    T: DataHandler,
-{
-    fn handle(
-        &mut self,
-        interaction: Interaction,
-        tx: &mut Packet,
-        transaction: &mut Transaction,
-    ) -> Result<bool, Error> {
-        (**self).handle(interaction, tx, transaction)
-    }
-}
-
-impl<'a, T> DataHandler for DataModel<'a, T>
-where
-    T: Handler,
-{
-    fn handle(
-        &mut self,
-        interaction: Interaction,
-        tx: &mut Packet,
-        transaction: &mut Transaction,
-    ) -> Result<bool, Error> {
-        DataModel::handle(self, interaction, tx, transaction)
-    }
-}
-
-#[cfg(feature = "nightly")]
-pub mod asynch {
-    use crate::{
-        data_model::objects::asynch::AsyncHandler,
-        error::Error,
-        interaction_model::core::{Interaction, Transaction},
-        transport::packet::Packet,
-    };
-
-    use super::DataModel;
-
-    pub trait AsyncDataHandler {
-        async fn handle(
-            &mut self,
-            interaction: Interaction<'_>,
-            tx: &mut Packet,
-            transaction: &mut Transaction,
-        ) -> Result<bool, Error>;
-    }
-
-    impl<T> AsyncDataHandler for &mut T
-    where
-        T: AsyncDataHandler,
-    {
-        async fn handle(
-            &mut self,
-            interaction: Interaction<'_>,
-            tx: &mut Packet<'_>,
-            transaction: &mut Transaction<'_, '_>,
-        ) -> Result<bool, Error> {
-            (**self).handle(interaction, tx, transaction).await
-        }
-    }
-
-    impl<'a, T> AsyncDataHandler for DataModel<'a, T>
-    where
-        T: AsyncHandler,
-    {
-        async fn handle(
-            &mut self,
-            interaction: Interaction<'_>,
-            tx: &mut Packet<'_>,
-            transaction: &mut Transaction<'_, '_>,
-        ) -> Result<bool, Error> {
-            DataModel::handle_async(self, interaction, tx, transaction).await
-        }
+        Ok(())
     }
 }

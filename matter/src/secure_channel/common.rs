@@ -17,7 +17,10 @@
 
 use num_derive::FromPrimitive;
 
-use crate::{error::Error, transport::packet::Packet};
+use crate::{
+    error::Error,
+    transport::{exchange::Exchange, packet::Packet},
+};
 
 use super::status_report::{create_status_report, GeneralCode};
 
@@ -49,6 +52,17 @@ pub enum SCStatusCodes {
     CloseSession = 3,
     Busy = 4,
     SessionNotFound = 5,
+}
+
+pub async fn complete_with_status(
+    exchange: &mut Exchange<'_>,
+    tx: &mut Packet<'_>,
+    status_code: SCStatusCodes,
+    proto_data: Option<&[u8]>,
+) -> Result<(), Error> {
+    create_sc_status_report(tx, status_code, proto_data)?;
+
+    exchange.send_complete(tx).await
 }
 
 pub fn create_sc_status_report(

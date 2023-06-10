@@ -132,7 +132,7 @@ impl<'a> AccessControlCluster<'a> {
         }
     }
 
-    pub fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         match attr.attr_id.try_into()? {
             Attributes::Acl(_) => {
                 attr_list_write(attr, data.with_dataver(self.data_ver.get())?, |op, data| {
@@ -151,7 +151,7 @@ impl<'a> AccessControlCluster<'a> {
     /// This takes care of 4 things, add item, edit item, delete item, delete list.
     /// Care about fabric-scoped behaviour is taken
     fn write_acl_attr(
-        &mut self,
+        &self,
         op: &ListOperation,
         data: &TLVElement,
         fab_idx: u8,
@@ -185,7 +185,7 @@ impl<'a> Handler for AccessControlCluster<'a> {
         AccessControlCluster::read(self, attr, encoder)
     }
 
-    fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         AccessControlCluster::write(self, attr, data)
     }
 }
@@ -220,7 +220,7 @@ mod tests {
         let mut tw = TLVWriter::new(&mut writebuf);
 
         let acl_mgr = RefCell::new(AclMgr::new());
-        let mut acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
+        let acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
 
         let new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
         new.to_tlv(&mut tw, TagType::Anonymous).unwrap();
@@ -258,7 +258,7 @@ mod tests {
         for i in &verifier {
             acl_mgr.borrow_mut().add(i.clone()).unwrap();
         }
-        let mut acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
+        let acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
 
         let new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
         new.to_tlv(&mut tw, TagType::Anonymous).unwrap();
@@ -295,7 +295,7 @@ mod tests {
         for i in &input {
             acl_mgr.borrow_mut().add(i.clone()).unwrap();
         }
-        let mut acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
+        let acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
         // data is don't-care actually
         let data = TLVElement::new(TagType::Anonymous, ElementType::True);
 

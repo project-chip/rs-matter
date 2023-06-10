@@ -22,13 +22,12 @@ use matter::{
         messages::ib::{AttrData, AttrPath, AttrStatus},
         messages::GenericPath,
     },
-    mdns::DummyMdns,
     tlv::Nullable,
 };
 
 use crate::common::{
     echo_cluster::{self, TestChecker},
-    im_engine::{matter, ImEngine},
+    im_engine::ImEngine,
     init_env_logger,
 };
 
@@ -65,8 +64,8 @@ fn attr_list_ops() {
         EncodeValue::Value(&val0),
     )];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
-    ImEngine::new_with_write_reqs(&matter(&mut DummyMdns), input, expected);
 
+    ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!([Some(val0), None, None, None, None], tc.write_list);
@@ -79,8 +78,8 @@ fn attr_list_ops() {
         EncodeValue::Value(&val1),
     )];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
-    ImEngine::new_with_write_reqs(&matter(&mut DummyMdns), input, expected);
 
+    ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!([Some(val0), Some(val1), None, None, None], tc.write_list);
@@ -94,8 +93,8 @@ fn attr_list_ops() {
         EncodeValue::Value(&val0),
     )];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
-    ImEngine::new_with_write_reqs(&matter(&mut DummyMdns), input, expected);
 
+    ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!([Some(val0), Some(val0), None, None, None], tc.write_list);
@@ -105,8 +104,8 @@ fn attr_list_ops() {
     att_path.list_index = Some(Nullable::NotNull(0));
     let input = &[AttrData::new(None, att_path.clone(), delete_item)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
-    ImEngine::new_with_write_reqs(&matter(&mut DummyMdns), input, expected);
 
+    ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!([None, Some(val0), None, None, None], tc.write_list);
@@ -121,8 +120,8 @@ fn attr_list_ops() {
         EncodeValue::Value(&overwrite_val),
     )];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
-    ImEngine::new_with_write_reqs(&matter(&mut DummyMdns), input, expected);
 
+    ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!([Some(20), Some(21), None, None, None], tc.write_list);
@@ -132,8 +131,8 @@ fn attr_list_ops() {
     att_path.list_index = None;
     let input = &[AttrData::new(None, att_path, delete_all)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
-    ImEngine::new_with_write_reqs(&matter(&mut DummyMdns), input, expected);
 
+    ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
         assert_eq!([None, None, None, None, None], tc.write_list);
