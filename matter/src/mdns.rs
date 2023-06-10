@@ -21,7 +21,7 @@ use crate::error::Error;
 
 pub trait Mdns {
     fn add(
-        &mut self,
+        &self,
         name: &str,
         service: &str,
         protocol: &str,
@@ -30,8 +30,7 @@ pub trait Mdns {
         txt_kvs: &[(&str, &str)],
     ) -> Result<(), Error>;
 
-    fn remove(&mut self, name: &str, service: &str, protocol: &str, port: u16)
-        -> Result<(), Error>;
+    fn remove(&self, name: &str, service: &str, protocol: &str, port: u16) -> Result<(), Error>;
 }
 
 impl<T> Mdns for &mut T
@@ -39,7 +38,7 @@ where
     T: Mdns,
 {
     fn add(
-        &mut self,
+        &self,
         name: &str,
         service: &str,
         protocol: &str,
@@ -50,13 +49,7 @@ where
         (**self).add(name, service, protocol, port, service_subtypes, txt_kvs)
     }
 
-    fn remove(
-        &mut self,
-        name: &str,
-        service: &str,
-        protocol: &str,
-        port: u16,
-    ) -> Result<(), Error> {
+    fn remove(&self, name: &str, service: &str, protocol: &str, port: u16) -> Result<(), Error> {
         (**self).remove(name, service, protocol, port)
     }
 }
@@ -65,7 +58,7 @@ pub struct DummyMdns;
 
 impl Mdns for DummyMdns {
     fn add(
-        &mut self,
+        &self,
         _name: &str,
         _service: &str,
         _protocol: &str,
@@ -77,7 +70,7 @@ impl Mdns for DummyMdns {
     }
 
     fn remove(
-        &mut self,
+        &self,
         _name: &str,
         _service: &str,
         _protocol: &str,
@@ -101,11 +94,11 @@ pub struct MdnsMgr<'a> {
     /// Product ID
     pid: u16,
     /// Device name
-    device_name: heapless::String<32>,
+    device_name: &'a str,
     /// Matter port
     matter_port: u16,
     /// mDns service
-    mdns: &'a mut dyn Mdns,
+    pub(crate) mdns: &'a dyn Mdns,
 }
 
 impl<'a> MdnsMgr<'a> {
@@ -113,14 +106,14 @@ impl<'a> MdnsMgr<'a> {
     pub fn new(
         vid: u16,
         pid: u16,
-        device_name: &str,
+        device_name: &'a str,
         matter_port: u16,
-        mdns: &'a mut dyn Mdns,
+        mdns: &'a dyn Mdns,
     ) -> Self {
         Self {
             vid,
             pid,
-            device_name: device_name.chars().take(32).collect(),
+            device_name,
             matter_port,
             mdns,
         }
@@ -130,7 +123,7 @@ impl<'a> MdnsMgr<'a> {
     /// name - is the service name (comma separated subtypes may follow)
     /// mode - the current service mode
     #[allow(clippy::needless_pass_by_value)]
-    pub fn publish_service(&mut self, name: &str, mode: ServiceMode) -> Result<(), Error> {
+    pub fn publish_service(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         match mode {
             ServiceMode::Commissioned => {
                 self.mdns
@@ -143,7 +136,7 @@ impl<'a> MdnsMgr<'a> {
                 let txt_kvs = [
                     ("D", discriminator_str.as_str()),
                     ("CM", "1"),
-                    ("DN", self.device_name.as_str()),
+                    ("DN", self.device_name),
                     ("VP", &vp),
                     ("SII", "5000"), /* Sleepy Idle Interval */
                     ("SAI", "300"),  /* Sleepy Active Interval */
@@ -166,7 +159,7 @@ impl<'a> MdnsMgr<'a> {
         }
     }
 
-    pub fn unpublish_service(&mut self, name: &str, mode: ServiceMode) -> Result<(), Error> {
+    pub fn unpublish_service(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         match mode {
             ServiceMode::Commissioned => {
                 self.mdns.remove(name, "_matter", "_tcp", self.matter_port)
@@ -216,6 +209,7 @@ impl<'a> MdnsMgr<'a> {
 pub mod builtin {
     use core::cell::RefCell;
     use core::fmt::Write;
+    use core::mem::MaybeUninit;
     use core::pin::pin;
     use core::str::FromStr;
 
@@ -224,15 +218,16 @@ pub mod builtin {
     use domain::base::octets::{Octets256, Octets64, OctetsBuilder};
     use domain::base::{Dname, MessageBuilder, Record, ShortBuf};
     use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
-    use embassy_futures::select::select;
-    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use embassy_futures::select::{select, select3};
     use embassy_time::{Duration, Timer};
     use log::info;
 
     use crate::error::{Error, ErrorCode};
-    use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use crate::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+    use crate::transport::packet::{MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
+    use crate::transport::pipe::{Chunk, Pipe};
     use crate::transport::udp::UdpListener;
-    use crate::utils::select::EitherUnwrap;
+    use crate::utils::select::{EitherUnwrap, Notification};
 
     const IP_BROADCAST_ADDRS: [(IpAddr, u16); 2] = [
         (IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)), 5353),
@@ -243,6 +238,9 @@ pub mod builtin {
     ];
 
     const IP_BIND_ADDR: (IpAddr, u16) = (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
+
+    pub type MdnsTxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
+    pub type MdnsRxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
 
     #[allow(clippy::too_many_arguments)]
     pub fn create_record(
@@ -382,8 +380,6 @@ pub mod builtin {
         Ok(target.len())
     }
 
-    pub type Notification = embassy_sync::signal::Signal<NoopRawMutex, ()>;
-
     #[derive(Debug, Clone)]
     struct MdnsEntry {
         key: heapless::String<64>,
@@ -407,7 +403,6 @@ pub mod builtin {
         ipv6: Option<[u8; 16]>,
         entries: RefCell<heapless::Vec<MdnsEntry, 4>>,
         notification: Notification,
-        udp: RefCell<Option<UdpListener>>,
     }
 
     impl<'a> Mdns<'a> {
@@ -420,25 +415,11 @@ pub mod builtin {
                 ipv6,
                 entries: RefCell::new(heapless::Vec::new()),
                 notification: Notification::new(),
-                udp: RefCell::new(None),
             }
         }
 
         pub fn split(&mut self) -> (MdnsApi<'_, 'a>, MdnsRunner<'_, 'a>) {
             (MdnsApi(&*self), MdnsRunner(&*self))
-        }
-
-        async fn bind(&self) -> Result<(), Error> {
-            if self.udp.borrow().is_none() {
-                *self.udp.borrow_mut() =
-                    Some(UdpListener::new(SocketAddr::new(IP_BIND_ADDR.0, IP_BIND_ADDR.1)).await?);
-            }
-
-            Ok(())
-        }
-
-        pub fn close(&mut self) {
-            *self.udp.borrow_mut() = None;
         }
 
         fn key(
@@ -546,15 +527,72 @@ pub mod builtin {
     pub struct MdnsRunner<'a, 'b>(&'a Mdns<'b>);
 
     impl<'a, 'b> MdnsRunner<'a, 'b> {
-        pub async fn run(&mut self) -> Result<(), Error> {
-            let mut broadcast = pin!(self.broadcast());
-            let mut respond = pin!(self.respond());
+        pub async fn run_udp(
+            &mut self,
+            tx_buf: &mut MdnsTxBuf,
+            rx_buf: &mut MdnsRxBuf,
+        ) -> Result<(), Error> {
+            let udp = UdpListener::new(SocketAddr::new(IP_BIND_ADDR.0, IP_BIND_ADDR.1)).await?;
+
+            let tx_pipe = Pipe::new(unsafe { tx_buf.assume_init_mut() });
+            let rx_pipe = Pipe::new(unsafe { rx_buf.assume_init_mut() });
+
+            let tx_pipe = &tx_pipe;
+            let rx_pipe = &rx_pipe;
+            let udp = &udp;
+
+            let mut tx = pin!(async move {
+                loop {
+                    {
+                        let mut data = tx_pipe.data.lock().await;
+
+                        if let Some(chunk) = data.chunk {
+                            udp.send(chunk.addr.unwrap_udp(), &data.buf[chunk.start..chunk.end])
+                                .await?;
+                            data.chunk = None;
+                            tx_pipe.data_consumed_notification.signal(());
+                        }
+                    }
+
+                    tx_pipe.data_supplied_notification.wait().await;
+                }
+            });
+
+            let mut rx = pin!(async move {
+                loop {
+                    {
+                        let mut data = rx_pipe.data.lock().await;
+
+                        if data.chunk.is_none() {
+                            let (len, addr) = udp.recv(data.buf).await?;
+
+                            data.chunk = Some(Chunk {
+                                start: 0,
+                                end: len,
+                                addr: Address::Udp(addr),
+                            });
+                            rx_pipe.data_supplied_notification.signal(());
+                        }
+                    }
+
+                    rx_pipe.data_consumed_notification.wait().await;
+                }
+            });
+
+            let mut run = pin!(async move { self.run(tx_pipe, rx_pipe).await });
+
+            select3(&mut tx, &mut rx, &mut run).await.unwrap()
+        }
+
+        pub async fn run(&mut self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
+            let mut broadcast = pin!(self.broadcast(tx_pipe));
+            let mut respond = pin!(self.respond(rx_pipe, tx_pipe));
 
             select(&mut broadcast, &mut respond).await.unwrap()
         }
 
         #[allow(clippy::await_holding_refcell_ref)]
-        async fn broadcast(&self) -> Result<(), Error> {
+        async fn broadcast(&self, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
             loop {
                 select(
                     self.0.notification.wait(),
@@ -564,51 +602,74 @@ pub mod builtin {
 
                 let mut index = 0;
 
-                loop {
-                    let entry = self.0.entries.borrow().get(index).cloned();
+                'outer: loop {
+                    for (addr, port) in IP_BROADCAST_ADDRS {
+                        loop {
+                            {
+                                let mut data = tx_pipe.data.lock().await;
 
-                    if let Some(entry) = entry {
-                        info!("Broadasting mDNS entry {}", &entry.key);
+                                if data.chunk.is_none() {
+                                    let entries = self.0.entries.borrow();
+                                    let entry = entries.get(index);
 
-                        self.0.bind().await?;
+                                    if let Some(entry) = entry {
+                                        info!(
+                                            "Broadasting mDNS entry {} on {}:{}",
+                                            &entry.key, addr, port
+                                        );
 
-                        let udp = self.0.udp.borrow();
-                        let udp = udp.as_ref().unwrap();
+                                        let len = entry.record.len();
+                                        data.buf[..len].copy_from_slice(&entry.record);
+                                        drop(entries);
 
-                        for (addr, port) in IP_BROADCAST_ADDRS {
-                            udp.send(SocketAddr::new(addr, port), &entry.record).await?;
+                                        data.chunk = Some(Chunk {
+                                            start: 0,
+                                            end: len,
+                                            addr: Address::Udp(SocketAddr::new(addr, port)),
+                                        });
+
+                                        tx_pipe.data_supplied_notification.signal(());
+                                    } else {
+                                        break 'outer;
+                                    }
+
+                                    break;
+                                }
+                            }
+
+                            tx_pipe.data_consumed_notification.wait().await;
                         }
-
-                        index += 1;
-                    } else {
-                        break;
                     }
+
+                    index += 1;
                 }
             }
         }
 
         #[allow(clippy::await_holding_refcell_ref)]
-        async fn respond(&self) -> Result<(), Error> {
+        async fn respond(&self, rx_pipe: &Pipe<'_>, _tx_pipe: &Pipe<'_>) -> Result<(), Error> {
             loop {
-                let mut buf = [0; 1580];
+                {
+                    let mut data = rx_pipe.data.lock().await;
 
-                let udp = self.0.udp.borrow();
-                let udp = udp.as_ref().unwrap();
+                    if let Some(_chunk) = data.chunk {
+                        // TODO: Process the incoming packed and only answer what we are being queried about
 
-                let (_len, _addr) = udp.recv(&mut buf).await?;
+                        data.chunk = None;
+                        rx_pipe.data_consumed_notification.signal(());
 
-                info!("Received UDP packet");
+                        self.0.notification.signal(());
+                    }
+                }
 
-                // TODO: Process the incoming packed and only answer what we are being queried about
-
-                self.0.notification.signal(());
+                rx_pipe.data_supplied_notification.wait().await;
             }
         }
     }
 
     impl<'a, 'b> super::Mdns for MdnsApi<'a, 'b> {
         fn add(
-            &mut self,
+            &self,
             name: &str,
             service: &str,
             protocol: &str,
@@ -628,7 +689,7 @@ pub mod builtin {
         }
 
         fn remove(
-            &mut self,
+            &self,
             name: &str,
             service: &str,
             protocol: &str,
@@ -641,6 +702,7 @@ pub mod builtin {
 
 #[cfg(all(feature = "std", feature = "astro-dnssd"))]
 pub mod astro {
+    use core::cell::RefCell;
     use std::collections::HashMap;
 
     use super::Mdns;
@@ -657,18 +719,18 @@ pub mod astro {
     }
 
     pub struct AstroMdns {
-        services: HashMap<ServiceId, RegisteredDnsService>,
+        services: RefCell<HashMap<ServiceId, RegisteredDnsService>>,
     }
 
     impl AstroMdns {
         pub fn new() -> Result<Self, Error> {
             Ok(Self {
-                services: HashMap::new(),
+                services: RefCell::new(HashMap::new()),
             })
         }
 
         pub fn add(
-            &mut self,
+            &self,
             name: &str,
             service: &str,
             protocol: &str,
@@ -698,7 +760,7 @@ pub mod astro {
 
             let svc = builder.register().map_err(|_| ErrorCode::MdnsError)?;
 
-            self.services.insert(
+            self.services.borrow_mut().insert(
                 ServiceId {
                     name: name.into(),
                     service: service.into(),
@@ -712,7 +774,7 @@ pub mod astro {
         }
 
         pub fn remove(
-            &mut self,
+            &self,
             name: &str,
             service: &str,
             protocol: &str,
@@ -725,7 +787,7 @@ pub mod astro {
                 port,
             };
 
-            if self.services.remove(&id).is_some() {
+            if self.services.borrow_mut().remove(&id).is_some() {
                 info!(
                     "Deregistering mDNS service {}/{}.{}/{}",
                     name, service, protocol, port
@@ -738,7 +800,7 @@ pub mod astro {
 
     impl Mdns for AstroMdns {
         fn add(
-            &mut self,
+            &self,
             name: &str,
             service: &str,
             protocol: &str,
@@ -758,7 +820,7 @@ pub mod astro {
         }
 
         fn remove(
-            &mut self,
+            &self,
             name: &str,
             service: &str,
             protocol: &str,

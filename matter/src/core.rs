@@ -48,10 +48,10 @@ pub struct Matter<'a> {
     pub acl_mgr: RefCell<AclMgr>,
     pub pase_mgr: RefCell<PaseMgr>,
     pub failsafe: RefCell<FailSafe>,
-    pub mdns_mgr: RefCell<MdnsMgr<'a>>,
+    pub mdns_mgr: MdnsMgr<'a>,
     pub epoch: Epoch,
     pub rand: Rand,
-    pub dev_det: BasicInfoConfig<'a>,
+    pub dev_det: &'a BasicInfoConfig<'a>,
     pub dev_att: &'a dyn DevAttDataFetcher,
     pub port: u16,
 }
@@ -60,9 +60,9 @@ impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
     #[inline(always)]
     pub fn new_default(
-        dev_det: BasicInfoConfig<'a>,
+        dev_det: &'a BasicInfoConfig<'a>,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: &'a mut dyn Mdns,
+        mdns: &'a dyn Mdns,
         port: u16,
     ) -> Self {
         use crate::utils::epoch::sys_epoch;
@@ -79,9 +79,9 @@ impl<'a> Matter<'a> {
     /// this object to return the device attestation details when queried upon.
     #[inline(always)]
     pub fn new(
-        dev_det: BasicInfoConfig<'a>,
+        dev_det: &'a BasicInfoConfig<'a>,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: &'a mut dyn Mdns,
+        mdns: &'a dyn Mdns,
         epoch: Epoch,
         rand: Rand,
         port: u16,
@@ -91,13 +91,7 @@ impl<'a> Matter<'a> {
             acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
-            mdns_mgr: RefCell::new(MdnsMgr::new(
-                dev_det.vid,
-                dev_det.pid,
-                dev_det.device_name,
-                port,
-                mdns,
-            )),
+            mdns_mgr: MdnsMgr::new(dev_det.vid, dev_det.pid, dev_det.device_name, port, mdns),
             epoch,
             rand,
             dev_det,
@@ -107,7 +101,7 @@ impl<'a> Matter<'a> {
     }
 
     pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
-        &self.dev_det
+        self.dev_det
     }
 
     pub fn dev_att(&self) -> &dyn DevAttDataFetcher {
@@ -119,9 +113,7 @@ impl<'a> Matter<'a> {
     }
 
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr
-            .borrow_mut()
-            .load(data, &mut self.mdns_mgr.borrow_mut())
+        self.fabric_mgr.borrow_mut().load(data, &self.mdns_mgr)
     }
 
     pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
@@ -148,7 +140,7 @@ impl<'a> Matter<'a> {
         if !self.pase_mgr.borrow().is_pase_session_enabled() && self.fabric_mgr.borrow().is_empty()
         {
             print_pairing_code_and_qr(
-                &self.dev_det,
+                self.dev_det,
                 &dev_comm,
                 DiscoveryCapabilities::default(),
                 buf,
@@ -157,7 +149,7 @@ impl<'a> Matter<'a> {
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,
                 dev_comm.discriminator,
-                &mut self.mdns_mgr.borrow_mut(),
+                &self.mdns_mgr,
             )?;
 
             Ok(true)
@@ -191,9 +183,27 @@ impl<'a> Borrow<RefCell<FailSafe>> for Matter<'a> {
     }
 }
 
-impl<'a> Borrow<RefCell<MdnsMgr<'a>>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<MdnsMgr<'a>> {
+impl<'a> Borrow<MdnsMgr<'a>> for Matter<'a> {
+    fn borrow(&self) -> &MdnsMgr<'a> {
         &self.mdns_mgr
+    }
+}
+
+impl<'a> Borrow<BasicInfoConfig<'a>> for Matter<'a> {
+    fn borrow(&self) -> &BasicInfoConfig<'a> {
+        self.dev_det
+    }
+}
+
+impl<'a> Borrow<dyn DevAttDataFetcher + 'a> for Matter<'a> {
+    fn borrow(&self) -> &(dyn DevAttDataFetcher + 'a) {
+        self.dev_att
+    }
+}
+
+impl<'a> Borrow<dyn Mdns + 'a> for Matter<'a> {
+    fn borrow(&self) -> &(dyn Mdns + 'a) {
+        self.mdns_mgr.mdns
     }
 }
 

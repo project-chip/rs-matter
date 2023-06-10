@@ -22,12 +22,8 @@ use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::time::Duration;
 
-use crate::{
-    error::*,
-    transport::{plain_hdr, proto_hdr},
-    utils::writebuf::WriteBuf,
-};
-use log::{info, trace};
+use crate::{error::*, transport::plain_hdr};
+use log::info;
 
 use super::dedup::RxCtrState;
 use super::{network::Address, packet::Packet};
@@ -255,44 +251,16 @@ impl Session {
         Ok(())
     }
 
-    // TODO: Most of this can now be moved into the 'Packet' module
-    fn do_send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
+    fn send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
         self.last_use = epoch();
-        tx.peer = self.peer_addr;
 
-        // Generate encrypted header
-        let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
-        let mut write_buf = WriteBuf::new(&mut tmp_buf);
-        tx.proto.encode(&mut write_buf)?;
-        tx.get_writebuf()?.prepend(write_buf.as_slice())?;
-
-        // Generate plain-text header
-        if self.mode == SessionMode::PlainText {
-            if let Some(d) = self.peer_nodeid {
-                tx.plain.set_dest_u64(d);
-            }
-        }
-        let mut tmp_buf = [0_u8; plain_hdr::max_plain_hdr_len()];
-        let mut write_buf = WriteBuf::new(&mut tmp_buf);
-        tx.plain.encode(&mut write_buf)?;
-        let plain_hdr_bytes = write_buf.as_slice();
-
-        trace!("unencrypted packet: {:x?}", tx.as_mut_slice());
-        let ctr = tx.plain.ctr;
-        let enc_key = self.get_enc_key();
-        if let Some(e) = enc_key {
-            proto_hdr::encrypt_in_place(
-                ctr,
-                self.local_nodeid,
-                plain_hdr_bytes,
-                tx.get_writebuf()?,
-                e,
-            )?;
-        }
-
-        tx.get_writebuf()?.prepend(plain_hdr_bytes)?;
-        trace!("Full encrypted packet: {:x?}", tx.as_mut_slice());
-        Ok(())
+        tx.proto_encode(
+            self.peer_addr,
+            self.peer_nodeid,
+            self.local_nodeid,
+            self.mode == SessionMode::PlainText,
+            self.get_enc_key(),
+        )
     }
 
     fn rand_msg_ctr(rand: Rand) -> u32 {
@@ -493,32 +461,11 @@ impl SessionMgr {
         }
     }
 
-    pub fn decode(&mut self, rx: &mut Packet) -> Result<(), Error> {
-        // let network = self.network.as_ref().ok_or(ErrorCode::NoNetworkInterface)?;
-
-        // let (len, src) = network.recv(rx.as_borrow_slice()).await?;
-        // rx.get_parsebuf()?.set_len(len);
-        // rx.peer = src;
-
-        // info!("{} from src: {}", "Received".blue(), src);
-        // trace!("payload: {:x?}", rx.as_borrow_slice());
-
-        // Read unencrypted packet header
-        rx.plain_hdr_decode()
-    }
-
     pub fn send(&mut self, sess_idx: usize, tx: &mut Packet) -> Result<(), Error> {
         self.sessions[sess_idx]
             .as_mut()
             .ok_or(ErrorCode::NoSession)?
-            .do_send(self.epoch, tx)?;
-
-        // let network = self.network.as_ref().ok_or(Error::NoNetworkInterface)?;
-        // let peer = proto_tx.peer;
-        // network.send(proto_tx.as_borrow_slice(), peer).await?;
-        // info!("Message Sent to {}", peer);
-
-        Ok(())
+            .send(self.epoch, tx)
     }
 
     pub fn get_session_handle(&mut self, sess_idx: usize) -> SessionHandle {

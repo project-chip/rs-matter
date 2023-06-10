@@ -39,6 +39,7 @@ pub enum GeneralCode {
     PermissionDenied = 15,
     DataLoss = 16,
 }
+
 pub fn create_status_report(
     proto_tx: &mut Packet,
     general_code: GeneralCode,

@@ -204,7 +204,7 @@ impl<'a, 'b> Transaction<'a, 'b> {
 }
 
 /* Interaction Model ID as per the Matter Spec */
-const PROTO_ID_INTERACTION_MODEL: usize = 0x01;
+pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 
 const MAX_RESUME_PATHS: usize = 32;
 const MAX_RESUME_DATAVER_FILTERS: usize = 32;
@@ -228,8 +228,7 @@ pub enum Interaction<'a> {
 
 impl<'a> Interaction<'a> {
     fn new(rx: &'a Packet, transaction: &mut Transaction) -> Result<Option<Self>, Error> {
-        let opcode: OpCode =
-            num::FromPrimitive::from_u8(rx.get_proto_opcode()).ok_or(ErrorCode::Invalid)?;
+        let opcode: OpCode = rx.get_proto_opcode()?;
 
         let rx_data = rx.as_slice();
 
@@ -303,7 +302,7 @@ impl<'a> Interaction<'a> {
     }
 
     fn create_status_response(tx: &mut Packet, status: IMStatusCode) -> Result<(), Error> {
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
         tx.set_proto_opcode(OpCode::StatusResponse as u8);
 
         let mut tw = TLVWriter::new(tx.get_writebuf()?);
@@ -332,7 +331,7 @@ impl<'a> ReadReq<'a> {
     }
 
     fn initiate(&self, tx: &mut Packet, _transaction: &mut Transaction) -> Result<bool, Error> {
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
         tx.set_proto_opcode(OpCode::ReportData as u8);
 
         let mut tw = Self::reserve_long_read_space(tx)?;
@@ -410,7 +409,7 @@ impl<'a> WriteReq<'a> {
 
             Ok(false)
         } else {
-            tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+            tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
             tx.set_proto_opcode(OpCode::WriteResponse as u8);
 
             let mut tw = TLVWriter::new(tx.get_writebuf()?);
@@ -459,7 +458,7 @@ impl<'a> InvReq<'a> {
 
                 Ok(false)
             } else {
-                tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+                tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
                 tx.set_proto_opcode(OpCode::InvokeResponse as u8);
 
                 let mut tw = TLVWriter::new(tx.get_writebuf()?);
@@ -503,7 +502,7 @@ impl<'a> InvReq<'a> {
 
 impl TimedReq {
     pub fn process(&self, tx: &mut Packet, transaction: &mut Transaction) -> Result<(), Error> {
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
         tx.set_proto_opcode(OpCode::StatusResponse as u8);
 
         let mut tw = TLVWriter::new(tx.get_writebuf()?);
@@ -547,7 +546,7 @@ impl<'a> SubscribeReq<'a> {
     }
 
     fn initiate(&self, tx: &mut Packet, transaction: &mut Transaction) -> Result<bool, Error> {
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
         tx.set_proto_opcode(OpCode::ReportData as u8);
 
         let mut tw = ReadReq::reserve_long_read_space(tx)?;
@@ -615,7 +614,7 @@ pub struct ResumeReadReq {
 
 impl ResumeReadReq {
     fn initiate(&self, tx: &mut Packet, _transaction: &mut Transaction) -> Result<bool, Error> {
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
         tx.set_proto_opcode(OpCode::ReportData as u8);
 
         let mut tw = ReadReq::reserve_long_read_space(tx)?;
@@ -679,7 +678,7 @@ pub struct ResumeSubscribeReq {
 
 impl ResumeSubscribeReq {
     fn initiate(&self, tx: &mut Packet, _transaction: &mut Transaction) -> Result<bool, Error> {
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL as u16);
+        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
 
         if self.resume_path.is_some() {
             tx.set_proto_opcode(OpCode::ReportData as u8);

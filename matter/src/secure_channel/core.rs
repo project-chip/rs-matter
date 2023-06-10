@@ -27,7 +27,6 @@ use crate::{
     utils::{epoch::Epoch, rand::Rand},
 };
 use log::{error, info};
-use num;
 
 use super::{case::Case, pake::PaseMgr};
 
@@ -37,7 +36,7 @@ use super::{case::Case, pake::PaseMgr};
 pub struct SecureChannel<'a> {
     case: Case<'a>,
     pase: &'a RefCell<PaseMgr>,
-    mdns: &'a RefCell<MdnsMgr<'a>>,
+    mdns: &'a MdnsMgr<'a>,
 }
 
 impl<'a> SecureChannel<'a> {
@@ -45,7 +44,7 @@ impl<'a> SecureChannel<'a> {
     pub fn new<
         T: Borrow<RefCell<FabricMgr>>
             + Borrow<RefCell<PaseMgr>>
-            + Borrow<RefCell<MdnsMgr<'a>>>
+            + Borrow<MdnsMgr<'a>>
             + Borrow<Epoch>
             + Borrow<Rand>,
     >(
@@ -63,7 +62,7 @@ impl<'a> SecureChannel<'a> {
     pub fn wrap(
         pase: &'a RefCell<PaseMgr>,
         fabric: &'a RefCell<FabricMgr>,
-        mdns: &'a RefCell<MdnsMgr<'a>>,
+        mdns: &'a MdnsMgr<'a>,
         rand: Rand,
     ) -> Self {
         Self {
@@ -74,8 +73,8 @@ impl<'a> SecureChannel<'a> {
     }
 
     pub fn handle(&mut self, ctx: &mut ProtoCtx) -> Result<(bool, Option<CloneData>), Error> {
-        let proto_opcode: OpCode =
-            num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(ErrorCode::Invalid)?;
+        let proto_opcode: OpCode = ctx.rx.get_proto_opcode()?;
+
         ctx.tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
         info!("Received Opcode: {:?}", proto_opcode);
         info!("Received Data:");
@@ -92,10 +91,7 @@ impl<'a> SecureChannel<'a> {
                 .borrow_mut()
                 .pasepake1_handler(ctx)
                 .map(|reply| (reply, None)),
-            OpCode::PASEPake3 => self
-                .pase
-                .borrow_mut()
-                .pasepake3_handler(ctx, &mut self.mdns.borrow_mut()),
+            OpCode::PASEPake3 => self.pase.borrow_mut().pasepake3_handler(ctx, self.mdns),
             OpCode::CASESigma1 => self.case.casesigma1_handler(ctx).map(|reply| (reply, None)),
             OpCode::CASESigma3 => self.case.casesigma3_handler(ctx),
             _ => {

@@ -15,10 +15,14 @@
  *    limitations under the License.
  */
 
-use log::error;
+use log::{error, info, trace};
+use owo_colors::OwoColorize;
 
 use crate::{
     error::{Error, ErrorCode},
+    interaction_model::core::PROTO_ID_INTERACTION_MODEL,
+    secure_channel::common::PROTO_ID_SECURE_CHANNEL,
+    tlv,
     utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
 };
 
@@ -29,6 +33,7 @@ use super::{
 };
 
 pub const MAX_RX_BUF_SIZE: usize = 1583;
+pub const MAX_RX_STATUS_BUF_SIZE: usize = 100;
 pub const MAX_TX_BUF_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -160,8 +165,20 @@ impl<'a> Packet<'a> {
         self.proto.proto_id = proto_id;
     }
 
-    pub fn get_proto_opcode(&self) -> u8 {
+    pub fn get_proto_opcode<T: num::FromPrimitive>(&self) -> Result<T, Error> {
+        num::FromPrimitive::from_u8(self.proto.proto_opcode).ok_or(ErrorCode::Invalid.into())
+    }
+
+    pub fn get_proto_raw_opcode(&self) -> u8 {
         self.proto.proto_opcode
+    }
+
+    pub fn check_proto_opcode(&self, opcode: u8) -> Result<(), Error> {
+        if self.proto.proto_opcode == opcode {
+            Ok(())
+        } else {
+            Err(ErrorCode::Invalid.into())
+        }
     }
 
     pub fn set_proto_opcode(&mut self, proto_opcode: u8) {
@@ -196,6 +213,52 @@ impl<'a> Packet<'a> {
         }
     }
 
+    pub fn proto_encode(
+        &mut self,
+        peer: Address,
+        peer_nodeid: Option<u64>,
+        local_nodeid: u64,
+        plain_text: bool,
+        enc_key: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        self.peer = peer;
+
+        // Generate encrypted header
+        let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        self.proto.encode(&mut write_buf)?;
+        self.get_writebuf()?.prepend(write_buf.as_slice())?;
+
+        // Generate plain-text header
+        if plain_text {
+            if let Some(d) = peer_nodeid {
+                self.plain.set_dest_u64(d);
+            }
+        }
+
+        let mut tmp_buf = [0_u8; plain_hdr::max_plain_hdr_len()];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        self.plain.encode(&mut write_buf)?;
+        let plain_hdr_bytes = write_buf.as_slice();
+
+        trace!("unencrypted packet: {:x?}", self.as_mut_slice());
+        let ctr = self.plain.ctr;
+        if let Some(e) = enc_key {
+            proto_hdr::encrypt_in_place(
+                ctr,
+                local_nodeid,
+                plain_hdr_bytes,
+                self.get_writebuf()?,
+                e,
+            )?;
+        }
+
+        self.get_writebuf()?.prepend(plain_hdr_bytes)?;
+        trace!("Full encrypted packet: {:x?}", self.as_mut_slice());
+
+        Ok(())
+    }
+
     pub fn is_plain_hdr_decoded(&self) -> Result<bool, Error> {
         match &self.data {
             Direction::Rx(_, state) => match state {
@@ -218,6 +281,46 @@ impl<'a> Packet<'a> {
                 }
             }
             _ => Err(ErrorCode::InvalidState.into()),
+        }
+    }
+
+    pub fn log(&self, operation: &str) {
+        match self.get_proto_id() {
+            PROTO_ID_SECURE_CHANNEL => {
+                if let Ok(opcode) = self.get_proto_opcode::<crate::secure_channel::common::OpCode>()
+                {
+                    info!("{} SC:{:?}: ", operation.cyan(), opcode);
+                } else {
+                    info!(
+                        "{} SC:{}??: ",
+                        operation.cyan(),
+                        self.get_proto_raw_opcode()
+                    );
+                }
+
+                tlv::print_tlv_list(self.as_slice());
+            }
+            PROTO_ID_INTERACTION_MODEL => {
+                if let Ok(opcode) =
+                    self.get_proto_opcode::<crate::interaction_model::core::OpCode>()
+                {
+                    info!("{} IM:{:?}: ", operation.cyan(), opcode);
+                } else {
+                    info!(
+                        "{} IM:{}??: ",
+                        operation.cyan(),
+                        self.get_proto_raw_opcode()
+                    );
+                }
+
+                tlv::print_tlv_list(self.as_slice());
+            }
+            other => info!(
+                "{} {}??:{}??: ",
+                operation.cyan(),
+                other,
+                self.get_proto_raw_opcode()
+            ),
         }
     }
 }

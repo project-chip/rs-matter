@@ -102,15 +102,11 @@ pub struct OpenCommWindowReq<'a> {
 pub struct AdminCommCluster<'a> {
     data_ver: Dataver,
     pase_mgr: &'a RefCell<PaseMgr>,
-    mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+    mdns_mgr: &'a MdnsMgr<'a>,
 }
 
 impl<'a> AdminCommCluster<'a> {
-    pub fn new(
-        pase_mgr: &'a RefCell<PaseMgr>,
-        mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
-        rand: Rand,
-    ) -> Self {
+    pub fn new(pase_mgr: &'a RefCell<PaseMgr>, mdns_mgr: &'a MdnsMgr<'a>, rand: Rand) -> Self {
         Self {
             data_ver: Dataver::new(rand),
             pase_mgr,
@@ -159,7 +155,7 @@ impl<'a> AdminCommCluster<'a> {
         self.pase_mgr.borrow_mut().enable_pase_session(
             verifier,
             req.discriminator,
-            &mut self.mdns_mgr.borrow_mut(),
+            self.mdns_mgr,
         )?;
 
         Ok(())

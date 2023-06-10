@@ -1,4 +1,7 @@
 use embassy_futures::select::{Either, Either3, Either4};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+pub type Notification = embassy_sync::signal::Signal<NoopRawMutex, ()>;
 
 pub trait EitherUnwrap<T> {
     fn unwrap(self) -> T;

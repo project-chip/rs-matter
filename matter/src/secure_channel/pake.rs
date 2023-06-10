@@ -67,7 +67,7 @@ impl PaseMgr {
         &mut self,
         verifier: VerifierData,
         discriminator: u16,
-        mdns: &mut MdnsMgr,
+        mdns: &MdnsMgr,
     ) -> Result<(), Error> {
         let mut buf = [0; 8];
         (self.rand)(&mut buf);
@@ -89,7 +89,7 @@ impl PaseMgr {
         Ok(())
     }
 
-    pub fn disable_pase_session(&mut self, mdns: &mut MdnsMgr) -> Result<(), Error> {
+    pub fn disable_pase_session(&mut self, mdns: &MdnsMgr) -> Result<(), Error> {
         if let PaseMgrState::Enabled(_, mdns_service_name, discriminator) = &self.state {
             mdns.unpublish_service(
                 mdns_service_name,
@@ -134,7 +134,7 @@ impl PaseMgr {
     pub fn pasepake3_handler(
         &mut self,
         ctx: &mut ProtoCtx,
-        mdns: &mut MdnsMgr,
+        mdns: &MdnsMgr,
     ) -> Result<(bool, Option<CloneData>), Error> {
         let clone_data = self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
         self.disable_pase_session(mdns)?;

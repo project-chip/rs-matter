@@ -222,7 +222,7 @@ pub struct NocCluster<'a> {
     fabric_mgr: &'a RefCell<FabricMgr>,
     acl_mgr: &'a RefCell<AclMgr>,
     failsafe: &'a RefCell<FailSafe>,
-    mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+    mdns_mgr: &'a MdnsMgr<'a>,
 }
 
 impl<'a> NocCluster<'a> {
@@ -231,7 +231,7 @@ impl<'a> NocCluster<'a> {
         fabric_mgr: &'a RefCell<FabricMgr>,
         acl_mgr: &'a RefCell<AclMgr>,
         failsafe: &'a RefCell<FailSafe>,
-        mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+        mdns_mgr: &'a MdnsMgr<'a>,
         epoch: Epoch,
         rand: Rand,
     ) -> Self {
@@ -383,7 +383,7 @@ impl<'a> NocCluster<'a> {
         let fab_idx = self
             .fabric_mgr
             .borrow_mut()
-            .add(fabric, &mut self.mdns_mgr.borrow_mut())
+            .add(fabric, self.mdns_mgr)
             .map_err(|_| NocStatus::TableFull)?;
 
         self.add_acl(fab_idx, r.case_admin_subject)?;
@@ -455,7 +455,7 @@ impl<'a> NocCluster<'a> {
         if self
             .fabric_mgr
             .borrow_mut()
-            .remove(req.fab_idx, &mut self.mdns_mgr.borrow_mut())
+            .remove(req.fab_idx, self.mdns_mgr)
             .is_ok()
         {
             let _ = self.acl_mgr.borrow_mut().delete_for_fabric(req.fab_idx);
