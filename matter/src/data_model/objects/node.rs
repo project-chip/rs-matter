@@ -17,9 +17,10 @@
 
 use crate::{
     acl::Accessor,
+    alloc,
     data_model::objects::Endpoint,
     interaction_model::{
-        core::{IMStatusCode, ResumeReadReq, ResumeSubscribeReq},
+        core::IMStatusCode,
         messages::{
             ib::{AttrPath, AttrStatus, CmdStatus, DataVersionFilter},
             msg::{InvReq, ReadReq, SubscribeReq, WriteReq},
@@ -27,7 +28,7 @@ use crate::{
         },
     },
     // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
-    tlv::{TLVArray, TLVArrayIter, TLVElement},
+    tlv::{TLVArray, TLVElement},
 };
 use core::{
     fmt,
@@ -57,41 +58,6 @@ where
     }
 }
 
-pub trait Iterable {
-    type Item;
-
-    type Iterator<'a>: Iterator<Item = Self::Item>
-    where
-        Self: 'a;
-
-    fn iter(&self) -> Self::Iterator<'_>;
-}
-
-impl<'a> Iterable for Option<&'a TLVArray<'a, DataVersionFilter>> {
-    type Item = DataVersionFilter;
-
-    type Iterator<'i> = WildcardIter<TLVArrayIter<'i, DataVersionFilter>, DataVersionFilter> where Self: 'i;
-
-    fn iter(&self) -> Self::Iterator<'_> {
-        if let Some(filters) = self {
-            WildcardIter::Wildcard(filters.iter())
-        } else {
-            WildcardIter::None
-        }
-    }
-}
-
-impl<'a> Iterable for &'a [DataVersionFilter] {
-    type Item = DataVersionFilter;
-
-    type Iterator<'i> = core::iter::Cloned<core::slice::Iter<'i, DataVersionFilter>> where Self: 'i;
-
-    fn iter(&self) -> Self::Iterator<'_> {
-        let slice: &[DataVersionFilter] = self;
-        slice.iter().cloned()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Node<'a> {
     pub id: u16,
@@ -102,6 +68,7 @@ impl<'a> Node<'a> {
     pub fn read<'s, 'm>(
         &'s self,
         req: &'m ReadReq,
+        from: Option<GenericPath>,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
     where
@@ -114,30 +81,14 @@ impl<'a> Node<'a> {
             req.dataver_filters.as_ref(),
             req.fabric_filtered,
             accessor,
-            None,
-        )
-    }
-
-    pub fn resume_read<'s, 'm>(
-        &'s self,
-        req: &'m ResumeReadReq,
-        accessor: &'m Accessor<'m>,
-    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
-    where
-        's: 'm,
-    {
-        self.read_attr_requests(
-            req.paths.iter().cloned(),
-            req.filters.as_slice(),
-            req.fabric_filtered,
-            accessor,
-            Some(req.resume_path.clone()),
+            from,
         )
     }
 
     pub fn subscribing_read<'s, 'm>(
         &'s self,
         req: &'m SubscribeReq,
+        from: Option<GenericPath>,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
     where
@@ -150,31 +101,14 @@ impl<'a> Node<'a> {
             req.dataver_filters.as_ref(),
             req.fabric_filtered,
             accessor,
-            None,
+            from,
         )
     }
 
-    pub fn resume_subscribing_read<'s, 'm>(
-        &'s self,
-        req: &'m ResumeSubscribeReq,
-        accessor: &'m Accessor<'m>,
-    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
-    where
-        's: 'm,
-    {
-        self.read_attr_requests(
-            req.paths.iter().cloned(),
-            req.filters.as_slice(),
-            req.fabric_filtered,
-            accessor,
-            Some(req.resume_path.clone().unwrap()),
-        )
-    }
-
-    fn read_attr_requests<'s, 'm, P, D>(
+    fn read_attr_requests<'s, 'm, P>(
         &'s self,
         attr_requests: P,
-        dataver_filters: D,
+        dataver_filters: Option<&'m TLVArray<DataVersionFilter>>,
         fabric_filtered: bool,
         accessor: &'m Accessor<'m>,
         from: Option<GenericPath>,
@@ -182,11 +116,9 @@ impl<'a> Node<'a> {
     where
         's: 'm,
         P: Iterator<Item = AttrPath> + 'm,
-        D: Iterable<Item = DataVersionFilter> + Clone + 'm,
     {
-        attr_requests.flat_map(move |path| {
+        alloc!(attr_requests.flat_map(move |path| {
             if path.to_gp().is_wildcard() {
-                let dataver_filters = dataver_filters.clone();
                 let from = from.clone();
 
                 let iter = self
@@ -204,10 +136,14 @@ impl<'a> Node<'a> {
                         .is_ok()
                     })
                     .map(move |(ep, cl, attr)| {
-                        let dataver = dataver_filters.iter().find_map(|filter| {
-                            (filter.path.endpoint == ep.id && filter.path.cluster == cl.id)
-                                .then_some(filter.data_ver)
-                        });
+                        let dataver = if let Some(dataver_filters) = dataver_filters {
+                            dataver_filters.iter().find_map(|filter| {
+                                (filter.path.endpoint == ep.id && filter.path.cluster == cl.id)
+                                    .then_some(filter.data_ver)
+                            })
+                        } else {
+                            None
+                        };
 
                         Ok(AttrDetails {
                             node: self,
@@ -230,10 +166,14 @@ impl<'a> Node<'a> {
 
                 let result = match self.check_attribute(accessor, ep, cl, attr, false) {
                     Ok(()) => {
-                        let dataver = dataver_filters.iter().find_map(|filter| {
-                            (filter.path.endpoint == ep && filter.path.cluster == cl)
-                                .then_some(filter.data_ver)
-                        });
+                        let dataver = if let Some(dataver_filters) = dataver_filters {
+                            dataver_filters.iter().find_map(|filter| {
+                                (filter.path.endpoint == ep && filter.path.cluster == cl)
+                                    .then_some(filter.data_ver)
+                            })
+                        } else {
+                            None
+                        };
 
                         Ok(AttrDetails {
                             node: self,
@@ -252,7 +192,7 @@ impl<'a> Node<'a> {
 
                 WildcardIter::Single(once(result))
             }
-        })
+        }))
     }
 
     pub fn write<'m>(
@@ -260,7 +200,7 @@ impl<'a> Node<'a> {
         req: &'m WriteReq,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<(AttrDetails, TLVElement<'m>), AttrStatus>> + 'm {
-        req.write_requests.iter().flat_map(move |attr_data| {
+        alloc!(req.write_requests.iter().flat_map(move |attr_data| {
             if attr_data.path.cluster.is_none() {
                 WildcardIter::Single(once(Err(AttrStatus::new(
                     &attr_data.path.to_gp(),
@@ -332,7 +272,7 @@ impl<'a> Node<'a> {
 
                 WildcardIter::Single(once(result))
             }
-        })
+        }))
     }
 
     pub fn invoke<'m>(
@@ -340,7 +280,8 @@ impl<'a> Node<'a> {
         req: &'m InvReq,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<(CmdDetails, TLVElement<'m>), CmdStatus>> + 'm {
-        req.inv_requests
+        alloc!(req
+            .inv_requests
             .iter()
             .flat_map(|inv_requests| inv_requests.iter())
             .flat_map(move |cmd_data| {
@@ -393,7 +334,7 @@ impl<'a> Node<'a> {
 
                     WildcardIter::Single(once(result))
                 }
-            })
+            }))
     }
 
     fn matches(path: Option<&GenericPath>, ep: EndptId, cl: ClusterId, leaf: u32) -> bool {

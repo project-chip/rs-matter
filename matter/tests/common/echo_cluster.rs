@@ -15,10 +15,9 @@
  *    limitations under the License.
  */
 
-use std::{
-    convert::TryInto,
-    sync::{Arc, Mutex, Once},
-};
+use core::cell::Cell;
+use core::convert::TryInto;
+use std::sync::{Arc, Mutex, Once};
 
 use matter::{
     attribute_enum, command_enum,
@@ -28,11 +27,9 @@ use matter::{
         Quality, ATTRIBUTE_LIST, FEATURE_MAP,
     },
     error::{Error, ErrorCode},
-    interaction_model::{
-        core::Transaction,
-        messages::ib::{attr_list_write, ListOperation},
-    },
+    interaction_model::messages::ib::{attr_list_write, ListOperation},
     tlv::{TLVElement, TagType},
+    transport::exchange::Exchange,
     utils::rand::Rand,
 };
 use num_derive::FromPrimitive;
@@ -132,10 +129,10 @@ pub const WRITE_LIST_MAX: usize = 5;
 pub struct EchoCluster {
     pub data_ver: Dataver,
     pub multiplier: u8,
-    pub att1: u16,
-    pub att2: u16,
-    pub att_write: u16,
-    pub att_custom: u32,
+    pub att1: Cell<u16>,
+    pub att2: Cell<u16>,
+    pub att_write: Cell<u16>,
+    pub att_custom: Cell<u32>,
 }
 
 impl EchoCluster {
@@ -143,10 +140,10 @@ impl EchoCluster {
         Self {
             data_ver: Dataver::new(rand),
             multiplier,
-            att1: 0x1234,
-            att2: 0x5678,
-            att_write: ATTR_WRITE_DEFAULT_VALUE,
-            att_custom: ATTR_CUSTOM_VALUE,
+            att1: Cell::new(0x1234),
+            att2: Cell::new(0x5678),
+            att_write: Cell::new(ATTR_WRITE_DEFAULT_VALUE),
+            att_custom: Cell::new(ATTR_CUSTOM_VALUE),
         }
     }
 
@@ -179,14 +176,14 @@ impl EchoCluster {
         }
     }
 
-    pub fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         let data = data.with_dataver(self.data_ver.get())?;
 
         match attr.attr_id.try_into()? {
-            Attributes::Att1(codec) => self.att1 = codec.decode(data)?,
-            Attributes::Att2(codec) => self.att2 = codec.decode(data)?,
-            Attributes::AttWrite(codec) => self.att_write = codec.decode(data)?,
-            Attributes::AttCustom(codec) => self.att_custom = codec.decode(data)?,
+            Attributes::Att1(codec) => self.att1.set(codec.decode(data)?),
+            Attributes::Att2(codec) => self.att2.set(codec.decode(data)?),
+            Attributes::AttWrite(codec) => self.att_write.set(codec.decode(data)?),
+            Attributes::AttCustom(codec) => self.att_custom.set(codec.decode(data)?),
             Attributes::AttWriteList(_) => {
                 attr_list_write(attr, data, |op, data| self.write_attr_list(&op, data))?
             }
@@ -198,8 +195,8 @@ impl EchoCluster {
     }
 
     pub fn invoke(
-        &mut self,
-        _transaction: &mut Transaction,
+        &self,
+        _exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
@@ -222,7 +219,7 @@ impl EchoCluster {
         }
     }
 
-    fn write_attr_list(&mut self, op: &ListOperation, data: &TLVElement) -> Result<(), Error> {
+    fn write_attr_list(&self, op: &ListOperation, data: &TLVElement) -> Result<(), Error> {
         let tc_handle = TestChecker::get().unwrap();
         let mut tc = tc_handle.lock().unwrap();
         match op {
@@ -272,18 +269,18 @@ impl Handler for EchoCluster {
         EchoCluster::read(self, attr, encoder)
     }
 
-    fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         EchoCluster::write(self, attr, data)
     }
 
     fn invoke(
-        &mut self,
-        transaction: &mut Transaction,
+        &self,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        EchoCluster::invoke(self, transaction, cmd, data, encoder)
+        EchoCluster::invoke(self, exchange, cmd, data, encoder)
     }
 }
 

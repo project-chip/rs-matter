@@ -15,12 +15,12 @@
  *    limitations under the License.
  */
 
-use core::convert::TryInto;
+use core::{cell::Cell, convert::TryInto};
 
 use super::objects::*;
 use crate::{
-    attribute_enum, cmd_enter, command_enum, error::Error, interaction_model::core::Transaction,
-    tlv::TLVElement, utils::rand::Rand,
+    attribute_enum, cmd_enter, command_enum, error::Error, tlv::TLVElement,
+    transport::exchange::Exchange, utils::rand::Rand,
 };
 use log::info;
 use strum::{EnumDiscriminants, FromRepr};
@@ -66,20 +66,20 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 
 pub struct OnOffCluster {
     data_ver: Dataver,
-    on: bool,
+    on: Cell<bool>,
 }
 
 impl OnOffCluster {
     pub fn new(rand: Rand) -> Self {
         Self {
             data_ver: Dataver::new(rand),
-            on: false,
+            on: Cell::new(false),
         }
     }
 
-    pub fn set(&mut self, on: bool) {
-        if self.on != on {
-            self.on = on;
+    pub fn set(&self, on: bool) {
+        if self.on.get() != on {
+            self.on.set(on);
             self.data_ver.changed();
         }
     }
@@ -90,7 +90,7 @@ impl OnOffCluster {
                 CLUSTER.read(attr.attr_id, writer)
             } else {
                 match attr.attr_id.try_into()? {
-                    Attributes::OnOff(codec) => codec.encode(writer, self.on),
+                    Attributes::OnOff(codec) => codec.encode(writer, self.on.get()),
                 }
             }
         } else {
@@ -98,7 +98,7 @@ impl OnOffCluster {
         }
     }
 
-    pub fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         let data = data.with_dataver(self.data_ver.get())?;
 
         match attr.attr_id.try_into()? {
@@ -111,8 +111,8 @@ impl OnOffCluster {
     }
 
     pub fn invoke(
-        &mut self,
-        transaction: &mut Transaction,
+        &self,
+        _exchange: &Exchange,
         cmd: &CmdDetails,
         _data: &TLVElement,
         _encoder: CmdDataEncoder,
@@ -128,11 +128,9 @@ impl OnOffCluster {
             }
             Commands::Toggle => {
                 cmd_enter!("Toggle");
-                self.set(!self.on);
+                self.set(!self.on.get());
             }
         }
-
-        transaction.complete();
 
         self.data_ver.changed();
 
@@ -145,18 +143,18 @@ impl Handler for OnOffCluster {
         OnOffCluster::read(self, attr, encoder)
     }
 
-    fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         OnOffCluster::write(self, attr, data)
     }
 
     fn invoke(
-        &mut self,
-        transaction: &mut Transaction,
+        &self,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        OnOffCluster::invoke(self, transaction, cmd, data, encoder)
+        OnOffCluster::invoke(self, exchange, cmd, data, encoder)
     }
 }
 

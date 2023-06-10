@@ -23,20 +23,15 @@ use log::info;
 use matter::core::{CommissioningData, Matter};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
 use matter::data_model::cluster_on_off;
-use matter::data_model::core::DataModel;
 use matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use matter::data_model::objects::*;
 use matter::data_model::root_endpoint;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
-use matter::interaction_model::core::InteractionModel;
 use matter::mdns::{DefaultMdns, DefaultMdnsRunner};
 use matter::secure_channel::spake2p::VerifierData;
-use matter::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use matter::transport::{
-    core::RecvAction, core::Transport, packet::MAX_RX_BUF_SIZE, packet::MAX_TX_BUF_SIZE,
-    udp::UdpListener,
-};
+use matter::transport::network::{Ipv4Addr, Ipv6Addr};
+use matter::transport::runner::{RxBuf, TransportRunner, TxBuf};
 use matter::utils::select::EitherUnwrap;
 
 mod dev_att;
@@ -44,7 +39,7 @@ mod dev_att;
 #[cfg(feature = "std")]
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
-        .stack_size(120 * 1024)
+        .stack_size(140 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -62,10 +57,10 @@ fn run() -> Result<(), Error> {
     initialize_logger();
 
     info!(
-        "Matter memory: mDNS={}, Matter={}, Transport={}",
+        "Matter memory: mDNS={}, Matter={}, TransportRunner={}",
         core::mem::size_of::<DefaultMdns>(),
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<Transport>(),
+        core::mem::size_of::<TransportRunner>(),
     );
 
     let dev_det = BasicInfoConfig {
@@ -91,6 +86,8 @@ fn run() -> Result<(), Error> {
     );
 
     let mut mdns_runner = DefaultMdnsRunner::new(&mdns);
+
+    info!("mDNS initialized: {:p}, {:p}", &mdns, &mdns_runner);
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 
@@ -118,36 +115,25 @@ fn run() -> Result<(), Error> {
         matter::MATTER_PORT,
     );
 
-    let psm_path = std::env::temp_dir().join("matter-iot");
-    info!("Persisting from/to {}", psm_path.display());
+    info!("Matter initialized: {:p}", &matter);
 
-    #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    let psm = matter::persist::FilePsm::new(psm_path)?;
+    let mut runner = TransportRunner::new(&matter);
 
-    let mut buf = [0; 4096];
-    let buf = &mut buf;
+    info!("Transport Runner initialized: {:p}", &runner);
 
-    #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    {
-        if let Some(data) = psm.load("acls", buf)? {
-            matter.load_acls(data)?;
-        }
+    let mut tx_buf = TxBuf::uninit();
+    let mut rx_buf = RxBuf::uninit();
 
-        if let Some(data) = psm.load("fabrics", buf)? {
-            matter.load_fabrics(data)?;
-        }
-    }
+    // #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    // {
+    //     if let Some(data) = psm.load("acls", buf)? {
+    //         matter.load_acls(data)?;
+    //     }
 
-    let mut transport = Transport::new(&matter);
-
-    transport.start(
-        CommissioningData {
-            // TODO: Hard-coded for now
-            verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
-            discriminator: 250,
-        },
-        buf,
-    )?;
+    //     if let Some(data) = psm.load("fabrics", buf)? {
+    //         matter.load_fabrics(data)?;
+    //     }
+    // }
 
     let node = Node {
         id: 0,
@@ -161,69 +147,48 @@ fn run() -> Result<(), Error> {
         ],
     };
 
-    let mut handler = handler(&matter);
+    let handler = HandlerCompat(handler(&matter));
 
-    let mut im = InteractionModel(DataModel::new(matter.borrow(), &node, &mut handler));
-
-    let mut rx_buf = [0; MAX_RX_BUF_SIZE];
-    let mut tx_buf = [0; MAX_TX_BUF_SIZE];
-
-    let im = &mut im;
-    let mdns_runner = &mut mdns_runner;
-    let transport = &mut transport;
-    let rx_buf = &mut rx_buf;
+    let matter = &matter;
+    let node = &node;
+    let handler = &handler;
+    let runner = &mut runner;
     let tx_buf = &mut tx_buf;
+    let rx_buf = &mut rx_buf;
 
-    let mut io_fut = pin!(async move {
-        // NOTE (no_std): On no_std, the `UdpListener` implementation is a no-op so you might want to
-        // replace it with your own UDP stack
-        let udp = UdpListener::new(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            matter::MATTER_PORT,
-        ))
-        .await?;
+    info!(
+        "About to run wth node {:p}, handler {:p}, transport runner {:p}, mdns_runner {:p}",
+        node, handler, runner, &mdns_runner
+    );
 
-        loop {
-            let (len, addr) = udp.recv(rx_buf).await?;
+    let mut fut = pin!(async move {
+        // NOTE (no_std): On no_std, the `run_udp` is a no-op so you might want to replace it with `run` and
+        // connect the pipes of the `run` method with your own UDP stack
+        let mut transport = pin!(runner.run_udp(
+            tx_buf,
+            rx_buf,
+            CommissioningData {
+                // TODO: Hard-coded for now
+                verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
+                discriminator: 250,
+            },
+            &handler,
+        ));
 
-            let mut completion = transport.recv(Address::Udp(addr), &mut rx_buf[..len], tx_buf);
+        // NOTE (no_std): On no_std, the `run_udp` is a no-op so you might want to replace it with `run` and
+        // connect the pipes of the `run` method with your own UDP stack
+        let mut mdns = pin!(mdns_runner.run_udp());
 
-            while let Some(action) = completion.next_action()? {
-                match action {
-                    RecvAction::Send(addr, buf) => {
-                        udp.send(addr.unwrap_udp(), buf).await?;
-                    }
-                    RecvAction::Interact(mut ctx) => {
-                        if im.handle(&mut ctx)? && ctx.send()? {
-                            udp.send(ctx.tx.peer.unwrap_udp(), ctx.tx.as_slice())
-                                .await?;
-                        }
-                    }
-                }
-            }
-
-            #[cfg(all(feature = "std", not(target_os = "espidf")))]
-            {
-                if let Some(data) = transport.matter().store_fabrics(buf)? {
-                    psm.store("fabrics", data)?;
-                }
-
-                if let Some(data) = transport.matter().store_acls(buf)? {
-                    psm.store("acls", data)?;
-                }
-            }
-        }
-
-        #[allow(unreachable_code)]
-        Ok::<_, matter::error::Error>(())
+        select(
+            &mut transport,
+            &mut mdns,
+            //save(transport, &psm),
+        )
+        .await
+        .unwrap()
     });
 
-    // NOTE (no_std): On no_std, the `run_udp` is a no-op so you might want to replace it with `run` and
-    // connect the pipes of the `run` method with your own UDP stack
-    let mut mdns_fut = pin!(async move { mdns_runner.run_udp().await });
-
-    let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut).await.unwrap() });
-
+    // NOTE: For no_std, replace with your own no_std way of polling the future
     #[cfg(feature = "std")]
     smol::block_on(&mut fut)?;
 
@@ -235,18 +200,33 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
-fn handler<'a>(matter: &'a Matter<'a>) -> impl Handler + 'a {
-    root_endpoint::handler(0, matter)
-        .chain(
-            1,
-            descriptor::ID,
-            descriptor::DescriptorCluster::new(*matter.borrow()),
-        )
-        .chain(
-            1,
-            cluster_on_off::ID,
-            cluster_on_off::OnOffCluster::new(*matter.borrow()),
-        )
+const NODE: Node<'static> = Node {
+    id: 0,
+    endpoints: &[
+        root_endpoint::endpoint(0),
+        Endpoint {
+            id: 1,
+            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+        },
+    ],
+};
+
+fn handler<'a>(matter: &'a Matter<'a>) -> impl Metadata + NonBlockingHandler + 'a {
+    (
+        NODE,
+        root_endpoint::handler(0, matter)
+            .chain(
+                1,
+                descriptor::ID,
+                descriptor::DescriptorCluster::new(*matter.borrow()),
+            )
+            .chain(
+                1,
+                cluster_on_off::ID,
+                cluster_on_off::OnOffCluster::new(*matter.borrow()),
+            ),
+    )
 }
 
 // NOTE (no_std): For no_std, implement here your own way of initializing the logger

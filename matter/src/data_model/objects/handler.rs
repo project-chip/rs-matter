@@ -17,11 +17,24 @@
 
 use crate::{
     error::{Error, ErrorCode},
-    interaction_model::core::Transaction,
     tlv::TLVElement,
+    transport::exchange::Exchange,
 };
 
 use super::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails};
+
+#[cfg(feature = "nightly")]
+pub use asynch::*;
+
+#[cfg(not(feature = "nightly"))]
+pub trait DataModelHandler: super::Metadata + Handler {}
+#[cfg(not(feature = "nightly"))]
+impl<T> DataModelHandler for T where T: super::Metadata + Handler {}
+
+#[cfg(feature = "nightly")]
+pub trait DataModelHandler: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
+#[cfg(feature = "nightly")]
+impl<T> DataModelHandler for T where T: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
 
 pub trait ChangeNotifier<T> {
     fn consume_change(&mut self) -> Option<T>;
@@ -30,18 +43,41 @@ pub trait ChangeNotifier<T> {
 pub trait Handler {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error>;
 
-    fn write(&mut self, _attr: &AttrDetails, _data: AttrData) -> Result<(), Error> {
+    fn write(&self, _attr: &AttrDetails, _data: AttrData) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
     fn invoke(
-        &mut self,
-        _transaction: &mut Transaction,
+        &self,
+        _exchange: &Exchange,
         _cmd: &CmdDetails,
         _data: &TLVElement,
         _encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         Err(ErrorCode::CommandNotFound.into())
+    }
+}
+
+impl<T> Handler for &T
+where
+    T: Handler,
+{
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        (**self).read(attr, encoder)
+    }
+
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        (**self).write(attr, data)
+    }
+
+    fn invoke(
+        &self,
+        exchange: &Exchange,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        (**self).invoke(exchange, cmd, data, encoder)
     }
 }
 
@@ -53,24 +89,51 @@ where
         (**self).read(attr, encoder)
     }
 
-    fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         (**self).write(attr, data)
     }
 
     fn invoke(
-        &mut self,
-        transaction: &mut Transaction,
+        &self,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        (**self).invoke(transaction, cmd, data, encoder)
+        (**self).invoke(exchange, cmd, data, encoder)
     }
 }
 
 pub trait NonBlockingHandler: Handler {}
 
+impl<T> NonBlockingHandler for &T where T: NonBlockingHandler {}
+
 impl<T> NonBlockingHandler for &mut T where T: NonBlockingHandler {}
+
+impl<M, H> Handler for (M, H)
+where
+    H: Handler,
+{
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        self.1.read(attr, encoder)
+    }
+
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        self.1.write(attr, data)
+    }
+
+    fn invoke(
+        &self,
+        exchange: &Exchange,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        self.1.invoke(exchange, cmd, data, encoder)
+    }
+}
+
+impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
 
 pub struct EmptyHandler;
 
@@ -140,7 +203,7 @@ where
         }
     }
 
-    fn write(&mut self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id {
             self.handler.write(attr, data)
         } else {
@@ -149,16 +212,16 @@ where
     }
 
     fn invoke(
-        &mut self,
-        transaction: &mut Transaction,
+        &self,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         if self.handler_endpoint == cmd.endpoint_id && self.handler_cluster == cmd.cluster_id {
-            self.handler.invoke(transaction, cmd, data, encoder)
+            self.handler.invoke(exchange, cmd, data, encoder)
         } else {
-            self.next.invoke(transaction, cmd, data, encoder)
+            self.next.invoke(exchange, cmd, data, encoder)
         }
     }
 }
@@ -184,6 +247,35 @@ where
     }
 }
 
+/// Wrap your `NonBlockingHandler` or `AsyncHandler` implementation in this struct
+/// to get your code compilable with and without the `nightly` feature
+pub struct HandlerCompat<T>(pub T);
+
+impl<T> Handler for HandlerCompat<T>
+where
+    T: Handler,
+{
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        self.0.read(attr, encoder)
+    }
+
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        self.0.write(attr, data)
+    }
+
+    fn invoke(
+        &self,
+        exchange: &Exchange,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        self.0.invoke(exchange, cmd, data, encoder)
+    }
+}
+
+impl<T> NonBlockingHandler for HandlerCompat<T> where T: NonBlockingHandler {}
+
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! handler_chain_type {
@@ -203,15 +295,15 @@ macro_rules! handler_chain_type {
 }
 
 #[cfg(feature = "nightly")]
-pub mod asynch {
+mod asynch {
     use crate::{
         data_model::objects::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails},
         error::{Error, ErrorCode},
-        interaction_model::core::Transaction,
         tlv::TLVElement,
+        transport::exchange::Exchange,
     };
 
-    use super::{ChainedHandler, EmptyHandler, Handler, NonBlockingHandler};
+    use super::{ChainedHandler, EmptyHandler, Handler, HandlerCompat, NonBlockingHandler};
 
     pub trait AsyncHandler {
         async fn read<'a>(
@@ -221,7 +313,7 @@ pub mod asynch {
         ) -> Result<(), Error>;
 
         async fn write<'a>(
-            &'a mut self,
+            &'a self,
             _attr: &'a AttrDetails<'_>,
             _data: AttrData<'a>,
         ) -> Result<(), Error> {
@@ -229,8 +321,8 @@ pub mod asynch {
         }
 
         async fn invoke<'a>(
-            &'a mut self,
-            _transaction: &'a mut Transaction<'_, '_>,
+            &'a self,
+            _exchange: &'a Exchange<'_>,
             _cmd: &'a CmdDetails<'_>,
             _data: &'a TLVElement<'_>,
             _encoder: CmdDataEncoder<'a, '_, '_>,
@@ -252,7 +344,7 @@ pub mod asynch {
         }
 
         async fn write<'a>(
-            &'a mut self,
+            &'a self,
             attr: &'a AttrDetails<'_>,
             data: AttrData<'a>,
         ) -> Result<(), Error> {
@@ -260,19 +352,79 @@ pub mod asynch {
         }
 
         async fn invoke<'a>(
-            &'a mut self,
-            transaction: &'a mut Transaction<'_, '_>,
+            &'a self,
+            exchange: &'a Exchange<'_>,
             cmd: &'a CmdDetails<'_>,
             data: &'a TLVElement<'_>,
             encoder: CmdDataEncoder<'a, '_, '_>,
         ) -> Result<(), Error> {
-            (**self).invoke(transaction, cmd, data, encoder).await
+            (**self).invoke(exchange, cmd, data, encoder).await
         }
     }
 
-    pub struct Asyncify<T>(pub T);
+    impl<T> AsyncHandler for &T
+    where
+        T: AsyncHandler,
+    {
+        async fn read<'a>(
+            &'a self,
+            attr: &'a AttrDetails<'_>,
+            encoder: AttrDataEncoder<'a, '_, '_>,
+        ) -> Result<(), Error> {
+            (**self).read(attr, encoder).await
+        }
 
-    impl<T> AsyncHandler for Asyncify<T>
+        async fn write<'a>(
+            &'a self,
+            attr: &'a AttrDetails<'_>,
+            data: AttrData<'a>,
+        ) -> Result<(), Error> {
+            (**self).write(attr, data).await
+        }
+
+        async fn invoke<'a>(
+            &'a self,
+            exchange: &'a Exchange<'_>,
+            cmd: &'a CmdDetails<'_>,
+            data: &'a TLVElement<'_>,
+            encoder: CmdDataEncoder<'a, '_, '_>,
+        ) -> Result<(), Error> {
+            (**self).invoke(exchange, cmd, data, encoder).await
+        }
+    }
+
+    impl<M, H> AsyncHandler for (M, H)
+    where
+        H: AsyncHandler,
+    {
+        async fn read<'a>(
+            &'a self,
+            attr: &'a AttrDetails<'_>,
+            encoder: AttrDataEncoder<'a, '_, '_>,
+        ) -> Result<(), Error> {
+            self.1.read(attr, encoder).await
+        }
+
+        async fn write<'a>(
+            &'a self,
+            attr: &'a AttrDetails<'_>,
+            data: AttrData<'a>,
+        ) -> Result<(), Error> {
+            self.1.write(attr, data).await
+        }
+
+        async fn invoke<'a>(
+            &'a self,
+            exchange: &'a Exchange<'_>,
+            cmd: &'a CmdDetails<'_>,
+            data: &'a TLVElement<'_>,
+            encoder: CmdDataEncoder<'a, '_, '_>,
+        ) -> Result<(), Error> {
+            self.1.invoke(exchange, cmd, data, encoder).await
+        }
+    }
+
+    impl<T> AsyncHandler for HandlerCompat<T>
     where
         T: NonBlockingHandler,
     {
@@ -285,21 +437,21 @@ pub mod asynch {
         }
 
         async fn write<'a>(
-            &'a mut self,
+            &'a self,
             attr: &'a AttrDetails<'_>,
             data: AttrData<'a>,
         ) -> Result<(), Error> {
-            Handler::write(&mut self.0, attr, data)
+            Handler::write(&self.0, attr, data)
         }
 
         async fn invoke<'a>(
-            &'a mut self,
-            transaction: &'a mut Transaction<'_, '_>,
+            &'a self,
+            exchange: &'a Exchange<'_>,
             cmd: &'a CmdDetails<'_>,
             data: &'a TLVElement<'_>,
             encoder: CmdDataEncoder<'a, '_, '_>,
         ) -> Result<(), Error> {
-            Handler::invoke(&mut self.0, transaction, cmd, data, encoder)
+            Handler::invoke(&self.0, exchange, cmd, data, encoder)
         }
     }
 
@@ -332,7 +484,7 @@ pub mod asynch {
         }
 
         async fn write<'a>(
-            &'a mut self,
+            &'a self,
             attr: &'a AttrDetails<'_>,
             data: AttrData<'a>,
         ) -> Result<(), Error> {
@@ -345,16 +497,16 @@ pub mod asynch {
         }
 
         async fn invoke<'a>(
-            &'a mut self,
-            transaction: &'a mut Transaction<'_, '_>,
+            &'a self,
+            exchange: &'a Exchange<'_>,
             cmd: &'a CmdDetails<'_>,
             data: &'a TLVElement<'_>,
             encoder: CmdDataEncoder<'a, '_, '_>,
         ) -> Result<(), Error> {
             if self.handler_endpoint == cmd.endpoint_id && self.handler_cluster == cmd.cluster_id {
-                self.handler.invoke(transaction, cmd, data, encoder).await
+                self.handler.invoke(exchange, cmd, data, encoder).await
             } else {
-                self.next.invoke(transaction, cmd, data, encoder).await
+                self.next.invoke(exchange, cmd, data, encoder).await
             }
         }
     }

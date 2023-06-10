@@ -30,13 +30,7 @@ use matter::{
         },
         messages::{msg::SubscribeReq, GenericPath},
     },
-    mdns::DummyMdns,
-    tlv::{self, ElementType, FromTLV, TLVElement, TagType, ToTLV},
-    transport::{
-        exchange::{self, Exchange},
-        packet::MAX_RX_BUF_SIZE,
-    },
-    Matter,
+    tlv::{self, ElementType, FromTLV, TLVElement, TagType},
 };
 
 use crate::{
@@ -44,34 +38,10 @@ use crate::{
     common::{
         attributes::*,
         echo_cluster as echo,
-        im_engine::{matter, ImEngine, ImInput},
+        im_engine::{ImEngine, ImInput},
         init_env_logger,
     },
 };
-
-pub struct LongRead<'a> {
-    im_engine: ImEngine<'a>,
-}
-
-impl<'a> LongRead<'a> {
-    pub fn new(matter: &'a Matter<'a>) -> Self {
-        let mut im_engine = ImEngine::new(matter);
-        // Use the same exchange for all parts of the transaction
-        im_engine.exch = Some(Exchange::new(1, 0, exchange::Role::Responder));
-        Self { im_engine }
-    }
-
-    pub fn process<'p>(
-        &mut self,
-        action: OpCode,
-        data: &dyn ToTLV,
-        data_out: &'p mut [u8],
-    ) -> (u8, &'p [u8]) {
-        let input = ImInput::new(action, data);
-        let (response, output) = self.im_engine.process(&input, data_out);
-        (response, output)
-    }
-}
 
 fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
     // For brevity, we only check the AttrPath, not the actual 'data'
@@ -215,6 +185,9 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             acl::AttributesDiscriminants::Extension,
             dont_care.clone()
         ),
+    ];
+
+    let part2 = vec![
         attr_data!(
             0,
             31,
@@ -266,9 +239,6 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             descriptor::Attributes::DeviceTypeList,
             dont_care.clone()
         ),
-    ];
-
-    let part2 = vec![
         attr_data!(1, 29, descriptor::Attributes::ServerList, dont_care.clone()),
         attr_data!(1, 29, descriptor::Attributes::PartsList, dont_care.clone()),
         attr_data!(1, 29, descriptor::Attributes::ClientList, dont_care.clone()),
@@ -318,74 +288,103 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
 fn test_long_read_success() {
     // Read the entire attribute database, which requires 2 reads to complete
     init_env_logger();
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let mut lr = LongRead::new(&matter);
-    let mut output = [0_u8; MAX_RX_BUF_SIZE + 100];
+
+    let mut out = heapless::Vec::<_, 3>::new();
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
 
     let wc_path = GenericPath::new(None, None, None);
 
     let read_all = [AttrPath::new(&wc_path)];
     let read_req = ReadReq::new(true).set_attr_requests(&read_all);
     let expected_part1 = wildcard_read_resp(1);
-    let (out_code, out_data) = lr.process(OpCode::ReadRequest, &read_req, &mut output);
-    let root = tlv::get_root_node_struct(out_data).unwrap();
-    let report_data = ReportDataMsg::from_tlv(&root).unwrap();
-    assert_attr_report_skip_data(&report_data, &expected_part1);
-    assert_eq!(report_data.more_chunks, Some(true));
-    assert_eq!(out_code, OpCode::ReportData as u8);
 
-    // Ask for the next read by sending a status report
     let status_report = StatusResp {
         status: IMStatusCode::Success,
     };
     let expected_part2 = wildcard_read_resp(2);
-    let (out_code, out_data) = lr.process(OpCode::StatusResponse, &status_report, &mut output);
-    let root = tlv::get_root_node_struct(out_data).unwrap();
+
+    im.process(
+        &handler,
+        &[
+            &ImInput::new(OpCode::ReadRequest, &read_req),
+            &ImInput::new(OpCode::StatusResponse, &status_report),
+        ],
+        &mut out,
+    )
+    .unwrap();
+
+    assert_eq!(out.len(), 2);
+
+    assert_eq!(out[0].action, OpCode::ReportData);
+
+    let root = tlv::get_root_node_struct(&out[0].data).unwrap();
+    let report_data = ReportDataMsg::from_tlv(&root).unwrap();
+    assert_attr_report_skip_data(&report_data, &expected_part1);
+    assert_eq!(report_data.more_chunks, Some(true));
+
+    assert_eq!(out[1].action, OpCode::ReportData);
+
+    let root = tlv::get_root_node_struct(&out[1].data).unwrap();
     let report_data = ReportDataMsg::from_tlv(&root).unwrap();
     assert_attr_report_skip_data(&report_data, &expected_part2);
     assert_eq!(report_data.more_chunks, None);
-    assert_eq!(out_code, OpCode::ReportData as u8);
 }
 
 #[test]
 fn test_long_read_subscription_success() {
     // Subscribe to the entire attribute database, which requires 2 reads to complete
     init_env_logger();
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let mut lr = LongRead::new(&matter);
-    let mut output = [0_u8; MAX_RX_BUF_SIZE + 100];
+
+    let mut out = heapless::Vec::<_, 3>::new();
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
 
     let wc_path = GenericPath::new(None, None, None);
 
     let read_all = [AttrPath::new(&wc_path)];
     let subs_req = SubscribeReq::new(true, 1, 20).set_attr_requests(&read_all);
     let expected_part1 = wildcard_read_resp(1);
-    let (out_code, out_data) = lr.process(OpCode::SubscribeRequest, &subs_req, &mut output);
-    let root = tlv::get_root_node_struct(out_data).unwrap();
-    let report_data = ReportDataMsg::from_tlv(&root).unwrap();
-    assert_attr_report_skip_data(&report_data, &expected_part1);
-    assert_eq!(report_data.more_chunks, Some(true));
-    assert_eq!(out_code, OpCode::ReportData as u8);
 
-    // Ask for the next read by sending a status report
     let status_report = StatusResp {
         status: IMStatusCode::Success,
     };
     let expected_part2 = wildcard_read_resp(2);
-    let (out_code, out_data) = lr.process(OpCode::StatusResponse, &status_report, &mut output);
-    let root = tlv::get_root_node_struct(out_data).unwrap();
+
+    im.process(
+        &handler,
+        &[
+            &ImInput::new(OpCode::SubscribeRequest, &subs_req),
+            &ImInput::new(OpCode::StatusResponse, &status_report),
+            &ImInput::new(OpCode::StatusResponse, &status_report),
+        ],
+        &mut out,
+    )
+    .unwrap();
+
+    assert_eq!(out.len(), 3);
+
+    assert_eq!(out[0].action, OpCode::ReportData);
+
+    let root = tlv::get_root_node_struct(&out[0].data).unwrap();
+    let report_data = ReportDataMsg::from_tlv(&root).unwrap();
+    assert_attr_report_skip_data(&report_data, &expected_part1);
+    assert_eq!(report_data.more_chunks, Some(true));
+
+    assert_eq!(out[1].action, OpCode::ReportData);
+
+    let root = tlv::get_root_node_struct(&out[1].data).unwrap();
     let report_data = ReportDataMsg::from_tlv(&root).unwrap();
     assert_attr_report_skip_data(&report_data, &expected_part2);
     assert_eq!(report_data.more_chunks, None);
-    assert_eq!(out_code, OpCode::ReportData as u8);
 
-    // Finally confirm subscription
-    let (out_code, out_data) = lr.process(OpCode::StatusResponse, &status_report, &mut output);
-    tlv::print_tlv_list(out_data);
-    let root = tlv::get_root_node_struct(out_data).unwrap();
+    assert_eq!(out[2].action, OpCode::SubscribeResponse);
+
+    let root = tlv::get_root_node_struct(&out[2].data).unwrap();
     let subs_resp = SubscribeResp::from_tlv(&root).unwrap();
-    assert_eq!(out_code, OpCode::SubscribeResponse as u8);
     assert_eq!(subs_resp.subs_id, 1);
 }

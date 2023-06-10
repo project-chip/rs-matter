@@ -41,6 +41,9 @@ pub use handler::*;
 mod dataver;
 pub use dataver::*;
 
+mod metadata;
+pub use metadata::*;
+
 pub type EndptId = u16;
 pub type ClusterId = u32;
 pub type AttrId = u16;

@@ -26,7 +26,6 @@ use matter::{
         messages::ib::{AttrData, AttrPath, AttrResp, AttrStatus, ClusterPath, DataVersionFilter},
         messages::GenericPath,
     },
-    mdns::DummyMdns,
     tlv::{ElementType, TLVArray, TLVElement, TLVWriter, TagType},
 };
 
@@ -35,7 +34,7 @@ use crate::{
     common::{
         attributes::*,
         echo_cluster::{self, ATTR_WRITE_DEFAULT_VALUE},
-        im_engine::{matter, ImEngine},
+        im_engine::{ImEngine, IM_ENGINE_PEER_ID},
         init_env_logger,
     },
 };
@@ -62,30 +61,28 @@ fn wc_read_attribute() {
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
 
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Test1: Empty Response as no ACL matches
     let input = &[AttrPath::new(&wc_att1)];
     let expected = &[];
-    im.handle_read_reqs(peer, input, expected);
+    im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to only access endpoint 0
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     // Test2: Only Single response as only single endpoint is allowed
     let input = &[AttrPath::new(&wc_att1)];
     let expected = &[attr_data_path!(ep0_att1, ElementType::U16(0x1234))];
-    im.handle_read_reqs(peer, input, expected);
+    im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to also access endpoint 1
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
@@ -95,7 +92,7 @@ fn wc_read_attribute() {
         attr_data_path!(ep0_att1, ElementType::U16(0x1234)),
         attr_data_path!(ep1_att1, ElementType::U16(0x1234)),
     ];
-    im.handle_read_reqs(peer, input, expected);
+    im.handle_read_reqs(&handler, input, expected);
 }
 
 #[test]
@@ -115,25 +112,23 @@ fn exact_read_attribute() {
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
 
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Test1: Unsupported Access error as no ACL matches
     let input = &[AttrPath::new(&wc_att1)];
     let expected = &[attr_status!(&ep0_att1, IMStatusCode::UnsupportedAccess)];
-    im.handle_read_reqs(peer, input, expected);
+    im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to access any endpoint
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     // Test2: Only Single response as only single endpoint is allowed
     let input = &[AttrPath::new(&wc_att1)];
     let expected = &[attr_data_path!(ep0_att1, ElementType::U16(0x1234))];
-    im.handle_read_reqs(peer, input, expected);
+    im.handle_read_reqs(&handler, input, expected);
 }
 
 #[test]
@@ -177,52 +172,54 @@ fn wc_write_attribute() {
         EncodeValue::Closure(&attr_data1),
     )];
 
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Test 1: Wildcard write to an attribute without permission should return
     // no error
-    im.handle_write_reqs(peer, None, input0, &[]);
-    assert_eq!(ATTR_WRITE_DEFAULT_VALUE, im.echo_cluster(0).att_write);
+    im.handle_write_reqs(&handler, input0, &[]);
+    assert_eq!(
+        ATTR_WRITE_DEFAULT_VALUE,
+        handler.echo_cluster(0).att_write.get()
+    );
 
     // Add ACL to allow our peer to access one endpoint
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     // Test 2: Wildcard write to attributes will only return attributes
     // where the writes were successful
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         input0,
         &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)],
     );
-    assert_eq!(val0, im.echo_cluster(0).att_write);
-    assert_eq!(ATTR_WRITE_DEFAULT_VALUE, im.echo_cluster(1).att_write);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
+    assert_eq!(
+        ATTR_WRITE_DEFAULT_VALUE,
+        handler.echo_cluster(1).att_write.get()
+    );
 
     // Add ACL to allow our peer to access another endpoint
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     // Test 3: Wildcard write to attributes will return multiple attributes
     // where the writes were successful
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         input1,
         &[
             AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
             AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
         ],
     );
-    assert_eq!(val1, im.echo_cluster(0).att_write);
-    assert_eq!(val1, im.echo_cluster(1).att_write);
+    assert_eq!(val1, handler.echo_cluster(0).att_write.get());
+    assert_eq!(val1, handler.echo_cluster(1).att_write.get());
 }
 
 #[test]
@@ -253,25 +250,26 @@ fn exact_write_attribute() {
     )];
     let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)];
 
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Test 1: Exact write to an attribute without permission should return
     // Unsupported Access Error
-    im.handle_write_reqs(peer, None, input, expected_fail);
-    assert_eq!(ATTR_WRITE_DEFAULT_VALUE, im.echo_cluster(0).att_write);
+    im.handle_write_reqs(&handler, input, expected_fail);
+    assert_eq!(
+        ATTR_WRITE_DEFAULT_VALUE,
+        handler.echo_cluster(0).att_write.get()
+    );
 
     // Add ACL to allow our peer to access any endpoint
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     // Test 1: Exact write to an attribute with permission should grant
     // access
-    im.handle_write_reqs(peer, None, input, expected_success);
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    im.handle_write_reqs(&handler, input, expected_success);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 }
 
 #[test]
@@ -303,19 +301,20 @@ fn exact_write_attribute_noc_cat() {
     )];
     let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)];
 
-    let peer = 98765;
     /* CAT in NOC is 1 more, in version, than that in ACL */
     let noc_cat = gen_noc_cat(0xABCD, 2);
     let cat_in_acl = gen_noc_cat(0xABCD, 1);
     let cat_ids = [noc_cat, 0, 0];
-    let mut mdns = DummyMdns;
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+    let im = ImEngine::new(cat_ids);
+    let handler = im.handler();
 
     // Test 1: Exact write to an attribute without permission should return
     // Unsupported Access Error
-    im.handle_write_reqs(peer, Some(&cat_ids), input, expected_fail);
-    assert_eq!(ATTR_WRITE_DEFAULT_VALUE, im.echo_cluster(0).att_write);
+    im.handle_write_reqs(&handler, input, expected_fail);
+    assert_eq!(
+        ATTR_WRITE_DEFAULT_VALUE,
+        handler.echo_cluster(0).att_write.get()
+    );
 
     // Add ACL to allow our peer to access any endpoint
     let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
@@ -324,8 +323,8 @@ fn exact_write_attribute_noc_cat() {
 
     // Test 1: Exact write to an attribute with permission should grant
     // access
-    im.handle_write_reqs(peer, Some(&cat_ids), input, expected_success);
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    im.handle_write_reqs(&handler, input, expected_success);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 }
 
 #[test]
@@ -347,21 +346,18 @@ fn insufficient_perms_write() {
         EncodeValue::Closure(&attr_data0),
     )];
 
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
     let mut acl = AclEntry::new(1, Privilege::OPERATE, AuthMode::Case);
-    acl.add_subject(peer).unwrap();
+    acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     // Test: Not enough permission should return error
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         input0,
         &[AttrStatus::new(
             &ep0_att,
@@ -369,7 +365,10 @@ fn insufficient_perms_write() {
             0,
         )],
     );
-    assert_eq!(ATTR_WRITE_DEFAULT_VALUE, im.echo_cluster(0).att_write);
+    assert_eq!(
+        ATTR_WRITE_DEFAULT_VALUE,
+        handler.echo_cluster(0).att_write.get()
+    );
 }
 
 #[test]
@@ -381,10 +380,9 @@ fn insufficient_perms_write() {
 ///    - Write Attr to Echo Cluster again (successful this time)
 fn write_with_runtime_acl_add() {
     init_env_logger();
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     let val0 = 10;
     let attr_data0 = |tag, t: &mut TLVWriter| {
@@ -403,7 +401,7 @@ fn write_with_runtime_acl_add() {
 
     // Create ACL to allow our peer ADMIN on everything
     let mut allow_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    allow_acl.add_subject(peer).unwrap();
+    allow_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
 
     let acl_att = GenericPath::new(
         Some(0),
@@ -418,7 +416,7 @@ fn write_with_runtime_acl_add() {
 
     // Create ACL that only allows write to the ACL Cluster
     let mut basic_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-    basic_acl.add_subject(peer).unwrap();
+    basic_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     basic_acl
         .add_target(Target::new(Some(0), Some(access_control::ID), None))
         .unwrap();
@@ -426,8 +424,7 @@ fn write_with_runtime_acl_add() {
 
     // Test: deny write (with error), then ACL is added, then allow write
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         // write to echo-cluster attribute, write to acl attribute, write to echo-cluster attribute
         &[input0.clone(), acl_input, input0],
         &[
@@ -436,7 +433,7 @@ fn write_with_runtime_acl_add() {
             AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
         ],
     );
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 }
 
 #[test]
@@ -448,10 +445,9 @@ fn test_read_data_ver() {
     // - wildcard endpoint, att1
     // - 2 responses are expected
     init_env_logger();
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
     let acl = AclEntry::new(1, Privilege::OPERATE, AuthMode::Case);
@@ -482,10 +478,11 @@ fn test_read_data_ver() {
             ElementType::U16(0x1234)
         ),
     ];
-    let mut out_buf = [0u8; 400];
+
+    let mut out = heapless::Vec::new();
 
     // Test 1: Simple read to retrieve the current Data Version of Cluster at Endpoint 0
-    let received = im.gen_read_reqs_output(peer, input, None, &mut out_buf);
+    let received = im.gen_read_reqs_output::<1>(&handler, input, None, &mut out);
     assert_attr_report(&received, expected);
 
     let data_ver_cluster_at_0 = received
@@ -507,11 +504,12 @@ fn test_read_data_ver() {
     }];
 
     // Test 2: Add Dataversion filter for cluster at endpoint 0 only single entry should be retrieved
-    let received = im.gen_read_reqs_output(
-        peer,
+    let mut out = heapless::Vec::new();
+    let received = im.gen_read_reqs_output::<1>(
+        &handler,
         input,
         Some(TLVArray::Slice(&dataver_filter)),
-        &mut out_buf,
+        &mut out,
     );
     let expected_only_one = &[attr_data_path!(
         GenericPath::new(
@@ -532,10 +530,10 @@ fn test_read_data_ver() {
     );
     let input = &[AttrPath::new(&ep0_att1)];
     let received = im.gen_read_reqs_output(
-        peer,
+        &handler,
         input,
         Some(TLVArray::Slice(&dataver_filter)),
-        &mut out_buf,
+        &mut out,
     );
     let expected_error = &[];
 
@@ -551,10 +549,9 @@ fn test_write_data_ver() {
     // - wildcard endpoint, att1
     // - 2 responses are expected
     init_env_logger();
-    let peer = 98765;
-    let mut mdns = DummyMdns {};
-    let matter = matter(&mut mdns);
-    let mut im = ImEngine::new(&matter);
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
     let acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
@@ -576,7 +573,7 @@ fn test_write_data_ver() {
     let attr_data0 = EncodeValue::Value(&val0);
     let attr_data1 = EncodeValue::Value(&val1);
 
-    let initial_data_ver = im.echo_cluster(0).data_ver.get();
+    let initial_data_ver = handler.echo_cluster(0).data_ver.get();
 
     // Test 1: Write with correct dataversion should succeed
     let input_correct_dataver = &[AttrData::new(
@@ -585,12 +582,11 @@ fn test_write_data_ver() {
         attr_data0,
     )];
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         input_correct_dataver,
         &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, 0)],
     );
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 
     // Test 2: Write with incorrect dataversion should fail
     // Now the data version would have incremented due to the previous write
@@ -600,8 +596,7 @@ fn test_write_data_ver() {
         attr_data1.clone(),
     )];
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         input_correct_dataver,
         &[AttrStatus::new(
             &ep0_attwrite,
@@ -609,12 +604,12 @@ fn test_write_data_ver() {
             0,
         )],
     );
-    assert_eq!(val0, im.echo_cluster(0).att_write);
+    assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 
     // Test 3: Wildcard write with incorrect dataversion should ignore that cluster
     //   In this case, while the data version is correct for endpoint 0, the endpoint 1's
     //   data version would not match
-    let new_data_ver = im.echo_cluster(0).data_ver.get();
+    let new_data_ver = handler.echo_cluster(0).data_ver.get();
 
     let input_correct_dataver = &[AttrData::new(
         Some(new_data_ver),
@@ -622,12 +617,11 @@ fn test_write_data_ver() {
         attr_data1,
     )];
     im.handle_write_reqs(
-        peer,
-        None,
+        &handler,
         input_correct_dataver,
         &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, 0)],
     );
-    assert_eq!(val1, im.echo_cluster(0).att_write);
+    assert_eq!(val1, handler.echo_cluster(0).att_write.get());
 
     assert_eq!(initial_data_ver + 1, new_data_ver);
 }

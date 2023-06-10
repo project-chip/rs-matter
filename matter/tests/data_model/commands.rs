@@ -17,12 +17,7 @@
 
 use crate::{
     cmd_data,
-    common::{
-        commands::*,
-        echo_cluster,
-        im_engine::{matter, ImEngine},
-        init_env_logger,
-    },
+    common::{commands::*, echo_cluster, im_engine::ImEngine, init_env_logger},
     echo_req, echo_resp,
 };
 
@@ -32,7 +27,6 @@ use matter::{
         core::IMStatusCode,
         messages::ib::{CmdData, CmdPath, CmdStatus},
     },
-    mdns::DummyMdns,
 };
 
 #[test]
@@ -44,7 +38,7 @@ fn test_invoke_cmds_success() {
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
-    ImEngine::new_with_commands(&matter(&mut DummyMdns), input, expected);
+    ImEngine::commands(input, expected);
 }
 
 #[test]
@@ -99,7 +93,7 @@ fn test_invoke_cmds_unsupported_fields() {
             0,
         )),
     ];
-    ImEngine::new_with_commands(&matter(&mut DummyMdns), input, expected);
+    ImEngine::commands(input, expected);
 }
 
 #[test]
@@ -114,7 +108,7 @@ fn test_invoke_cmd_wc_endpoint_all_have_clusters() {
     );
     let input = &[cmd_data!(path, 5)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 15)];
-    ImEngine::new_with_commands(&matter(&mut DummyMdns), input, expected);
+    ImEngine::commands(input, expected);
 }
 
 #[test]
@@ -139,5 +133,5 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
         IMStatusCode::Success,
         0,
     ))];
-    ImEngine::new_with_commands(&matter(&mut DummyMdns), input, expected);
+    ImEngine::commands(input, expected);
 }
