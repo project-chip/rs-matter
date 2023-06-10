@@ -30,7 +30,7 @@ use matter::data_model::root_endpoint;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
 use matter::interaction_model::core::InteractionModel;
-use matter::mdns::builtin::{Mdns, MdnsRxBuf, MdnsTxBuf};
+use matter::mdns::{DefaultMdns, DefaultMdnsRunner};
 use matter::persist;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -64,23 +64,21 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Matter memory: mDNS={}, Matter={}, Transport={}",
-        core::mem::size_of::<Mdns>(),
+        core::mem::size_of::<DefaultMdns>(),
         core::mem::size_of::<Matter>(),
         core::mem::size_of::<Transport>(),
     );
 
     let (ipv4_addr, ipv6_addr) = initialize_network()?;
 
-    let mut mdns = matter::mdns::builtin::Mdns::new(
+    let mdns = DefaultMdns::new(
         0,
         "matter-demo",
         ipv4_addr.octets(),
         Some(ipv6_addr.octets()),
     );
 
-    let (mdns, mut mdns_runner) = mdns.split();
-    //let (mut mdns, mdns_runner) = (matter::mdns::astro::AstroMdns::new()?, core::future::pending::pending());
-    //let (mut mdns, mdns_runner) = (matter::mdns::DummyMdns {}, core::future::pending::pending());
+    let mut mdns_runner = DefaultMdnsRunner::new(&mdns);
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 
@@ -191,14 +189,9 @@ fn run() -> Result<(), Error> {
         Ok::<_, matter::error::Error>(())
     });
 
-    let mut tx_buf = MdnsTxBuf::uninit();
-    let mut rx_buf = MdnsRxBuf::uninit();
-    let tx_buf = &mut tx_buf;
-    let rx_buf = &mut rx_buf;
+    let mut mdns_fut = pin!(async move { mdns_runner.run_udp().await });
 
-    let mut mdns_fut = pin!(async move { mdns_runner.run_udp(tx_buf, rx_buf).await });
-
-    let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut,).await.unwrap() });
+    let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut).await.unwrap() });
 
     smol::block_on(&mut fut)?;
 
