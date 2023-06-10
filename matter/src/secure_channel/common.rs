@@ -24,7 +24,7 @@ use super::status_report::{create_status_report, GeneralCode};
 /* Interaction Model ID as per the Matter Spec */
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
 
-#[derive(FromPrimitive, Debug)]
+#[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum OpCode {
     MsgCounterSyncReq = 0x00,
     MsgCounterSyncResp = 0x01,
@@ -56,8 +56,6 @@ pub fn create_sc_status_report(
     status_code: SCStatusCodes,
     proto_data: Option<&[u8]>,
 ) -> Result<(), Error> {
-    proto_tx.reset();
-
     let general_code = match status_code {
         SCStatusCodes::SessionEstablishmentSuccess => GeneralCode::Success,
         SCStatusCodes::CloseSession => {
@@ -71,6 +69,7 @@ pub fn create_sc_status_report(
         | SCStatusCodes::NoSharedTrustRoots
         | SCStatusCodes::SessionNotFound => GeneralCode::Failure,
     };
+
     create_status_report(
         proto_tx,
         general_code,

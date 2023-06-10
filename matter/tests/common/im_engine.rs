@@ -110,7 +110,7 @@ pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
     #[cfg(not(feature = "std"))]
     use matter::utils::epoch::dummy_epoch as epoch;
 
-    Matter::new(BASIC_INFO, &DummyDevAtt, mdns, epoch, dummy_rand, 5540)
+    Matter::new(&BASIC_INFO, &DummyDevAtt, mdns, epoch, dummy_rand, 5540)
 }
 
 /// An Interaction Model Engine to facilitate easy testing
@@ -236,7 +236,7 @@ impl<'a> ImEngine<'a> {
         self.im.handle(&mut ctx).unwrap();
         let out_data_len = ctx.tx.as_slice().len();
         data_out[..out_data_len].copy_from_slice(ctx.tx.as_slice());
-        let response = ctx.tx.get_proto_opcode();
+        let response = ctx.tx.get_proto_raw_opcode();
         (response, &data_out[..out_data_len])
     }
 }

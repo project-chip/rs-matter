@@ -24,8 +24,8 @@ use matter::{
     attribute_enum, command_enum,
     data_model::objects::{
         Access, AttrData, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute,
-        Cluster, CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, Quality,
-        ATTRIBUTE_LIST, FEATURE_MAP,
+        Cluster, CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, NonBlockingHandler,
+        Quality, ATTRIBUTE_LIST, FEATURE_MAP,
     },
     error::{Error, ErrorCode},
     interaction_model::{
@@ -286,3 +286,5 @@ impl Handler for EchoCluster {
         EchoCluster::invoke(self, transaction, cmd, data, encoder)
     }
 }
+
+impl NonBlockingHandler for EchoCluster {}

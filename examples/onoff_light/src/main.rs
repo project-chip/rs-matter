@@ -30,7 +30,7 @@ use matter::data_model::root_endpoint;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
 use matter::interaction_model::core::InteractionModel;
-use matter::mdns::builtin::Mdns;
+use matter::mdns::builtin::{Mdns, MdnsRxBuf, MdnsTxBuf};
 use matter::persist;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -46,7 +46,7 @@ mod dev_att;
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
         .stack_size(120 * 1024)
-        .spawn(move || run())
+        .spawn(run)
         .unwrap();
 
     thread.join().unwrap()
@@ -63,10 +63,10 @@ fn run() -> Result<(), Error> {
     initialize_logger();
 
     info!(
-        "Matter memory: mDNS={}, Transport={} (of which Matter={})",
+        "Matter memory: mDNS={}, Matter={}, Transport={}",
         core::mem::size_of::<Mdns>(),
-        core::mem::size_of::<Transport>(),
         core::mem::size_of::<Matter>(),
+        core::mem::size_of::<Transport>(),
     );
 
     let (ipv4_addr, ipv6_addr) = initialize_network()?;
@@ -78,7 +78,7 @@ fn run() -> Result<(), Error> {
         Some(ipv6_addr.octets()),
     );
 
-    let (mut mdns, mut mdns_runner) = mdns.split();
+    let (mdns, mut mdns_runner) = mdns.split();
     //let (mut mdns, mdns_runner) = (matter::mdns::astro::AstroMdns::new()?, core::future::pending::pending());
     //let (mut mdns, mdns_runner) = (matter::mdns::DummyMdns {}, core::future::pending::pending());
 
@@ -86,7 +86,7 @@ fn run() -> Result<(), Error> {
 
     let matter = Matter::new_default(
         // vid/pid should match those in the DAC
-        BasicInfoConfig {
+        &BasicInfoConfig {
             vid: 0xFFF1,
             pid: 0x8000,
             hw_ver: 2,
@@ -96,7 +96,7 @@ fn run() -> Result<(), Error> {
             device_name: "OnOff Light",
         },
         &dev_att,
-        &mut mdns,
+        &mdns,
         matter::MATTER_PORT,
     );
 
@@ -106,12 +106,13 @@ fn run() -> Result<(), Error> {
     let psm = persist::FilePsm::new(psm_path)?;
 
     let mut buf = [0; 4096];
+    let buf = &mut buf;
 
-    if let Some(data) = psm.load("acls", &mut buf)? {
+    if let Some(data) = psm.load("acls", buf)? {
         matter.load_acls(data)?;
     }
 
-    if let Some(data) = psm.load("fabrics", &mut buf)? {
+    if let Some(data) = psm.load("fabrics", buf)? {
         matter.load_fabrics(data)?;
     }
 
@@ -123,12 +124,33 @@ fn run() -> Result<(), Error> {
             verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
             discriminator: 250,
         },
-        &mut buf,
+        buf,
     )?;
 
-    let matter = &matter;
+    let node = Node {
+        id: 0,
+        endpoints: &[
+            root_endpoint::endpoint(0),
+            Endpoint {
+                id: 1,
+                device_type: DEV_TYPE_ON_OFF_LIGHT,
+                clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+            },
+        ],
+    };
+
+    let mut handler = handler(&matter);
+
+    let mut im = InteractionModel(DataModel::new(matter.borrow(), &node, &mut handler));
+
+    let mut rx_buf = [0; MAX_RX_BUF_SIZE];
+    let mut tx_buf = [0; MAX_TX_BUF_SIZE];
+
+    let im = &mut im;
     let mdns_runner = &mut mdns_runner;
     let transport = &mut transport;
+    let rx_buf = &mut rx_buf;
+    let tx_buf = &mut tx_buf;
 
     let mut io_fut = pin!(async move {
         let udp = UdpListener::new(SocketAddr::new(
@@ -138,13 +160,9 @@ fn run() -> Result<(), Error> {
         .await?;
 
         loop {
-            let mut rx_buf = [0; MAX_RX_BUF_SIZE];
-            let mut tx_buf = [0; MAX_TX_BUF_SIZE];
+            let (len, addr) = udp.recv(rx_buf).await?;
 
-            let (len, addr) = udp.recv(&mut rx_buf).await?;
-
-            let mut completion =
-                transport.recv(Address::Udp(addr), &mut rx_buf[..len], &mut tx_buf);
+            let mut completion = transport.recv(Address::Udp(addr), &mut rx_buf[..len], tx_buf);
 
             while let Some(action) = completion.next_action()? {
                 match action {
@@ -152,38 +170,19 @@ fn run() -> Result<(), Error> {
                         udp.send(addr.unwrap_udp(), buf).await?;
                     }
                     RecvAction::Interact(mut ctx) => {
-                        let node = Node {
-                            id: 0,
-                            endpoints: &[
-                                root_endpoint::endpoint(0),
-                                Endpoint {
-                                    id: 1,
-                                    device_type: DEV_TYPE_ON_OFF_LIGHT,
-                                    clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
-                                },
-                            ],
-                        };
-
-                        let mut handler = handler(matter);
-
-                        let mut im =
-                            InteractionModel(DataModel::new(matter.borrow(), &node, &mut handler));
-
-                        if im.handle(&mut ctx)? {
-                            if ctx.send()? {
-                                udp.send(ctx.tx.peer.unwrap_udp(), ctx.tx.as_slice())
-                                    .await?;
-                            }
+                        if im.handle(&mut ctx)? && ctx.send()? {
+                            udp.send(ctx.tx.peer.unwrap_udp(), ctx.tx.as_slice())
+                                .await?;
                         }
                     }
                 }
             }
 
-            if let Some(data) = transport.matter().store_fabrics(&mut buf)? {
+            if let Some(data) = transport.matter().store_fabrics(buf)? {
                 psm.store("fabrics", data)?;
             }
 
-            if let Some(data) = transport.matter().store_acls(&mut buf)? {
+            if let Some(data) = transport.matter().store_acls(buf)? {
                 psm.store("acls", data)?;
             }
         }
@@ -192,7 +191,12 @@ fn run() -> Result<(), Error> {
         Ok::<_, matter::error::Error>(())
     });
 
-    let mut mdns_fut = pin!(async move { mdns_runner.run().await });
+    let mut tx_buf = MdnsTxBuf::uninit();
+    let mut rx_buf = MdnsRxBuf::uninit();
+    let tx_buf = &mut tx_buf;
+    let rx_buf = &mut rx_buf;
+
+    let mut mdns_fut = pin!(async move { mdns_runner.run_udp(tx_buf, rx_buf).await });
 
     let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut,).await.unwrap() });
 

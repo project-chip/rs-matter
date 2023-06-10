@@ -223,7 +223,7 @@ impl Exchange {
             "{} with proto id: {} opcode: {}, tlv:\n",
             "Sending".blue(),
             tx.get_proto_id(),
-            tx.get_proto_opcode(),
+            tx.get_proto_raw_opcode(),
         );
 
         //print_tlv_list(tx.as_slice());

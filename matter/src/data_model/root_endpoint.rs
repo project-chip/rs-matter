@@ -7,7 +7,6 @@ use crate::{
     mdns::MdnsMgr,
     secure_channel::pake::PaseMgr,
     utils::{epoch::Epoch, rand::Rand},
-    Matter,
 };
 
 use super::{
@@ -55,11 +54,23 @@ pub fn endpoint(id: EndptId) -> Endpoint<'static> {
     }
 }
 
-pub fn handler<'a>(endpoint_id: u16, matter: &'a Matter<'a>) -> RootEndpointHandler<'a> {
+pub fn handler<'a, T>(endpoint_id: u16, matter: &'a T) -> RootEndpointHandler<'a>
+where
+    T: Borrow<BasicInfoConfig<'a>>
+        + Borrow<dyn DevAttDataFetcher + 'a>
+        + Borrow<RefCell<PaseMgr>>
+        + Borrow<RefCell<FabricMgr>>
+        + Borrow<RefCell<AclMgr>>
+        + Borrow<RefCell<FailSafe>>
+        + Borrow<MdnsMgr<'a>>
+        + Borrow<Epoch>
+        + Borrow<Rand>
+        + 'a,
+{
     wrap(
         endpoint_id,
-        matter.dev_det(),
-        matter.dev_att(),
+        matter.borrow(),
+        matter.borrow(),
         matter.borrow(),
         matter.borrow(),
         matter.borrow(),
@@ -79,7 +90,7 @@ pub fn wrap<'a>(
     fabric: &'a RefCell<FabricMgr>,
     acl: &'a RefCell<AclMgr>,
     failsafe: &'a RefCell<FailSafe>,
-    mdns_mgr: &'a RefCell<MdnsMgr<'a>>,
+    mdns_mgr: &'a MdnsMgr<'a>,
     epoch: Epoch,
     rand: Rand,
 ) -> RootEndpointHandler<'a> {

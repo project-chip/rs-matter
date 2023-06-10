@@ -200,7 +200,7 @@ impl FabricMgr {
         }
     }
 
-    pub fn load(&mut self, data: &[u8], mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
+    pub fn load(&mut self, data: &[u8], mdns_mgr: &MdnsMgr) -> Result<(), Error> {
         for fabric in self.fabrics.iter().flatten() {
             mdns_mgr.unpublish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
         }
@@ -241,7 +241,7 @@ impl FabricMgr {
         self.changed
     }
 
-    pub fn add(&mut self, f: Fabric, mdns_mgr: &mut MdnsMgr) -> Result<u8, Error> {
+    pub fn add(&mut self, f: Fabric, mdns_mgr: &MdnsMgr) -> Result<u8, Error> {
         let slot = self.fabrics.iter().position(|x| x.is_none());
 
         if slot.is_some() || self.fabrics.len() < MAX_SUPPORTED_FABRICS {
@@ -265,7 +265,7 @@ impl FabricMgr {
         }
     }
 
-    pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &mut MdnsMgr) -> Result<(), Error> {
+    pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &MdnsMgr) -> Result<(), Error> {
         if fab_idx > 0 && fab_idx as usize <= self.fabrics.len() {
             if let Some(f) = self.fabrics[(fab_idx - 1) as usize].take() {
                 mdns_mgr.unpublish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;

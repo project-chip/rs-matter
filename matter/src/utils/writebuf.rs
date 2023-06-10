@@ -38,6 +38,10 @@ impl<'a> WriteBuf<'a> {
         }
     }
 
+    pub fn get_start(&self) -> usize {
+        self.start
+    }
+
     pub fn get_tail(&self) -> usize {
         self.end
     }

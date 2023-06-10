@@ -41,15 +41,15 @@ pub enum RecvAction<'r, 'p> {
     Interact(ProtoCtx<'r, 'p>),
 }
 
-pub struct RecvCompletion<'r, 'a, 'p> {
+pub struct RecvCompletion<'r, 'a> {
     transport: &'r mut Transport<'a>,
-    rx: Packet<'p>,
-    tx: Packet<'p>,
+    rx: Packet<'r>,
+    tx: Packet<'r>,
     state: RecvState,
 }
 
-impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
-    pub fn next_action(&mut self) -> Result<Option<RecvAction<'_, 'p>>, Error> {
+impl<'r, 'a> RecvCompletion<'r, 'a> {
+    pub fn next_action(&mut self) -> Result<Option<RecvAction<'_, 'r>>, Error> {
         loop {
             // Polonius will remove the need for unsafe one day
             let this = unsafe { (self as *mut RecvCompletion).as_mut().unwrap() };
@@ -60,16 +60,13 @@ impl<'r, 'a, 'p> RecvCompletion<'r, 'a, 'p> {
         }
     }
 
-    fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'p>>>, Error> {
+    fn maybe_next_action(&mut self) -> Result<Option<Option<RecvAction<'_, 'r>>>, Error> {
         self.transport.exch_mgr.purge();
         self.tx.reset();
 
         let (state, next) = match core::mem::replace(&mut self.state, RecvState::New) {
             RecvState::New => {
-                self.transport
-                    .exch_mgr
-                    .get_sess_mgr()
-                    .decode(&mut self.rx)?;
+                self.rx.plain_hdr_decode()?;
                 (RecvState::OpenExchange, None)
             }
             RecvState::OpenExchange => match self.transport.exch_mgr.recv(&mut self.rx) {
@@ -173,16 +170,16 @@ pub enum NotifyAction<'r, 'p> {
     Notify(ProtoCtx<'r, 'p>),
 }
 
-pub struct NotifyCompletion<'r, 'a, 'p> {
+pub struct NotifyCompletion<'r, 'a> {
     // TODO
     _transport: &'r mut Transport<'a>,
-    _rx: &'r mut Packet<'p>,
-    _tx: &'r mut Packet<'p>,
+    _rx: Packet<'r>,
+    _tx: Packet<'r>,
     _state: NotifyState,
 }
 
-impl<'r, 'a, 'p> NotifyCompletion<'r, 'a, 'p> {
-    pub fn next_action(&mut self) -> Result<Option<NotifyAction<'_, 'p>>, Error> {
+impl<'r, 'a> NotifyCompletion<'r, 'a> {
+    pub fn next_action(&mut self) -> Result<Option<NotifyAction<'_, 'r>>, Error> {
         loop {
             // Polonius will remove the need for unsafe one day
             let this = unsafe { (self as *mut NotifyCompletion).as_mut().unwrap() };
@@ -193,7 +190,7 @@ impl<'r, 'a, 'p> NotifyCompletion<'r, 'a, 'p> {
         }
     }
 
-    fn maybe_next_action(&mut self) -> Result<Option<Option<NotifyAction<'_, 'p>>>, Error> {
+    fn maybe_next_action(&mut self) -> Result<Option<Option<NotifyAction<'_, 'r>>>, Error> {
         Ok(Some(None)) // TODO: Future
     }
 }
@@ -216,7 +213,7 @@ impl<'a> Transport<'a> {
     }
 
     pub fn matter(&self) -> &Matter<'a> {
-        &self.matter
+        self.matter
     }
 
     pub fn start(&mut self, dev_comm: CommissioningData, buf: &mut [u8]) -> Result<(), Error> {
@@ -229,12 +226,12 @@ impl<'a> Transport<'a> {
         Ok(())
     }
 
-    pub fn recv<'r, 'p>(
+    pub fn recv<'r>(
         &'r mut self,
         addr: Address,
-        rx_buf: &'p mut [u8],
-        tx_buf: &'p mut [u8],
-    ) -> RecvCompletion<'r, 'a, 'p> {
+        rx_buf: &'r mut [u8],
+        tx_buf: &'r mut [u8],
+    ) -> RecvCompletion<'r, 'a> {
         let mut rx = Packet::new_rx(rx_buf);
         let tx = Packet::new_tx(tx_buf);
 
