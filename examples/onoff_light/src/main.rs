@@ -31,7 +31,6 @@ use matter::data_model::system_model::descriptor;
 use matter::error::Error;
 use matter::interaction_model::core::InteractionModel;
 use matter::mdns::{DefaultMdns, DefaultMdnsRunner};
-use matter::persist;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use matter::transport::{
@@ -50,7 +49,6 @@ fn main() -> Result<(), Error> {
         .unwrap();
 
     thread.join().unwrap()
-    // run()
 }
 
 #[cfg(not(feature = "std"))]
@@ -105,17 +103,21 @@ fn run() -> Result<(), Error> {
     let psm_path = std::env::temp_dir().join("matter-iot");
     info!("Persisting from/to {}", psm_path.display());
 
-    let psm = persist::FilePsm::new(psm_path)?;
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    let psm = matter::persist::FilePsm::new(psm_path)?;
 
     let mut buf = [0; 4096];
     let buf = &mut buf;
 
-    if let Some(data) = psm.load("acls", buf)? {
-        matter.load_acls(data)?;
-    }
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    {
+        if let Some(data) = psm.load("acls", buf)? {
+            matter.load_acls(data)?;
+        }
 
-    if let Some(data) = psm.load("fabrics", buf)? {
-        matter.load_fabrics(data)?;
+        if let Some(data) = psm.load("fabrics", buf)? {
+            matter.load_fabrics(data)?;
+        }
     }
 
     let mut transport = Transport::new(&matter);
@@ -180,12 +182,15 @@ fn run() -> Result<(), Error> {
                 }
             }
 
-            if let Some(data) = transport.matter().store_fabrics(buf)? {
-                psm.store("fabrics", data)?;
-            }
+            #[cfg(all(feature = "std", not(target_os = "espidf")))]
+            {
+                if let Some(data) = transport.matter().store_fabrics(buf)? {
+                    psm.store("fabrics", data)?;
+                }
 
-            if let Some(data) = transport.matter().store_acls(buf)? {
-                psm.store("acls", data)?;
+                if let Some(data) = transport.matter().store_acls(buf)? {
+                    psm.store("acls", data)?;
+                }
             }
         }
 
