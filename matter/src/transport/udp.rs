@@ -52,6 +52,8 @@ mod smol_udp {
                 IpAddr::V6(ip_addr) => self.socket.join_multicast_v6(&ip_addr, 0)?,
             }
 
+            info!("Joining multicast on {:?}", ip_addr);
+
             Ok(())
         }
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["matter", "matter_macro_derive", "tools/tlv_tool"]
+members = ["matter", "matter_macro_derive"]
 
 exclude = ["examples/*"]
 

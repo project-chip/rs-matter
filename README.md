@@ -13,13 +13,31 @@ Building the library:
 $ cargo build
 ```
 
-Building the example:
+Building and running the example (Linux, MacOS X):
 
 ```
-$ RUST_LOG="matter" cargo run --example onoff_light
+$ cargo run --example onoff_light
 ```
 
-With the chip-tool (the current tool for testing Matter) use the Ethernet commissioning mechanism:
+Building the example (Espressif's ESP-IDF):
+* Install all build prerequisites described [here](https://github.com/esp-rs/esp-idf-template#prerequisites)
+* Build with the following command line:
+```
+export MCU=esp32; export CARGO_TARGET_XTENSA_ESP32_ESPIDF_LINKER=ldproxy; export RUSTFLAGS="-C default-linker-libraries"; export WIFI_SSID=ssid;export WIFI_PASS=pass; cargo build --example onoff_light --no-default-features --features std,crypto_rustcrypto --target xtensa-esp32-espidf -Zbuild-std=std,panic_abort
+```
+* If you are building for a different Espressif MCU, change the `MCU` variable, the `xtensa-esp32-espidf` target and the name of the `CARGO_TARGET_<esp-idf-target-uppercase>_LINKER` variable to match your MCU and its Rust target. Available Espressif MCUs and targets are:
+  * esp32 / xtensa-esp32-espidf
+  * esp32s2 / xtensa-esp32s2-espidf
+  * esp32s3 / xtensa-esp32s3-espidf
+  * esp32c3 / riscv32imc-esp-espidf
+  * esp32c5 / riscv32imc-esp-espidf
+  * esp32c6 / risxcv32imac-esp-espidf
+* Put in `WIFI_SSID` / `WIFI_PASS` the SSID & password for your wireless router
+* Flash using the `espflash` utility described in the build prerequsites' link above
+
+## Test
+
+With the `chip-tool` (the current tool for testing Matter) use the Ethernet commissioning mechanism:
 
 ```
 $ chip-tool pairing code 12344321 <Pairing-Code>
