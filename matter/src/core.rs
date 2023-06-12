@@ -25,7 +25,7 @@ use crate::{
     },
     error::*,
     fabric::FabricMgr,
-    mdns::{Mdns, MdnsMgr},
+    mdns::Mdns,
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
     utils::{epoch::Epoch, rand::Rand},
@@ -48,7 +48,7 @@ pub struct Matter<'a> {
     pub acl_mgr: RefCell<AclMgr>,
     pub pase_mgr: RefCell<PaseMgr>,
     pub failsafe: RefCell<FailSafe>,
-    pub mdns_mgr: MdnsMgr<'a>,
+    pub mdns: &'a dyn Mdns,
     pub epoch: Epoch,
     pub rand: Rand,
     pub dev_det: &'a BasicInfoConfig<'a>,
@@ -91,7 +91,7 @@ impl<'a> Matter<'a> {
             acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
-            mdns_mgr: MdnsMgr::new(dev_det.vid, dev_det.pid, dev_det.device_name, port, mdns),
+            mdns,
             epoch,
             rand,
             dev_det,
@@ -113,7 +113,7 @@ impl<'a> Matter<'a> {
     }
 
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr.borrow_mut().load(data, &self.mdns_mgr)
+        self.fabric_mgr.borrow_mut().load(data, self.mdns)
     }
 
     pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
@@ -149,7 +149,7 @@ impl<'a> Matter<'a> {
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,
                 dev_comm.discriminator,
-                &self.mdns_mgr,
+                self.mdns,
             )?;
 
             Ok(true)
@@ -183,12 +183,6 @@ impl<'a> Borrow<RefCell<FailSafe>> for Matter<'a> {
     }
 }
 
-impl<'a> Borrow<MdnsMgr<'a>> for Matter<'a> {
-    fn borrow(&self) -> &MdnsMgr<'a> {
-        &self.mdns_mgr
-    }
-}
-
 impl<'a> Borrow<BasicInfoConfig<'a>> for Matter<'a> {
     fn borrow(&self) -> &BasicInfoConfig<'a> {
         self.dev_det
@@ -203,7 +197,7 @@ impl<'a> Borrow<dyn DevAttDataFetcher + 'a> for Matter<'a> {
 
 impl<'a> Borrow<dyn Mdns + 'a> for Matter<'a> {
     fn borrow(&self) -> &(dyn Mdns + 'a) {
-        self.mdns_mgr.mdns
+        self.mdns
     }
 }
 

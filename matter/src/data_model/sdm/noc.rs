@@ -25,7 +25,7 @@ use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
 use crate::fabric::{Fabric, FabricMgr, MAX_SUPPORTED_FABRICS};
 use crate::interaction_model::core::Transaction;
-use crate::mdns::MdnsMgr;
+use crate::mdns::Mdns;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
 use crate::transport::session::SessionMode;
 use crate::utils::epoch::Epoch;
@@ -222,7 +222,7 @@ pub struct NocCluster<'a> {
     fabric_mgr: &'a RefCell<FabricMgr>,
     acl_mgr: &'a RefCell<AclMgr>,
     failsafe: &'a RefCell<FailSafe>,
-    mdns_mgr: &'a MdnsMgr<'a>,
+    mdns: &'a dyn Mdns,
 }
 
 impl<'a> NocCluster<'a> {
@@ -231,7 +231,7 @@ impl<'a> NocCluster<'a> {
         fabric_mgr: &'a RefCell<FabricMgr>,
         acl_mgr: &'a RefCell<AclMgr>,
         failsafe: &'a RefCell<FailSafe>,
-        mdns_mgr: &'a MdnsMgr<'a>,
+        mdns: &'a dyn Mdns,
         epoch: Epoch,
         rand: Rand,
     ) -> Self {
@@ -243,7 +243,7 @@ impl<'a> NocCluster<'a> {
             fabric_mgr,
             acl_mgr,
             failsafe,
-            mdns_mgr,
+            mdns,
         }
     }
 
@@ -383,7 +383,7 @@ impl<'a> NocCluster<'a> {
         let fab_idx = self
             .fabric_mgr
             .borrow_mut()
-            .add(fabric, self.mdns_mgr)
+            .add(fabric, self.mdns)
             .map_err(|_| NocStatus::TableFull)?;
 
         self.add_acl(fab_idx, r.case_admin_subject)?;
@@ -455,7 +455,7 @@ impl<'a> NocCluster<'a> {
         if self
             .fabric_mgr
             .borrow_mut()
-            .remove(req.fab_idx, self.mdns_mgr)
+            .remove(req.fab_idx, self.mdns)
             .is_ok()
         {
             let _ = self.acl_mgr.borrow_mut().delete_for_fabric(req.fab_idx);

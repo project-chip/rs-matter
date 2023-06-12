@@ -24,7 +24,7 @@ use super::{
 use crate::{
     crypto,
     error::{Error, ErrorCode},
-    mdns::{MdnsMgr, ServiceMode},
+    mdns::{Mdns, ServiceMode},
     secure_channel::common::OpCode,
     tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType, ToTLV},
     transport::{
@@ -39,7 +39,7 @@ use log::{error, info};
 
 #[allow(clippy::large_enum_variant)]
 enum PaseMgrState {
-    Enabled(Pake, heapless::String<16>, u16),
+    Enabled(Pake, heapless::String<16>),
     Disabled,
 }
 
@@ -60,14 +60,14 @@ impl PaseMgr {
     }
 
     pub fn is_pase_session_enabled(&self) -> bool {
-        matches!(&self.state, PaseMgrState::Enabled(_, _, _))
+        matches!(&self.state, PaseMgrState::Enabled(_, _))
     }
 
     pub fn enable_pase_session(
         &mut self,
         verifier: VerifierData,
         discriminator: u16,
-        mdns: &MdnsMgr,
+        mdns: &dyn Mdns,
     ) -> Result<(), Error> {
         let mut buf = [0; 8];
         (self.rand)(&mut buf);
@@ -76,25 +76,21 @@ impl PaseMgr {
         let mut mdns_service_name = heapless::String::<16>::new();
         write!(&mut mdns_service_name, "{:016X}", num).unwrap();
 
-        mdns.publish_service(
+        mdns.add(
             &mdns_service_name,
             ServiceMode::Commissionable(discriminator),
         )?;
         self.state = PaseMgrState::Enabled(
             Pake::new(verifier, self.epoch, self.rand),
             mdns_service_name,
-            discriminator,
         );
 
         Ok(())
     }
 
-    pub fn disable_pase_session(&mut self, mdns: &MdnsMgr) -> Result<(), Error> {
-        if let PaseMgrState::Enabled(_, mdns_service_name, discriminator) = &self.state {
-            mdns.unpublish_service(
-                mdns_service_name,
-                ServiceMode::Commissionable(*discriminator),
-            )?;
+    pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<(), Error> {
+        if let PaseMgrState::Enabled(_, mdns_service_name) = &self.state {
+            mdns.remove(mdns_service_name)?;
         }
 
         self.state = PaseMgrState::Disabled;
@@ -108,7 +104,7 @@ impl PaseMgr {
     where
         F: FnOnce(&mut Pake, &mut ProtoCtx) -> Result<T, Error>,
     {
-        if let PaseMgrState::Enabled(pake, _, _) = &mut self.state {
+        if let PaseMgrState::Enabled(pake, _) = &mut self.state {
             let data = f(pake, ctx)?;
 
             Ok(Some(data))
@@ -134,7 +130,7 @@ impl PaseMgr {
     pub fn pasepake3_handler(
         &mut self,
         ctx: &mut ProtoCtx,
-        mdns: &MdnsMgr,
+        mdns: &dyn Mdns,
     ) -> Result<(bool, Option<CloneData>), Error> {
         let clone_data = self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
         self.disable_pase_session(mdns)?;

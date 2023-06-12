@@ -4,7 +4,7 @@ use crate::{
     acl::AclMgr,
     fabric::FabricMgr,
     handler_chain_type,
-    mdns::MdnsMgr,
+    mdns::Mdns,
     secure_channel::pake::PaseMgr,
     utils::{epoch::Epoch, rand::Rand},
 };
@@ -62,7 +62,7 @@ where
         + Borrow<RefCell<FabricMgr>>
         + Borrow<RefCell<AclMgr>>
         + Borrow<RefCell<FailSafe>>
-        + Borrow<MdnsMgr<'a>>
+        + Borrow<dyn Mdns + 'a>
         + Borrow<Epoch>
         + Borrow<Rand>
         + 'a,
@@ -90,7 +90,7 @@ pub fn wrap<'a>(
     fabric: &'a RefCell<FabricMgr>,
     acl: &'a RefCell<AclMgr>,
     failsafe: &'a RefCell<FailSafe>,
-    mdns_mgr: &'a MdnsMgr<'a>,
+    mdns: &'a dyn Mdns,
     epoch: Epoch,
     rand: Rand,
 ) -> RootEndpointHandler<'a> {
@@ -103,12 +103,12 @@ pub fn wrap<'a>(
         .chain(
             endpoint_id,
             noc::ID,
-            NocCluster::new(dev_att, fabric, acl, failsafe, mdns_mgr, epoch, rand),
+            NocCluster::new(dev_att, fabric, acl, failsafe, mdns, epoch, rand),
         )
         .chain(
             endpoint_id,
             admin_commissioning::ID,
-            AdminCommCluster::new(pase, mdns_mgr, rand),
+            AdminCommCluster::new(pase, mdns, rand),
         )
         .chain(endpoint_id, nw_commissioning::ID, NwCommCluster::new(rand))
         .chain(

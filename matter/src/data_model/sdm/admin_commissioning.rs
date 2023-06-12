@@ -20,7 +20,7 @@ use core::convert::TryInto;
 
 use crate::data_model::objects::*;
 use crate::interaction_model::core::Transaction;
-use crate::mdns::MdnsMgr;
+use crate::mdns::Mdns;
 use crate::secure_channel::pake::PaseMgr;
 use crate::secure_channel::spake2p::VerifierData;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
@@ -102,15 +102,15 @@ pub struct OpenCommWindowReq<'a> {
 pub struct AdminCommCluster<'a> {
     data_ver: Dataver,
     pase_mgr: &'a RefCell<PaseMgr>,
-    mdns_mgr: &'a MdnsMgr<'a>,
+    mdns: &'a dyn Mdns,
 }
 
 impl<'a> AdminCommCluster<'a> {
-    pub fn new(pase_mgr: &'a RefCell<PaseMgr>, mdns_mgr: &'a MdnsMgr<'a>, rand: Rand) -> Self {
+    pub fn new(pase_mgr: &'a RefCell<PaseMgr>, mdns: &'a dyn Mdns, rand: Rand) -> Self {
         Self {
             data_ver: Dataver::new(rand),
             pase_mgr,
-            mdns_mgr,
+            mdns,
         }
     }
 
@@ -152,11 +152,9 @@ impl<'a> AdminCommCluster<'a> {
         cmd_enter!("Open Commissioning Window");
         let req = OpenCommWindowReq::from_tlv(data)?;
         let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
-        self.pase_mgr.borrow_mut().enable_pase_session(
-            verifier,
-            req.discriminator,
-            self.mdns_mgr,
-        )?;
+        self.pase_mgr
+            .borrow_mut()
+            .enable_pase_session(verifier, req.discriminator, self.mdns)?;
 
         Ok(())
     }
