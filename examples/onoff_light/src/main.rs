@@ -69,6 +69,16 @@ fn run() -> Result<(), Error> {
         core::mem::size_of::<Transport>(),
     );
 
+    let dev_det = BasicInfoConfig {
+        vid: 0xFFF1,
+        pid: 0x8000,
+        hw_ver: 2,
+        sw_ver: 1,
+        sw_ver_str: "1",
+        serial_no: "aabbccdd",
+        device_name: "OnOff Light",
+    };
+
     let (ipv4_addr, ipv6_addr) = initialize_network()?;
 
     let mdns = DefaultMdns::new(
@@ -76,6 +86,8 @@ fn run() -> Result<(), Error> {
         "matter-demo",
         ipv4_addr.octets(),
         Some(ipv6_addr.octets()),
+        &dev_det,
+        matter::MATTER_PORT,
     );
 
     let mut mdns_runner = DefaultMdnsRunner::new(&mdns);
@@ -84,15 +96,7 @@ fn run() -> Result<(), Error> {
 
     let matter = Matter::new_default(
         // vid/pid should match those in the DAC
-        &BasicInfoConfig {
-            vid: 0xFFF1,
-            pid: 0x8000,
-            hw_ver: 2,
-            sw_ver: 1,
-            sw_ver_str: "1",
-            serial_no: "aabbccdd",
-            device_name: "OnOff Light",
-        },
+        &dev_det,
         &dev_att,
         &mdns,
         matter::MATTER_PORT,

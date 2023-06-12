@@ -27,7 +27,7 @@ mod smol_udp {
     use log::{debug, info, warn};
     use smol::net::UdpSocket;
 
-    use crate::transport::network::SocketAddr;
+    use crate::transport::network::{IpAddr, Ipv4Addr, SocketAddr};
 
     pub struct UdpListener {
         socket: UdpSocket,
@@ -44,9 +44,18 @@ mod smol_udp {
             Ok(listener)
         }
 
-        pub async fn recv(&self, in_buf: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
-            info!("Waiting for incoming packets");
+        pub async fn join_multicast(&mut self, ip_addr: IpAddr) -> Result<(), Error> {
+            match ip_addr {
+                IpAddr::V4(ip_addr) => self
+                    .socket
+                    .join_multicast_v4(ip_addr, Ipv4Addr::UNSPECIFIED)?,
+                IpAddr::V6(ip_addr) => self.socket.join_multicast_v6(&ip_addr, 0)?,
+            }
 
+            Ok(())
+        }
+
+        pub async fn recv(&self, in_buf: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
             let (size, addr) = self.socket.recv_from(in_buf).await.map_err(|e| {
                 warn!("Error on the network: {:?}", e);
                 ErrorCode::Network
@@ -94,6 +103,10 @@ mod dummy_udp {
             info!("Pretending to listen on {:?}", addr);
 
             Ok(listener)
+        }
+
+        pub async fn join_multicast(&mut self, ip_addr: IpAddr) -> Result<(), Error> {
+            Ok(())
         }
 
         pub async fn recv(&self, _in_buf: &mut [u8]) -> Result<(usize, SocketAddr), Error> {

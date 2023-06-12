@@ -26,7 +26,7 @@ use crate::{
     crypto::{self, hkdf_sha256, HmacSha256, KeyPair},
     error::{Error, ErrorCode},
     group_keys::KeySet,
-    mdns::{MdnsMgr, ServiceMode},
+    mdns::{Mdns, ServiceMode},
     tlv::{self, FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
     utils::writebuf::WriteBuf,
 };
@@ -200,9 +200,9 @@ impl FabricMgr {
         }
     }
 
-    pub fn load(&mut self, data: &[u8], mdns_mgr: &MdnsMgr) -> Result<(), Error> {
+    pub fn load(&mut self, data: &[u8], mdns: &dyn Mdns) -> Result<(), Error> {
         for fabric in self.fabrics.iter().flatten() {
-            mdns_mgr.unpublish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
+            mdns.remove(&fabric.mdns_service_name)?;
         }
 
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
@@ -210,7 +210,7 @@ impl FabricMgr {
         tlv::from_tlv(&mut self.fabrics, &root)?;
 
         for fabric in self.fabrics.iter().flatten() {
-            mdns_mgr.publish_service(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
+            mdns.add(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
         }
 
         self.changed = false;
@@ -241,11 +241,11 @@ impl FabricMgr {
         self.changed
     }
 
-    pub fn add(&mut self, f: Fabric, mdns_mgr: &MdnsMgr) -> Result<u8, Error> {
+    pub fn add(&mut self, f: Fabric, mdns: &dyn Mdns) -> Result<u8, Error> {
         let slot = self.fabrics.iter().position(|x| x.is_none());
 
         if slot.is_some() || self.fabrics.len() < MAX_SUPPORTED_FABRICS {
-            mdns_mgr.publish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+            mdns.add(&f.mdns_service_name, ServiceMode::Commissioned)?;
             self.changed = true;
 
             if let Some(index) = slot {
@@ -265,10 +265,10 @@ impl FabricMgr {
         }
     }
 
-    pub fn remove(&mut self, fab_idx: u8, mdns_mgr: &MdnsMgr) -> Result<(), Error> {
+    pub fn remove(&mut self, fab_idx: u8, mdns: &dyn Mdns) -> Result<(), Error> {
         if fab_idx > 0 && fab_idx as usize <= self.fabrics.len() {
             if let Some(f) = self.fabrics[(fab_idx - 1) as usize].take() {
-                mdns_mgr.unpublish_service(&f.mdns_service_name, ServiceMode::Commissioned)?;
+                mdns.remove(&f.mdns_service_name)?;
                 self.changed = true;
                 Ok(())
             } else {

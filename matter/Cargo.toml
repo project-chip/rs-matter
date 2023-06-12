@@ -46,7 +46,7 @@ embassy-futures = "0.1"
 embassy-time = { version = "0.1.1", features = ["generic-queue-8"] }
 embassy-sync = "0.2"
 critical-section = "1.1.1"
-domain = { version = "0.7.2", default_features = false }
+domain = { version = "0.7.2", default_features = false, features = ["heapless"] }
 
 # STD-only dependencies
 rand = { version = "0.8.5", optional = true }

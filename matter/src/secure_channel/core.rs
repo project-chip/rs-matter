@@ -20,7 +20,7 @@ use core::{borrow::Borrow, cell::RefCell};
 use crate::{
     error::*,
     fabric::FabricMgr,
-    mdns::MdnsMgr,
+    mdns::Mdns,
     secure_channel::common::*,
     tlv,
     transport::{proto_ctx::ProtoCtx, session::CloneData},
@@ -36,7 +36,7 @@ use super::{case::Case, pake::PaseMgr};
 pub struct SecureChannel<'a> {
     case: Case<'a>,
     pase: &'a RefCell<PaseMgr>,
-    mdns: &'a MdnsMgr<'a>,
+    mdns: &'a dyn Mdns,
 }
 
 impl<'a> SecureChannel<'a> {
@@ -44,7 +44,7 @@ impl<'a> SecureChannel<'a> {
     pub fn new<
         T: Borrow<RefCell<FabricMgr>>
             + Borrow<RefCell<PaseMgr>>
-            + Borrow<MdnsMgr<'a>>
+            + Borrow<dyn Mdns + 'a>
             + Borrow<Epoch>
             + Borrow<Rand>,
     >(
@@ -62,7 +62,7 @@ impl<'a> SecureChannel<'a> {
     pub fn wrap(
         pase: &'a RefCell<PaseMgr>,
         fabric: &'a RefCell<FabricMgr>,
-        mdns: &'a MdnsMgr<'a>,
+        mdns: &'a dyn Mdns,
         rand: Rand,
     ) -> Self {
         Self {
