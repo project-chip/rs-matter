@@ -51,7 +51,7 @@ fn main() -> Result<(), Error> {
     thread.join().unwrap()
 }
 
-// NOTE: For no_std, name this entry point according to your MCU platform
+// NOTE (no_std): For no_std, name this entry point according to your MCU platform
 #[cfg(not(feature = "std"))]
 #[no_mangle]
 fn app_main() {
@@ -100,11 +100,11 @@ fn run() -> Result<(), Error> {
     #[cfg(feature = "std")]
     let rand = matter::utils::rand::sys_rand;
 
-    // NOTE: For no_std, provide your own function here
+    // NOTE (no_std): For no_std, provide your own function here
     #[cfg(not(feature = "std"))]
     let epoch = matter::utils::epoch::dummy_epoch;
 
-    // NOTE: For no_std, provide your own function here
+    // NOTE (no_std): For no_std, provide your own function here
     #[cfg(not(feature = "std"))]
     let rand = matter::utils::rand::dummy_rand;
 
@@ -175,6 +175,8 @@ fn run() -> Result<(), Error> {
     let tx_buf = &mut tx_buf;
 
     let mut io_fut = pin!(async move {
+        // NOTE (no_std): On no_std, the `UdpListener` implementation is a no-op so you might want to
+        // replace it with your own UDP stack
         let udp = UdpListener::new(SocketAddr::new(
             IpAddr::V6(Ipv6Addr::UNSPECIFIED),
             matter::MATTER_PORT,
@@ -216,17 +218,21 @@ fn run() -> Result<(), Error> {
         Ok::<_, matter::error::Error>(())
     });
 
+    // NOTE (no_std): On no_std, the `run_udp` is a no-op so you might want to replace it with `run` and
+    // connect the pipes of the `run` method with your own UDP stack
     let mut mdns_fut = pin!(async move { mdns_runner.run_udp().await });
 
     let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut).await.unwrap() });
 
-    info!("Final future: {:p}", &mut fut);
-
-    // NOTE: For no_std, replace with your own no_std way of polling the future
     #[cfg(feature = "std")]
     smol::block_on(&mut fut)?;
 
-    Ok::<_, matter::error::Error>(())
+    // NOTE (no_std): For no_std, replace with your own more efficient no_std executor,
+    // because the executor used below is a simple busy-loop poller
+    #[cfg(not(feature = "std"))]
+    embassy_futures::block_on(&mut fut)?;
+
+    Ok(())
 }
 
 fn handler<'a>(matter: &'a Matter<'a>) -> impl Handler + 'a {
@@ -243,12 +249,12 @@ fn handler<'a>(matter: &'a Matter<'a>) -> impl Handler + 'a {
         )
 }
 
-// NOTE: For no_std, implement here your own way of initializing the logger
+// NOTE (no_std): For no_std, implement here your own way of initializing the logger
 #[cfg(all(not(feature = "std"), not(target_os = "espidf")))]
 #[inline(never)]
 fn initialize_logger() {}
 
-// NOTE: For no_std, implement here your own way of initializing the network
+// NOTE (no_std): For no_std, implement here your own way of initializing the network
 #[cfg(all(not(feature = "std"), not(target_os = "espidf")))]
 #[inline(never)]
 fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
