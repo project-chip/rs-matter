@@ -51,9 +51,10 @@ fn main() -> Result<(), Error> {
     thread.join().unwrap()
 }
 
+// NOTE: For no_std, name this entry point according to your MCU platform
 #[cfg(not(feature = "std"))]
 #[no_mangle]
-fn main() {
+fn app_main() {
     run().unwrap();
 }
 
@@ -93,11 +94,27 @@ fn run() -> Result<(), Error> {
 
     let dev_att = dev_att::HardCodedDevAtt::new();
 
-    let matter = Matter::new_default(
+    #[cfg(feature = "std")]
+    let epoch = matter::utils::epoch::sys_epoch;
+
+    #[cfg(feature = "std")]
+    let rand = matter::utils::rand::sys_rand;
+
+    // NOTE: For no_std, provide your own function here
+    #[cfg(not(feature = "std"))]
+    let epoch = matter::utils::epoch::dummy_epoch;
+
+    // NOTE: For no_std, provide your own function here
+    #[cfg(not(feature = "std"))]
+    let rand = matter::utils::rand::dummy_rand;
+
+    let matter = Matter::new(
         // vid/pid should match those in the DAC
         &dev_det,
         &dev_att,
         &mdns,
+        epoch,
+        rand,
         matter::MATTER_PORT,
     );
 
@@ -203,6 +220,10 @@ fn run() -> Result<(), Error> {
 
     let mut fut = pin!(async move { select(&mut io_fut, &mut mdns_fut).await.unwrap() });
 
+    info!("Final future: {:p}", &mut fut);
+
+    // NOTE: For no_std, replace with your own no_std way of polling the future
+    #[cfg(feature = "std")]
     smol::block_on(&mut fut)?;
 
     Ok::<_, matter::error::Error>(())
@@ -222,7 +243,19 @@ fn handler<'a>(matter: &'a Matter<'a>) -> impl Handler + 'a {
         )
 }
 
-#[cfg(not(target_os = "espidf"))]
+// NOTE: For no_std, implement here your own way of initializing the logger
+#[cfg(all(not(feature = "std"), not(target_os = "espidf")))]
+#[inline(never)]
+fn initialize_logger() {}
+
+// NOTE: For no_std, implement here your own way of initializing the network
+#[cfg(all(not(feature = "std"), not(target_os = "espidf")))]
+#[inline(never)]
+fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
+    Ok((Ipv4Addr::UNSPECIFIED, Ipv6Addr::UNSPECIFIED, 0))
+}
+
+#[cfg(all(feature = "std", not(target_os = "espidf")))]
 #[inline(never)]
 fn initialize_logger() {
     env_logger::init_from_env(
@@ -230,7 +263,7 @@ fn initialize_logger() {
     );
 }
 
-#[cfg(not(target_os = "espidf"))]
+#[cfg(all(feature = "std", not(target_os = "espidf")))]
 #[inline(never)]
 fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     use log::error;

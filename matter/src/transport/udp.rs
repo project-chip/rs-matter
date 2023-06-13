@@ -150,7 +150,7 @@ mod dummy_udp {
     use crate::error::*;
     use log::{debug, info};
 
-    use crate::transport::network::SocketAddr;
+    use crate::transport::network::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     pub struct UdpListener {}
 
@@ -163,7 +163,29 @@ mod dummy_udp {
             Ok(listener)
         }
 
-        pub async fn join_multicast(&mut self, ip_addr: IpAddr) -> Result<(), Error> {
+        pub fn join_multicast_v6(
+            &mut self,
+            multiaddr: Ipv6Addr,
+            interface: u32,
+        ) -> Result<(), Error> {
+            info!(
+                "Pretending to join IPV6 multicast {}/{}",
+                multiaddr, interface
+            );
+
+            Ok(())
+        }
+
+        pub fn join_multicast_v4(
+            &mut self,
+            multiaddr: Ipv4Addr,
+            interface: Ipv4Addr,
+        ) -> Result<(), Error> {
+            info!(
+                "Pretending to join IP multicast {}/{}",
+                multiaddr, interface
+            );
+
             Ok(())
         }
 
