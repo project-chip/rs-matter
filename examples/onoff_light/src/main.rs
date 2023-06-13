@@ -77,13 +77,14 @@ fn run() -> Result<(), Error> {
         device_name: "OnOff Light",
     };
 
-    let (ipv4_addr, ipv6_addr) = initialize_network()?;
+    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
 
     let mdns = DefaultMdns::new(
         0,
         "matter-demo",
         ipv4_addr.octets(),
         Some(ipv6_addr.octets()),
+        interface,
         &dev_det,
         matter::MATTER_PORT,
     );
@@ -231,7 +232,7 @@ fn initialize_logger() {
 
 #[cfg(not(target_os = "espidf"))]
 #[inline(never)]
-fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr), Error> {
+fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     use log::error;
     use matter::error::ErrorCode;
     use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
@@ -276,7 +277,7 @@ fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr), Error> {
         iname, ip, ipv6
     );
 
-    Ok((ip, ipv6))
+    Ok((ip, ipv6, 0 as _))
 }
 
 #[cfg(target_os = "espidf")]
@@ -287,7 +288,7 @@ fn initialize_logger() {
 
 #[cfg(target_os = "espidf")]
 #[inline(never)]
-fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr), Error> {
+fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     use core::time::Duration;
 
     use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
@@ -379,9 +380,11 @@ fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr), Error> {
         ipv6.addr[3].to_le_bytes()[3],
     ];
 
+    let interface = wifi.sta_netif().get_index();
+
     // Not OK of course, but for a demo this is good enough
     // Wifi will continue to be available and working in the background
     core::mem::forget(wifi);
 
-    Ok((ipv4_octets.into(), ipv6_octets.into()))
+    Ok((ipv4_octets.into(), ipv6_octets.into(), interface))
 }

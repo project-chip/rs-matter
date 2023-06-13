@@ -27,7 +27,7 @@ mod smol_udp {
     use log::{debug, info, warn};
     use smol::net::UdpSocket;
 
-    use crate::transport::network::{IpAddr, Ipv4Addr, SocketAddr};
+    use crate::transport::network::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     pub struct UdpListener {
         socket: UdpSocket,
@@ -44,15 +44,71 @@ mod smol_udp {
             Ok(listener)
         }
 
-        pub async fn join_multicast(&mut self, ip_addr: IpAddr) -> Result<(), Error> {
-            match ip_addr {
-                IpAddr::V4(ip_addr) => self
-                    .socket
-                    .join_multicast_v4(ip_addr, Ipv4Addr::UNSPECIFIED)?,
-                IpAddr::V6(ip_addr) => self.socket.join_multicast_v6(&ip_addr, 0)?,
+        pub fn join_multicast_v6(
+            &mut self,
+            multiaddr: Ipv6Addr,
+            interface: u32,
+        ) -> Result<(), Error> {
+            self.socket.join_multicast_v6(&multiaddr, interface)?;
+
+            info!("Joined IPV6 multicast {}/{}", multiaddr, interface);
+
+            Ok(())
+        }
+
+        pub fn join_multicast_v4(
+            &mut self,
+            multiaddr: Ipv4Addr,
+            interface: Ipv4Addr,
+        ) -> Result<(), Error> {
+            #[cfg(not(target_os = "espidf"))]
+            self.socket.join_multicast_v4(multiaddr, interface)?;
+
+            // join_multicast_v4() is broken for ESP-IDF, most likely due to wrong `ip_mreq` signature in the `libc` crate
+            // Note that also most *_multicast_v4 and *_multicast_v6 methods are broken as well in Rust STD for the ESP-IDF
+            // due to mismatch w.r.t. sizes (u8 expected but u32 passed to setsockopt() and sometimes the other way around)
+            #[cfg(target_os = "espidf")]
+            {
+                fn esp_setsockopt<T>(
+                    socket: &mut UdpSocket,
+                    proto: u32,
+                    option: u32,
+                    value: T,
+                ) -> Result<(), Error> {
+                    use std::os::fd::AsRawFd;
+
+                    esp_idf_sys::esp!(unsafe {
+                        esp_idf_sys::lwip_setsockopt(
+                            socket.as_raw_fd(),
+                            proto as _,
+                            option as _,
+                            &value as *const _ as *const _,
+                            core::mem::size_of::<T>() as _,
+                        )
+                    })
+                    .map_err(|_| ErrorCode::StdIoError)?;
+
+                    Ok(())
+                }
+
+                let mreq = esp_idf_sys::ip_mreq {
+                    imr_multiaddr: esp_idf_sys::in_addr {
+                        s_addr: u32::from_ne_bytes(multiaddr.octets()),
+                    },
+                    imr_interface: esp_idf_sys::in_addr {
+                        s_addr: u32::from_ne_bytes(interface.octets()),
+                    },
+                };
+
+                esp_setsockopt(
+                    &mut self.socket,
+                    esp_idf_sys::IPPROTO_IP,
+                    esp_idf_sys::IP_ADD_MEMBERSHIP,
+                    mreq,
+                )?;
             }
 
-            info!("Joining multicast on {:?}", ip_addr);
+            info!("Joined IP multicast {}/{}", multiaddr, interface);
 
             Ok(())
         }
