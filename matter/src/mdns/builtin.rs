@@ -19,21 +19,19 @@ use super::{
     Service, ServiceMode,
 };
 
-const IP_BROADCAST_ADDRS: [(IpAddr, u16); 2] = [
-    (IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)), 5353),
-    (
-        IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb)),
-        5353,
-    ),
-];
+const IP_BIND_ADDR: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
 
-const IP_BIND_ADDR: (IpAddr, u16) = (IpAddr::V6(Ipv6Addr::UNSPECIFIED), 5353);
+const IP_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+const IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
+
+const PORT: u16 = 5353;
 
 type MdnsTxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
 type MdnsRxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
 
 pub struct Mdns<'a> {
     host: Host<'a>,
+    interface: u32,
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
     services: RefCell<heapless::Vec<(heapless::String<40>, ServiceMode), 4>>,
@@ -47,6 +45,7 @@ impl<'a> Mdns<'a> {
         hostname: &'a str,
         ip: [u8; 4],
         ipv6: Option<[u8; 16]>,
+        interface: u32,
         dev_det: &'a BasicInfoConfig<'a>,
         matter_port: u16,
     ) -> Self {
@@ -57,6 +56,7 @@ impl<'a> Mdns<'a> {
                 ip,
                 ipv6,
             },
+            interface,
             dev_det,
             matter_port,
             services: RefCell::new(heapless::Vec::new()),
@@ -121,11 +121,10 @@ impl<'a> MdnsRunner<'a> {
         let tx_pipe = &tx_pipe;
         let rx_pipe = &rx_pipe;
 
-        let mut udp = UdpListener::new(SocketAddr::new(IP_BIND_ADDR.0, IP_BIND_ADDR.1)).await?;
+        let mut udp = UdpListener::new(SocketAddr::new(IP_BIND_ADDR, PORT)).await?;
 
-        for (ip, _) in IP_BROADCAST_ADDRS {
-            udp.join_multicast(ip).await?;
-        }
+        udp.join_multicast_v6(IPV6_BROADCAST_ADDR, self.0.interface)?;
+        udp.join_multicast_v4(IP_BROADCAST_ADDR, Ipv4Addr::from(self.0.host.ip))?;
 
         let udp = &udp;
 
@@ -188,7 +187,10 @@ impl<'a> MdnsRunner<'a> {
             )
             .await;
 
-            for (addr, port) in IP_BROADCAST_ADDRS {
+            for addr in [
+                IpAddr::V4(IP_BROADCAST_ADDR),
+                IpAddr::V6(IPV6_BROADCAST_ADDR),
+            ] {
                 loop {
                     let sent = {
                         let mut data = tx_pipe.data.lock().await;
@@ -197,12 +199,12 @@ impl<'a> MdnsRunner<'a> {
                             let len = self.0.host.broadcast(&self.0, data.buf, 60)?;
 
                             if len > 0 {
-                                info!("Broadasting mDNS entry to {}:{}", addr, port);
+                                info!("Broadasting mDNS entry to {}:{}", addr, PORT);
 
                                 data.chunk = Some(Chunk {
                                     start: 0,
                                     end: len,
-                                    addr: Address::Udp(SocketAddr::new(addr, port)),
+                                    addr: Address::Udp(SocketAddr::new(addr, PORT)),
                                 });
 
                                 tx_pipe.data_supplied_notification.signal(());

@@ -23,6 +23,7 @@ impl<'a> Mdns<'a> {
         _hostname: &str,
         _ip: [u8; 4],
         _ipv6: Option<[u8; 16]>,
+        _interface: u32,
         dev_det: &'a BasicInfoConfig<'a>,
         matter_port: u16,
     ) -> Self {
