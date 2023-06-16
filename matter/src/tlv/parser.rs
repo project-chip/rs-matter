@@ -357,10 +357,27 @@ impl<'a> TLVElement<'a> {
         }
     }
 
+    pub fn i16(&self) -> Result<i16, Error> {
+        match self.element_type {
+            ElementType::S8(a) => Ok(a.into()),
+            ElementType::S16(a) => Ok(a),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
     pub fn u16(&self) -> Result<u16, Error> {
         match self.element_type {
             ElementType::U8(a) => Ok(a.into()),
             ElementType::U16(a) => Ok(a),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
+    pub fn i32(&self) -> Result<i32, Error> {
+        match self.element_type {
+            ElementType::S8(a) => Ok(a.into()),
+            ElementType::S16(a) => Ok(a.into()),
+            ElementType::S32(a) => Ok(a),
             _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
@@ -370,6 +387,16 @@ impl<'a> TLVElement<'a> {
             ElementType::U8(a) => Ok(a.into()),
             ElementType::U16(a) => Ok(a.into()),
             ElementType::U32(a) => Ok(a),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
+    pub fn i64(&self) -> Result<i64, Error> {
+        match self.element_type {
+            ElementType::S8(a) => Ok(a.into()),
+            ElementType::S16(a) => Ok(a.into()),
+            ElementType::S32(a) => Ok(a.into()),
+            ElementType::S64(a) => Ok(a),
             _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
