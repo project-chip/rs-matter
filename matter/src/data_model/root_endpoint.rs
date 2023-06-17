@@ -27,7 +27,7 @@ use super::{
 };
 
 pub type RootEndpointHandler<'a> = handler_chain_type!(
-    DescriptorCluster,
+    DescriptorCluster<'static>,
     BasicInfoCluster<'a>,
     GenCommCluster<'a>,
     NwCommCluster,

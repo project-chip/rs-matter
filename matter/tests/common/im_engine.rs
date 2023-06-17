@@ -101,7 +101,7 @@ impl<'a> ImInput<'a> {
     }
 }
 
-pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster, EchoCluster | RootEndpointHandler<'a>);
+pub type DmHandler<'a> = handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster<'a>, EchoCluster | RootEndpointHandler<'a>);
 
 pub fn matter(mdns: &mut dyn Mdns) -> Matter<'_> {
     #[cfg(feature = "std")]
