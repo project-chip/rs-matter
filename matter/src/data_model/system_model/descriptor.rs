@@ -53,13 +53,63 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[],
 };
 
-pub struct DescriptorCluster {
+struct StandardPartsMatcher;
+
+impl PartsMatcher for StandardPartsMatcher {
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        our_endpoint == 0 && endpoint != our_endpoint
+    }
+}
+
+struct AggregatorPartsMatcher;
+
+impl PartsMatcher for AggregatorPartsMatcher {
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        endpoint != our_endpoint && endpoint != 0
+    }
+}
+
+pub trait PartsMatcher {
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool;
+}
+
+impl<T> PartsMatcher for &T
+where
+    T: PartsMatcher,
+{
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        (**self).describe(our_endpoint, endpoint)
+    }
+}
+
+impl<T> PartsMatcher for &mut T
+where
+    T: PartsMatcher,
+{
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        (**self).describe(our_endpoint, endpoint)
+    }
+}
+
+pub struct DescriptorCluster<'a> {
+    matcher: &'a dyn PartsMatcher,
     data_ver: Dataver,
 }
 
-impl DescriptorCluster {
+impl DescriptorCluster<'static> {
     pub fn new(rand: Rand) -> Self {
+        Self::new_matching(&StandardPartsMatcher, rand)
+    }
+
+    pub fn new_aggregator(rand: Rand) -> Self {
+        Self::new_matching(&AggregatorPartsMatcher, rand)
+    }
+}
+
+impl<'a> DescriptorCluster<'a> {
+    pub fn new_matching(matcher: &'a dyn PartsMatcher, rand: Rand) -> DescriptorCluster<'a> {
         Self {
+            matcher,
             data_ver: Dataver::new(rand),
         }
     }
@@ -159,12 +209,9 @@ impl DescriptorCluster {
     ) -> Result<(), Error> {
         tw.start_array(tag)?;
 
-        if endpoint_id == 0 {
-            // TODO: If endpoint is another than 0, need to figure out what to do
-            for endpoint in node.endpoints {
-                if endpoint.id != 0 {
-                    tw.u16(TagType::Anonymous, endpoint.id)?;
-                }
+        for endpoint in node.endpoints {
+            if self.matcher.describe(endpoint_id, endpoint.id) {
+                tw.u16(TagType::Anonymous, endpoint.id)?;
             }
         }
 
@@ -184,15 +231,15 @@ impl DescriptorCluster {
     }
 }
 
-impl Handler for DescriptorCluster {
+impl<'a> Handler for DescriptorCluster<'a> {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         DescriptorCluster::read(self, attr, encoder)
     }
 }
 
-impl NonBlockingHandler for DescriptorCluster {}
+impl<'a> NonBlockingHandler for DescriptorCluster<'a> {}
 
-impl ChangeNotifier<()> for DescriptorCluster {
+impl<'a> ChangeNotifier<()> for DescriptorCluster<'a> {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }
