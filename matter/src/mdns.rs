@@ -19,7 +19,7 @@ use core::fmt::Write;
 
 use crate::{data_model::cluster_basic_information::BasicInfoConfig, error::Error};
 
-#[cfg(all(feature = "std", feature = "astro-dnssd"))]
+#[cfg(all(feature = "std", target_os = "macos"))]
 pub mod astro;
 pub mod builtin;
 pub mod proto;
@@ -55,16 +55,16 @@ where
     }
 }
 
-#[cfg(all(feature = "std", feature = "astro-dnssd"))]
+#[cfg(all(feature = "std", target_os = "macos"))]
 pub type DefaultMdns<'a> = astro::Mdns<'a>;
 
-#[cfg(all(feature = "std", feature = "astro-dnssd"))]
+#[cfg(all(feature = "std", target_os = "macos"))]
 pub type DefaultMdnsRunner<'a> = astro::MdnsRunner<'a>;
 
-#[cfg(not(all(feature = "std", feature = "astro-dnssd")))]
+#[cfg(not(all(feature = "std", target_os = "macos")))]
 pub type DefaultMdns<'a> = builtin::Mdns<'a>;
 
-#[cfg(not(all(feature = "std", feature = "astro-dnssd")))]
+#[cfg(not(all(feature = "std", target_os = "macos")))]
 pub type DefaultMdnsRunner<'a> = builtin::MdnsRunner<'a>;
 
 pub struct DummyMdns;
