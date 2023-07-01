@@ -74,7 +74,7 @@ x509-cert = { version = "0.2.0", default-features = false, features = ["pem"], o
 astro-dnssd = { version = "0.3" }
 
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
-mbedtls = { git = "https://github.com/fortanix/rust-mbedtls", optional = true }
+mbedtls = { version = "0.11", optional = true }
 env_logger = { version = "0.10.0", optional = true }
 nix = { version = "0.26", features = ["net"], optional = true }
 
