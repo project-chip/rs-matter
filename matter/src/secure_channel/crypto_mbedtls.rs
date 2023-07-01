@@ -130,7 +130,11 @@ impl CryptoSpake2 {
         //    where P is the generator of the underlying elliptic curve
         self.set_w1_from_w1s(w1s)?;
         // TODO: rust-mbedtls doesn't yet accept the DRBG parameter
-        self.L = self.group.generator()?.mul(&mut self.group, &self.w1)?;
+        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
+        self.L = self
+            .group
+            .generator()?
+            .mul(&mut self.group, &self.w1, &mut ctr_drbg)?;
         Ok(())
     }
 
@@ -288,7 +292,8 @@ impl CryptoSpake2 {
         let Z = EcPoint::muladd(group, X, y, &inverted_M, &tmp)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
-        let V = L.mul(group, y)?;
+        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
+        let V = L.mul(group, y, &mut ctr_drbg)?;
         Ok((Z, V))
     }
 

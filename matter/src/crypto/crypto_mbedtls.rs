@@ -74,10 +74,15 @@ impl KeyPair {
     }
 
     pub fn new_from_components(_pub_key: &[u8], priv_key: &[u8]) -> Result<Self, Error> {
+        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         // No rust-mbedtls API yet for creating keypair from both public and private key
         let priv_key = Mpi::from_binary(priv_key)?;
         Ok(Self {
-            key: Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, priv_key)?,
+            key: Pk::private_from_ec_components(
+                &mut ctr_drbg,
+                EcGroup::new(EcGroupId::SecP256R1)?,
+                priv_key,
+            )?,
         })
     }
 
@@ -91,9 +96,13 @@ impl KeyPair {
     }
 
     pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         let tmp_priv = self.key.ec_private()?;
-        let mut tmp_key =
-            Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_priv)?;
+        let mut tmp_key = Pk::private_from_ec_components(
+            &mut ctr_drbg,
+            EcGroup::new(EcGroupId::SecP256R1)?,
+            tmp_priv,
+        )?;
 
         let mut builder = x509::csr::Builder::new();
         builder.key(&mut tmp_key);
@@ -134,29 +143,36 @@ impl KeyPair {
     }
 
     pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
+        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
 
         let tmp_key = self.key.ec_private()?;
-        let mut tmp_key =
-            Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_key)?;
+        let mut tmp_key = Pk::private_from_ec_components(
+            &mut ctr_drbg,
+            EcGroup::new(EcGroupId::SecP256R1)?,
+            tmp_key,
+        )?;
 
         let group = EcGroup::new(EcGroupId::SecP256R1)?;
         let other = EcPoint::from_binary(&group, peer_pub_key)?;
         let other = Pk::public_from_ec_components(group, other)?;
 
         let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
-
         let len = tmp_key.agree(&other, secret, &mut ctr_drbg)?;
         Ok(len)
     }
 
     pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
+        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
         let tmp_key = self.key.ec_private()?;
-        let mut tmp_key =
-            Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_key)?;
+        let mut tmp_key = Pk::private_from_ec_components(
+            &mut ctr_drbg,
+            EcGroup::new(EcGroupId::SecP256R1)?,
+            tmp_key,
+        )?;
 
         // First get the SHA256 of the message
         let mut msg_hash = [0_u8; super::SHA256_HASH_LEN_BYTES];
@@ -294,7 +310,7 @@ pub fn encrypt_in_place(
     nonce: &[u8],
     ad: &[u8],
     data: &mut [u8],
-    data_len: usize,
+    _: usize,
 ) -> Result<usize, Error> {
     let cipher = Cipher::<_, Authenticated, _>::new(
         mbedtls::cipher::raw::CipherId::Aes,
@@ -302,10 +318,8 @@ pub fn encrypt_in_place(
         (key.len() * 8) as u32,
     )?;
     let cipher = cipher.set_key_iv(key, nonce)?;
-    let (data, tag) = data.split_at_mut(data_len);
-    let tag = &mut tag[..super::AEAD_MIC_LEN_BYTES];
     cipher
-        .encrypt_auth_inplace(ad, data, tag)
+        .encrypt_auth_inplace(ad, data, super::AEAD_MIC_LEN_BYTES)
         .map(|(len, _)| len)
         .map_err(|_e| ErrorCode::TLSStack.into())
 }
@@ -322,10 +336,8 @@ pub fn decrypt_in_place(
         (key.len() * 8) as u32,
     )?;
     let cipher = cipher.set_key_iv(key, nonce)?;
-    let data_len = data.len() - super::AEAD_MIC_LEN_BYTES;
-    let (data, tag) = data.split_at_mut(data_len);
     cipher
-        .decrypt_auth_inplace(ad, data, tag)
+        .decrypt_auth_inplace(ad, data, super::AEAD_MIC_LEN_BYTES)
         .map(|(len, _)| len)
         .map_err(|e| {
             error!("Error during decryption: {:?}", e);
