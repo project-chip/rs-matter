@@ -24,6 +24,7 @@ nightly = []
 crypto_openssl = ["alloc", "openssl", "foreign-types", "hmac", "sha2"]
 crypto_mbedtls = ["alloc", "mbedtls"]
 crypto_rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
+embassy-net = ["dep:embassy-net", "dep:embassy-net-driver", "smoltcp"]
 
 [dependencies]
 matter_macro_derive = { path = "../matter_macro_derive" }
@@ -46,6 +47,9 @@ embassy-time = { version = "0.1.1", features = ["generic-queue-8"] }
 embassy-sync = "0.2"
 critical-section = "1.1.1"
 domain = { version = "0.7.2", default_features = false, features = ["heapless"] }
+embassy-net = { version = "0.1", features = ["udp", "igmp", "proto-ipv6", "medium-ethernet", "medium-ip"], optional = true }
+embassy-net-driver = { version = "0.1", optional = true }
+smoltcp = { version = "0.10", default-features = false, optional = true }
 
 # STD-only dependencies
 rand = { version = "0.8.5", optional = true }

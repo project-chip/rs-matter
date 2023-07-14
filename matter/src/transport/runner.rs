@@ -21,10 +21,9 @@ use crate::{
     alloc,
     data_model::{core::DataModel, objects::DataModelHandler},
     interaction_model::core::PROTO_ID_INTERACTION_MODEL,
-    transport::network::{Address, IpAddr, Ipv6Addr, SocketAddr},
     CommissioningData, Matter,
 };
-use embassy_futures::select::{select, select3, select_slice, Either};
+use embassy_futures::select::{select, select_slice, Either};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use log::{error, info, warn};
 
@@ -40,7 +39,6 @@ use super::{
     exchange::{ExchangeCtr, Notification, MAX_EXCHANGES},
     packet::{MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
     pipe::{Chunk, Pipe},
-    udp::UdpListener,
 };
 
 pub type TxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
@@ -103,20 +101,30 @@ impl<'a> TransportRunner<'a> {
         &self.transport
     }
 
-    pub async fn run_udp<H>(
+    #[cfg(any(feature = "std", feature = "embassy-net"))]
+    pub async fn run_udp<D, H>(
         &mut self,
+        stack: &crate::transport::network::NetworkStack<D>,
+        buffers: &mut crate::transport::udp::UdpBuffers,
         tx_buf: &mut TxBuf,
         rx_buf: &mut RxBuf,
         dev_comm: CommissioningData,
         handler: &H,
     ) -> Result<(), Error>
     where
+        D: crate::transport::network::NetworkStackDriver,
         H: DataModelHandler,
     {
-        let udp = UdpListener::new(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            self.transport.matter().port,
-        ))
+        let udp = crate::transport::udp::UdpListener::new(
+            stack,
+            crate::transport::network::SocketAddr::new(
+                crate::transport::network::IpAddr::V6(
+                    crate::transport::network::Ipv6Addr::UNSPECIFIED,
+                ),
+                self.transport.matter().port,
+            ),
+            buffers,
+        )
         .await?;
 
         let tx_pipe = Pipe::new(unsafe { tx_buf.assume_init_mut() });
@@ -154,7 +162,7 @@ impl<'a> TransportRunner<'a> {
                         data.chunk = Some(Chunk {
                             start: 0,
                             end: len,
-                            addr: Address::Udp(addr),
+                            addr: crate::transport::network::Address::Udp(addr),
                         });
                         rx_pipe.data_supplied_notification.signal(());
                     }
@@ -166,7 +174,9 @@ impl<'a> TransportRunner<'a> {
 
         let mut run = pin!(async move { self.run(tx_pipe, rx_pipe, dev_comm, handler).await });
 
-        select3(&mut tx, &mut rx, &mut run).await.unwrap()
+        embassy_futures::select::select3(&mut tx, &mut rx, &mut run)
+            .await
+            .unwrap()
     }
 
     pub async fn run<H>(

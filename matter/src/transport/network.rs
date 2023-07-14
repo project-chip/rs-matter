@@ -55,3 +55,35 @@ impl Debug for Address {
         }
     }
 }
+
+#[cfg(all(feature = "std", not(feature = "embassy-net")))]
+pub use std_stack::*;
+
+#[cfg(feature = "embassy-net")]
+pub use embassy_stack::*;
+
+#[cfg(all(feature = "std", not(feature = "embassy-net")))]
+mod std_stack {
+    pub trait NetworkStackDriver {}
+
+    impl NetworkStackDriver for () {}
+
+    pub trait NetworkStackMulticastDriver {}
+
+    impl NetworkStackMulticastDriver for () {}
+
+    pub struct NetworkStack<D>(D);
+
+    impl NetworkStack<()> {
+        pub const fn new() -> Self {
+            Self(())
+        }
+    }
+}
+
+#[cfg(feature = "embassy-net")]
+mod embassy_stack {
+    pub use embassy_net::Stack as NetworkStack;
+    pub use embassy_net_driver::Driver as NetworkStackDriver;
+    pub use smoltcp::phy::Device as NetworkStackMulticastDriver;
+}

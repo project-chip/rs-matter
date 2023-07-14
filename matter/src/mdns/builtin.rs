@@ -1,17 +1,15 @@
-use core::{cell::RefCell, mem::MaybeUninit, pin::pin};
+use core::{cell::RefCell, pin::pin};
 
 use domain::base::name::FromStrError;
 use domain::base::{octets::ParseError, ShortBuf};
-use embassy_futures::select::{select, select3};
+use embassy_futures::select::select;
 use embassy_time::{Duration, Timer};
 use log::info;
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use crate::transport::packet::{MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 use crate::transport::pipe::{Chunk, Pipe};
-use crate::transport::udp::UdpListener;
 use crate::utils::select::{EitherUnwrap, Notification};
 
 use super::{
@@ -19,18 +17,14 @@ use super::{
     Service, ServiceMode,
 };
 
-const IP_BIND_ADDR: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
-
 const IP_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
 
 const PORT: u16 = 5353;
 
-type MdnsTxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
-type MdnsRxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
-
 pub struct Mdns<'a> {
     host: Host<'a>,
+    #[allow(unused)]
     interface: u32,
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
@@ -108,9 +102,21 @@ impl<'a> MdnsRunner<'a> {
         Self(mdns)
     }
 
-    pub async fn run_udp(&mut self) -> Result<(), Error> {
-        let mut tx_buf = MdnsTxBuf::uninit();
-        let mut rx_buf = MdnsRxBuf::uninit();
+    #[cfg(any(feature = "std", feature = "embassy-net"))]
+    pub async fn run_udp<D>(
+        &mut self,
+        stack: &crate::transport::network::NetworkStack<D>,
+        buffers: &mut crate::transport::udp::UdpBuffers,
+    ) -> Result<(), Error>
+    where
+        D: crate::transport::network::NetworkStackMulticastDriver
+            + crate::transport::network::NetworkStackDriver
+            + 'static,
+    {
+        let mut tx_buf =
+            core::mem::MaybeUninit::<[u8; crate::transport::packet::MAX_TX_BUF_SIZE]>::uninit();
+        let mut rx_buf =
+            core::mem::MaybeUninit::<[u8; crate::transport::packet::MAX_RX_BUF_SIZE]>::uninit();
 
         let tx_buf = &mut tx_buf;
         let rx_buf = &mut rx_buf;
@@ -121,10 +127,18 @@ impl<'a> MdnsRunner<'a> {
         let tx_pipe = &tx_pipe;
         let rx_pipe = &rx_pipe;
 
-        let mut udp = UdpListener::new(SocketAddr::new(IP_BIND_ADDR, PORT)).await?;
+        let mut udp = crate::transport::udp::UdpListener::new(
+            stack,
+            crate::transport::network::SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), PORT),
+            buffers,
+        )
+        .await?;
 
         udp.join_multicast_v6(IPV6_BROADCAST_ADDR, self.0.interface)?;
-        udp.join_multicast_v4(IP_BROADCAST_ADDR, Ipv4Addr::from(self.0.host.ip))?;
+        udp.join_multicast_v4(
+            IP_BROADCAST_ADDR,
+            crate::transport::network::Ipv4Addr::from(self.0.host.ip),
+        )?;
 
         let udp = &udp;
 
@@ -168,7 +182,9 @@ impl<'a> MdnsRunner<'a> {
 
         let mut run = pin!(async move { self.run(tx_pipe, rx_pipe).await });
 
-        select3(&mut tx, &mut rx, &mut run).await.unwrap()
+        embassy_futures::select::select3(&mut tx, &mut rx, &mut run)
+            .await
+            .unwrap()
     }
 
     pub async fn run(&self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
