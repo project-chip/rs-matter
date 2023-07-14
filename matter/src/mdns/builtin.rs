@@ -22,7 +22,7 @@ const IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x
 
 const PORT: u16 = 5353;
 
-pub struct Mdns<'a> {
+pub struct MdnsService<'a> {
     host: Host<'a>,
     #[allow(unused)]
     interface: u32,
@@ -32,7 +32,7 @@ pub struct Mdns<'a> {
     notification: Notification,
 }
 
-impl<'a> Mdns<'a> {
+impl<'a> MdnsService<'a> {
     #[inline(always)]
     pub const fn new(
         id: u16,
@@ -95,10 +95,29 @@ impl<'a> Mdns<'a> {
     }
 }
 
-pub struct MdnsRunner<'a>(&'a Mdns<'a>);
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+pub struct MdnsUdpBuffers {
+    udp: crate::transport::udp::UdpBuffers,
+    tx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_TX_BUF_SIZE]>,
+    rx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_RX_BUF_SIZE]>,
+}
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+impl MdnsUdpBuffers {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            udp: crate::transport::udp::UdpBuffers::new(),
+            tx_buf: core::mem::MaybeUninit::uninit(),
+            rx_buf: core::mem::MaybeUninit::uninit(),
+        }
+    }
+}
+
+pub struct MdnsRunner<'a>(&'a MdnsService<'a>);
 
 impl<'a> MdnsRunner<'a> {
-    pub const fn new(mdns: &'a Mdns<'a>) -> Self {
+    pub const fn new(mdns: &'a MdnsService<'a>) -> Self {
         Self(mdns)
     }
 
@@ -106,31 +125,17 @@ impl<'a> MdnsRunner<'a> {
     pub async fn run_udp<D>(
         &mut self,
         stack: &crate::transport::network::NetworkStack<D>,
-        buffers: &mut crate::transport::udp::UdpBuffers,
+        buffers: &mut MdnsUdpBuffers,
     ) -> Result<(), Error>
     where
         D: crate::transport::network::NetworkStackMulticastDriver
             + crate::transport::network::NetworkStackDriver
             + 'static,
     {
-        let mut tx_buf =
-            core::mem::MaybeUninit::<[u8; crate::transport::packet::MAX_TX_BUF_SIZE]>::uninit();
-        let mut rx_buf =
-            core::mem::MaybeUninit::<[u8; crate::transport::packet::MAX_RX_BUF_SIZE]>::uninit();
-
-        let tx_buf = &mut tx_buf;
-        let rx_buf = &mut rx_buf;
-
-        let tx_pipe = Pipe::new(unsafe { tx_buf.assume_init_mut() });
-        let rx_pipe = Pipe::new(unsafe { rx_buf.assume_init_mut() });
-
-        let tx_pipe = &tx_pipe;
-        let rx_pipe = &rx_pipe;
-
         let mut udp = crate::transport::udp::UdpListener::new(
             stack,
             crate::transport::network::SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), PORT),
-            buffers,
+            &mut buffers.udp,
         )
         .await?;
 
@@ -140,6 +145,11 @@ impl<'a> MdnsRunner<'a> {
             crate::transport::network::Ipv4Addr::from(self.0.host.ip),
         )?;
 
+        let tx_pipe = Pipe::new(unsafe { buffers.tx_buf.assume_init_mut() });
+        let rx_pipe = Pipe::new(unsafe { buffers.rx_buf.assume_init_mut() });
+
+        let tx_pipe = &tx_pipe;
+        let rx_pipe = &rx_pipe;
         let udp = &udp;
 
         let mut tx = pin!(async move {
@@ -295,24 +305,24 @@ impl<'a> MdnsRunner<'a> {
     }
 }
 
-impl<'a> super::Mdns for Mdns<'a> {
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        Mdns::add(self, service, mode)
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        Mdns::remove(self, service)
-    }
-}
-
-impl<'a> Services for Mdns<'a> {
+impl<'a> Services for MdnsService<'a> {
     type Error = crate::error::Error;
 
     fn for_each<F>(&self, callback: F) -> Result<(), Error>
     where
         F: FnMut(&Service) -> Result<(), Error>,
     {
-        Mdns::for_each(self, callback)
+        MdnsService::for_each(self, callback)
+    }
+}
+
+impl<'a> super::Mdns for MdnsService<'a> {
+    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
+        MdnsService::add(self, service, mode)
+    }
+
+    fn remove(&self, service: &str) -> Result<(), Error> {
+        MdnsService::remove(self, service)
     }
 }
 

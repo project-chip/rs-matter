@@ -11,13 +11,14 @@ use log::info;
 
 use super::ServiceMode;
 
-pub struct Mdns<'a> {
+pub struct MdnsService<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
     services: RefCell<HashMap<String, RegisteredDnsService>>,
 }
 
-impl<'a> Mdns<'a> {
+impl<'a> MdnsService<'a> {
+    /// This constructor takes extra parameters for API-compatibility with builtin::MdnsRunner
     pub fn new(
         _id: u16,
         _hostname: &str,
@@ -80,28 +81,41 @@ impl<'a> Mdns<'a> {
     }
 }
 
-pub struct MdnsRunner<'a>(&'a Mdns<'a>);
+/// Only for API-compatibility with builtin::MdnsRunner
+pub struct MdnsUdpBuffers(());
 
+/// Only for API-compatibility with builtin::MdnsRunner
+impl MdnsUdpBuffers {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self(())
+    }
+}
+
+impl<'a> super::Mdns for MdnsService<'a> {
+    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
+        MdnsService::add(self, service, mode)
+    }
+
+    fn remove(&self, service: &str) -> Result<(), Error> {
+        MdnsService::remove(self, service)
+    }
+}
+
+/// Only for API-compatibility with builtin::MdnsRunner
+pub struct MdnsRunner<'a>(&'a MdnsService<'a>);
+
+/// Only for API-compatibility with builtin::MdnsRunner
 impl<'a> MdnsRunner<'a> {
-    pub const fn new(mdns: &'a Mdns<'a>) -> Self {
+    pub const fn new(mdns: &'a MdnsService<'a>) -> Self {
         Self(mdns)
     }
 
-    pub async fn run_udp(&mut self) -> Result<(), Error> {
+    pub async fn run_udp(&mut self, buffers: &mut MdnsUdpBuffers) -> Result<(), Error> {
         core::future::pending::<Result<(), Error>>().await
     }
 
     pub async fn run(&self, _tx_pipe: &Pipe<'_>, _rx_pipe: &Pipe<'_>) -> Result<(), Error> {
         core::future::pending::<Result<(), Error>>().await
-    }
-}
-
-impl<'a> super::Mdns for Mdns<'a> {
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        Mdns::add(self, service, mode)
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        Mdns::remove(self, service)
     }
 }

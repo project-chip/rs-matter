@@ -18,7 +18,6 @@
 use core::borrow::Borrow;
 use core::pin::pin;
 
-use embassy_futures::select::select3;
 use log::info;
 use matter::core::{CommissioningData, Matter};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -28,13 +27,11 @@ use matter::data_model::objects::*;
 use matter::data_model::root_endpoint;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
-use matter::mdns::{DefaultMdns, DefaultMdnsRunner};
+use matter::mdns::MdnsService;
 use matter::persist::FilePsm;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::network::{Ipv4Addr, Ipv6Addr, NetworkStack};
-use matter::transport::runner::{RxBuf, TransportRunner, TxBuf};
-use matter::transport::udp::UdpBuffers;
-use matter::utils::select::EitherUnwrap;
+use matter::transport::runner::{AllUdpBuffers, TransportRunner};
 
 mod dev_att;
 
@@ -59,10 +56,11 @@ fn run() -> Result<(), Error> {
     initialize_logger();
 
     info!(
-        "Matter memory: mDNS={}, Matter={}, TransportRunner={}",
-        core::mem::size_of::<DefaultMdns>(),
+        "Matter memory: mDNS={}, Matter={}, TransportRunner={}, UdpBuffers={}",
+        core::mem::size_of::<MdnsService>(),
         core::mem::size_of::<Matter>(),
         core::mem::size_of::<TransportRunner>(),
+        core::mem::size_of::<AllUdpBuffers>(),
     );
 
     let dev_det = BasicInfoConfig {
@@ -83,20 +81,6 @@ fn run() -> Result<(), Error> {
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
 
-    let mdns = DefaultMdns::new(
-        0,
-        "matter-demo",
-        ipv4_addr.octets(),
-        Some(ipv6_addr.octets()),
-        interface,
-        &dev_det,
-        matter::MATTER_PORT,
-    );
-
-    let mut mdns_runner = DefaultMdnsRunner::new(&mdns);
-
-    info!("mDNS initialized: {:p}, {:p}", &mdns, &mdns_runner);
-
     let dev_att = dev_att::HardCodedDevAtt::new();
 
     #[cfg(feature = "std")]
@@ -113,6 +97,18 @@ fn run() -> Result<(), Error> {
     #[cfg(not(feature = "std"))]
     let rand = matter::utils::rand::dummy_rand;
 
+    let mdns = MdnsService::new(
+        0,
+        "matter-demo",
+        ipv4_addr.octets(),
+        Some(ipv6_addr.octets()),
+        interface,
+        &dev_det,
+        matter::MATTER_PORT,
+    );
+
+    info!("mDNS initialized: {:p}", &mdns);
+
     let matter = Matter::new(
         // vid/pid should match those in the DAC
         &dev_det,
@@ -124,20 +120,6 @@ fn run() -> Result<(), Error> {
     );
 
     info!("Matter initialized: {:p}", &matter);
-
-    let mut runner = TransportRunner::new(&matter);
-
-    info!("Transport Runner initialized: {:p}", &runner);
-
-    let mut tx_buf = TxBuf::uninit();
-    let mut rx_buf = RxBuf::uninit();
-
-    // NOTE (no_std): If using the `embassy-net` UDP implementation, replace this dummy stack with the `embassy-net` one
-    // When using a custom UDP stack, remove this
-    let stack = NetworkStack::new();
-
-    let mut mdns_udp_buffers = UdpBuffers::new();
-    let mut trans_udp_buffers = UdpBuffers::new();
 
     #[cfg(all(feature = "std", not(target_os = "espidf")))]
     {
@@ -152,62 +134,33 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    let node = Node {
-        id: 0,
-        endpoints: &[
-            root_endpoint::endpoint(0),
-            Endpoint {
-                id: 1,
-                device_type: DEV_TYPE_ON_OFF_LIGHT,
-                clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
-            },
-        ],
-    };
+    let mut runner = TransportRunner::new(&matter);
+
+    info!("Transport runner initialized: {:p}", &runner);
 
     let handler = HandlerCompat(handler(&matter));
 
-    let matter = &matter;
-    let node = &node;
-    let handler = &handler;
-    let runner = &mut runner;
-    let tx_buf = &mut tx_buf;
-    let rx_buf = &mut rx_buf;
-    let stack = &stack;
-    let mdns_udp_buffers = &mut mdns_udp_buffers;
-    let trans_udp_buffers = &mut trans_udp_buffers;
+    // NOTE (no_std): If using the `embassy-net` UDP implementation, replace this dummy stack with the `embassy-net` one
+    // When using a custom UDP stack, remove this
+    let stack = NetworkStack::new();
 
-    info!(
-        "About to run wth node {:p}, handler {:p}, transport runner {:p}, mdns_runner {:p}",
-        node, handler, runner, &mdns_runner
-    );
+    let mut buffers = AllUdpBuffers::new();
 
-    let mut fut = pin!(async move {
-        // NOTE: If using a custom UDP stack, replace `run_udp` with `run`
-        // and connect the pipes of the `run` method with the custom UDP stack
-        let mut transport = pin!(runner.run_udp(
-            stack,
-            trans_udp_buffers,
-            tx_buf,
-            rx_buf,
-            CommissioningData {
-                // TODO: Hard-coded for now
-                verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
-                discriminator: 250,
-            },
-            &handler,
-        ));
-
-        // NOTE: If using a custom UDP stack, replace `run_udp` with `run`
-        // and connect the pipes of the `run` method with the custom UDP stack
-        let mut mdns = pin!(mdns_runner.run_udp(stack, mdns_udp_buffers));
-
-        let mut save = pin!(save(matter, &psm));
-        select3(&mut transport, &mut mdns, &mut save).await.unwrap()
-    });
+    let mut fut = pin!(runner.run_udp_all(
+        &stack,
+        &mdns,
+        &mut buffers,
+        CommissioningData {
+            // TODO: Hard-coded for now
+            verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
+            discriminator: 250,
+        },
+        &handler,
+    ));
 
     // NOTE: For no_std, replace with your own no_std way of polling the future
     #[cfg(feature = "std")]
-    smol::block_on(&mut fut)?;
+    async_io::block_on(&mut fut)?;
 
     // NOTE (no_std): For no_std, replace with your own more efficient no_std executor,
     // because the executor used below is a simple busy-loop poller

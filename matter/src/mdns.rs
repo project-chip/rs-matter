@@ -56,16 +56,18 @@ where
 }
 
 #[cfg(all(feature = "std", target_os = "macos"))]
-pub type DefaultMdns<'a> = astro::Mdns<'a>;
-
+pub use astro::MdnsRunner;
 #[cfg(all(feature = "std", target_os = "macos"))]
-pub type DefaultMdnsRunner<'a> = astro::MdnsRunner<'a>;
+pub use astro::MdnsService;
+#[cfg(all(feature = "std", target_os = "macos"))]
+pub use astro::MdnsUdpBuffers;
 
 #[cfg(not(all(feature = "std", target_os = "macos")))]
-pub type DefaultMdns<'a> = builtin::Mdns<'a>;
-
+pub use builtin::MdnsRunner;
 #[cfg(not(all(feature = "std", target_os = "macos")))]
-pub type DefaultMdnsRunner<'a> = builtin::MdnsRunner<'a>;
+pub use builtin::MdnsService;
+#[cfg(not(all(feature = "std", target_os = "macos")))]
+pub use builtin::MdnsUdpBuffers;
 
 pub struct DummyMdns;
 

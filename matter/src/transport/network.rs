@@ -60,10 +60,10 @@ impl Debug for Address {
 pub use std_stack::*;
 
 #[cfg(feature = "embassy-net")]
-pub use embassy_stack::*;
+pub use embassy_net_stack::*;
 
-#[cfg(all(feature = "std", not(feature = "embassy-net")))]
-mod std_stack {
+#[cfg(feature = "std")]
+pub mod std_stack {
     pub trait NetworkStackDriver {}
 
     impl NetworkStackDriver for () {}
@@ -82,7 +82,7 @@ mod std_stack {
 }
 
 #[cfg(feature = "embassy-net")]
-mod embassy_stack {
+pub mod embassy_net_stack {
     pub use embassy_net::Stack as NetworkStack;
     pub use embassy_net_driver::Driver as NetworkStackDriver;
     pub use smoltcp::phy::Device as NetworkStackMulticastDriver;

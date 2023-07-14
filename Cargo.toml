@@ -5,7 +5,6 @@ exclude = ["examples/*"]
 
 # For compatibility with ESP IDF
 [patch.crates-io]
-smol = { git = "https://github.com/esp-rs-compat/smol" }
 polling = { git = "https://github.com/esp-rs-compat/polling" }
 socket2 = { git = "https://github.com/esp-rs-compat/socket2" }
 

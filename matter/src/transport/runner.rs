@@ -41,8 +41,8 @@ use super::{
     pipe::{Chunk, Pipe},
 };
 
-pub type TxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
-pub type RxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
+type TxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
+type RxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
 type SxBuf = MaybeUninit<[u8; MAX_RX_STATUS_BUF_SIZE]>;
 
 struct PacketPools {
@@ -66,6 +66,42 @@ impl PacketPools {
             tx: Self::TX_INIT,
             rx: Self::RX_INIT,
             sx: Self::SX_INIT,
+        }
+    }
+}
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+pub struct AllUdpBuffers {
+    transport: TransportUdpBuffers,
+    mdns: crate::mdns::MdnsUdpBuffers,
+}
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+impl AllUdpBuffers {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            transport: TransportUdpBuffers::new(),
+            mdns: crate::mdns::MdnsUdpBuffers::new(),
+        }
+    }
+}
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+pub struct TransportUdpBuffers {
+    udp: crate::transport::udp::UdpBuffers,
+    tx_buf: TxBuf,
+    rx_buf: RxBuf,
+}
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+impl TransportUdpBuffers {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            udp: crate::transport::udp::UdpBuffers::new(),
+            tx_buf: core::mem::MaybeUninit::uninit(),
+            rx_buf: core::mem::MaybeUninit::uninit(),
         }
     }
 }
@@ -102,12 +138,35 @@ impl<'a> TransportRunner<'a> {
     }
 
     #[cfg(any(feature = "std", feature = "embassy-net"))]
+    pub async fn run_udp_all<D, H>(
+        &mut self,
+        stack: &crate::transport::network::NetworkStack<D>,
+        mdns: &crate::mdns::MdnsService<'_>,
+        buffers: &mut AllUdpBuffers,
+        dev_comm: CommissioningData,
+        handler: &H,
+    ) -> Result<(), Error>
+    where
+        D: crate::transport::network::NetworkStackDriver
+            + crate::transport::network::NetworkStackMulticastDriver
+            + 'static,
+        H: DataModelHandler,
+    {
+        let mut mdns_runner = crate::mdns::MdnsRunner::new(mdns);
+
+        let mut mdns = pin!(mdns_runner.run_udp(stack, &mut buffers.mdns));
+        let mut transport = pin!(self.run_udp(stack, &mut buffers.transport, dev_comm, handler));
+
+        embassy_futures::select::select(&mut transport, &mut mdns)
+            .await
+            .unwrap()
+    }
+
+    #[cfg(any(feature = "std", feature = "embassy-net"))]
     pub async fn run_udp<D, H>(
         &mut self,
         stack: &crate::transport::network::NetworkStack<D>,
-        buffers: &mut crate::transport::udp::UdpBuffers,
-        tx_buf: &mut TxBuf,
-        rx_buf: &mut RxBuf,
+        buffers: &mut TransportUdpBuffers,
         dev_comm: CommissioningData,
         handler: &H,
     ) -> Result<(), Error>
@@ -123,12 +182,12 @@ impl<'a> TransportRunner<'a> {
                 ),
                 self.transport.matter().port,
             ),
-            buffers,
+            &mut buffers.udp,
         )
         .await?;
 
-        let tx_pipe = Pipe::new(unsafe { tx_buf.assume_init_mut() });
-        let rx_pipe = Pipe::new(unsafe { rx_buf.assume_init_mut() });
+        let tx_pipe = Pipe::new(unsafe { buffers.tx_buf.assume_init_mut() });
+        let rx_pipe = Pipe::new(unsafe { buffers.rx_buf.assume_init_mut() });
 
         let tx_pipe = &tx_pipe;
         let rx_pipe = &rx_pipe;

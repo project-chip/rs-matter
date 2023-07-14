@@ -16,21 +16,25 @@
  */
 
 #[cfg(all(feature = "std", not(feature = "embassy-net")))]
-pub use smol_udp::*;
+pub use async_io::*;
 
 #[cfg(feature = "embassy-net")]
-pub use embassy_udp::*;
+pub use embassy_net::*;
 
-#[cfg(all(feature = "std", not(feature = "embassy-net")))]
-mod smol_udp {
+#[cfg(feature = "std")]
+pub mod async_io {
     use crate::error::*;
-    use log::{debug, info, warn};
-    use smol::net::UdpSocket;
 
-    use crate::transport::network::{
-        Ipv4Addr, Ipv6Addr, NetworkStack, NetworkStackDriver, NetworkStackMulticastDriver,
-        SocketAddr,
+    use std::net::UdpSocket;
+
+    use async_io::Async;
+
+    use log::{debug, info, warn};
+
+    use crate::transport::network::std_stack::{
+        NetworkStack, NetworkStackDriver, NetworkStackMulticastDriver,
     };
+    use crate::transport::network::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     pub struct UdpBuffers(());
 
@@ -40,7 +44,7 @@ mod smol_udp {
         }
     }
 
-    pub struct UdpListener<'a, D>(UdpSocket, &'a NetworkStack<D>)
+    pub struct UdpListener<'a, D>(Async<UdpSocket>, &'a NetworkStack<D>)
     where
         D: NetworkStackDriver;
 
@@ -53,7 +57,7 @@ mod smol_udp {
             addr: SocketAddr,
             _buffers: &'a mut UdpBuffers,
         ) -> Result<UdpListener<'a, D>, Error> {
-            let listener = UdpListener(UdpSocket::bind((addr.ip(), addr.port())).await?, stack);
+            let listener = UdpListener(Async::<UdpSocket>::bind(addr)?, stack);
 
             info!("Listening on {:?}", addr);
 
@@ -68,7 +72,7 @@ mod smol_udp {
         where
             D: NetworkStackMulticastDriver + 'static,
         {
-            self.0.join_multicast_v6(&multiaddr, interface)?;
+            self.0.get_ref().join_multicast_v6(&multiaddr, interface)?;
 
             info!("Joined IPV6 multicast {}/{}", multiaddr, interface);
 
@@ -84,7 +88,7 @@ mod smol_udp {
             D: NetworkStackMulticastDriver + 'static,
         {
             #[cfg(not(target_os = "espidf"))]
-            self.0.join_multicast_v4(multiaddr, interface)?;
+            self.0.get_ref().join_multicast_v4(&multiaddr, &interface)?;
 
             // join_multicast_v4() is broken for ESP-IDF, most likely due to wrong `ip_mreq` signature in the `libc` crate
             // Note that also most *_multicast_v4 and *_multicast_v6 methods are broken as well in Rust STD for the ESP-IDF
@@ -166,7 +170,7 @@ mod smol_udp {
 }
 
 #[cfg(feature = "embassy-net")]
-mod embassy_udp {
+pub mod embassy_net {
     use core::mem::MaybeUninit;
 
     use embassy_net::udp::{PacketMetadata, UdpSocket};
@@ -177,10 +181,10 @@ mod embassy_udp {
 
     use log::{debug, info, warn};
 
-    use crate::transport::network::{
-        IpAddr, Ipv4Addr, Ipv6Addr, NetworkStack, NetworkStackDriver, NetworkStackMulticastDriver,
-        SocketAddr,
+    use crate::transport::network::embassy_net_stack::{
+        NetworkStack, NetworkStackDriver, NetworkStackMulticastDriver,
     };
+    use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     const RX_BUF_SIZE: usize = 4096;
     const TX_BUF_SIZE: usize = 4096;
