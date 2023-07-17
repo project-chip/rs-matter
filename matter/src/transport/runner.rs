@@ -138,9 +138,7 @@ impl<'a> TransportRunner<'a> {
         handler: &H,
     ) -> Result<(), Error>
     where
-        D: crate::transport::network::NetworkStackDriver
-            + crate::transport::network::NetworkStackMulticastDriver
-            + 'static,
+        D: crate::transport::network::NetworkStackDriver,
         H: DataModelHandler,
     {
         let mut mdns_runner = crate::mdns::MdnsRunner::new(mdns);

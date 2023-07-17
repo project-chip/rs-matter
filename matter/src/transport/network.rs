@@ -68,10 +68,6 @@ pub mod std_stack {
 
     impl NetworkStackDriver for () {}
 
-    pub trait NetworkStackMulticastDriver {}
-
-    impl NetworkStackMulticastDriver for () {}
-
     pub struct NetworkStack<D>(D);
 
     impl NetworkStack<()> {
@@ -85,5 +81,4 @@ pub mod std_stack {
 pub mod embassy_net_stack {
     pub use embassy_net::Stack as NetworkStack;
     pub use embassy_net_driver::Driver as NetworkStackDriver;
-    pub use smoltcp::phy::Device as NetworkStackMulticastDriver;
 }

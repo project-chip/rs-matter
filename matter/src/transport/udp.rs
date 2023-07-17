@@ -31,9 +31,7 @@ pub mod async_io {
 
     use log::{debug, info, warn};
 
-    use crate::transport::network::std_stack::{
-        NetworkStack, NetworkStackDriver, NetworkStackMulticastDriver,
-    };
+    use crate::transport::network::std_stack::{NetworkStack, NetworkStackDriver};
     use crate::transport::network::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     pub struct UdpBuffers(());
@@ -46,11 +44,11 @@ pub mod async_io {
 
     pub struct UdpListener<'a, D>(Async<UdpSocket>, &'a NetworkStack<D>)
     where
-        D: NetworkStackDriver;
+        D: NetworkStackDriver + 'static;
 
     impl<'a, D> UdpListener<'a, D>
     where
-        D: NetworkStackDriver + 'a,
+        D: NetworkStackDriver + 'a + 'static,
     {
         pub async fn new(
             stack: &'a NetworkStack<D>,
@@ -64,14 +62,11 @@ pub mod async_io {
             Ok(listener)
         }
 
-        pub fn join_multicast_v6(
+        pub async fn join_multicast_v6(
             &mut self,
             multiaddr: Ipv6Addr,
             interface: u32,
-        ) -> Result<(), Error>
-        where
-            D: NetworkStackMulticastDriver + 'static,
-        {
+        ) -> Result<(), Error> {
             self.0.get_ref().join_multicast_v6(&multiaddr, interface)?;
 
             info!("Joined IPV6 multicast {}/{}", multiaddr, interface);
@@ -79,14 +74,11 @@ pub mod async_io {
             Ok(())
         }
 
-        pub fn join_multicast_v4(
+        pub async fn join_multicast_v4(
             &mut self,
             multiaddr: Ipv4Addr,
             interface: Ipv4Addr,
-        ) -> Result<(), Error>
-        where
-            D: NetworkStackMulticastDriver + 'static,
-        {
+        ) -> Result<(), Error> {
             #[cfg(not(target_os = "espidf"))]
             self.0.get_ref().join_multicast_v4(&multiaddr, &interface)?;
 
@@ -181,9 +173,7 @@ pub mod embassy_net {
 
     use log::{debug, info, warn};
 
-    use crate::transport::network::embassy_net_stack::{
-        NetworkStack, NetworkStackDriver, NetworkStackMulticastDriver,
-    };
+    use crate::transport::network::embassy_net_stack::{NetworkStack, NetworkStackDriver};
     use crate::transport::network::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     const RX_BUF_SIZE: usize = 4096;
@@ -210,11 +200,11 @@ pub mod embassy_net {
 
     pub struct UdpListener<'a, D>(UdpSocket<'a>, &'a NetworkStack<D>)
     where
-        D: NetworkStackDriver;
+        D: NetworkStackDriver + 'static;
 
     impl<'a, D> UdpListener<'a, D>
     where
-        D: NetworkStackDriver + 'a,
+        D: NetworkStackDriver + 'a + 'static,
     {
         pub async fn new(
             stack: &'a NetworkStack<D>,
@@ -239,16 +229,14 @@ pub mod embassy_net {
             Ok(UdpListener(socket, stack))
         }
 
-        pub fn join_multicast_v6(
+        pub async fn join_multicast_v6(
             &mut self,
             multiaddr: Ipv6Addr,
             _interface: u32,
-        ) -> Result<(), Error>
-        where
-            D: NetworkStackMulticastDriver + 'static,
-        {
+        ) -> Result<(), Error> {
             self.1
                 .join_multicast_group(Self::from_ip_addr(IpAddr::V6(multiaddr)))
+                .await
                 .map_err(|e| {
                     warn!("Error on the network: {:?}", e);
                     ErrorCode::Network
@@ -259,16 +247,14 @@ pub mod embassy_net {
             Ok(())
         }
 
-        pub fn join_multicast_v4(
+        pub async fn join_multicast_v4(
             &mut self,
             multiaddr: Ipv4Addr,
             _interface: Ipv4Addr,
-        ) -> Result<(), Error>
-        where
-            D: NetworkStackMulticastDriver + 'static,
-        {
+        ) -> Result<(), Error> {
             self.1
                 .join_multicast_group(Self::from_ip_addr(IpAddr::V4(multiaddr)))
+                .await
                 .map_err(|e| {
                     warn!("Error on the network: {:?}", e);
                     ErrorCode::Network

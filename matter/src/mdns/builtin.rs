@@ -128,9 +128,7 @@ impl<'a> MdnsRunner<'a> {
         buffers: &mut MdnsUdpBuffers,
     ) -> Result<(), Error>
     where
-        D: crate::transport::network::NetworkStackMulticastDriver
-            + crate::transport::network::NetworkStackDriver
-            + 'static,
+        D: crate::transport::network::NetworkStackDriver,
     {
         let mut udp = crate::transport::udp::UdpListener::new(
             stack,
@@ -139,11 +137,13 @@ impl<'a> MdnsRunner<'a> {
         )
         .await?;
 
-        udp.join_multicast_v6(IPV6_BROADCAST_ADDR, self.0.interface)?;
+        udp.join_multicast_v6(IPV6_BROADCAST_ADDR, self.0.interface)
+            .await?;
         udp.join_multicast_v4(
             IP_BROADCAST_ADDR,
             crate::transport::network::Ipv4Addr::from(self.0.host.ip),
-        )?;
+        )
+        .await?;
 
         let tx_pipe = Pipe::new(unsafe { buffers.tx_buf.assume_init_mut() });
         let rx_pipe = Pipe::new(unsafe { buffers.rx_buf.assume_init_mut() });
