@@ -17,13 +17,23 @@
 
 use core::{borrow::Borrow, cell::RefCell};
 
-use crate::{error::ErrorCode, secure_channel::common::OpCode, Matter};
 use embassy_futures::select::select;
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{Duration, Timer};
-use log::info;
+
+use log::{error, info, warn};
 
 use crate::{
-    error::Error, secure_channel::common::PROTO_ID_SECURE_CHANNEL, transport::packet::Packet,
+    alloc,
+    data_model::{core::DataModel, objects::DataModelHandler},
+    error::{Error, ErrorCode},
+    interaction_model::core::PROTO_ID_INTERACTION_MODEL,
+    secure_channel::{
+        common::{OpCode, PROTO_ID_SECURE_CHANNEL},
+        core::SecureChannel,
+    },
+    transport::packet::Packet,
+    Matter,
 };
 
 use super::{
@@ -32,6 +42,8 @@ use super::{
         MAX_EXCHANGES,
     },
     mrp::ReliableMessage,
+    packet::{MAX_RX_BUF_SIZE, MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
+    pipe::{Chunk, Pipe},
     session::SessionMgr,
 };
 
@@ -81,6 +93,165 @@ impl<'a> Transport<'a> {
 
     pub async fn initiate(&self, _fabric_id: u64, _node_id: u64) -> Result<Exchange<'a>, Error> {
         unimplemented!()
+    }
+
+    #[inline(always)]
+    pub async fn handle_tx(&self, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
+        loop {
+            loop {
+                {
+                    let mut data = tx_pipe.data.lock().await;
+
+                    if data.chunk.is_none() {
+                        let mut tx = alloc!(Packet::new_tx(data.buf));
+
+                        if self.pull_tx(&mut tx).await? {
+                            data.chunk = Some(Chunk {
+                                start: tx.get_writebuf()?.get_start(),
+                                end: tx.get_writebuf()?.get_tail(),
+                                addr: tx.peer,
+                            });
+                            tx_pipe.data_supplied_notification.signal(());
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                tx_pipe.data_consumed_notification.wait().await;
+            }
+
+            self.wait_tx().await?;
+        }
+    }
+
+    #[inline(always)]
+    pub async fn handle_rx_multiplex<'t, 'e, const N: usize>(
+        &'t self,
+        rx_pipe: &Pipe<'_>,
+        construction_notification: &'e Notification,
+        channel: &Channel<NoopRawMutex, ExchangeCtr<'e>, N>,
+    ) -> Result<(), Error>
+    where
+        't: 'e,
+    {
+        loop {
+            info!("Transport: waiting for incoming packets");
+
+            {
+                let mut data = rx_pipe.data.lock().await;
+
+                if let Some(chunk) = data.chunk {
+                    let mut rx = alloc!(Packet::new_rx(&mut data.buf[chunk.start..chunk.end]));
+                    rx.peer = chunk.addr;
+
+                    if let Some(exchange_ctr) =
+                        self.process_rx(construction_notification, &mut rx)?
+                    {
+                        let exchange_id = exchange_ctr.id().clone();
+
+                        info!("Transport: got new exchange: {:?}", exchange_id);
+
+                        channel.send(exchange_ctr).await;
+                        info!("Transport: exchange sent");
+
+                        self.wait_construction(construction_notification, &rx, &exchange_id)
+                            .await?;
+
+                        info!("Transport: exchange started");
+                    }
+
+                    data.chunk = None;
+                    rx_pipe.data_consumed_notification.signal(());
+                }
+            }
+
+            rx_pipe.data_supplied_notification.wait().await
+        }
+
+        #[allow(unreachable_code)]
+        Ok::<_, Error>(())
+    }
+
+    #[inline(always)]
+    pub async fn exchange_handler<const N: usize, H>(
+        &self,
+        tx_buf: &mut [u8; MAX_TX_BUF_SIZE],
+        rx_buf: &mut [u8; MAX_RX_BUF_SIZE],
+        sx_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
+        handler_id: impl core::fmt::Display,
+        channel: &Channel<NoopRawMutex, ExchangeCtr<'_>, N>,
+        handler: &H,
+    ) -> Result<(), Error>
+    where
+        H: DataModelHandler,
+    {
+        loop {
+            let exchange_ctr: ExchangeCtr<'_> = channel.recv().await;
+
+            info!(
+                "Handler {}: Got exchange {:?}",
+                handler_id,
+                exchange_ctr.id()
+            );
+
+            let result = self
+                .handle_exchange(tx_buf, rx_buf, sx_buf, exchange_ctr, handler)
+                .await;
+
+            if let Err(err) = result {
+                warn!(
+                    "Handler {}: Exchange closed because of error: {:?}",
+                    handler_id, err
+                );
+            } else {
+                info!("Handler {}: Exchange completed", handler_id);
+            }
+        }
+    }
+
+    #[inline(always)]
+    #[cfg_attr(feature = "nightly", allow(clippy::await_holding_refcell_ref))] // Fine because of the async mutex
+    pub async fn handle_exchange<H>(
+        &self,
+        tx_buf: &mut [u8; MAX_TX_BUF_SIZE],
+        rx_buf: &mut [u8; MAX_RX_BUF_SIZE],
+        sx_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
+        exchange_ctr: ExchangeCtr<'_>,
+        handler: &H,
+    ) -> Result<(), Error>
+    where
+        H: DataModelHandler,
+    {
+        let mut tx = alloc!(Packet::new_tx(tx_buf.as_mut()));
+        let mut rx = alloc!(Packet::new_rx(rx_buf.as_mut()));
+
+        let mut exchange = alloc!(exchange_ctr.get(&mut rx).await?);
+
+        match rx.get_proto_id() {
+            PROTO_ID_SECURE_CHANNEL => {
+                let sc = SecureChannel::new(self.matter());
+
+                sc.handle(&mut exchange, &mut rx, &mut tx).await?;
+
+                self.matter().notify_changed();
+            }
+            PROTO_ID_INTERACTION_MODEL => {
+                let dm = DataModel::new(handler);
+
+                let mut rx_status = alloc!(Packet::new_rx(sx_buf));
+
+                dm.handle(&mut exchange, &mut rx, &mut tx, &mut rx_status)
+                    .await?;
+
+                self.matter().notify_changed();
+            }
+            other => {
+                error!("Unknown Proto-ID: {}", other);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn process_rx<'r>(
