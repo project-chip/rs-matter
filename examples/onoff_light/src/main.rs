@@ -101,8 +101,7 @@ fn run() -> Result<(), Error> {
         0,
         "matter-demo",
         ipv4_addr.octets(),
-        Some(ipv6_addr.octets()),
-        interface,
+        Some((ipv6_addr.octets(), interface)),
         &dev_det,
         matter::MATTER_PORT,
     );

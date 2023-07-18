@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use portable_atomic::{AtomicU32, Ordering};
 
 use super::objects::*;
 use crate::{

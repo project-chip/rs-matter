@@ -25,7 +25,7 @@ const PORT: u16 = 5353;
 pub struct MdnsService<'a> {
     host: Host<'a>,
     #[allow(unused)]
-    interface: u32,
+    interface: Option<u32>,
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
     services: RefCell<heapless::Vec<(heapless::String<40>, ServiceMode), 4>>,
@@ -38,8 +38,7 @@ impl<'a> MdnsService<'a> {
         id: u16,
         hostname: &'a str,
         ip: [u8; 4],
-        ipv6: Option<[u8; 16]>,
-        interface: u32,
+        ipv6: Option<([u8; 16], u32)>,
         dev_det: &'a BasicInfoConfig<'a>,
         matter_port: u16,
     ) -> Self {
@@ -48,9 +47,17 @@ impl<'a> MdnsService<'a> {
                 id,
                 hostname,
                 ip,
-                ipv6,
+                ipv6: if let Some((ipv6, _)) = ipv6 {
+                    Some(ipv6)
+                } else {
+                    None
+                },
             },
-            interface,
+            interface: if let Some((_, interface)) = ipv6 {
+                Some(interface)
+            } else {
+                None
+            },
             dev_det,
             matter_port,
             services: RefCell::new(heapless::Vec::new()),
@@ -137,8 +144,13 @@ impl<'a> MdnsRunner<'a> {
         )
         .await?;
 
-        udp.join_multicast_v6(IPV6_BROADCAST_ADDR, self.0.interface)
-            .await?;
+        // V6 multicast does not work with smoltcp yet (see https://github.com/smoltcp-rs/smoltcp/pull/602)
+        #[cfg(not(feature = "embassy-net"))]
+        if let Some(interface) = self.0.interface {
+            udp.join_multicast_v6(IPV6_BROADCAST_ADDR, interface)
+                .await?;
+        }
+
         udp.join_multicast_v4(
             IP_BROADCAST_ADDR,
             crate::transport::network::Ipv4Addr::from(self.0.host.ip),
@@ -217,35 +229,37 @@ impl<'a> MdnsRunner<'a> {
                 IpAddr::V4(IP_BROADCAST_ADDR),
                 IpAddr::V6(IPV6_BROADCAST_ADDR),
             ] {
-                loop {
-                    let sent = {
-                        let mut data = tx_pipe.data.lock().await;
+                if self.0.interface.is_some() || addr == IpAddr::V4(IP_BROADCAST_ADDR) {
+                    loop {
+                        let sent = {
+                            let mut data = tx_pipe.data.lock().await;
 
-                        if data.chunk.is_none() {
-                            let len = self.0.host.broadcast(&self.0, data.buf, 60)?;
+                            if data.chunk.is_none() {
+                                let len = self.0.host.broadcast(&self.0, data.buf, 60)?;
 
-                            if len > 0 {
-                                info!("Broadasting mDNS entry to {}:{}", addr, PORT);
+                                if len > 0 {
+                                    info!("Broadasting mDNS entry to {}:{}", addr, PORT);
 
-                                data.chunk = Some(Chunk {
-                                    start: 0,
-                                    end: len,
-                                    addr: Address::Udp(SocketAddr::new(addr, PORT)),
-                                });
+                                    data.chunk = Some(Chunk {
+                                        start: 0,
+                                        end: len,
+                                        addr: Address::Udp(SocketAddr::new(addr, PORT)),
+                                    });
 
-                                tx_pipe.data_supplied_notification.signal(());
+                                    tx_pipe.data_supplied_notification.signal(());
+                                }
+
+                                true
+                            } else {
+                                false
                             }
+                        };
 
-                            true
+                        if sent {
+                            break;
                         } else {
-                            false
+                            tx_pipe.data_consumed_notification.wait().await;
                         }
-                    };
-
-                    if sent {
-                        break;
-                    } else {
-                        tx_pipe.data_consumed_notification.wait().await;
                     }
                 }
             }
