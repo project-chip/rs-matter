@@ -18,7 +18,7 @@
 use core::borrow::Borrow;
 use core::pin::pin;
 
-use embassy_futures::select::select;
+use embassy_futures::select::select3;
 use log::info;
 use matter::core::{CommissioningData, Matter};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -29,6 +29,7 @@ use matter::data_model::root_endpoint;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
 use matter::mdns::{DefaultMdns, DefaultMdnsRunner};
+use matter::persist::FilePsm;
 use matter::secure_channel::spake2p::VerifierData;
 use matter::transport::network::{Ipv4Addr, Ipv6Addr};
 use matter::transport::runner::{RxBuf, TransportRunner, TxBuf};
@@ -72,6 +73,12 @@ fn run() -> Result<(), Error> {
         serial_no: "aabbccdd",
         device_name: "OnOff Light",
     };
+
+    let psm_path = std::env::temp_dir().join("matter-iot");
+    info!("Persisting from/to {}", psm_path.display());
+
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    let psm = matter::persist::FilePsm::new(psm_path)?;
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
 
@@ -124,16 +131,18 @@ fn run() -> Result<(), Error> {
     let mut tx_buf = TxBuf::uninit();
     let mut rx_buf = RxBuf::uninit();
 
-    // #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    // {
-    //     if let Some(data) = psm.load("acls", buf)? {
-    //         matter.load_acls(data)?;
-    //     }
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    {
+        let mut buf = [0; 4096];
+        let buf = &mut buf;
+        if let Some(data) = psm.load("acls", buf)? {
+            matter.load_acls(data)?;
+        }
 
-    //     if let Some(data) = psm.load("fabrics", buf)? {
-    //         matter.load_fabrics(data)?;
-    //     }
-    // }
+        if let Some(data) = psm.load("fabrics", buf)? {
+            matter.load_fabrics(data)?;
+        }
+    }
 
     let node = Node {
         id: 0,
@@ -179,13 +188,8 @@ fn run() -> Result<(), Error> {
         // connect the pipes of the `run` method with your own UDP stack
         let mut mdns = pin!(mdns_runner.run_udp());
 
-        select(
-            &mut transport,
-            &mut mdns,
-            //save(transport, &psm),
-        )
-        .await
-        .unwrap()
+        let mut save = pin!(save(matter, &psm));
+        select3(&mut transport, &mut mdns, &mut save).await.unwrap()
     });
 
     // NOTE: For no_std, replace with your own no_std way of polling the future
@@ -297,6 +301,26 @@ fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     );
 
     Ok((ip, ipv6, 0 as _))
+}
+
+#[cfg(all(feature = "std", not(target_os = "espidf")))]
+#[inline(never)]
+async fn save(matter: &Matter<'_>, psm: &FilePsm) -> Result<(), Error> {
+    let mut buf = [0; 4096];
+    let buf = &mut buf;
+
+    loop {
+        matter.wait_changed().await;
+        if matter.is_changed() {
+            if let Some(data) = matter.store_acls(buf)? {
+                psm.store("acls", data)?;
+            }
+
+            if let Some(data) = matter.store_fabrics(buf)? {
+                psm.store("fabrics", data)?;
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "espidf")]
