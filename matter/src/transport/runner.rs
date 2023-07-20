@@ -370,7 +370,7 @@ impl<'a> TransportRunner<'a> {
 
                 sc.handle(&mut exchange, &mut rx, &mut tx).await?;
 
-                transport.notify_changed();
+                transport.matter().notify_changed();
             }
             PROTO_ID_INTERACTION_MODEL => {
                 let dm = DataModel::new(handler);
@@ -380,7 +380,7 @@ impl<'a> TransportRunner<'a> {
                 dm.handle(&mut exchange, &mut rx, &mut tx, &mut rx_status)
                     .await?;
 
-                transport.notify_changed();
+                transport.matter().notify_changed();
             }
             other => {
                 error!("Unknown Proto-ID: {}", other);
