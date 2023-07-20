@@ -28,6 +28,7 @@ use crate::{
     mdns::Mdns,
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
+    transport::exchange::Notification,
     utils::{epoch::Epoch, rand::Rand},
 };
 
@@ -48,6 +49,7 @@ pub struct Matter<'a> {
     pub acl_mgr: RefCell<AclMgr>,
     pub pase_mgr: RefCell<PaseMgr>,
     pub failsafe: RefCell<FailSafe>,
+    pub persist_notification: Notification,
     pub mdns: &'a dyn Mdns,
     pub epoch: Epoch,
     pub rand: Rand,
@@ -91,6 +93,7 @@ impl<'a> Matter<'a> {
             acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
+            persist_notification: Notification::new(),
             mdns,
             epoch,
             rand,
@@ -156,6 +159,15 @@ impl<'a> Matter<'a> {
         } else {
             Ok(false)
         }
+    }
+    pub fn notify_changed(&self) {
+        if self.is_changed() {
+            self.persist_notification.signal(());
+        }
+    }
+
+    pub async fn wait_changed(&self) {
+        self.persist_notification.wait().await
     }
 }
 

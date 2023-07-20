@@ -58,7 +58,6 @@ pub struct Transport<'a> {
     matter: &'a Matter<'a>,
     pub(crate) exchanges: RefCell<heapless::Vec<ExchangeCtx, MAX_EXCHANGES>>,
     pub(crate) send_notification: Notification,
-    pub(crate) persist_notification: Notification,
     pub session_mgr: RefCell<SessionMgr>,
 }
 
@@ -72,7 +71,6 @@ impl<'a> Transport<'a> {
             matter,
             exchanges: RefCell::new(heapless::Vec::new()),
             send_notification: Notification::new(),
-            persist_notification: Notification::new(),
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
         }
     }
@@ -128,7 +126,7 @@ impl<'a> Transport<'a> {
                     }
                 }
 
-                self.notify_changed();
+                self.matter().notify_changed();
             }
         }
 
@@ -142,7 +140,7 @@ impl<'a> Transport<'a> {
                 construction_notification,
             };
 
-            self.notify_changed();
+            self.matter().notify_changed();
 
             Ok(Some(constructor))
         } else if src_rx.proto.proto_id == PROTO_ID_SECURE_CHANNEL
@@ -169,7 +167,7 @@ impl<'a> Transport<'a> {
                 }
             }
 
-            self.notify_changed();
+            self.matter().notify_changed();
 
             Ok(None)
         }
@@ -232,7 +230,7 @@ impl<'a> Transport<'a> {
         });
 
         if let Some(ctx) = ctx {
-            self.notify_changed();
+            self.matter().notify_changed();
 
             let state = &mut ctx.state;
 
@@ -291,7 +289,7 @@ impl<'a> Transport<'a> {
                 dest_tx.log("Sending packet");
 
                 self.pre_send(ctx, dest_tx)?;
-                self.notify_changed();
+                self.matter().notify_changed();
 
                 return Ok(true);
             }
@@ -413,15 +411,5 @@ impl<'a> Transport<'a> {
         id: &ExchangeId,
     ) -> Option<&'r mut ExchangeCtx> {
         exchanges.iter_mut().find(|exchange| exchange.id == *id)
-    }
-
-    pub fn notify_changed(&self) {
-        if self.matter().is_changed() {
-            self.persist_notification.signal(());
-        }
-    }
-
-    pub async fn wait_changed(&self) {
-        self.persist_notification.wait().await
     }
 }
