@@ -609,7 +609,7 @@ impl<'a, 'r, 'p> Interaction<'a, 'r, 'p> {
         rx: &mut Packet<'_>,
         tx: &mut Packet<'_>,
     ) -> Result<Option<Duration>, Error> {
-        let epoch = exchange.transport().matter().epoch;
+        let epoch = exchange.matter.epoch;
 
         let mut opcode: OpCode = rx.get_proto_opcode()?;
 
@@ -641,7 +641,7 @@ impl<'a, 'r, 'p> Interaction<'a, 'r, 'p> {
     where
         S: FnOnce() -> u32,
     {
-        let epoch = exchange.transport().matter().epoch;
+        let epoch = exchange.matter.epoch;
 
         let opcode = rx.get_proto_opcode()?;
         let rx_data = rx.as_slice();

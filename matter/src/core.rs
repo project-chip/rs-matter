@@ -28,8 +28,11 @@ use crate::{
     mdns::Mdns,
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
-    transport::exchange::Notification,
-    utils::{epoch::Epoch, rand::Rand},
+    transport::{
+        exchange::{ExchangeCtx, MAX_EXCHANGES},
+        session::SessionMgr,
+    },
+    utils::{epoch::Epoch, rand::Rand, select::Notification},
 };
 
 /* The Matter Port */
@@ -45,17 +48,20 @@ pub struct CommissioningData {
 
 /// The primary Matter Object
 pub struct Matter<'a> {
-    pub fabric_mgr: RefCell<FabricMgr>,
-    pub acl_mgr: RefCell<AclMgr>,
-    pub pase_mgr: RefCell<PaseMgr>,
-    pub failsafe: RefCell<FailSafe>,
-    pub persist_notification: Notification,
-    pub mdns: &'a dyn Mdns,
-    pub epoch: Epoch,
-    pub rand: Rand,
-    pub dev_det: &'a BasicInfoConfig<'a>,
-    pub dev_att: &'a dyn DevAttDataFetcher,
-    pub port: u16,
+    fabric_mgr: RefCell<FabricMgr>,
+    pub acl_mgr: RefCell<AclMgr>, // Public for tests
+    pase_mgr: RefCell<PaseMgr>,
+    failsafe: RefCell<FailSafe>,
+    persist_notification: Notification,
+    pub(crate) send_notification: Notification,
+    mdns: &'a dyn Mdns,
+    pub(crate) epoch: Epoch,
+    pub(crate) rand: Rand,
+    dev_det: &'a BasicInfoConfig<'a>,
+    dev_att: &'a dyn DevAttDataFetcher,
+    pub(crate) port: u16,
+    pub(crate) exchanges: RefCell<heapless::Vec<ExchangeCtx, MAX_EXCHANGES>>,
+    pub session_mgr: RefCell<SessionMgr>, // Public for tests
 }
 
 impl<'a> Matter<'a> {
@@ -94,12 +100,15 @@ impl<'a> Matter<'a> {
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
             persist_notification: Notification::new(),
+            send_notification: Notification::new(),
             mdns,
             epoch,
             rand,
             dev_det,
             dev_att,
             port,
+            exchanges: RefCell::new(heapless::Vec::new()),
+            session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
         }
     }
 
@@ -160,6 +169,7 @@ impl<'a> Matter<'a> {
             Ok(false)
         }
     }
+
     pub fn notify_changed(&self) {
         if self.is_changed() {
             self.persist_notification.signal(());

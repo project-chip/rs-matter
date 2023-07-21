@@ -48,16 +48,15 @@ use matter::{
     secure_channel::{self, common::PROTO_ID_SECURE_CHANNEL, spake2p::VerifierData},
     tlv::{TLVWriter, TagType, ToTLV},
     transport::{
-        exchange::Notification,
+        core::PacketBuffers,
         packet::{Packet, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
         pipe::Pipe,
-        runner::TransportRunner,
     },
     transport::{
         network::Address,
         session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
-    utils::select::EitherUnwrap,
+    utils::select::{EitherUnwrap, Notification},
     CommissioningData, Matter, MATTER_PORT,
 };
 
@@ -248,7 +247,7 @@ impl<'a> ImEngine<'a> {
         input: &[&ImInput],
         out: &mut heapless::Vec<ImOutput, N>,
     ) -> Result<(), Error> {
-        let mut runner = TransportRunner::new(&self.matter);
+        self.matter.reset_transport();
 
         let clone_data = CloneData::new(
             IM_ENGINE_REMOTE_PEER_ID,
@@ -259,8 +258,8 @@ impl<'a> ImEngine<'a> {
             SessionMode::Case(CaseDetails::new(1, &self.cat_ids)),
         );
 
-        let sess_idx = runner
-            .transport()
+        let sess_idx = self
+            .matter
             .session_mgr
             .borrow_mut()
             .clone_session(&clone_data)
@@ -281,10 +280,9 @@ impl<'a> ImEngine<'a> {
         let rx_pipe_buf = &mut rx_pipe_buf;
 
         let handler = &handler;
-        let runner = &mut runner;
 
-        let mut msg_ctr = runner
-            .transport()
+        let mut msg_ctr = self
+            .matter
             .session_mgr
             .borrow_mut()
             .mut_by_index(sess_idx)
@@ -294,9 +292,13 @@ impl<'a> ImEngine<'a> {
         let resp_notif = Notification::new();
         let resp_notif = &resp_notif;
 
+        let mut buffers = PacketBuffers::new();
+        let buffers = &mut buffers;
+
         embassy_futures::block_on(async move {
             select3(
-                runner.run(
+                self.matter.run_piped(
+                    buffers,
                     tx_pipe,
                     rx_pipe,
                     CommissioningData {

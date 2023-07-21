@@ -15,31 +15,63 @@
  *    limitations under the License.
  */
 #[cfg(feature = "std")]
-pub use file_psm::*;
+pub use fileio::*;
 
 #[cfg(feature = "std")]
-mod file_psm {
+pub mod fileio {
     use std::fs;
     use std::io::{Read, Write};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use log::info;
 
     use crate::error::{Error, ErrorCode};
+    use crate::Matter;
 
-    pub struct FilePsm {
+    pub struct Psm<'a> {
+        matter: &'a Matter<'a>,
         dir: PathBuf,
+        buf: [u8; 4096],
     }
 
-    impl FilePsm {
-        pub fn new(dir: PathBuf) -> Result<Self, Error> {
+    impl<'a> Psm<'a> {
+        #[inline(always)]
+        pub fn new(matter: &'a Matter<'a>, dir: PathBuf) -> Result<Self, Error> {
             fs::create_dir_all(&dir)?;
 
-            Ok(Self { dir })
+            info!("Persisting from/to {}", dir.display());
+
+            let mut buf = [0; 4096];
+
+            if let Some(data) = Self::load(&dir, "acls", &mut buf)? {
+                matter.load_acls(data)?;
+            }
+
+            if let Some(data) = Self::load(&dir, "fabrics", &mut buf)? {
+                matter.load_fabrics(data)?;
+            }
+
+            Ok(Self { matter, dir, buf })
         }
 
-        pub fn load<'a>(&self, key: &str, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-            let path = self.dir.join(key);
+        pub async fn run(&mut self) -> Result<(), Error> {
+            loop {
+                self.matter.wait_changed().await;
+
+                if self.matter.is_changed() {
+                    if let Some(data) = self.matter.store_acls(&mut self.buf)? {
+                        Self::store(&self.dir, "acls", data)?;
+                    }
+
+                    if let Some(data) = self.matter.store_fabrics(&mut self.buf)? {
+                        Self::store(&self.dir, "fabrics", data)?;
+                    }
+                }
+            }
+        }
+
+        fn load<'b>(dir: &Path, key: &str, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+            let path = dir.join(key);
 
             match fs::File::open(path) {
                 Ok(mut file) => {
@@ -69,8 +101,8 @@ mod file_psm {
             }
         }
 
-        pub fn store(&self, key: &str, data: &[u8]) -> Result<(), Error> {
-            let path = self.dir.join(key);
+        fn store(dir: &Path, key: &str, data: &[u8]) -> Result<(), Error> {
+            let path = dir.join(key);
 
             let mut file = fs::File::create(path)?;
 

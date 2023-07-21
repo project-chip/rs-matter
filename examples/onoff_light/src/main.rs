@@ -18,6 +18,7 @@
 use core::borrow::Borrow;
 use core::pin::pin;
 
+use embassy_futures::select::select3;
 use log::info;
 use matter::core::{CommissioningData, Matter};
 use matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -27,18 +28,18 @@ use matter::data_model::objects::*;
 use matter::data_model::root_endpoint;
 use matter::data_model::system_model::descriptor;
 use matter::error::Error;
-use matter::mdns::MdnsService;
-use matter::persist::FilePsm;
+use matter::mdns::{MdnsRunBuffers, MdnsService};
 use matter::secure_channel::spake2p::VerifierData;
+use matter::transport::core::RunBuffers;
 use matter::transport::network::{Ipv4Addr, Ipv6Addr, NetworkStack};
-use matter::transport::runner::{AllUdpBuffers, TransportRunner};
+use matter::utils::select::EitherUnwrap;
 
 mod dev_att;
 
 #[cfg(feature = "std")]
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
-        .stack_size(140 * 1024)
+        .stack_size(150 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -56,11 +57,11 @@ fn run() -> Result<(), Error> {
     initialize_logger();
 
     info!(
-        "Matter memory: mDNS={}, Matter={}, TransportRunner={}, UdpBuffers={}",
+        "Matter memory: mDNS={}, Matter={}, MdnsBuffers={}, RunBuffers={}",
         core::mem::size_of::<MdnsService>(),
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<TransportRunner>(),
-        core::mem::size_of::<AllUdpBuffers>(),
+        core::mem::size_of::<MdnsRunBuffers>(),
+        core::mem::size_of::<RunBuffers>(),
     );
 
     let dev_det = BasicInfoConfig {
@@ -72,12 +73,6 @@ fn run() -> Result<(), Error> {
         serial_no: "aabbccdd",
         device_name: "OnOff Light",
     };
-
-    let psm_path = std::env::temp_dir().join("matter-iot");
-    info!("Persisting from/to {}", psm_path.display());
-
-    #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    let psm = matter::persist::FilePsm::new(psm_path)?;
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
 
@@ -106,7 +101,7 @@ fn run() -> Result<(), Error> {
         matter::MATTER_PORT,
     );
 
-    info!("mDNS initialized: {:p}", &mdns);
+    info!("mDNS initialized");
 
     let matter = Matter::new(
         // vid/pid should match those in the DAC
@@ -118,36 +113,28 @@ fn run() -> Result<(), Error> {
         matter::MATTER_PORT,
     );
 
-    info!("Matter initialized: {:p}", &matter);
+    info!("Matter initialized");
 
     #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    {
-        let mut buf = [0; 4096];
-        let buf = &mut buf;
-        if let Some(data) = psm.load("acls", buf)? {
-            matter.load_acls(data)?;
-        }
-
-        if let Some(data) = psm.load("fabrics", buf)? {
-            matter.load_fabrics(data)?;
-        }
-    }
-
-    let mut runner = TransportRunner::new(&matter);
-
-    info!("Transport runner initialized: {:p}", &runner);
+    let mut psm = matter::persist::Psm::new(&matter, std::env::temp_dir().join("matter-iot"))?;
 
     let handler = HandlerCompat(handler(&matter));
 
-    // NOTE (no_std): If using the `embassy-net` UDP implementation, replace this dummy stack with the `embassy-net` one
-    // When using a custom UDP stack, remove this
+    // When using a custom UDP stack, remove the network stack initialization below
+    // and call `Matter::run_piped()` instead, by utilizing the TX & RX `Pipe` structs
+    // to push/pull your UDP packets from/to the Matter stack.
+    // Ditto for `MdnsService`.
+    //
+    // When using the `embassy-net` feature (as opposed to the Rust Standard Library network stack),
+    // this initialization would be more complex.
     let stack = NetworkStack::new();
 
-    let mut buffers = AllUdpBuffers::new();
+    let mut mdns_buffers = MdnsRunBuffers::new();
+    let mut mdns_runner = pin!(mdns.run(&stack, &mut mdns_buffers));
 
-    let mut fut = pin!(runner.run_udp_all(
+    let mut buffers = RunBuffers::new();
+    let mut runner = matter.run(
         &stack,
-        &mdns,
         &mut buffers,
         CommissioningData {
             // TODO: Hard-coded for now
@@ -155,16 +142,30 @@ fn run() -> Result<(), Error> {
             discriminator: 250,
         },
         &handler,
-    ));
+    );
 
-    // NOTE: For no_std, replace with your own no_std way of polling the future
+    info!(
+        "Matter transport runner memory: {}",
+        core::mem::size_of_val(&runner)
+    );
+
+    let mut runner = pin!(runner);
+
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    let mut psm_runner = pin!(psm.run());
+
+    #[cfg(not(all(feature = "std", not(target_os = "espidf"))))]
+    let mut psm_runner = pin!(core::future::pending());
+
+    let mut runner = select3(&mut runner, &mut mdns_runner, &mut psm_runner);
+
     #[cfg(feature = "std")]
-    async_io::block_on(&mut fut)?;
+    async_io::block_on(&mut runner).unwrap()?;
 
     // NOTE (no_std): For no_std, replace with your own more efficient no_std executor,
     // because the executor used below is a simple busy-loop poller
     #[cfg(not(feature = "std"))]
-    embassy_futures::block_on(&mut fut)?;
+    embassy_futures::block_on(&mut runner).unwrap()?;
 
     Ok(())
 }
@@ -266,26 +267,6 @@ fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     );
 
     Ok((ip, ipv6, 0 as _))
-}
-
-#[cfg(all(feature = "std", not(target_os = "espidf")))]
-#[inline(never)]
-async fn save(matter: &Matter<'_>, psm: &FilePsm) -> Result<(), Error> {
-    let mut buf = [0; 4096];
-    let buf = &mut buf;
-
-    loop {
-        matter.wait_changed().await;
-        if matter.is_changed() {
-            if let Some(data) = matter.store_acls(buf)? {
-                psm.store("acls", data)?;
-            }
-
-            if let Some(data) = matter.store_fabrics(buf)? {
-                psm.store("fabrics", data)?;
-            }
-        }
-    }
 }
 
 #[cfg(target_os = "espidf")]

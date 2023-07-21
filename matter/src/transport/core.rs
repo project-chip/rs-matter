@@ -15,14 +15,18 @@
  *    limitations under the License.
  */
 
-use core::{borrow::Borrow, cell::RefCell};
+use core::borrow::Borrow;
+use core::mem::MaybeUninit;
+use core::pin::pin;
 
-use embassy_futures::select::select;
+use embassy_futures::select::{select, select_slice, Either};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
 use embassy_time::{Duration, Timer};
 
 use log::{error, info, warn};
 
+use crate::utils::select::Notification;
+use crate::CommissioningData;
 use crate::{
     alloc,
     data_model::{core::DataModel, objects::DataModelHandler},
@@ -33,18 +37,17 @@ use crate::{
         core::SecureChannel,
     },
     transport::packet::Packet,
+    utils::select::EitherUnwrap,
     Matter,
 };
 
 use super::{
     exchange::{
-        Exchange, ExchangeCtr, ExchangeCtx, ExchangeId, ExchangeState, Notification, Role,
-        MAX_EXCHANGES,
+        Exchange, ExchangeCtr, ExchangeCtx, ExchangeId, ExchangeState, Role, MAX_EXCHANGES,
     },
     mrp::ReliableMessage,
     packet::{MAX_RX_BUF_SIZE, MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
     pipe::{Chunk, Pipe},
-    session::SessionMgr,
 };
 
 #[derive(Debug)]
@@ -66,33 +69,216 @@ impl From<u8> for OpCodeDescriptor {
     }
 }
 
-pub struct Transport<'a> {
-    matter: &'a Matter<'a>,
-    pub(crate) exchanges: RefCell<heapless::Vec<ExchangeCtx, MAX_EXCHANGES>>,
-    pub(crate) send_notification: Notification,
-    pub session_mgr: RefCell<SessionMgr>,
+type TxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
+type RxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
+type SxBuf = MaybeUninit<[u8; MAX_RX_STATUS_BUF_SIZE]>;
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+pub struct RunBuffers {
+    udp_bufs: crate::transport::udp::UdpBuffers,
+    run_bufs: PacketBuffers,
+    tx_buf: TxBuf,
+    rx_buf: RxBuf,
 }
 
-impl<'a> Transport<'a> {
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+impl RunBuffers {
     #[inline(always)]
-    pub fn new(matter: &'a Matter<'a>) -> Self {
-        let epoch = matter.epoch;
-        let rand = matter.rand;
-
+    pub const fn new() -> Self {
         Self {
-            matter,
-            exchanges: RefCell::new(heapless::Vec::new()),
-            send_notification: Notification::new(),
-            session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
+            udp_bufs: crate::transport::udp::UdpBuffers::new(),
+            run_bufs: PacketBuffers::new(),
+            tx_buf: core::mem::MaybeUninit::uninit(),
+            rx_buf: core::mem::MaybeUninit::uninit(),
         }
     }
+}
 
-    pub fn matter(&self) -> &'a Matter<'a> {
-        self.matter
+pub struct PacketBuffers {
+    tx: [TxBuf; MAX_EXCHANGES],
+    rx: [RxBuf; MAX_EXCHANGES],
+    sx: [SxBuf; MAX_EXCHANGES],
+}
+
+impl PacketBuffers {
+    const TX_ELEM: TxBuf = MaybeUninit::uninit();
+    const RX_ELEM: RxBuf = MaybeUninit::uninit();
+    const SX_ELEM: SxBuf = MaybeUninit::uninit();
+
+    const TX_INIT: [TxBuf; MAX_EXCHANGES] = [Self::TX_ELEM; MAX_EXCHANGES];
+    const RX_INIT: [RxBuf; MAX_EXCHANGES] = [Self::RX_ELEM; MAX_EXCHANGES];
+    const SX_INIT: [SxBuf; MAX_EXCHANGES] = [Self::SX_ELEM; MAX_EXCHANGES];
+
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            tx: Self::TX_INIT,
+            rx: Self::RX_INIT,
+            sx: Self::SX_INIT,
+        }
+    }
+}
+
+impl<'a> Matter<'a> {
+    #[cfg(any(feature = "std", feature = "embassy-net"))]
+    pub async fn run<D, H>(
+        &self,
+        stack: &crate::transport::network::NetworkStack<D>,
+        buffers: &mut RunBuffers,
+        dev_comm: CommissioningData,
+        handler: &H,
+    ) -> Result<(), Error>
+    where
+        D: crate::transport::network::NetworkStackDriver,
+        H: DataModelHandler,
+    {
+        let udp = crate::transport::udp::UdpListener::new(
+            stack,
+            crate::transport::network::SocketAddr::new(
+                crate::transport::network::IpAddr::V6(
+                    crate::transport::network::Ipv6Addr::UNSPECIFIED,
+                ),
+                self.port,
+            ),
+            &mut buffers.udp_bufs,
+        )
+        .await?;
+
+        let tx_pipe = Pipe::new(unsafe { buffers.tx_buf.assume_init_mut() });
+        let rx_pipe = Pipe::new(unsafe { buffers.rx_buf.assume_init_mut() });
+
+        let tx_pipe = &tx_pipe;
+        let rx_pipe = &rx_pipe;
+        let udp = &udp;
+        let run_bufs = &mut buffers.run_bufs;
+
+        let mut tx = pin!(async move {
+            loop {
+                {
+                    let mut data = tx_pipe.data.lock().await;
+
+                    if let Some(chunk) = data.chunk {
+                        udp.send(chunk.addr.unwrap_udp(), &data.buf[chunk.start..chunk.end])
+                            .await?;
+                        data.chunk = None;
+                        tx_pipe.data_consumed_notification.signal(());
+                    }
+                }
+
+                tx_pipe.data_supplied_notification.wait().await;
+            }
+        });
+
+        let mut rx = pin!(async move {
+            loop {
+                {
+                    let mut data = rx_pipe.data.lock().await;
+
+                    if data.chunk.is_none() {
+                        let (len, addr) = udp.recv(data.buf).await?;
+
+                        data.chunk = Some(Chunk {
+                            start: 0,
+                            end: len,
+                            addr: crate::transport::network::Address::Udp(addr),
+                        });
+                        rx_pipe.data_supplied_notification.signal(());
+                    }
+                }
+
+                rx_pipe.data_consumed_notification.wait().await;
+            }
+        });
+
+        let mut run = pin!(async move {
+            self.run_piped(run_bufs, tx_pipe, rx_pipe, dev_comm, handler)
+                .await
+        });
+
+        embassy_futures::select::select3(&mut tx, &mut rx, &mut run)
+            .await
+            .unwrap()
     }
 
-    pub async fn initiate(&self, _fabric_id: u64, _node_id: u64) -> Result<Exchange<'a>, Error> {
-        unimplemented!()
+    pub async fn run_piped<H>(
+        &self,
+        buffers: &mut PacketBuffers,
+        tx_pipe: &Pipe<'_>,
+        rx_pipe: &Pipe<'_>,
+        dev_comm: CommissioningData,
+        handler: &H,
+    ) -> Result<(), Error>
+    where
+        H: DataModelHandler,
+    {
+        info!("Running Matter transport");
+
+        let buf = unsafe { buffers.rx[0].assume_init_mut() };
+
+        if self.start_comissioning(dev_comm, buf)? {
+            info!("Comissioning started");
+        }
+
+        let construction_notification = Notification::new();
+
+        let mut rx = pin!(self.handle_rx(buffers, rx_pipe, &construction_notification, handler));
+        let mut tx = pin!(self.handle_tx(tx_pipe));
+
+        select(&mut rx, &mut tx).await.unwrap()
+    }
+
+    #[inline(always)]
+    async fn handle_rx<H>(
+        &self,
+        buffers: &mut PacketBuffers,
+        rx_pipe: &Pipe<'_>,
+        construction_notification: &Notification,
+        handler: &H,
+    ) -> Result<(), Error>
+    where
+        H: DataModelHandler,
+    {
+        info!("Creating queue for {} exchanges", 1);
+
+        let channel = Channel::<NoopRawMutex, _, 1>::new();
+
+        info!("Creating {} handlers", MAX_EXCHANGES);
+        let mut handlers = heapless::Vec::<_, MAX_EXCHANGES>::new();
+
+        info!("Handlers size: {}", core::mem::size_of_val(&handlers));
+
+        // Unsafely allow mutable aliasing in the packet pools by different indices
+        let pools: *mut PacketBuffers = buffers;
+
+        for index in 0..MAX_EXCHANGES {
+            let channel = &channel;
+            let handler_id = index;
+
+            let pools = unsafe { pools.as_mut() }.unwrap();
+
+            let tx_buf = unsafe { pools.tx[handler_id].assume_init_mut() };
+            let rx_buf = unsafe { pools.rx[handler_id].assume_init_mut() };
+            let sx_buf = unsafe { pools.sx[handler_id].assume_init_mut() };
+
+            handlers
+                .push(self.exchange_handler(tx_buf, rx_buf, sx_buf, handler_id, channel, handler))
+                .map_err(|_| ())
+                .unwrap();
+        }
+
+        let mut rx = pin!(self.handle_rx_multiplex(rx_pipe, construction_notification, &channel));
+
+        let result = select(&mut rx, select_slice(&mut handlers)).await;
+
+        if let Either::First(result) = result {
+            if let Err(e) = &result {
+                error!("Exitting RX loop due to an error: {:?}", e);
+            }
+
+            result?;
+        }
+
+        Ok(())
     }
 
     #[inline(always)]
@@ -230,11 +416,11 @@ impl<'a> Transport<'a> {
 
         match rx.get_proto_id() {
             PROTO_ID_SECURE_CHANNEL => {
-                let sc = SecureChannel::new(self.matter());
+                let sc = SecureChannel::new(self);
 
                 sc.handle(&mut exchange, &mut rx, &mut tx).await?;
 
-                self.matter().notify_changed();
+                self.notify_changed();
             }
             PROTO_ID_INTERACTION_MODEL => {
                 let dm = DataModel::new(handler);
@@ -244,7 +430,7 @@ impl<'a> Transport<'a> {
                 dm.handle(&mut exchange, &mut rx, &mut tx, &mut rx_status)
                     .await?;
 
-                self.matter().notify_changed();
+                self.notify_changed();
             }
             other => {
                 error!("Unknown Proto-ID: {}", other);
@@ -252,6 +438,11 @@ impl<'a> Transport<'a> {
         }
 
         Ok(())
+    }
+
+    pub fn reset_transport(&self) {
+        self.exchanges.borrow_mut().clear();
+        self.session_mgr.borrow_mut().reset();
     }
 
     pub fn process_rx<'r>(
@@ -297,7 +488,7 @@ impl<'a> Transport<'a> {
                     }
                 }
 
-                self.matter().notify_changed();
+                self.notify_changed();
             }
         }
 
@@ -305,13 +496,13 @@ impl<'a> Transport<'a> {
             let constructor = ExchangeCtr {
                 exchange: Exchange {
                     id: ctx.id.clone(),
-                    transport: self,
+                    matter: self,
                     notification: Notification::new(),
                 },
                 construction_notification,
             };
 
-            self.matter().notify_changed();
+            self.notify_changed();
 
             Ok(Some(constructor))
         } else if src_rx.proto.proto_id == PROTO_ID_SECURE_CHANNEL
@@ -338,7 +529,7 @@ impl<'a> Transport<'a> {
                 }
             }
 
-            self.matter().notify_changed();
+            self.notify_changed();
 
             Ok(None)
         }
@@ -354,7 +545,7 @@ impl<'a> Transport<'a> {
 
         let mut exchanges = self.exchanges.borrow_mut();
 
-        let ctx = Self::get(&mut exchanges, exchange_id).unwrap();
+        let ctx = ExchangeCtx::get(&mut exchanges, exchange_id).unwrap();
 
         let state = &mut ctx.state;
 
@@ -397,11 +588,11 @@ impl<'a> Transport<'a> {
                     //     ..
                     // }
                     | ExchangeState::Complete { .. } // | ExchangeState::CompleteAcknowledge { .. }
-            ) || ctx.mrp.is_ack_ready(*self.matter.borrow())
+            ) || ctx.mrp.is_ack_ready(*self.borrow())
         });
 
         if let Some(ctx) = ctx {
-            self.matter().notify_changed();
+            self.notify_changed();
 
             let state = &mut ctx.state;
 
@@ -460,7 +651,7 @@ impl<'a> Transport<'a> {
                 dest_tx.log("Sending packet");
 
                 self.pre_send(ctx, dest_tx)?;
-                self.matter().notify_changed();
+                self.notify_changed();
 
                 return Ok(true);
             }
@@ -500,7 +691,7 @@ impl<'a> Transport<'a> {
         let session = session_mgr.mut_by_index(sess_index).unwrap();
 
         // Decrypt the message
-        session.recv(self.matter.epoch, rx)?;
+        session.recv(self.epoch, rx)?;
 
         // Get the exchange
         // TODO: Handle out of space
@@ -513,7 +704,7 @@ impl<'a> Transport<'a> {
         )?;
 
         // Message Reliability Protocol
-        exch.mrp.recv(rx, self.matter.epoch)?;
+        exch.mrp.recv(rx, self.epoch)?;
 
         Ok((exch, new))
     }
@@ -575,12 +766,5 @@ impl<'a> Transport<'a> {
         } else {
             Err(ErrorCode::NoExchange.into())
         }
-    }
-
-    pub(crate) fn get<'r>(
-        exchanges: &'r mut heapless::Vec<ExchangeCtx, MAX_EXCHANGES>,
-        id: &ExchangeId,
-    ) -> Option<&'r mut ExchangeCtx> {
-        exchanges.iter_mut().find(|exchange| exchange.id == *id)
     }
 }

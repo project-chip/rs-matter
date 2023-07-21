@@ -15,17 +15,13 @@
  *    limitations under the License.
  */
 
-#[cfg(not(any(
-    feature = "crypto_openssl",
-    feature = "crypto_mbedtls",
-    feature = "crypto_rustcrypto"
-)))]
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
 pub use super::crypto_dummy::CryptoSpake2;
-#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
 pub use super::crypto_esp_mbedtls::CryptoSpake2;
-#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 pub use super::crypto_mbedtls::CryptoSpake2;
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 pub use super::crypto_openssl::CryptoSpake2;
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 pub use super::crypto_rustcrypto::CryptoSpake2;

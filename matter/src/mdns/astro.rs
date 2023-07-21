@@ -11,6 +11,17 @@ use log::info;
 
 use super::ServiceMode;
 
+/// Only for API-compatibility with builtin::MdnsRunner
+pub struct MdnsUdpBuffers(());
+
+/// Only for API-compatibility with builtin::MdnsRunner
+impl MdnsUdpBuffers {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self(())
+    }
+}
+
 pub struct MdnsService<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
@@ -78,16 +89,15 @@ impl<'a> MdnsService<'a> {
 
         Ok(())
     }
-}
 
-/// Only for API-compatibility with builtin::MdnsRunner
-pub struct MdnsUdpBuffers(());
+    /// Only for API-compatibility with builtin::MdnsRunner
+    pub async fn run_udp(&mut self, buffers: &mut MdnsUdpBuffers) -> Result<(), Error> {
+        core::future::pending::<Result<(), Error>>().await
+    }
 
-/// Only for API-compatibility with builtin::MdnsRunner
-impl MdnsUdpBuffers {
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self(())
+    /// Only for API-compatibility with builtin::MdnsRunner
+    pub async fn run(&self, _tx_pipe: &Pipe<'_>, _rx_pipe: &Pipe<'_>) -> Result<(), Error> {
+        core::future::pending::<Result<(), Error>>().await
     }
 }
 
@@ -98,23 +108,5 @@ impl<'a> super::Mdns for MdnsService<'a> {
 
     fn remove(&self, service: &str) -> Result<(), Error> {
         MdnsService::remove(self, service)
-    }
-}
-
-/// Only for API-compatibility with builtin::MdnsRunner
-pub struct MdnsRunner<'a>(&'a MdnsService<'a>);
-
-/// Only for API-compatibility with builtin::MdnsRunner
-impl<'a> MdnsRunner<'a> {
-    pub const fn new(mdns: &'a MdnsService<'a>) -> Self {
-        Self(mdns)
-    }
-
-    pub async fn run_udp(&mut self, buffers: &mut MdnsUdpBuffers) -> Result<(), Error> {
-        core::future::pending::<Result<(), Error>>().await
-    }
-
-    pub async fn run(&self, _tx_pipe: &Pipe<'_>, _rx_pipe: &Pipe<'_>) -> Result<(), Error> {
-        core::future::pending::<Result<(), Error>>().await
     }
 }

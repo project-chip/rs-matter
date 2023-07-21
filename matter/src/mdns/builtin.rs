@@ -22,6 +22,25 @@ const IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x
 
 const PORT: u16 = 5353;
 
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+pub struct MdnsRunBuffers {
+    udp: crate::transport::udp::UdpBuffers,
+    tx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_TX_BUF_SIZE]>,
+    rx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_RX_BUF_SIZE]>,
+}
+
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+impl MdnsRunBuffers {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            udp: crate::transport::udp::UdpBuffers::new(),
+            tx_buf: core::mem::MaybeUninit::uninit(),
+            rx_buf: core::mem::MaybeUninit::uninit(),
+        }
+    }
+}
+
 pub struct MdnsService<'a> {
     host: Host<'a>,
     #[allow(unused)]
@@ -100,39 +119,12 @@ impl<'a> MdnsService<'a> {
 
         Ok(())
     }
-}
-
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-pub struct MdnsUdpBuffers {
-    udp: crate::transport::udp::UdpBuffers,
-    tx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_TX_BUF_SIZE]>,
-    rx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_RX_BUF_SIZE]>,
-}
-
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-impl MdnsUdpBuffers {
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self {
-            udp: crate::transport::udp::UdpBuffers::new(),
-            tx_buf: core::mem::MaybeUninit::uninit(),
-            rx_buf: core::mem::MaybeUninit::uninit(),
-        }
-    }
-}
-
-pub struct MdnsRunner<'a>(&'a MdnsService<'a>);
-
-impl<'a> MdnsRunner<'a> {
-    pub const fn new(mdns: &'a MdnsService<'a>) -> Self {
-        Self(mdns)
-    }
 
     #[cfg(any(feature = "std", feature = "embassy-net"))]
-    pub async fn run_udp<D>(
-        &mut self,
+    pub async fn run<D>(
+        &self,
         stack: &crate::transport::network::NetworkStack<D>,
-        buffers: &mut MdnsUdpBuffers,
+        buffers: &mut MdnsRunBuffers,
     ) -> Result<(), Error>
     where
         D: crate::transport::network::NetworkStackDriver,
@@ -146,14 +138,14 @@ impl<'a> MdnsRunner<'a> {
 
         // V6 multicast does not work with smoltcp yet (see https://github.com/smoltcp-rs/smoltcp/pull/602)
         #[cfg(not(feature = "embassy-net"))]
-        if let Some(interface) = self.0.interface {
+        if let Some(interface) = self.interface {
             udp.join_multicast_v6(IPV6_BROADCAST_ADDR, interface)
                 .await?;
         }
 
         udp.join_multicast_v4(
             IP_BROADCAST_ADDR,
-            crate::transport::network::Ipv4Addr::from(self.0.host.ip),
+            crate::transport::network::Ipv4Addr::from(self.host.ip),
         )
         .await?;
 
@@ -202,14 +194,14 @@ impl<'a> MdnsRunner<'a> {
             }
         });
 
-        let mut run = pin!(async move { self.run(tx_pipe, rx_pipe).await });
+        let mut run = pin!(async move { self.run_piped(tx_pipe, rx_pipe).await });
 
         embassy_futures::select::select3(&mut tx, &mut rx, &mut run)
             .await
             .unwrap()
     }
 
-    pub async fn run(&self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
+    pub async fn run_piped(&self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
         let mut broadcast = pin!(self.broadcast(tx_pipe));
         let mut respond = pin!(self.respond(rx_pipe, tx_pipe));
 
@@ -220,7 +212,7 @@ impl<'a> MdnsRunner<'a> {
     async fn broadcast(&self, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
         loop {
             select(
-                self.0.notification.wait(),
+                self.notification.wait(),
                 Timer::after(Duration::from_secs(30)),
             )
             .await;
@@ -229,13 +221,13 @@ impl<'a> MdnsRunner<'a> {
                 IpAddr::V4(IP_BROADCAST_ADDR),
                 IpAddr::V6(IPV6_BROADCAST_ADDR),
             ] {
-                if self.0.interface.is_some() || addr == IpAddr::V4(IP_BROADCAST_ADDR) {
+                if self.interface.is_some() || addr == IpAddr::V4(IP_BROADCAST_ADDR) {
                     loop {
                         let sent = {
                             let mut data = tx_pipe.data.lock().await;
 
                             if data.chunk.is_none() {
-                                let len = self.0.host.broadcast(&self.0, data.buf, 60)?;
+                                let len = self.host.broadcast(self, data.buf, 60)?;
 
                                 if len > 0 {
                                     info!("Broadasting mDNS entry to {}:{}", addr, PORT);
@@ -280,7 +272,7 @@ impl<'a> MdnsRunner<'a> {
                             let mut tx_data = tx_pipe.data.lock().await;
 
                             if tx_data.chunk.is_none() {
-                                let len = self.0.host.respond(&self.0, data, tx_data.buf, 60)?;
+                                let len = self.host.respond(self, data, tx_data.buf, 60)?;
 
                                 if len > 0 {
                                     info!("Replying to mDNS query from {}", rx_chunk.addr);

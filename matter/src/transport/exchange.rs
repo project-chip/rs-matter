@@ -1,13 +1,11 @@
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-
 use crate::{
     acl::Accessor,
     error::{Error, ErrorCode},
+    utils::select::Notification,
     Matter,
 };
 
 use super::{
-    core::Transport,
     mrp::ReliableMessage,
     network::Address,
     packet::Packet,
@@ -15,8 +13,6 @@ use super::{
 };
 
 pub const MAX_EXCHANGES: usize = 8;
-
-pub type Notification = embassy_sync::signal::Signal<NoopRawMutex, ()>;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 pub(crate) enum Role {
@@ -41,6 +37,15 @@ pub(crate) struct ExchangeCtx {
     pub(crate) role: Role,
     pub(crate) mrp: ReliableMessage,
     pub(crate) state: ExchangeState,
+}
+
+impl ExchangeCtx {
+    pub(crate) fn get<'r>(
+        exchanges: &'r mut heapless::Vec<ExchangeCtx, MAX_EXCHANGES>,
+        id: &ExchangeId,
+    ) -> Option<&'r mut ExchangeCtx> {
+        exchanges.iter_mut().find(|exchange| exchange.id == *id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -144,7 +149,7 @@ impl SessionId {
 }
 pub struct Exchange<'a> {
     pub(crate) id: ExchangeId,
-    pub(crate) transport: &'a Transport<'a>,
+    pub(crate) matter: &'a Matter<'a>,
     pub(crate) notification: Notification,
 }
 
@@ -153,21 +158,8 @@ impl<'a> Exchange<'a> {
         &self.id
     }
 
-    pub fn matter(&self) -> &Matter<'a> {
-        self.transport.matter()
-    }
-
-    pub fn transport(&self) -> &Transport<'a> {
-        self.transport
-    }
-
     pub fn accessor(&self) -> Result<Accessor<'a>, Error> {
-        self.with_session(|sess| {
-            Ok(Accessor::for_session(
-                sess,
-                &self.transport.matter().acl_mgr,
-            ))
-        })
+        self.with_session(|sess| Ok(Accessor::for_session(sess, &self.matter.acl_mgr)))
     }
 
     pub fn with_session_mut<F, T>(&self, f: F) -> Result<T, Error>
@@ -175,7 +167,7 @@ impl<'a> Exchange<'a> {
         F: FnOnce(&mut Session) -> Result<T, Error>,
     {
         self.with_ctx(|_self, ctx| {
-            let mut session_mgr = _self.transport.session_mgr.borrow_mut();
+            let mut session_mgr = _self.matter.session_mgr.borrow_mut();
 
             let sess_index = session_mgr
                 .get(
@@ -201,13 +193,9 @@ impl<'a> Exchange<'a> {
     where
         F: FnOnce(&mut SessionMgr) -> Result<T, Error>,
     {
-        let mut session_mgr = self.transport.session_mgr.borrow_mut();
+        let mut session_mgr = self.matter.session_mgr.borrow_mut();
 
         f(&mut session_mgr)
-    }
-
-    pub async fn initiate(&mut self, fabric_id: u64, node_id: u64) -> Result<Exchange<'a>, Error> {
-        self.transport.initiate(fabric_id, node_id).await
     }
 
     pub async fn acknowledge(&mut self) -> Result<(), Error> {
@@ -222,7 +210,7 @@ impl<'a> Exchange<'a> {
                 ctx.state = ExchangeState::Acknowledge {
                     notification: &_self.notification as *const _,
                 };
-                _self.transport.send_notification.signal(());
+                _self.matter.send_notification.signal(());
 
                 Ok(true)
             }
@@ -249,7 +237,7 @@ impl<'a> Exchange<'a> {
                 rx: rx as *mut _,
                 notification: &_self.notification as *const _,
             };
-            _self.transport.send_notification.signal(());
+            _self.matter.send_notification.signal(());
 
             Ok(())
         })?;
@@ -275,7 +263,7 @@ impl<'a> Exchange<'a> {
                 tx: tx as *const _,
                 notification: &_self.notification as *const _,
             };
-            _self.transport.send_notification.signal(());
+            _self.matter.send_notification.signal(());
 
             Ok(())
         })?;
@@ -289,9 +277,9 @@ impl<'a> Exchange<'a> {
     where
         F: FnOnce(&Self, &ExchangeCtx) -> Result<T, Error>,
     {
-        let mut exchanges = self.transport.exchanges.borrow_mut();
+        let mut exchanges = self.matter.exchanges.borrow_mut();
 
-        let exchange = Transport::get(&mut exchanges, &self.id).ok_or(ErrorCode::NoExchange)?; // TODO
+        let exchange = ExchangeCtx::get(&mut exchanges, &self.id).ok_or(ErrorCode::NoExchange)?; // TODO
 
         f(self, exchange)
     }
@@ -300,9 +288,9 @@ impl<'a> Exchange<'a> {
     where
         F: FnOnce(&mut Self, &mut ExchangeCtx) -> Result<T, Error>,
     {
-        let mut exchanges = self.transport.exchanges.borrow_mut();
+        let mut exchanges = self.matter.exchanges.borrow_mut();
 
-        let exchange = Transport::get(&mut exchanges, &self.id).ok_or(ErrorCode::NoExchange)?; // TODO
+        let exchange = ExchangeCtx::get(&mut exchanges, &self.id).ok_or(ErrorCode::NoExchange)?; // TODO
 
         f(self, exchange)
     }
@@ -312,7 +300,7 @@ impl<'a> Drop for Exchange<'a> {
     fn drop(&mut self) {
         let _ = self.with_ctx_mut(|_self, ctx| {
             ctx.state = ExchangeState::Closed;
-            _self.transport.send_notification.signal(());
+            _self.matter.send_notification.signal(());
 
             Ok(())
         });

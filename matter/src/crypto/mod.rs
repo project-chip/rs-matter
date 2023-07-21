@@ -37,37 +37,29 @@ pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
 
 pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
 
-#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
 mod crypto_esp_mbedtls;
-#[cfg(all(feature = "crypto_mbedtls", target_os = "espidf"))]
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
 pub use self::crypto_esp_mbedtls::*;
 
-#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 mod crypto_mbedtls;
-#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 pub use self::crypto_mbedtls::*;
 
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 mod crypto_openssl;
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 pub use self::crypto_openssl::*;
 
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 mod crypto_rustcrypto;
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 pub use self::crypto_rustcrypto::*;
 
-#[cfg(not(any(
-    feature = "crypto_openssl",
-    feature = "crypto_mbedtls",
-    feature = "crypto_rustcrypto"
-)))]
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
 pub mod crypto_dummy;
-#[cfg(not(any(
-    feature = "crypto_openssl",
-    feature = "crypto_mbedtls",
-    feature = "crypto_rustcrypto"
-)))]
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
 pub use self::crypto_dummy::*;
 
 impl<'a> FromTLV<'a> for KeyPair {

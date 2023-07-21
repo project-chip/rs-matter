@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::fmt::{self, Debug};
+
 use crate::error::{Error, ErrorCode};
 use crate::utils::rand::Rand;
 
@@ -389,5 +391,11 @@ impl Sha256 {
         let h = self.hasher.finish()?;
         data.copy_from_slice(h.as_ref());
         Ok(())
+    }
+}
+
+impl Debug for Sha256 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "Sha256")
     }
 }

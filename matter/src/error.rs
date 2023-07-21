@@ -149,7 +149,7 @@ impl<T> From<std::sync::PoisonError<T>> for Error {
     }
 }
 
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for Error {
     fn from(e: openssl::error::ErrorStack) -> Self {
         ::log::error!("Error in TLS: {}", e);
@@ -157,7 +157,7 @@ impl From<openssl::error::ErrorStack> for Error {
     }
 }
 
-#[cfg(all(feature = "crypto_mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 impl From<mbedtls::Error> for Error {
     fn from(e: mbedtls::Error) -> Self {
         ::log::error!("Error in TLS: {}", e);
@@ -173,7 +173,7 @@ impl From<esp_idf_sys::EspError> for Error {
     }
 }
 
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 impl From<ccm::aead::Error> for Error {
     fn from(_e: ccm::aead::Error) -> Self {
         Self::new(ErrorCode::Crypto)

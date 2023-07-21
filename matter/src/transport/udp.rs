@@ -16,10 +16,10 @@
  */
 
 #[cfg(all(feature = "std", not(feature = "embassy-net")))]
-pub use async_io::*;
+pub use self::async_io::*;
 
 #[cfg(feature = "embassy-net")]
-pub use embassy_net::*;
+pub use self::embassy_net::*;
 
 #[cfg(feature = "std")]
 pub mod async_io {
@@ -88,7 +88,7 @@ pub mod async_io {
             #[cfg(target_os = "espidf")]
             {
                 fn esp_setsockopt<T>(
-                    socket: &mut UdpSocket,
+                    socket: &UdpSocket,
                     proto: u32,
                     option: u32,
                     value: T,
@@ -119,7 +119,7 @@ pub mod async_io {
                 };
 
                 esp_setsockopt(
-                    &mut self.0,
+                    &mut self.0.get_ref(),
                     esp_idf_sys::IPPROTO_IP,
                     esp_idf_sys::IP_ADD_MEMBERSHIP,
                     mreq,

@@ -96,7 +96,7 @@ pub fn print_pairing_code_and_qr(
     Ok(())
 }
 
-pub(self) fn passwd_from_comm_data(comm_data: &CommissioningData) -> u32 {
+fn passwd_from_comm_data(comm_data: &CommissioningData) -> u32 {
     // todo: should this be part of the comm_data implementation?
     match comm_data.verifier.data {
         VerifierOption::Password(pwd) => pwd,

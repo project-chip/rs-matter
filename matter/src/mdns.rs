@@ -56,18 +56,14 @@ where
 }
 
 #[cfg(all(feature = "std", target_os = "macos"))]
-pub use astro::MdnsRunner;
-#[cfg(all(feature = "std", target_os = "macos"))]
 pub use astro::MdnsService;
 #[cfg(all(feature = "std", target_os = "macos"))]
 pub use astro::MdnsUdpBuffers;
 
-#[cfg(not(all(feature = "std", target_os = "macos")))]
-pub use builtin::MdnsRunner;
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+pub use builtin::MdnsRunBuffers;
 #[cfg(not(all(feature = "std", target_os = "macos")))]
 pub use builtin::MdnsService;
-#[cfg(not(all(feature = "std", target_os = "macos")))]
-pub use builtin::MdnsUdpBuffers;
 
 pub struct DummyMdns;
 

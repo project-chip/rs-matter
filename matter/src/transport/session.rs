@@ -306,6 +306,11 @@ impl SessionMgr {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.sessions.clear();
+        self.next_sess_id = 1;
+    }
+
     pub fn mut_by_index(&mut self, index: usize) -> Option<&mut Session> {
         self.sessions.get_mut(index).and_then(Option::as_mut)
     }

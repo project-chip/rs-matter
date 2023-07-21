@@ -17,6 +17,8 @@
 
 extern crate alloc;
 
+use core::fmt::{self, Debug};
+
 use alloc::sync::Arc;
 
 use log::{error, info};
@@ -353,5 +355,11 @@ impl Sha256 {
     pub fn finish(self, digest: &mut [u8]) -> Result<(), Error> {
         self.ctx.finish(digest).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
+    }
+}
+
+impl Debug for Sha256 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "Sha256")
     }
 }

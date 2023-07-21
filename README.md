@@ -41,23 +41,24 @@ The `async` metaphor however comes with a bit higher memory usage, due to not en
 
 ## Build
 
-Building the library:
+### Building the library
 
 ```
 $ cargo build
 ```
 
-Building and running the example (Linux, MacOS X):
+### Building and running the example (Linux, MacOS X)
 
 ```
 $ cargo run --example onoff_light
 ```
 
-Building the example (Espressif's ESP-IDF):
+### Building the example (Espressif's ESP-IDF)
+
 * Install all build prerequisites described [here](https://github.com/esp-rs/esp-idf-template#prerequisites)
 * Build with the following command line:
 ```
-export MCU=esp32; export CARGO_TARGET_XTENSA_ESP32_ESPIDF_LINKER=ldproxy; export RUSTFLAGS="-C default-linker-libraries"; export WIFI_SSID=ssid;export WIFI_PASS=pass; cargo build --example onoff_light --no-default-features --features std,crypto_rustcrypto --target xtensa-esp32-espidf -Zbuild-std=std,panic_abort
+export MCU=esp32; export CARGO_TARGET_XTENSA_ESP32_ESPIDF_LINKER=ldproxy; export RUSTFLAGS="-C default-linker-libraries"; export WIFI_SSID=ssid;export WIFI_PASS=pass; cargo build --example onoff_light --no-default-features --features esp-idf --target xtensa-esp32-espidf -Zbuild-std=std,panic_abort
 ```
 * If you are building for a different Espressif MCU, change the `MCU` variable, the `xtensa-esp32-espidf` target and the name of the `CARGO_TARGET_<esp-idf-target-uppercase>_LINKER` variable to match your MCU and its Rust target. Available Espressif MCUs and targets are:
   * esp32 / xtensa-esp32-espidf
@@ -68,6 +69,10 @@ export MCU=esp32; export CARGO_TARGET_XTENSA_ESP32_ESPIDF_LINKER=ldproxy; export
   * esp32c6 / risxcv32imac-esp-espidf
 * Put in `WIFI_SSID` / `WIFI_PASS` the SSID & password for your wireless router
 * Flash using the `espflash` utility described in the build prerequsites' link above
+
+### Building the example (ESP32-XX baremetal or RP2040)
+
+Coming soon!
 
 ## Test
 

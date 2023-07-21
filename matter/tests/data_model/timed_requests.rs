@@ -100,7 +100,7 @@ fn test_timed_cmd_success() {
     ImEngine::timed_commands(
         input,
         &TimedInvResponse::TransactionSuccess(expected),
-        400,
+        2000,
         0,
         true,
     );
@@ -130,7 +130,7 @@ fn test_timed_cmd_timedout_mismatch() {
     ImEngine::timed_commands(
         input,
         &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
-        400,
+        2000,
         0,
         false,
     );
