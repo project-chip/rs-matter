@@ -14,8 +14,10 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-
-use crate::error::Error;
+use crate::{
+    error::{Error, ErrorCode},
+    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
+};
 
 pub const SYMM_KEY_LEN_BITS: usize = 128;
 pub const SYMM_KEY_LEN_BYTES: usize = SYMM_KEY_LEN_BITS / 8;
@@ -35,43 +37,70 @@ pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
 
 pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
 
-// APIs particular to a KeyPair so a KeyPair object can be defined
-pub trait CryptoKeyPair {
-    fn get_csr<'a>(&self, csr: &'a mut [u8]) -> Result<&'a [u8], Error>;
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error>;
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error>;
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error>;
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error>;
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error>;
-}
-
-#[cfg(feature = "crypto_esp_mbedtls")]
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
 mod crypto_esp_mbedtls;
-#[cfg(feature = "crypto_esp_mbedtls")]
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
 pub use self::crypto_esp_mbedtls::*;
 
-#[cfg(feature = "crypto_mbedtls")]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 mod crypto_mbedtls;
-#[cfg(feature = "crypto_mbedtls")]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 pub use self::crypto_mbedtls::*;
 
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 mod crypto_openssl;
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 pub use self::crypto_openssl::*;
 
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 mod crypto_rustcrypto;
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 pub use self::crypto_rustcrypto::*;
 
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
 pub mod crypto_dummy;
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+pub use self::crypto_dummy::*;
+
+impl<'a> FromTLV<'a> for KeyPair {
+    fn from_tlv(t: &crate::tlv::TLVElement<'a>) -> Result<Self, Error>
+    where
+        Self: Sized,
+    {
+        t.confirm_array()?.enter();
+
+        if let Some(mut array) = t.enter() {
+            let pub_key = array.next().ok_or(ErrorCode::Invalid)?.slice()?;
+            let priv_key = array.next().ok_or(ErrorCode::Invalid)?.slice()?;
+
+            KeyPair::new_from_components(pub_key, priv_key)
+        } else {
+            Err(ErrorCode::Invalid.into())
+        }
+    }
+}
+
+impl ToTLV for KeyPair {
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        let mut buf = [0; 1024]; // TODO
+
+        tw.start_array(tag)?;
+
+        let size = self.get_public_key(&mut buf)?;
+        tw.str16(TagType::Anonymous, &buf[..size])?;
+
+        let size = self.get_private_key(&mut buf)?;
+        tw.str16(TagType::Anonymous, &buf[..size])?;
+
+        tw.end_container()
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::error::Error;
+    use crate::error::ErrorCode;
 
-    use super::{CryptoKeyPair, KeyPair};
+    use super::KeyPair;
 
     #[test]
     fn test_verify_msg_success() {
@@ -83,8 +112,9 @@ mod tests {
     fn test_verify_msg_fail() {
         let key = KeyPair::new_from_public(&test_vectors::PUB_KEY1).unwrap();
         assert_eq!(
-            key.verify_msg(&test_vectors::MSG1_FAIL, &test_vectors::SIGNATURE1),
-            Err(Error::InvalidSignature)
+            key.verify_msg(&test_vectors::MSG1_FAIL, &test_vectors::SIGNATURE1)
+                .map_err(|e| e.code()),
+            Err(ErrorCode::InvalidSignature)
         );
     }
 

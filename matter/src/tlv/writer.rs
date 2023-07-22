@@ -50,11 +50,11 @@ enum WriteElementType {
 }
 
 pub struct TLVWriter<'a, 'b> {
-    buf: &'b mut WriteBuf<'a>,
+    buf: &'a mut WriteBuf<'b>,
 }
 
 impl<'a, 'b> TLVWriter<'a, 'b> {
-    pub fn new(buf: &'b mut WriteBuf<'a>) -> Self {
+    pub fn new(buf: &'a mut WriteBuf<'b>) -> Self {
         TLVWriter { buf }
     }
 
@@ -164,7 +164,7 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
     pub fn str8(&mut self, tag_type: TagType, data: &[u8]) -> Result<(), Error> {
         if data.len() > 256 {
             error!("use str16() instead");
-            return Err(Error::Invalid);
+            return Err(ErrorCode::Invalid.into());
         }
         self.put_control_tag(tag_type, WriteElementType::Str8l)?;
         self.buf.le_u8(data.len() as u8)?;
@@ -265,7 +265,7 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
         self.buf.rewind_tail_to(anchor);
     }
 
-    pub fn get_buf<'c>(&'c mut self) -> &'c mut WriteBuf<'a> {
+    pub fn get_buf(&mut self) -> &mut WriteBuf<'b> {
         self.buf
     }
 }
@@ -277,9 +277,8 @@ mod tests {
 
     #[test]
     fn test_write_success() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         tw.start_struct(TagType::Anonymous).unwrap();
@@ -299,9 +298,8 @@ mod tests {
 
     #[test]
     fn test_write_overflow() {
-        let mut buf: [u8; 6] = [0; 6];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 6];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         tw.u8(TagType::Anonymous, 12).unwrap();
@@ -317,9 +315,8 @@ mod tests {
 
     #[test]
     fn test_put_str8() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         tw.u8(TagType::Context(1), 13).unwrap();
@@ -334,9 +331,8 @@ mod tests {
 
     #[test]
     fn test_put_str16_as() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         tw.u8(TagType::Context(1), 13).unwrap();

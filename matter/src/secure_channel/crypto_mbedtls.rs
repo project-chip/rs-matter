@@ -15,14 +15,14 @@
  *    limitations under the License.
  */
 
-use std::{
-    ops::{Mul, Sub},
-    sync::Arc,
+use alloc::sync::Arc;
+use core::ops::{Mul, Sub};
+
+use crate::{
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
 };
 
-use crate::error::Error;
-
-use super::crypto::CryptoSpake2;
 use byteorder::{ByteOrder, LittleEndian};
 use log::error;
 use mbedtls::{
@@ -32,6 +32,8 @@ use mbedtls::{
     pk::{EcGroup, EcGroupId, Pk},
     rng::{CtrDrbg, OsEntropy},
 };
+
+extern crate alloc;
 
 const MATTER_M_BIN: [u8; 65] = [
     0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
@@ -50,7 +52,7 @@ const MATTER_N_BIN: [u8; 65] = [
 
 #[allow(non_snake_case)]
 
-pub struct CryptoMbedTLS {
+pub struct CryptoSpake2 {
     group: EcGroup,
     order: Mpi,
     xy: Mpi,
@@ -62,15 +64,15 @@ pub struct CryptoMbedTLS {
     pB: EcPoint,
 }
 
-impl CryptoSpake2 for CryptoMbedTLS {
+impl CryptoSpake2 {
     #[allow(non_snake_case)]
-    fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         let group = EcGroup::new(mbedtls::pk::EcGroupId::SecP256R1)?;
         let order = group.order()?;
         let M = EcPoint::from_binary(&group, &MATTER_M_BIN)?;
         let N = EcPoint::from_binary(&group, &MATTER_N_BIN)?;
 
-        Ok(CryptoMbedTLS {
+        Ok(Self {
             group,
             order,
             xy: Mpi::new(0)?,
@@ -84,7 +86,7 @@ impl CryptoSpake2 for CryptoMbedTLS {
     }
 
     // Computes w0 from w0s respectively
-    fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error> {
+    pub fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error> {
         // From the Matter Spec,
         //         w0 = w0s mod p
         //   where p is the order of the curve
@@ -94,7 +96,7 @@ impl CryptoSpake2 for CryptoMbedTLS {
         Ok(())
     }
 
-    fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    pub fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter Spec,
         //         w1 = w1s mod p
         //   where p is the order of the curve
@@ -104,24 +106,25 @@ impl CryptoSpake2 for CryptoMbedTLS {
         Ok(())
     }
 
-    fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
+    pub fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
         self.w0 = Mpi::from_binary(w0)?;
         Ok(())
     }
 
-    fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
+    pub fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
         self.w1 = Mpi::from_binary(w1)?;
         Ok(())
     }
 
-    fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
+    #[allow(non_snake_case)]
+    pub fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
         self.L = EcPoint::from_binary(&self.group, l)?;
         Ok(())
     }
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
-    fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    pub fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
@@ -132,7 +135,7 @@ impl CryptoSpake2 for CryptoMbedTLS {
     }
 
     #[allow(non_snake_case)]
-    fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
+    pub fn get_pB(&mut self, pB: &mut [u8], _rand: Rand) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
@@ -150,14 +153,14 @@ impl CryptoSpake2 for CryptoMbedTLS {
         let pB_internal = pB_internal.as_slice();
         if pB_internal.len() != pB.len() {
             error!("pB length mismatch");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         pB.copy_from_slice(pB_internal);
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    fn get_TT_as_verifier(
+    pub fn get_TT_as_verifier(
         &mut self,
         context: &[u8],
         pA: &[u8],
@@ -166,21 +169,21 @@ impl CryptoSpake2 for CryptoMbedTLS {
     ) -> Result<(), Error> {
         let mut TT = Md::new(mbedtls::hash::Type::Sha256)?;
         // context
-        CryptoMbedTLS::add_to_tt(&mut TT, context)?;
+        Self::add_to_tt(&mut TT, context)?;
         // 2 empty identifiers
-        CryptoMbedTLS::add_to_tt(&mut TT, &[])?;
-        CryptoMbedTLS::add_to_tt(&mut TT, &[])?;
+        Self::add_to_tt(&mut TT, &[])?;
+        Self::add_to_tt(&mut TT, &[])?;
         // M
-        CryptoMbedTLS::add_to_tt(&mut TT, &MATTER_M_BIN)?;
+        Self::add_to_tt(&mut TT, &MATTER_M_BIN)?;
         // N
-        CryptoMbedTLS::add_to_tt(&mut TT, &MATTER_N_BIN)?;
+        Self::add_to_tt(&mut TT, &MATTER_N_BIN)?;
         // X = pA
-        CryptoMbedTLS::add_to_tt(&mut TT, pA)?;
+        Self::add_to_tt(&mut TT, pA)?;
         // Y = pB
-        CryptoMbedTLS::add_to_tt(&mut TT, pB)?;
+        Self::add_to_tt(&mut TT, pB)?;
 
         let X = EcPoint::from_binary(&self.group, pA)?;
-        let (Z, V) = CryptoMbedTLS::get_ZV_as_verifier(
+        let (Z, V) = Self::get_ZV_as_verifier(
             &self.w0,
             &self.L,
             &mut self.M,
@@ -193,24 +196,22 @@ impl CryptoSpake2 for CryptoMbedTLS {
         // Z
         let tmp = Z.to_binary(&self.group, false)?;
         let tmp = tmp.as_slice();
-        CryptoMbedTLS::add_to_tt(&mut TT, tmp)?;
+        Self::add_to_tt(&mut TT, tmp)?;
 
         // V
         let tmp = V.to_binary(&self.group, false)?;
         let tmp = tmp.as_slice();
-        CryptoMbedTLS::add_to_tt(&mut TT, tmp)?;
+        Self::add_to_tt(&mut TT, tmp)?;
 
         // w0
         let tmp = self.w0.to_binary()?;
         let tmp = tmp.as_slice();
-        CryptoMbedTLS::add_to_tt(&mut TT, tmp)?;
+        Self::add_to_tt(&mut TT, tmp)?;
 
         TT.finish(out)?;
         Ok(())
     }
-}
 
-impl CryptoMbedTLS {
     fn add_to_tt(tt: &mut Md, buf: &[u8]) -> Result<(), Error> {
         let mut len_buf: [u8; 8] = [0; 8];
         LittleEndian::write_u64(&mut len_buf, buf.len() as u64);
@@ -247,7 +248,7 @@ impl CryptoMbedTLS {
         let mut tmp = x.mul(w0)?;
         tmp = tmp.modulo(order)?;
 
-        let inverted_N = CryptoMbedTLS::invert(group, N)?;
+        let inverted_N = Self::invert(group, N)?;
         let Z = EcPoint::muladd(group, Y, x, &inverted_N, &tmp)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
@@ -283,7 +284,7 @@ impl CryptoMbedTLS {
         let mut tmp = y.mul(w0)?;
         tmp = tmp.modulo(order)?;
 
-        let inverted_M = CryptoMbedTLS::invert(group, M)?;
+        let inverted_M = Self::invert(group, M)?;
         let Z = EcPoint::muladd(group, X, y, &inverted_M, &tmp)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
@@ -302,8 +303,7 @@ impl CryptoMbedTLS {
 #[cfg(test)]
 mod tests {
 
-    use super::CryptoMbedTLS;
-    use crate::secure_channel::crypto::CryptoSpake2;
+    use super::CryptoSpake2;
     use crate::secure_channel::spake2p_test_vectors::test_vectors::*;
     use mbedtls::bignum::Mpi;
     use mbedtls::ecp::EcPoint;
@@ -312,7 +312,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_X() {
         for t in RFC_T {
-            let mut c = CryptoMbedTLS::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let x = Mpi::from_binary(&t.x).unwrap();
             c.set_w0(&t.w0).unwrap();
             let P = c.group.generator().unwrap();
@@ -326,7 +326,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_Y() {
         for t in RFC_T {
-            let mut c = CryptoMbedTLS::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let y = Mpi::from_binary(&t.y).unwrap();
             c.set_w0(&t.w0).unwrap();
             let P = c.group.generator().unwrap();
@@ -339,12 +339,12 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_prover() {
         for t in RFC_T {
-            let mut c = CryptoMbedTLS::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let x = Mpi::from_binary(&t.x).unwrap();
             c.set_w0(&t.w0).unwrap();
             c.set_w1(&t.w1).unwrap();
             let Y = EcPoint::from_binary(&c.group, &t.Y).unwrap();
-            let (Z, V) = CryptoMbedTLS::get_ZV_as_prover(
+            let (Z, V) = CryptoSpake2::get_ZV_as_prover(
                 &c.w0,
                 &c.w1,
                 &mut c.N,
@@ -364,12 +364,12 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_verifier() {
         for t in RFC_T {
-            let mut c = CryptoMbedTLS::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let y = Mpi::from_binary(&t.y).unwrap();
             c.set_w0(&t.w0).unwrap();
             let X = EcPoint::from_binary(&c.group, &t.X).unwrap();
             let L = EcPoint::from_binary(&c.group, &t.L).unwrap();
-            let (Z, V) = CryptoMbedTLS::get_ZV_as_verifier(
+            let (Z, V) = CryptoSpake2::get_ZV_as_verifier(
                 &c.w0,
                 &L,
                 &mut c.M,

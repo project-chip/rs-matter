@@ -17,39 +17,28 @@
 
 use crate::{
     crypto::{self, HmacSha256},
-    sys,
+    utils::rand::Rand,
 };
 use byteorder::{ByteOrder, LittleEndian};
 use log::error;
-use rand::prelude::*;
 use subtle::ConstantTimeEq;
 
 use crate::{
     crypto::{pbkdf2_hmac, Sha256},
-    error::Error,
+    error::{Error, ErrorCode},
 };
-
-#[cfg(feature = "crypto_openssl")]
-use super::crypto_openssl::CryptoOpenSSL;
-
-#[cfg(feature = "crypto_mbedtls")]
-use super::crypto_mbedtls::CryptoMbedTLS;
-
-#[cfg(feature = "crypto_esp_mbedtls")]
-use super::crypto_esp_mbedtls::CryptoEspMbedTls;
-
-#[cfg(feature = "crypto_rustcrypto")]
-use super::crypto_rustcrypto::CryptoRustCrypto;
 
 use super::{common::SCStatusCodes, crypto::CryptoSpake2};
 
-// This file handle Spake2+ specific instructions. In itself, this file is
+// This file handles Spake2+ specific instructions. In itself, this file is
 // independent from the BigNum and EC operations that are typically required
 // Spake2+. We use the CryptoSpake2 trait object that allows us to abstract
 // out the specific implementations.
 //
 // In the case of the verifier, we don't actually release the Ke until we
 // validate that the cA is confirmed.
+
+pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Spake2VerifierState {
@@ -74,7 +63,7 @@ pub struct Spake2P {
     context: Option<Sha256>,
     Ke: [u8; 16],
     cA: [u8; 32],
-    crypto_spake2: Option<Box<dyn CryptoSpake2>>,
+    crypto_spake2: Option<CryptoSpake2>,
     app_data: u32,
 }
 
@@ -87,24 +76,8 @@ const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
 const MAX_SALT_SIZE_BYTES: usize = 32;
 const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
 
-#[cfg(feature = "crypto_openssl")]
-fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
-    Ok(Box::new(CryptoOpenSSL::new()?))
-}
-
-#[cfg(feature = "crypto_mbedtls")]
-fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
-    Ok(Box::new(CryptoMbedTLS::new()?))
-}
-
-#[cfg(feature = "crypto_esp_mbedtls")]
-fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
-    Ok(Box::new(CryptoEspMbedTls::new()?))
-}
-
-#[cfg(feature = "crypto_rustcrypto")]
-fn crypto_spake2_new() -> Result<Box<dyn CryptoSpake2>, Error> {
-    Ok(Box::new(CryptoRustCrypto::new()?))
+fn crypto_spake2_new() -> Result<CryptoSpake2, Error> {
+    CryptoSpake2::new()
 }
 
 impl Default for Spake2P {
@@ -129,13 +102,13 @@ pub enum VerifierOption {
 }
 
 impl VerifierData {
-    pub fn new_with_pw(pw: u32) -> Self {
+    pub fn new_with_pw(pw: u32, rand: Rand) -> Self {
         let mut s = Self {
             salt: [0; MAX_SALT_SIZE_BYTES],
-            count: sys::SPAKE2_ITERATION_COUNT,
+            count: SPAKE2_ITERATION_COUNT,
             data: VerifierOption::Password(pw),
         };
-        rand::thread_rng().fill_bytes(&mut s.salt);
+        rand(&mut s.salt);
         s
     }
 
@@ -158,7 +131,7 @@ impl VerifierData {
 }
 
 impl Spake2P {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Spake2P {
             mode: Spake2Mode::Unknown,
             context: None,
@@ -198,7 +171,7 @@ impl Spake2P {
         match verifier.data {
             VerifierOption::Password(pw) => {
                 // Derive w0 and L from the password
-                let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; 2 * CRYPTO_W_SIZE_BYTES];
+                let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
                 Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
                 let w0s_len = w0w1s.len() / 2;
@@ -223,13 +196,19 @@ impl Spake2P {
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_pA(&mut self, pA: &[u8], pB: &mut [u8], cB: &mut [u8]) -> Result<(), Error> {
+    pub fn handle_pA(
+        &mut self,
+        pA: &[u8],
+        pB: &mut [u8],
+        cB: &mut [u8],
+        rand: Rand,
+    ) -> Result<(), Error> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::Init) {
-            return Err(Error::InvalidState);
+            Err(ErrorCode::InvalidState)?;
         }
 
         if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-            crypto_spake2.get_pB(pB)?;
+            crypto_spake2.get_pB(pB, rand)?;
             if let Some(context) = self.context.take() {
                 let mut hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
                 context.finish(&mut hash)?;
@@ -278,13 +257,13 @@ impl Spake2P {
         if ke_internal.len() == Ke.len() {
             Ke.copy_from_slice(ke_internal);
         } else {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
 
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
         let mut KcAKcB: [u8; 32] = [0; 32];
         crypto::hkdf_sha256(&[], Ka, &SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
-            .map_err(|_x| Error::NoSpace)?;
+            .map_err(|_x| ErrorCode::NoSpace)?;
 
         let KcA = &KcAKcB[0..(KcAKcB.len() / 2)];
         let KcB = &KcAKcB[(KcAKcB.len() / 2)..];
@@ -317,7 +296,7 @@ mod tests {
             0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
             0x36, 0x0,
         ];
-        let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; 2 * CRYPTO_W_SIZE_BYTES];
+        let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
         Spake2P::get_w0w1s(123456, 2000, &salt, &mut w0w1s);
         assert_eq!(
             w0w1s,

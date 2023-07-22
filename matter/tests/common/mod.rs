@@ -18,4 +18,12 @@
 pub mod attributes;
 pub mod commands;
 pub mod echo_cluster;
+pub mod handlers;
 pub mod im_engine;
+
+pub fn init_env_logger() {
+    #[cfg(all(feature = "std", not(target_os = "espidf")))]
+    {
+        let _ = env_logger::try_init();
+    }
+}

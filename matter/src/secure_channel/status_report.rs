@@ -39,6 +39,7 @@ pub enum GeneralCode {
     PermissionDenied = 15,
     DataLoss = 16,
 }
+
 pub fn create_status_report(
     proto_tx: &mut Packet,
     general_code: GeneralCode,
@@ -46,7 +47,8 @@ pub fn create_status_report(
     proto_code: u16,
     proto_data: Option<&[u8]>,
 ) -> Result<(), Error> {
-    proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL as u16);
+    proto_tx.reset();
+    proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
     proto_tx.set_proto_opcode(OpCode::StatusReport as u8);
     let wb = proto_tx.get_writebuf()?;
     wb.le_u16(general_code as u16)?;

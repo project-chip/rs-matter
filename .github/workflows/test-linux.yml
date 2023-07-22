@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crypto-backend: ['crypto_openssl', 'crypto_rustcrypto', 'crypto_mbedtls']
+        crypto-backend: ['rustcrypto', 'mbedtls', 'openssl']
 
     steps:
     - uses: actions/checkout@v2
     - name: Build
-      run: cd matter; cargo build --verbose --no-default-features --features ${{matrix.crypto-backend}}
+      run: cd matter; cargo build --no-default-features --features ${{matrix.crypto-backend}}
     - name: Run tests
-      run: cd matter; cargo test --verbose --no-default-features --features ${{matrix.crypto-backend}} -- --test-threads=1
+      run: cd matter; cargo test --no-default-features --features os,${{matrix.crypto-backend}} -- --test-threads=1

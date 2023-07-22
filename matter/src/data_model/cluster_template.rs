@@ -16,29 +16,59 @@
  */
 
 use crate::{
-    data_model::objects::{Cluster, ClusterType},
-    error::Error,
+    data_model::objects::{Cluster, Handler},
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
+};
+
+use super::objects::{
+    AttrDataEncoder, AttrDetails, ChangeNotifier, Dataver, NonBlockingHandler, ATTRIBUTE_LIST,
+    FEATURE_MAP,
 };
 
 const CLUSTER_NETWORK_COMMISSIONING_ID: u32 = 0x0031;
 
-pub struct TemplateCluster {
-    base: Cluster,
-}
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: CLUSTER_NETWORK_COMMISSIONING_ID as _,
+    feature_map: 0,
+    attributes: &[FEATURE_MAP, ATTRIBUTE_LIST],
+    commands: &[],
+};
 
-impl ClusterType for TemplateCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
-    }
+pub struct TemplateCluster {
+    data_ver: Dataver,
 }
 
 impl TemplateCluster {
-    pub fn new() -> Result<Box<Self>, Error> {
-        Ok(Box::new(Self {
-            base: Cluster::new(CLUSTER_NETWORK_COMMISSIONING_ID)?,
-        }))
+    pub fn new(rand: Rand) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
+        }
+    }
+
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                Err(ErrorCode::AttributeNotFound.into())
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Handler for TemplateCluster {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        TemplateCluster::read(self, attr, encoder)
+    }
+}
+
+impl NonBlockingHandler for TemplateCluster {}
+
+impl ChangeNotifier<()> for TemplateCluster {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
     }
 }

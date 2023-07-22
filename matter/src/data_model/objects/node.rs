@@ -16,283 +16,456 @@
  */
 
 use crate::{
-    data_model::objects::{ClusterType, Endpoint},
-    error::*,
-    interaction_model::{core::IMStatusCode, messages::GenericPath},
+    acl::Accessor,
+    alloc,
+    data_model::objects::Endpoint,
+    interaction_model::{
+        core::IMStatusCode,
+        messages::{
+            ib::{AttrPath, AttrStatus, CmdStatus, DataVersionFilter},
+            msg::{InvReq, ReadReq, SubscribeReq, WriteReq},
+            GenericPath,
+        },
+    },
     // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
+    tlv::{TLVArray, TLVElement},
 };
-use std::fmt;
+use core::{
+    fmt,
+    iter::{once, Once},
+};
 
-use super::{ClusterId, DeviceType, EndptId};
+use super::{AttrDetails, AttrId, Attribute, Cluster, ClusterId, CmdDetails, CmdId, EndptId};
 
-pub trait ChangeConsumer {
-    fn endpoint_added(&self, id: EndptId, endpoint: &mut Endpoint) -> Result<(), Error>;
+pub enum WildcardIter<T, E> {
+    None,
+    Single(Once<E>),
+    Wildcard(T),
 }
 
-pub const ENDPTS_PER_ACC: usize = 3;
+impl<T, E> Iterator for WildcardIter<T, E>
+where
+    T: Iterator<Item = E>,
+{
+    type Item = E;
 
-pub type BoxedEndpoints = [Option<Box<Endpoint>>];
-
-#[derive(Default)]
-pub struct Node {
-    endpoints: [Option<Box<Endpoint>>; ENDPTS_PER_ACC],
-    changes_cb: Option<Box<dyn ChangeConsumer>>,
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::None => None,
+            Self::Single(iter) => iter.next(),
+            Self::Wildcard(iter) => iter.next(),
+        }
+    }
 }
 
-impl std::fmt::Display for Node {
+#[derive(Debug, Clone)]
+pub struct Node<'a> {
+    pub id: u16,
+    pub endpoints: &'a [Endpoint<'a>],
+}
+
+impl<'a> Node<'a> {
+    pub fn read<'s, 'm>(
+        &'s self,
+        req: &'m ReadReq,
+        from: Option<GenericPath>,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+    {
+        self.read_attr_requests(
+            req.attr_requests
+                .iter()
+                .flat_map(|attr_requests| attr_requests.iter()),
+            req.dataver_filters.as_ref(),
+            req.fabric_filtered,
+            accessor,
+            from,
+        )
+    }
+
+    pub fn subscribing_read<'s, 'm>(
+        &'s self,
+        req: &'m SubscribeReq,
+        from: Option<GenericPath>,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+    {
+        self.read_attr_requests(
+            req.attr_requests
+                .iter()
+                .flat_map(|attr_requests| attr_requests.iter()),
+            req.dataver_filters.as_ref(),
+            req.fabric_filtered,
+            accessor,
+            from,
+        )
+    }
+
+    fn read_attr_requests<'s, 'm, P>(
+        &'s self,
+        attr_requests: P,
+        dataver_filters: Option<&'m TLVArray<DataVersionFilter>>,
+        fabric_filtered: bool,
+        accessor: &'m Accessor<'m>,
+        from: Option<GenericPath>,
+    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
+    where
+        's: 'm,
+        P: Iterator<Item = AttrPath> + 'm,
+    {
+        alloc!(attr_requests.flat_map(move |path| {
+            if path.to_gp().is_wildcard() {
+                let from = from.clone();
+
+                let iter = self
+                    .match_attributes(path.endpoint, path.cluster, path.attr)
+                    .skip_while(move |(ep, cl, attr)| {
+                        !Self::matches(from.as_ref(), ep.id, cl.id, attr.id as _)
+                    })
+                    .filter(move |(ep, cl, attr)| {
+                        Cluster::check_attr_access(
+                            accessor,
+                            GenericPath::new(Some(ep.id), Some(cl.id), Some(attr.id as _)),
+                            false,
+                            attr.access,
+                        )
+                        .is_ok()
+                    })
+                    .map(move |(ep, cl, attr)| {
+                        let dataver = if let Some(dataver_filters) = dataver_filters {
+                            dataver_filters.iter().find_map(|filter| {
+                                (filter.path.endpoint == ep.id && filter.path.cluster == cl.id)
+                                    .then_some(filter.data_ver)
+                            })
+                        } else {
+                            None
+                        };
+
+                        Ok(AttrDetails {
+                            node: self,
+                            endpoint_id: ep.id,
+                            cluster_id: cl.id,
+                            attr_id: attr.id,
+                            list_index: path.list_index,
+                            fab_idx: accessor.fab_idx,
+                            fab_filter: fabric_filtered,
+                            dataver,
+                            wildcard: true,
+                        })
+                    });
+
+                WildcardIter::Wildcard(iter)
+            } else {
+                let ep = path.endpoint.unwrap();
+                let cl = path.cluster.unwrap();
+                let attr = path.attr.unwrap();
+
+                let result = match self.check_attribute(accessor, ep, cl, attr, false) {
+                    Ok(()) => {
+                        let dataver = if let Some(dataver_filters) = dataver_filters {
+                            dataver_filters.iter().find_map(|filter| {
+                                (filter.path.endpoint == ep && filter.path.cluster == cl)
+                                    .then_some(filter.data_ver)
+                            })
+                        } else {
+                            None
+                        };
+
+                        Ok(AttrDetails {
+                            node: self,
+                            endpoint_id: ep,
+                            cluster_id: cl,
+                            attr_id: attr,
+                            list_index: path.list_index,
+                            fab_idx: accessor.fab_idx,
+                            fab_filter: fabric_filtered,
+                            dataver,
+                            wildcard: false,
+                        })
+                    }
+                    Err(err) => Err(AttrStatus::new(&path.to_gp(), err, 0)),
+                };
+
+                WildcardIter::Single(once(result))
+            }
+        }))
+    }
+
+    pub fn write<'m>(
+        &'m self,
+        req: &'m WriteReq,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<(AttrDetails, TLVElement<'m>), AttrStatus>> + 'm {
+        alloc!(req.write_requests.iter().flat_map(move |attr_data| {
+            if attr_data.path.cluster.is_none() {
+                WildcardIter::Single(once(Err(AttrStatus::new(
+                    &attr_data.path.to_gp(),
+                    IMStatusCode::UnsupportedCluster,
+                    0,
+                ))))
+            } else if attr_data.path.attr.is_none() {
+                WildcardIter::Single(once(Err(AttrStatus::new(
+                    &attr_data.path.to_gp(),
+                    IMStatusCode::UnsupportedAttribute,
+                    0,
+                ))))
+            } else if attr_data.path.to_gp().is_wildcard() {
+                let iter = self
+                    .match_attributes(
+                        attr_data.path.endpoint,
+                        attr_data.path.cluster,
+                        attr_data.path.attr,
+                    )
+                    .filter(move |(ep, cl, attr)| {
+                        Cluster::check_attr_access(
+                            accessor,
+                            GenericPath::new(Some(ep.id), Some(cl.id), Some(attr.id as _)),
+                            true,
+                            attr.access,
+                        )
+                        .is_ok()
+                    })
+                    .map(move |(ep, cl, attr)| {
+                        Ok((
+                            AttrDetails {
+                                node: self,
+                                endpoint_id: ep.id,
+                                cluster_id: cl.id,
+                                attr_id: attr.id,
+                                list_index: attr_data.path.list_index,
+                                fab_idx: accessor.fab_idx,
+                                fab_filter: false,
+                                dataver: attr_data.data_ver,
+                                wildcard: true,
+                            },
+                            attr_data.data.clone().unwrap_tlv().unwrap(),
+                        ))
+                    });
+
+                WildcardIter::Wildcard(iter)
+            } else {
+                let ep = attr_data.path.endpoint.unwrap();
+                let cl = attr_data.path.cluster.unwrap();
+                let attr = attr_data.path.attr.unwrap();
+
+                let result = match self.check_attribute(accessor, ep, cl, attr, true) {
+                    Ok(()) => Ok((
+                        AttrDetails {
+                            node: self,
+                            endpoint_id: ep,
+                            cluster_id: cl,
+                            attr_id: attr,
+                            list_index: attr_data.path.list_index,
+                            fab_idx: accessor.fab_idx,
+                            fab_filter: false,
+                            dataver: attr_data.data_ver,
+                            wildcard: false,
+                        },
+                        attr_data.data.unwrap_tlv().unwrap(),
+                    )),
+                    Err(err) => Err(AttrStatus::new(&attr_data.path.to_gp(), err, 0)),
+                };
+
+                WildcardIter::Single(once(result))
+            }
+        }))
+    }
+
+    pub fn invoke<'m>(
+        &'m self,
+        req: &'m InvReq,
+        accessor: &'m Accessor<'m>,
+    ) -> impl Iterator<Item = Result<(CmdDetails, TLVElement<'m>), CmdStatus>> + 'm {
+        alloc!(req
+            .inv_requests
+            .iter()
+            .flat_map(|inv_requests| inv_requests.iter())
+            .flat_map(move |cmd_data| {
+                if cmd_data.path.path.is_wildcard() {
+                    let iter = self
+                        .match_commands(
+                            cmd_data.path.path.endpoint,
+                            cmd_data.path.path.cluster,
+                            cmd_data.path.path.leaf.map(|leaf| leaf as _),
+                        )
+                        .filter(move |(ep, cl, cmd)| {
+                            Cluster::check_cmd_access(
+                                accessor,
+                                GenericPath::new(Some(ep.id), Some(cl.id), Some(*cmd)),
+                            )
+                            .is_ok()
+                        })
+                        .map(move |(ep, cl, cmd)| {
+                            Ok((
+                                CmdDetails {
+                                    node: self,
+                                    endpoint_id: ep.id,
+                                    cluster_id: cl.id,
+                                    cmd_id: cmd,
+                                    wildcard: true,
+                                },
+                                cmd_data.data.clone().unwrap_tlv().unwrap(),
+                            ))
+                        });
+
+                    WildcardIter::Wildcard(iter)
+                } else {
+                    let ep = cmd_data.path.path.endpoint.unwrap();
+                    let cl = cmd_data.path.path.cluster.unwrap();
+                    let cmd = cmd_data.path.path.leaf.unwrap();
+
+                    let result = match self.check_command(accessor, ep, cl, cmd) {
+                        Ok(()) => Ok((
+                            CmdDetails {
+                                node: self,
+                                endpoint_id: cmd_data.path.path.endpoint.unwrap(),
+                                cluster_id: cmd_data.path.path.cluster.unwrap(),
+                                cmd_id: cmd_data.path.path.leaf.unwrap(),
+                                wildcard: false,
+                            },
+                            cmd_data.data.unwrap_tlv().unwrap(),
+                        )),
+                        Err(err) => Err(CmdStatus::new(cmd_data.path, err, 0)),
+                    };
+
+                    WildcardIter::Single(once(result))
+                }
+            }))
+    }
+
+    fn matches(path: Option<&GenericPath>, ep: EndptId, cl: ClusterId, leaf: u32) -> bool {
+        if let Some(path) = path {
+            path.endpoint.map(|id| id == ep).unwrap_or(true)
+                && path.cluster.map(|id| id == cl).unwrap_or(true)
+                && path.leaf.map(|id| id == leaf).unwrap_or(true)
+        } else {
+            true
+        }
+    }
+
+    pub fn match_attributes(
+        &self,
+        ep: Option<EndptId>,
+        cl: Option<ClusterId>,
+        attr: Option<AttrId>,
+    ) -> impl Iterator<Item = (&'_ Endpoint, &'_ Cluster, &'_ Attribute)> + '_ {
+        self.match_endpoints(ep).flat_map(move |endpoint| {
+            endpoint
+                .match_attributes(cl, attr)
+                .map(move |(cl, attr)| (endpoint, cl, attr))
+        })
+    }
+
+    pub fn match_commands(
+        &self,
+        ep: Option<EndptId>,
+        cl: Option<ClusterId>,
+        cmd: Option<CmdId>,
+    ) -> impl Iterator<Item = (&'_ Endpoint, &'_ Cluster, CmdId)> + '_ {
+        self.match_endpoints(ep).flat_map(move |endpoint| {
+            endpoint
+                .match_commands(cl, cmd)
+                .map(move |(cl, cmd)| (endpoint, cl, cmd))
+        })
+    }
+
+    pub fn check_attribute(
+        &self,
+        accessor: &Accessor,
+        ep: EndptId,
+        cl: ClusterId,
+        attr: AttrId,
+        write: bool,
+    ) -> Result<(), IMStatusCode> {
+        self.check_endpoint(ep)
+            .and_then(|endpoint| endpoint.check_attribute(accessor, cl, attr, write))
+    }
+
+    pub fn check_command(
+        &self,
+        accessor: &Accessor,
+        ep: EndptId,
+        cl: ClusterId,
+        cmd: CmdId,
+    ) -> Result<(), IMStatusCode> {
+        self.check_endpoint(ep)
+            .and_then(|endpoint| endpoint.check_command(accessor, cl, cmd))
+    }
+
+    pub fn match_endpoints(&self, ep: Option<EndptId>) -> impl Iterator<Item = &'_ Endpoint> + '_ {
+        self.endpoints
+            .iter()
+            .filter(move |endpoint| ep.map(|id| id == endpoint.id).unwrap_or(true))
+    }
+
+    pub fn check_endpoint(&self, ep: EndptId) -> Result<&Endpoint, IMStatusCode> {
+        self.endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == ep)
+            .ok_or(IMStatusCode::UnsupportedEndpoint)
+    }
+}
+
+impl<'a> core::fmt::Display for Node<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "node:")?;
-        for (i, element) in self.endpoints.iter().enumerate() {
-            if let Some(e) = element {
-                writeln!(f, "endpoint {}: {}", i, e)?;
-            }
+        for (index, endpoint) in self.endpoints.iter().enumerate() {
+            writeln!(f, "endpoint {}: {}", index, endpoint)?;
         }
+
         write!(f, "")
     }
 }
 
-impl Node {
-    pub fn new() -> Result<Box<Node>, Error> {
-        let node = Box::default();
-        Ok(node)
+pub struct DynamicNode<'a, const N: usize> {
+    id: u16,
+    endpoints: heapless::Vec<Endpoint<'a>, N>,
+}
+
+impl<'a, const N: usize> DynamicNode<'a, N> {
+    pub const fn new(id: u16) -> Self {
+        Self {
+            id,
+            endpoints: heapless::Vec::new(),
+        }
     }
 
-    pub fn set_changes_cb(&mut self, consumer: Box<dyn ChangeConsumer>) {
-        self.changes_cb = Some(consumer);
+    pub fn node(&self) -> Node<'_> {
+        Node {
+            id: self.id,
+            endpoints: &self.endpoints,
+        }
     }
 
-    pub fn add_endpoint(&mut self, dev_type: DeviceType) -> Result<EndptId, Error> {
+    pub fn add(&mut self, endpoint: Endpoint<'a>) -> Result<(), Endpoint<'a>> {
+        if !self.endpoints.iter().any(|ep| ep.id == endpoint.id) {
+            self.endpoints.push(endpoint)
+        } else {
+            Err(endpoint)
+        }
+    }
+
+    pub fn remove(&mut self, endpoint_id: u16) -> Option<Endpoint<'a>> {
         let index = self
             .endpoints
             .iter()
-            .position(|x| x.is_none())
-            .ok_or(Error::NoSpace)?;
-        let mut endpoint = Endpoint::new(dev_type)?;
-        if let Some(cb) = &self.changes_cb {
-            cb.endpoint_added(index as EndptId, &mut endpoint)?;
-        }
-        self.endpoints[index] = Some(endpoint);
-        Ok(index as EndptId)
-    }
+            .enumerate()
+            .find_map(|(index, ep)| (ep.id == endpoint_id).then_some(index));
 
-    pub fn get_endpoint(&self, endpoint_id: EndptId) -> Result<&Endpoint, Error> {
-        if (endpoint_id as usize) < ENDPTS_PER_ACC {
-            let endpoint = self.endpoints[endpoint_id as usize]
-                .as_ref()
-                .ok_or(Error::EndpointNotFound)?;
-            Ok(endpoint)
+        if let Some(index) = index {
+            Some(self.endpoints.swap_remove(index))
         } else {
-            Err(Error::EndpointNotFound)
+            None
         }
     }
+}
 
-    pub fn get_endpoint_mut(&mut self, endpoint_id: EndptId) -> Result<&mut Endpoint, Error> {
-        if (endpoint_id as usize) < ENDPTS_PER_ACC {
-            let endpoint = self.endpoints[endpoint_id as usize]
-                .as_mut()
-                .ok_or(Error::EndpointNotFound)?;
-            Ok(endpoint)
-        } else {
-            Err(Error::EndpointNotFound)
-        }
-    }
-
-    pub fn get_cluster_mut(
-        &mut self,
-        e: EndptId,
-        c: ClusterId,
-    ) -> Result<&mut dyn ClusterType, Error> {
-        self.get_endpoint_mut(e)?.get_cluster_mut(c)
-    }
-
-    pub fn get_cluster(&self, e: EndptId, c: ClusterId) -> Result<&dyn ClusterType, Error> {
-        self.get_endpoint(e)?.get_cluster(c)
-    }
-
-    pub fn add_cluster(
-        &mut self,
-        endpoint_id: EndptId,
-        cluster: Box<dyn ClusterType>,
-    ) -> Result<(), Error> {
-        let endpoint_id = endpoint_id as usize;
-        if endpoint_id < ENDPTS_PER_ACC {
-            self.endpoints[endpoint_id]
-                .as_mut()
-                .ok_or(Error::NoEndpoint)?
-                .add_cluster(cluster)
-        } else {
-            Err(Error::Invalid)
-        }
-    }
-
-    // Returns a slice of endpoints, with either a single endpoint or all (wildcard)
-    pub fn get_wildcard_endpoints(
-        &self,
-        endpoint: Option<EndptId>,
-    ) -> Result<(&BoxedEndpoints, usize, bool), IMStatusCode> {
-        if let Some(e) = endpoint {
-            let e = e as usize;
-            if self.endpoints.len() <= e || self.endpoints[e].is_none() {
-                Err(IMStatusCode::UnsupportedEndpoint)
-            } else {
-                Ok((&self.endpoints[e..e + 1], e, false))
-            }
-        } else {
-            Ok((&self.endpoints[..], 0, true))
-        }
-    }
-
-    pub fn get_wildcard_endpoints_mut(
-        &mut self,
-        endpoint: Option<EndptId>,
-    ) -> Result<(&mut BoxedEndpoints, usize, bool), IMStatusCode> {
-        if let Some(e) = endpoint {
-            let e = e as usize;
-            if self.endpoints.len() <= e || self.endpoints[e].is_none() {
-                Err(IMStatusCode::UnsupportedEndpoint)
-            } else {
-                Ok((&mut self.endpoints[e..e + 1], e, false))
-            }
-        } else {
-            Ok((&mut self.endpoints[..], 0, true))
-        }
-    }
-
-    /// Run a closure for all endpoints as specified in the path
-    ///
-    /// Note that the path is a GenericPath and hence can be a wildcard path. The behaviour
-    /// of this function is to only capture the successful invocations and ignore the erroneous
-    /// ones. This is inline with the expected behaviour for wildcard, where it implies that
-    /// 'please run this operation on this wildcard path "wherever possible"'
-    ///
-    /// It is expected that if the closure that you pass here returns an error it may not reach
-    /// out to the caller, in case there was a wildcard path specified
-    pub fn for_each_endpoint<T>(&self, path: &GenericPath, mut f: T) -> Result<(), IMStatusCode>
-    where
-        T: FnMut(&GenericPath, &Endpoint) -> Result<(), IMStatusCode>,
-    {
-        let mut current_path = *path;
-        let (endpoints, mut endpoint_id, wildcard) = self.get_wildcard_endpoints(path.endpoint)?;
-        for e in endpoints.iter() {
-            if let Some(e) = e {
-                current_path.endpoint = Some(endpoint_id as EndptId);
-                f(&current_path, e.as_ref())
-                    .or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
-            }
-            endpoint_id += 1;
-        }
-        Ok(())
-    }
-
-    /// Run a closure for all endpoints  (mutable) as specified in the path
-    ///
-    /// Note that the path is a GenericPath and hence can be a wildcard path. The behaviour
-    /// of this function is to only capture the successful invocations and ignore the erroneous
-    /// ones. This is inline with the expected behaviour for wildcard, where it implies that
-    /// 'please run this operation on this wildcard path "wherever possible"'
-    ///
-    /// It is expected that if the closure that you pass here returns an error it may not reach
-    /// out to the caller, in case there was a wildcard path specified
-    pub fn for_each_endpoint_mut<T>(
-        &mut self,
-        path: &GenericPath,
-        mut f: T,
-    ) -> Result<(), IMStatusCode>
-    where
-        T: FnMut(&GenericPath, &mut Endpoint) -> Result<(), IMStatusCode>,
-    {
-        let mut current_path = *path;
-        let (endpoints, mut endpoint_id, wildcard) =
-            self.get_wildcard_endpoints_mut(path.endpoint)?;
-        for e in endpoints.iter_mut() {
-            if let Some(e) = e {
-                current_path.endpoint = Some(endpoint_id as EndptId);
-                f(&current_path, e.as_mut())
-                    .or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
-            }
-            endpoint_id += 1;
-        }
-        Ok(())
-    }
-
-    /// Run a closure for all clusters as specified in the path
-    ///
-    /// Note that the path is a GenericPath and hence can be a wildcard path. The behaviour
-    /// of this function is to only capture the successful invocations and ignore the erroneous
-    /// ones. This is inline with the expected behaviour for wildcard, where it implies that
-    /// 'please run this operation on this wildcard path "wherever possible"'
-    ///
-    /// It is expected that if the closure that you pass here returns an error it may not reach
-    /// out to the caller, in case there was a wildcard path specified
-    pub fn for_each_cluster<T>(&self, path: &GenericPath, mut f: T) -> Result<(), IMStatusCode>
-    where
-        T: FnMut(&GenericPath, &dyn ClusterType) -> Result<(), IMStatusCode>,
-    {
-        self.for_each_endpoint(path, |p, e| {
-            let mut current_path = *p;
-            let (clusters, wildcard) = e.get_wildcard_clusters(p.cluster)?;
-            for c in clusters.iter() {
-                current_path.cluster = Some(c.base().id);
-                f(&current_path, c.as_ref())
-                    .or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
-            }
-            Ok(())
-        })
-    }
-
-    /// Run a closure for all clusters (mutable) as specified in the path
-    ///
-    /// Note that the path is a GenericPath and hence can be a wildcard path. The behaviour
-    /// of this function is to only capture the successful invocations and ignore the erroneous
-    /// ones. This is inline with the expected behaviour for wildcard, where it implies that
-    /// 'please run this operation on this wildcard path "wherever possible"'
-    ///
-    /// It is expected that if the closure that you pass here returns an error it may not reach
-    /// out to the caller, in case there was a wildcard path specified
-    pub fn for_each_cluster_mut<T>(
-        &mut self,
-        path: &GenericPath,
-        mut f: T,
-    ) -> Result<(), IMStatusCode>
-    where
-        T: FnMut(&GenericPath, &mut dyn ClusterType) -> Result<(), IMStatusCode>,
-    {
-        self.for_each_endpoint_mut(path, |p, e| {
-            let mut current_path = *p;
-            let (clusters, wildcard) = e.get_wildcard_clusters_mut(p.cluster)?;
-
-            for c in clusters.iter_mut() {
-                current_path.cluster = Some(c.base().id);
-                f(&current_path, c.as_mut())
-                    .or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
-            }
-            Ok(())
-        })
-    }
-
-    /// Run a closure for all attributes as specified in the path
-    ///
-    /// Note that the path is a GenericPath and hence can be a wildcard path. The behaviour
-    /// of this function is to only capture the successful invocations and ignore the erroneous
-    /// ones. This is inline with the expected behaviour for wildcard, where it implies that
-    /// 'please run this operation on this wildcard path "wherever possible"'
-    ///
-    /// It is expected that if the closure that you pass here returns an error it may not reach
-    /// out to the caller, in case there was a wildcard path specified
-    pub fn for_each_attribute<T>(&self, path: &GenericPath, mut f: T) -> Result<(), IMStatusCode>
-    where
-        T: FnMut(&GenericPath, &dyn ClusterType) -> Result<(), IMStatusCode>,
-    {
-        self.for_each_cluster(path, |current_path, c| {
-            let mut current_path = *current_path;
-            let (attributes, wildcard) = c
-                .base()
-                .get_wildcard_attribute(path.leaf.map(|at| at as u16))?;
-            for a in attributes.iter() {
-                current_path.leaf = Some(a.id as u32);
-                f(&current_path, c).or_else(|e| if !wildcard { Err(e) } else { Ok(()) })?;
-            }
-            Ok(())
-        })
+impl<'a, const N: usize> core::fmt::Display for DynamicNode<'a, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.node().fmt(f)
     }
 }

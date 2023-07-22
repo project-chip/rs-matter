@@ -17,13 +17,15 @@
 
 pub mod case;
 pub mod common;
-#[cfg(feature = "crypto_esp_mbedtls")]
-pub mod crypto_esp_mbedtls;
-#[cfg(feature = "crypto_mbedtls")]
-pub mod crypto_mbedtls;
-#[cfg(feature = "crypto_openssl")]
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+mod crypto_dummy;
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
+mod crypto_esp_mbedtls;
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
+mod crypto_mbedtls;
+#[cfg(feature = "openssl")]
 pub mod crypto_openssl;
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(feature = "rustcrypto")]
 pub mod crypto_rustcrypto;
 
 pub mod core;

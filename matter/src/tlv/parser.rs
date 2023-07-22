@@ -15,11 +15,11 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
 use byteorder::{ByteOrder, LittleEndian};
+use core::fmt;
 use log::{error, info};
-use std::fmt;
 
 use super::{TagType, MAX_TAG_INDEX, TAG_MASK, TAG_SHIFT_BITS, TAG_SIZE_MAP, TYPE_MASK};
 
@@ -33,14 +33,7 @@ impl<'a> TLVList<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Pointer<'a> {
-    buf: &'a [u8],
-    current: usize,
-    left: usize,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ElementType<'a> {
     S8(i8),
     S16(i16),
@@ -63,9 +56,9 @@ pub enum ElementType<'a> {
     Str32l,
     Str64l,
     Null,
-    Struct(Pointer<'a>),
-    Array(Pointer<'a>),
-    List(Pointer<'a>),
+    Struct(&'a [u8]),
+    Array(&'a [u8]),
+    List(&'a [u8]),
     EndCnt,
     Last,
 }
@@ -204,44 +197,11 @@ static VALUE_EXTRACTOR: [ExtractValue; MAX_VALUE_INDEX] = [
     // Null  20
     { |_t| (0, ElementType::Null) },
     // Struct 21
-    {
-        |t| {
-            (
-                0,
-                ElementType::Struct(Pointer {
-                    buf: t.buf,
-                    current: t.current,
-                    left: t.left,
-                }),
-            )
-        }
-    },
+    { |t| (0, ElementType::Struct(&t.buf[t.current..])) },
     // Array  22
-    {
-        |t| {
-            (
-                0,
-                ElementType::Array(Pointer {
-                    buf: t.buf,
-                    current: t.current,
-                    left: t.left,
-                }),
-            )
-        }
-    },
+    { |t| (0, ElementType::Array(&t.buf[t.current..])) },
     // List  23
-    {
-        |t| {
-            (
-                0,
-                ElementType::List(Pointer {
-                    buf: t.buf,
-                    current: t.current,
-                    left: t.left,
-                }),
-            )
-        }
-    },
+    { |t| (0, ElementType::List(&t.buf[t.current..])) },
     // EndCnt  24
     { |_t| (0, ElementType::EndCnt) },
 ];
@@ -282,9 +242,9 @@ fn read_length_value<'a>(
     // The current offset is the string size
     let length: usize = LittleEndian::read_uint(&t.buf[t.current..], size_of_length_field) as usize;
     // We'll consume the current offset (len) + the entire string
-    if length + size_of_length_field > t.left {
+    if length + size_of_length_field > t.buf.len() - t.current {
         // Return Error
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     } else {
         Ok((
             // return the additional size only
@@ -294,7 +254,7 @@ fn read_length_value<'a>(
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct TLVElement<'a> {
     tag_type: TagType,
     element_type: ElementType<'a>,
@@ -303,11 +263,11 @@ pub struct TLVElement<'a> {
 impl<'a> PartialEq for TLVElement<'a> {
     fn eq(&self, other: &Self) -> bool {
         match self.element_type {
-            ElementType::Struct(a) | ElementType::Array(a) | ElementType::List(a) => {
-                let mut our_iter = TLVListIterator::from_pointer(a);
+            ElementType::Struct(buf) | ElementType::Array(buf) | ElementType::List(buf) => {
+                let mut our_iter = TLVListIterator::from_buf(buf);
                 let mut their = match other.element_type {
-                    ElementType::Struct(b) | ElementType::Array(b) | ElementType::List(b) => {
-                        TLVListIterator::from_pointer(b)
+                    ElementType::Struct(buf) | ElementType::Array(buf) | ElementType::List(buf) => {
+                        TLVListIterator::from_buf(buf)
                     }
                     _ => {
                         // If we are a container, the other must be a container, else this is a mismatch
@@ -318,7 +278,7 @@ impl<'a> PartialEq for TLVElement<'a> {
                 loop {
                     let ours = our_iter.next();
                     let theirs = their.next();
-                    if std::mem::discriminant(&ours) != std::mem::discriminant(&theirs) {
+                    if core::mem::discriminant(&ours) != core::mem::discriminant(&theirs) {
                         // One of us reached end of list, but the other didn't, that's a mismatch
                         return false;
                     }
@@ -336,13 +296,13 @@ impl<'a> PartialEq for TLVElement<'a> {
                         }
                         nest_level -= 1;
                     } else {
-                        if is_container(ours.element_type) {
+                        if is_container(&ours.element_type) {
                             nest_level += 1;
                             // Only compare the discriminants in case of array/list/structures,
                             // instead of actual element values. Those will be subsets within this same
                             // list that will get validated anyway
-                            if std::mem::discriminant(&ours.element_type)
-                                != std::mem::discriminant(&theirs.element_type)
+                            if core::mem::discriminant(&ours.element_type)
+                                != core::mem::discriminant(&theirs.element_type)
                             {
                                 return false;
                             }
@@ -364,15 +324,11 @@ impl<'a> PartialEq for TLVElement<'a> {
 
 impl<'a> TLVElement<'a> {
     pub fn enter(&self) -> Option<TLVContainerIterator<'a>> {
-        let ptr = match self.element_type {
-            ElementType::Struct(a) | ElementType::Array(a) | ElementType::List(a) => a,
+        let buf = match self.element_type {
+            ElementType::Struct(buf) | ElementType::Array(buf) | ElementType::List(buf) => buf,
             _ => return None,
         };
-        let list_iter = TLVListIterator {
-            buf: ptr.buf,
-            current: ptr.current,
-            left: ptr.left,
-        };
+        let list_iter = TLVListIterator { buf, current: 0 };
         Some(TLVContainerIterator {
             list_iter,
             prev_container: false,
@@ -390,14 +346,22 @@ impl<'a> TLVElement<'a> {
     pub fn i8(&self) -> Result<i8, Error> {
         match self.element_type {
             ElementType::S8(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn u8(&self) -> Result<u8, Error> {
         match self.element_type {
             ElementType::U8(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
+    pub fn i16(&self) -> Result<i16, Error> {
+        match self.element_type {
+            ElementType::S8(a) => Ok(a.into()),
+            ElementType::S16(a) => Ok(a),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -405,7 +369,16 @@ impl<'a> TLVElement<'a> {
         match self.element_type {
             ElementType::U8(a) => Ok(a.into()),
             ElementType::U16(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
+    pub fn i32(&self) -> Result<i32, Error> {
+        match self.element_type {
+            ElementType::S8(a) => Ok(a.into()),
+            ElementType::S16(a) => Ok(a.into()),
+            ElementType::S32(a) => Ok(a),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -414,7 +387,17 @@ impl<'a> TLVElement<'a> {
             ElementType::U8(a) => Ok(a.into()),
             ElementType::U16(a) => Ok(a.into()),
             ElementType::U32(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
+    pub fn i64(&self) -> Result<i64, Error> {
+        match self.element_type {
+            ElementType::S8(a) => Ok(a.into()),
+            ElementType::S16(a) => Ok(a.into()),
+            ElementType::S32(a) => Ok(a.into()),
+            ElementType::S64(a) => Ok(a),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -424,7 +407,7 @@ impl<'a> TLVElement<'a> {
             ElementType::U16(a) => Ok(a.into()),
             ElementType::U32(a) => Ok(a.into()),
             ElementType::U64(a) => Ok(a),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -434,7 +417,19 @@ impl<'a> TLVElement<'a> {
             | ElementType::Utf8l(s)
             | ElementType::Str16l(s)
             | ElementType::Utf16l(s) => Ok(s),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
+        }
+    }
+
+    pub fn str(&self) -> Result<&'a str, Error> {
+        match self.element_type {
+            ElementType::Str8l(s)
+            | ElementType::Utf8l(s)
+            | ElementType::Str16l(s)
+            | ElementType::Utf16l(s) => {
+                Ok(core::str::from_utf8(s).map_err(|_| Error::from(ErrorCode::InvalidData))?)
+            }
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
@@ -442,48 +437,48 @@ impl<'a> TLVElement<'a> {
         match self.element_type {
             ElementType::False => Ok(false),
             ElementType::True => Ok(true),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn null(&self) -> Result<(), Error> {
         match self.element_type {
             ElementType::Null => Ok(()),
-            _ => Err(Error::TLVTypeMismatch),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
-    pub fn confirm_struct(&self) -> Result<TLVElement<'a>, Error> {
+    pub fn confirm_struct(&self) -> Result<&TLVElement<'a>, Error> {
         match self.element_type {
-            ElementType::Struct(_) => Ok(*self),
-            _ => Err(Error::TLVTypeMismatch),
+            ElementType::Struct(_) => Ok(self),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
-    pub fn confirm_array(&self) -> Result<TLVElement<'a>, Error> {
+    pub fn confirm_array(&self) -> Result<&TLVElement<'a>, Error> {
         match self.element_type {
-            ElementType::Array(_) => Ok(*self),
-            _ => Err(Error::TLVTypeMismatch),
+            ElementType::Array(_) => Ok(self),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
-    pub fn confirm_list(&self) -> Result<TLVElement<'a>, Error> {
+    pub fn confirm_list(&self) -> Result<&TLVElement<'a>, Error> {
         match self.element_type {
-            ElementType::List(_) => Ok(*self),
-            _ => Err(Error::TLVTypeMismatch),
+            ElementType::List(_) => Ok(self),
+            _ => Err(ErrorCode::TLVTypeMismatch.into()),
         }
     }
 
     pub fn find_tag(&self, tag: u32) -> Result<TLVElement<'a>, Error> {
         let match_tag: TagType = TagType::Context(tag as u8);
 
-        let iter = self.enter().ok_or(Error::TLVTypeMismatch)?;
+        let iter = self.enter().ok_or(ErrorCode::TLVTypeMismatch)?;
         for a in iter {
             if match_tag == a.tag_type {
                 return Ok(a);
             }
         }
-        Err(Error::NoTagFound)
+        Err(ErrorCode::NoTagFound.into())
     }
 
     pub fn get_tag(&self) -> TagType {
@@ -499,8 +494,8 @@ impl<'a> TLVElement<'a> {
         false
     }
 
-    pub fn get_element_type(&self) -> ElementType {
-        self.element_type
+    pub fn get_element_type(&self) -> &ElementType {
+        &self.element_type
     }
 }
 
@@ -522,7 +517,7 @@ impl<'a> fmt::Display for TLVElement<'a> {
             | ElementType::Utf8l(a)
             | ElementType::Str16l(a)
             | ElementType::Utf16l(a) => {
-                if let Ok(s) = std::str::from_utf8(a) {
+                if let Ok(s) = core::str::from_utf8(a) {
                     write!(f, "len[{}]\"{}\"", s.len(), s)
                 } else {
                     write!(f, "len[{}]{:x?}", a.len(), a)
@@ -534,25 +529,19 @@ impl<'a> fmt::Display for TLVElement<'a> {
 }
 
 // This is a TLV List iterator, it only iterates over the individual TLVs in a TLV list
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TLVListIterator<'a> {
     buf: &'a [u8],
     current: usize,
-    left: usize,
 }
 
 impl<'a> TLVListIterator<'a> {
-    fn from_pointer(p: Pointer<'a>) -> Self {
-        Self {
-            buf: p.buf,
-            current: p.current,
-            left: p.left,
-        }
+    fn from_buf(buf: &'a [u8]) -> Self {
+        Self { buf, current: 0 }
     }
 
     fn advance(&mut self, len: usize) {
         self.current += len;
-        self.left -= len;
     }
 
     // Caller should ensure they are reading the _right_ tag at the _right_ place
@@ -561,7 +550,7 @@ impl<'a> TLVListIterator<'a> {
             return None;
         }
         let tag_size = TAG_SIZE_MAP[tag_type as usize];
-        if tag_size > self.left {
+        if tag_size > self.buf.len() - self.current {
             return None;
         }
         let tag = (TAG_EXTRACTOR[tag_type as usize])(self);
@@ -574,7 +563,7 @@ impl<'a> TLVListIterator<'a> {
             return None;
         }
         let mut size = VALUE_SIZE_MAP[element_type as usize];
-        if size > self.left {
+        if size > self.buf.len() - self.current {
             error!(
                 "Invalid value found: {} self {:?} size {}",
                 element_type, self, size
@@ -597,7 +586,7 @@ impl<'a> Iterator for TLVListIterator<'a> {
     type Item = TLVElement<'a>;
     /* Code for going to the next Element */
     fn next(&mut self) -> Option<TLVElement<'a>> {
-        if self.left < 1 {
+        if self.buf.len() - self.current < 1 {
             return None;
         }
         /* Read Control */
@@ -623,13 +612,12 @@ impl<'a> TLVList<'a> {
     pub fn iter(&self) -> TLVListIterator<'a> {
         TLVListIterator {
             current: 0,
-            left: self.buf.len(),
             buf: self.buf,
         }
     }
 }
 
-fn is_container(element_type: ElementType) -> bool {
+fn is_container(element_type: &ElementType) -> bool {
     matches!(
         element_type,
         ElementType::Struct(_) | ElementType::Array(_) | ElementType::List(_)
@@ -668,7 +656,7 @@ impl<'a> TLVContainerIterator<'a> {
                     nest_level -= 1;
                 }
                 _ => {
-                    if is_container(element.element_type) {
+                    if is_container(&element.element_type) {
                         nest_level += 1;
                     }
                 }
@@ -699,33 +687,38 @@ impl<'a> Iterator for TLVContainerIterator<'a> {
             return None;
         }
 
-        if is_container(element.element_type) {
-            self.prev_container = true;
-        } else {
-            self.prev_container = false;
-        }
+        self.prev_container = is_container(&element.element_type);
         Some(element)
     }
 }
 
 pub fn get_root_node(b: &[u8]) -> Result<TLVElement, Error> {
-    TLVList::new(b).iter().next().ok_or(Error::InvalidData)
+    Ok(TLVList::new(b)
+        .iter()
+        .next()
+        .ok_or(ErrorCode::InvalidData)?)
 }
 
 pub fn get_root_node_struct(b: &[u8]) -> Result<TLVElement, Error> {
-    TLVList::new(b)
+    let root = TLVList::new(b)
         .iter()
         .next()
-        .ok_or(Error::InvalidData)?
-        .confirm_struct()
+        .ok_or(ErrorCode::InvalidData)?;
+
+    root.confirm_struct()?;
+
+    Ok(root)
 }
 
 pub fn get_root_node_list(b: &[u8]) -> Result<TLVElement, Error> {
-    TLVList::new(b)
+    let root = TLVList::new(b)
         .iter()
         .next()
-        .ok_or(Error::InvalidData)?
-        .confirm_list()
+        .ok_or(ErrorCode::InvalidData)?;
+
+    root.confirm_list()?;
+
+    Ok(root)
 }
 
 pub fn print_tlv_list(b: &[u8]) {
@@ -752,7 +745,7 @@ pub fn print_tlv_list(b: &[u8]) {
         match a.element_type {
             ElementType::Struct(_) => {
                 if index < MAX_DEPTH {
-                    println!("{}{}", space[index], a);
+                    info!("{}{}", space[index], a);
                     stack[index] = '}';
                     index += 1;
                 } else {
@@ -761,7 +754,7 @@ pub fn print_tlv_list(b: &[u8]) {
             }
             ElementType::Array(_) | ElementType::List(_) => {
                 if index < MAX_DEPTH {
-                    println!("{}{}", space[index], a);
+                    info!("{}{}", space[index], a);
                     stack[index] = ']';
                     index += 1;
                 } else {
@@ -771,24 +764,25 @@ pub fn print_tlv_list(b: &[u8]) {
             ElementType::EndCnt => {
                 if index > 0 {
                     index -= 1;
-                    println!("{}{}", space[index], stack[index]);
+                    info!("{}{}", space[index], stack[index]);
                 } else {
                     error!("Incorrect TLV List");
                 }
             }
-            _ => println!("{}{}", space[index], a),
+            _ => info!("{}{}", space[index], a),
         }
     }
-    println!("---------");
+    info!("---------");
 }
 
 #[cfg(test)]
 mod tests {
+    use log::info;
+
     use super::{
-        get_root_node_list, get_root_node_struct, ElementType, Pointer, TLVElement, TLVList,
-        TagType,
+        get_root_node_list, get_root_node_struct, ElementType, TLVElement, TLVList, TagType,
     };
-    use crate::error::Error;
+    use crate::error::ErrorCode;
 
     #[test]
     fn test_short_length_tag() {
@@ -846,11 +840,7 @@ mod tests {
             tlv_iter.next(),
             Some(TLVElement {
                 tag_type: TagType::Context(0),
-                element_type: ElementType::Array(Pointer {
-                    buf: &[21, 54, 0],
-                    current: 3,
-                    left: 0
-                }),
+                element_type: ElementType::Array(&[]),
             })
         );
     }
@@ -1105,12 +1095,13 @@ mod tests {
             .unwrap()
             .enter()
             .unwrap();
-        println!("Command list iterator: {:?}", cmd_list_iter);
+        info!("Command list iterator: {:?}", cmd_list_iter);
 
         // This is an array of CommandDataIB, but we'll only use the first element
         let cmd_data_ib = cmd_list_iter.next().unwrap();
 
-        let cmd_path = cmd_data_ib.find_tag(0).unwrap().confirm_list().unwrap();
+        let cmd_path = cmd_data_ib.find_tag(0).unwrap();
+        let cmd_path = cmd_path.confirm_list().unwrap();
         assert_eq!(
             cmd_path.find_tag(0).unwrap(),
             TLVElement {
@@ -1132,7 +1123,10 @@ mod tests {
                 element_type: ElementType::U32(1),
             }
         );
-        assert_eq!(cmd_path.find_tag(3), Err(Error::NoTagFound));
+        assert_eq!(
+            cmd_path.find_tag(3).map_err(|e| e.code()),
+            Err(ErrorCode::NoTagFound)
+        );
 
         // This is the variable of the invoke command
         assert_eq!(
@@ -1172,11 +1166,7 @@ mod tests {
             0x35, 0x1, 0x18, 0x18, 0x18, 0x18,
         ];
 
-        let dummy_pointer = Pointer {
-            buf: &b,
-            current: 1,
-            left: 21,
-        };
+        let dummy_pointer = &b[1..];
         // These are the decoded elements that we expect from this input
         let verify_matrix: [(TagType, ElementType); 13] = [
             (TagType::Anonymous, ElementType::Struct(dummy_pointer)),
@@ -1203,8 +1193,8 @@ mod tests {
                 Some(a) => {
                     assert_eq!(a.tag_type, verify_matrix[index].0);
                     assert_eq!(
-                        std::mem::discriminant(&a.element_type),
-                        std::mem::discriminant(&verify_matrix[index].1)
+                        core::mem::discriminant(&a.element_type),
+                        core::mem::discriminant(&verify_matrix[index].1)
                     );
                 }
             }

@@ -14,11 +14,8 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-
-pub type EndptId = u16;
-pub type ClusterId = u32;
-pub type AttrId = u16;
-pub type CmdId = u32;
+use crate::error::Error;
+use crate::tlv::{TLVWriter, TagType, ToTLV};
 
 mod attribute;
 pub use attribute::*;
@@ -37,3 +34,23 @@ pub use privilege::*;
 
 mod encoder;
 pub use encoder::*;
+
+mod handler;
+pub use handler::*;
+
+mod dataver;
+pub use dataver::*;
+
+mod metadata;
+pub use metadata::*;
+
+pub type EndptId = u16;
+pub type ClusterId = u32;
+pub type AttrId = u16;
+pub type CmdId = u32;
+
+#[derive(Debug, ToTLV, Copy, Clone)]
+pub struct DeviceType {
+    pub dtype: u16,
+    pub drev: u16,
+}

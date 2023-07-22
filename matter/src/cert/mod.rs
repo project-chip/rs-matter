@@ -15,12 +15,12 @@
  *    limitations under the License.
  */
 
-use std::fmt;
+use core::fmt::{self, Write};
 
 use crate::{
-    crypto::{CryptoKeyPair, KeyPair},
-    error::Error,
-    tlv::{self, FromTLV, TLVArrayOwned, TLVElement, TLVWriter, TagType, ToTLV},
+    crypto::KeyPair,
+    error::{Error, ErrorCode},
+    tlv::{self, FromTLV, OctetStr, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
     utils::writebuf::WriteBuf,
 };
 use log::error;
@@ -28,6 +28,8 @@ use num_derive::FromPrimitive;
 
 pub use self::asn1_writer::ASN1Writer;
 use self::printer::CertPrinter;
+
+pub const MAX_CERT_TLV_LEN: usize = 1024; // TODO
 
 // As per https://datatracker.ietf.org/doc/html/rfc5280
 
@@ -113,8 +115,10 @@ macro_rules! add_if {
     };
 }
 
-fn get_print_str(key_usage: u16) -> String {
-    format!(
+fn get_print_str(key_usage: u16) -> heapless::String<256> {
+    let mut string = heapless::String::new();
+    write!(
+        &mut string,
         "{}{}{}{}{}{}{}{}{}",
         add_if!(key_usage, KEY_USAGE_DIGITAL_SIGN, "digitalSignature "),
         add_if!(key_usage, KEY_USAGE_NON_REPUDIATION, "nonRepudiation "),
@@ -126,6 +130,9 @@ fn get_print_str(key_usage: u16) -> String {
         add_if!(key_usage, KEY_USAGE_ENCIPHER_ONLY, "encipherOnly "),
         add_if!(key_usage, KEY_USAGE_DECIPHER_ONLY, "decipherOnly "),
     )
+    .unwrap();
+
+    string
 }
 
 #[allow(unused_assignments)]
@@ -137,7 +144,7 @@ fn encode_key_usage(key_usage: u16, w: &mut dyn CertConsumer) -> Result<(), Erro
 }
 
 fn encode_extended_key_usage(
-    list: &TLVArrayOwned<u8>,
+    list: impl Iterator<Item = u8>,
     w: &mut dyn CertConsumer,
 ) -> Result<(), Error> {
     const OID_SERVER_AUTH: [u8; 8] = [0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
@@ -157,19 +164,18 @@ fn encode_extended_key_usage(
     ];
 
     w.start_seq("")?;
-    for t in list.iter() {
-        let t = *t as usize;
+    for t in list {
+        let t = t as usize;
         if t > 0 && t <= encoding.len() {
             w.oid(encoding[t].0, encoding[t].1)?;
         } else {
             error!("Skipping encoding key usage out of bounds");
         }
     }
-    w.end_seq()?;
-    Ok(())
+    w.end_seq()
 }
 
-#[derive(FromTLV, ToTLV, Default)]
+#[derive(FromTLV, ToTLV, Default, Debug)]
 #[tlvargs(start = 1)]
 struct BasicConstraints {
     is_ca: bool,
@@ -209,18 +215,18 @@ fn encode_extension_end(w: &mut dyn CertConsumer) -> Result<(), Error> {
     w.end_seq()
 }
 
-#[derive(FromTLV, ToTLV, Default)]
-#[tlvargs(start = 1, datatype = "list")]
-struct Extensions {
+#[derive(FromTLV, ToTLV, Default, Debug)]
+#[tlvargs(lifetime = "'a", start = 1, datatype = "list")]
+struct Extensions<'a> {
     basic_const: Option<BasicConstraints>,
     key_usage: Option<u16>,
-    ext_key_usage: Option<TLVArrayOwned<u8>>,
-    subj_key_id: Option<Vec<u8>>,
-    auth_key_id: Option<Vec<u8>>,
-    future_extensions: Option<Vec<u8>>,
+    ext_key_usage: Option<TLVArray<'a, u8>>,
+    subj_key_id: Option<OctetStr<'a>>,
+    auth_key_id: Option<OctetStr<'a>>,
+    future_extensions: Option<OctetStr<'a>>,
 }
 
-impl Extensions {
+impl<'a> Extensions<'a> {
     fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
         const OID_BASIC_CONSTRAINTS: [u8; 3] = [0x55, 0x1D, 0x13];
         const OID_KEY_USAGE: [u8; 3] = [0x55, 0x1D, 0x0F];
@@ -242,30 +248,29 @@ impl Extensions {
         }
         if let Some(t) = &self.ext_key_usage {
             encode_extension_start("X509v3 Extended Key Usage", true, &OID_EXT_KEY_USAGE, w)?;
-            encode_extended_key_usage(t, w)?;
+            encode_extended_key_usage(t.iter(), w)?;
             encode_extension_end(w)?;
         }
         if let Some(t) = &self.subj_key_id {
             encode_extension_start("Subject Key ID", false, &OID_SUBJ_KEY_IDENTIFIER, w)?;
-            w.ostr("", t.as_slice())?;
+            w.ostr("", t.0)?;
             encode_extension_end(w)?;
         }
         if let Some(t) = &self.auth_key_id {
             encode_extension_start("Auth Key ID", false, &OID_AUTH_KEY_ID, w)?;
             w.start_seq("")?;
-            w.ctx("", 0, t.as_slice())?;
+            w.ctx("", 0, t.0)?;
             w.end_seq()?;
             encode_extension_end(w)?;
         }
         if let Some(t) = &self.future_extensions {
-            error!("Future Extensions Not Yet Supported: {:x?}", t.as_slice())
+            error!("Future Extensions Not Yet Supported: {:x?}", t.0);
         }
         w.end_seq()?;
         w.end_ctx()?;
         Ok(())
     }
 }
-const MAX_DN_ENTRIES: usize = 5;
 
 #[derive(FromPrimitive, Copy, Clone)]
 enum DnTags {
@@ -293,20 +298,23 @@ enum DnTags {
     NocCat = 22,
 }
 
-enum DistNameValue {
+#[derive(Debug)]
+enum DistNameValue<'a> {
     Uint(u64),
-    Utf8Str(Vec<u8>),
-    PrintableStr(Vec<u8>),
+    Utf8Str(&'a [u8]),
+    PrintableStr(&'a [u8]),
 }
 
-#[derive(Default)]
-struct DistNames {
+const MAX_DN_ENTRIES: usize = 5;
+
+#[derive(Default, Debug)]
+struct DistNames<'a> {
     // The order in which the DNs arrive is important, as the signing
     // requires that the ASN1 notation retains the same order
-    dn: Vec<(u8, DistNameValue)>,
+    dn: heapless::Vec<(u8, DistNameValue<'a>), MAX_DN_ENTRIES>,
 }
 
-impl DistNames {
+impl<'a> DistNames<'a> {
     fn u64(&self, match_id: DnTags) -> Option<u64> {
         self.dn
             .iter()
@@ -336,24 +344,27 @@ impl DistNames {
 
 const PRINTABLE_STR_THRESHOLD: u8 = 0x80;
 
-impl<'a> FromTLV<'a> for DistNames {
+impl<'a> FromTLV<'a> for DistNames<'a> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
         let mut d = Self {
-            dn: Vec::with_capacity(MAX_DN_ENTRIES),
+            dn: heapless::Vec::new(),
         };
-        let iter = t.confirm_list()?.enter().ok_or(Error::Invalid)?;
+        let iter = t.confirm_list()?.enter().ok_or(ErrorCode::Invalid)?;
         for t in iter {
             if let TagType::Context(tag) = t.get_tag() {
                 if let Ok(value) = t.u64() {
-                    d.dn.push((tag, DistNameValue::Uint(value)));
+                    d.dn.push((tag, DistNameValue::Uint(value)))
+                        .map_err(|_| ErrorCode::BufferTooSmall)?;
                 } else if let Ok(value) = t.slice() {
                     if tag > PRINTABLE_STR_THRESHOLD {
                         d.dn.push((
                             tag - PRINTABLE_STR_THRESHOLD,
-                            DistNameValue::PrintableStr(value.to_vec()),
-                        ));
+                            DistNameValue::PrintableStr(value),
+                        ))
+                        .map_err(|_| ErrorCode::BufferTooSmall)?;
                     } else {
-                        d.dn.push((tag, DistNameValue::Utf8Str(value.to_vec())));
+                        d.dn.push((tag, DistNameValue::Utf8Str(value)))
+                            .map_err(|_| ErrorCode::BufferTooSmall)?;
                     }
                 }
             }
@@ -362,24 +373,23 @@ impl<'a> FromTLV<'a> for DistNames {
     }
 }
 
-impl ToTLV for DistNames {
+impl<'a> ToTLV for DistNames<'a> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.start_list(tag)?;
         for (name, value) in &self.dn {
             match value {
                 DistNameValue::Uint(v) => tw.u64(TagType::Context(*name), *v)?,
-                DistNameValue::Utf8Str(v) => tw.utf8(TagType::Context(*name), v.as_slice())?,
-                DistNameValue::PrintableStr(v) => tw.utf8(
-                    TagType::Context(*name + PRINTABLE_STR_THRESHOLD),
-                    v.as_slice(),
-                )?,
+                DistNameValue::Utf8Str(v) => tw.utf8(TagType::Context(*name), v)?,
+                DistNameValue::PrintableStr(v) => {
+                    tw.utf8(TagType::Context(*name + PRINTABLE_STR_THRESHOLD), v)?
+                }
             }
         }
         tw.end_container()
     }
 }
 
-impl DistNames {
+impl<'a> DistNames<'a> {
     fn encode(&self, tag: &str, w: &mut dyn CertConsumer) -> Result<(), Error> {
         const OID_COMMON_NAME: [u8; 3] = [0x55_u8, 0x04, 0x03];
         const OID_SURNAME: [u8; 3] = [0x55_u8, 0x04, 0x04];
@@ -509,52 +519,60 @@ fn encode_dn_value(
     w.oid(name, oid)?;
     match value {
         DistNameValue::Uint(v) => match expected_len {
-            Some(IntToStringLen::Len16) => w.utf8str("", format!("{:016X}", v).as_str())?,
-            Some(IntToStringLen::Len8) => w.utf8str("", format!("{:08X}", v).as_str())?,
+            Some(IntToStringLen::Len16) => {
+                let mut string = heapless::String::<32>::new();
+                write!(&mut string, "{:016X}", v).unwrap();
+                w.utf8str("", &string)?
+            }
+            Some(IntToStringLen::Len8) => {
+                let mut string = heapless::String::<32>::new();
+                write!(&mut string, "{:08X}", v).unwrap();
+                w.utf8str("", &string)?
+            }
             _ => {
                 error!("Invalid encoding");
-                return Err(Error::Invalid);
+                Err(ErrorCode::Invalid)?
             }
         },
         DistNameValue::Utf8Str(v) => {
-            let str = String::from_utf8(v.to_vec())?;
-            w.utf8str("", &str)?;
+            w.utf8str("", core::str::from_utf8(v)?)?;
         }
         DistNameValue::PrintableStr(v) => {
-            let str = String::from_utf8(v.to_vec())?;
-            w.printstr("", &str)?;
+            w.printstr("", core::str::from_utf8(v)?)?;
         }
     }
     w.end_seq()?;
     w.end_set()
 }
 
-#[derive(FromTLV, ToTLV, Default)]
-#[tlvargs(start = 1)]
-pub struct Cert {
-    serial_no: Vec<u8>,
+#[derive(FromTLV, ToTLV, Default, Debug)]
+#[tlvargs(lifetime = "'a", start = 1)]
+pub struct Cert<'a> {
+    serial_no: OctetStr<'a>,
     sign_algo: u8,
-    issuer: DistNames,
+    issuer: DistNames<'a>,
     not_before: u32,
     not_after: u32,
-    subject: DistNames,
+    subject: DistNames<'a>,
     pubkey_algo: u8,
     ec_curve_id: u8,
-    pubkey: Vec<u8>,
-    extensions: Extensions,
-    signature: Vec<u8>,
+    pubkey: OctetStr<'a>,
+    extensions: Extensions<'a>,
+    signature: OctetStr<'a>,
 }
 
 // TODO: Instead of parsing the TLVs everytime, we should just cache this, but the encoding
 // rules in terms of sequence may get complicated. Need to look into this
-impl Cert {
-    pub fn new(cert_bin: &[u8]) -> Result<Self, Error> {
+impl<'a> Cert<'a> {
+    pub fn new(cert_bin: &'a [u8]) -> Result<Self, Error> {
         let root = tlv::get_root_node(cert_bin)?;
         Cert::from_tlv(&root)
     }
 
     pub fn get_node_id(&self) -> Result<u64, Error> {
-        self.subject.u64(DnTags::NodeId).ok_or(Error::NoNodeId)
+        self.subject
+            .u64(DnTags::NodeId)
+            .ok_or_else(|| Error::from(ErrorCode::NoNodeId))
     }
 
     pub fn get_cat_ids(&self, output: &mut [u32]) {
@@ -562,21 +580,27 @@ impl Cert {
     }
 
     pub fn get_fabric_id(&self) -> Result<u64, Error> {
-        self.subject.u64(DnTags::FabricId).ok_or(Error::NoFabricId)
+        self.subject
+            .u64(DnTags::FabricId)
+            .ok_or_else(|| Error::from(ErrorCode::NoFabricId))
     }
 
     pub fn get_pubkey(&self) -> &[u8] {
-        self.pubkey.as_slice()
+        self.pubkey.0
     }
 
     pub fn get_subject_key_id(&self) -> Result<&[u8], Error> {
-        self.extensions.subj_key_id.as_deref().ok_or(Error::Invalid)
+        if let Some(id) = self.extensions.subj_key_id.as_ref() {
+            Ok(id.0)
+        } else {
+            Err(ErrorCode::Invalid.into())
+        }
     }
 
     pub fn is_authority(&self, their: &Cert) -> Result<bool, Error> {
         if let Some(our_auth_key) = &self.extensions.auth_key_id {
             let their_subject = their.get_subject_key_id()?;
-            if our_auth_key == their_subject {
+            if our_auth_key.0 == their_subject {
                 Ok(true)
             } else {
                 Ok(false)
@@ -587,11 +611,11 @@ impl Cert {
     }
 
     pub fn get_signature(&self) -> &[u8] {
-        self.signature.as_slice()
+        self.signature.0
     }
 
     pub fn as_tlv(&self, buf: &mut [u8]) -> Result<usize, Error> {
-        let mut wb = WriteBuf::new(buf, buf.len());
+        let mut wb = WriteBuf::new(buf);
         let mut tw = TLVWriter::new(&mut wb);
         self.to_tlv(&mut tw, TagType::Anonymous)?;
         Ok(wb.as_slice().len())
@@ -614,10 +638,10 @@ impl Cert {
         w.integer("", &[2])?;
         w.end_ctx()?;
 
-        w.integer("Serial Num:", self.serial_no.as_slice())?;
+        w.integer("Serial Num:", self.serial_no.0)?;
 
         w.start_seq("Signature Algorithm:")?;
-        let (str, oid) = match get_sign_algo(self.sign_algo).ok_or(Error::Invalid)? {
+        let (str, oid) = match get_sign_algo(self.sign_algo).ok_or(ErrorCode::Invalid)? {
             SignAlgoValue::ECDSAWithSHA256 => ("ECDSA with SHA256", OID_ECDSA_WITH_SHA256),
         };
         w.oid(str, &oid)?;
@@ -634,17 +658,17 @@ impl Cert {
 
         w.start_seq("")?;
         w.start_seq("Public Key Algorithm")?;
-        let (str, pub_key) = match get_pubkey_algo(self.pubkey_algo).ok_or(Error::Invalid)? {
+        let (str, pub_key) = match get_pubkey_algo(self.pubkey_algo).ok_or(ErrorCode::Invalid)? {
             PubKeyAlgoValue::EcPubKey => ("ECPubKey", OID_PUB_KEY_ECPUBKEY),
         };
         w.oid(str, &pub_key)?;
-        let (str, curve_id) = match get_ec_curve_id(self.ec_curve_id).ok_or(Error::Invalid)? {
+        let (str, curve_id) = match get_ec_curve_id(self.ec_curve_id).ok_or(ErrorCode::Invalid)? {
             EcCurveIdValue::Prime256V1 => ("Prime256v1", OID_EC_TYPE_PRIME256V1),
         };
         w.oid(str, &curve_id)?;
         w.end_seq()?;
 
-        w.bitstr("Public-Key:", false, self.pubkey.as_slice())?;
+        w.bitstr("Public-Key:", false, self.pubkey.0)?;
         w.end_seq()?;
 
         self.extensions.encode(w)?;
@@ -655,7 +679,7 @@ impl Cert {
     }
 }
 
-impl fmt::Display for Cert {
+impl<'a> fmt::Display for Cert<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut printer = CertPrinter::new(f);
         let _ = self
@@ -667,7 +691,7 @@ impl fmt::Display for Cert {
 }
 
 pub struct CertVerifier<'a> {
-    cert: &'a Cert,
+    cert: &'a Cert<'a>,
 }
 
 impl<'a> CertVerifier<'a> {
@@ -677,7 +701,7 @@ impl<'a> CertVerifier<'a> {
 
     pub fn add_cert(self, parent: &'a Cert) -> Result<CertVerifier<'a>, Error> {
         if !self.cert.is_authority(parent)? {
-            return Err(Error::InvalidAuthKey);
+            Err(ErrorCode::InvalidAuthKey)?;
         }
         let mut asn1 = [0u8; MAX_ASN1_CERT_SIZE];
         let len = self.cert.as_asn1(&mut asn1)?;
@@ -731,8 +755,9 @@ mod printer;
 
 #[cfg(test)]
 mod tests {
+    use log::info;
+
     use crate::cert::Cert;
-    use crate::error::Error;
     use crate::tlv::{self, FromTLV, TLVWriter, TagType, ToTLV};
     use crate::utils::writebuf::WriteBuf;
 
@@ -777,29 +802,41 @@ mod tests {
     #[test]
     fn test_verify_chain_incomplete() {
         // The chain doesn't lead up to a self-signed certificate
+
+        use crate::error::ErrorCode;
         let noc = Cert::new(&test_vectors::NOC1_SUCCESS).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let a = noc.verify_chain_start();
         assert_eq!(
-            Err(Error::InvalidAuthKey),
-            a.add_cert(&icac).unwrap().finalise()
+            Err(ErrorCode::InvalidAuthKey),
+            a.add_cert(&icac).unwrap().finalise().map_err(|e| e.code())
         );
     }
 
     #[test]
     fn test_auth_key_chain_incorrect() {
+        use crate::error::ErrorCode;
+
         let noc = Cert::new(&test_vectors::NOC1_AUTH_KEY_FAIL).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let a = noc.verify_chain_start();
-        assert_eq!(Err(Error::InvalidAuthKey), a.add_cert(&icac).map(|_| ()));
+        assert_eq!(
+            Err(ErrorCode::InvalidAuthKey),
+            a.add_cert(&icac).map(|_| ()).map_err(|e| e.code())
+        );
     }
 
     #[test]
     fn test_cert_corrupted() {
+        use crate::error::ErrorCode;
+
         let noc = Cert::new(&test_vectors::NOC1_CORRUPT_CERT).unwrap();
         let icac = Cert::new(&test_vectors::ICAC1_SUCCESS).unwrap();
         let a = noc.verify_chain_start();
-        assert_eq!(Err(Error::InvalidSignature), a.add_cert(&icac).map(|_| ()));
+        assert_eq!(
+            Err(ErrorCode::InvalidSignature),
+            a.add_cert(&icac).map(|_| ()).map_err(|e| e.code())
+        );
     }
 
     #[test]
@@ -811,12 +848,11 @@ mod tests {
         ];
 
         for input in test_input.iter() {
-            println!("Testing next input...");
+            info!("Testing next input...");
             let root = tlv::get_root_node(input).unwrap();
             let cert = Cert::from_tlv(&root).unwrap();
             let mut buf = [0u8; 1024];
-            let buf_len = buf.len();
-            let mut wb = WriteBuf::new(&mut buf, buf_len);
+            let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
             cert.to_tlv(&mut tw, TagType::Anonymous).unwrap();
             assert_eq!(*input, wb.as_slice());

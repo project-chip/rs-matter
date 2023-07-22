@@ -17,9 +17,8 @@
 
 use log::error;
 
-use crate::error::Error;
-
-use super::CryptoKeyPair;
+use crate::error::{Error, ErrorCode};
+use crate::utils::rand::Rand;
 
 pub fn hkdf_sha256(_salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> Result<(), Error> {
     error!("This API should never get called");
@@ -62,18 +61,17 @@ impl HmacSha256 {
     }
 }
 
+#[derive(Debug)]
 pub struct KeyPair {}
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(_rand: Rand) -> Result<Self, Error> {
         error!("This API should never get called");
 
         Ok(Self {})
     }
 
     pub fn new_from_components(_pub_key: &[u8], priv_key: &[u8]) -> Result<Self, Error> {
-        error!("This API should never get called");
-
         Ok(Self {})
     }
 
@@ -82,28 +80,33 @@ impl KeyPair {
 
         Ok(Self {})
     }
-}
 
-impl CryptoKeyPair for KeyPair {
-    fn get_csr<'a>(&self, _out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    pub fn get_csr<'a>(&self, _out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
-    fn get_public_key(&self, _pub_key: &mut [u8]) -> Result<usize, Error> {
-        error!("This API should never get called");
-        Err(Error::Invalid)
+
+    pub fn get_public_key(&self, _pub_key: &mut [u8]) -> Result<usize, Error> {
+        Ok(0)
     }
-    fn derive_secret(self, _peer_pub_key: &[u8], _secret: &mut [u8]) -> Result<usize, Error> {
-        error!("This API should never get called");
-        Err(Error::Invalid)
+
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+        Ok(0)
     }
-    fn sign_msg(&self, _msg: &[u8], _signature: &mut [u8]) -> Result<usize, Error> {
+
+    pub fn derive_secret(self, _peer_pub_key: &[u8], _secret: &mut [u8]) -> Result<usize, Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
-    fn verify_msg(&self, _msg: &[u8], _signature: &[u8]) -> Result<(), Error> {
+
+    pub fn sign_msg(&self, _msg: &[u8], _signature: &mut [u8]) -> Result<usize, Error> {
         error!("This API should never get called");
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
+    }
+
+    pub fn verify_msg(&self, _msg: &[u8], _signature: &[u8]) -> Result<(), Error> {
+        error!("This API should never get called");
+        Err(ErrorCode::Invalid.into())
     }
 }
 

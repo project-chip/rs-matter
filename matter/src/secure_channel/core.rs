@@ -15,65 +15,87 @@
  *    limitations under the License.
  */
 
-use std::sync::Arc;
+use core::borrow::Borrow;
+use core::cell::RefCell;
+
+use log::error;
 
 use crate::{
     error::*,
     fabric::FabricMgr,
-    secure_channel::common::*,
-    tlv,
-    transport::proto_demux::{self, ProtoCtx, ResponseRequired},
+    mdns::Mdns,
+    secure_channel::{common::*, pake::Pake},
+    transport::{exchange::Exchange, packet::Packet},
+    utils::{epoch::Epoch, rand::Rand},
 };
-use log::{error, info};
-use num;
 
 use super::{case::Case, pake::PaseMgr};
 
 /* Handle messages related to the Secure Channel
  */
 
-pub struct SecureChannel {
-    case: Case,
-    pase: PaseMgr,
+pub struct SecureChannel<'a> {
+    pase: &'a RefCell<PaseMgr>,
+    fabric: &'a RefCell<FabricMgr>,
+    mdns: &'a dyn Mdns,
+    rand: Rand,
 }
 
-impl SecureChannel {
-    pub fn new(pase: PaseMgr, fabric_mgr: Arc<FabricMgr>) -> SecureChannel {
-        SecureChannel {
+impl<'a> SecureChannel<'a> {
+    #[inline(always)]
+    pub fn new<
+        T: Borrow<RefCell<FabricMgr>>
+            + Borrow<RefCell<PaseMgr>>
+            + Borrow<dyn Mdns + 'a>
+            + Borrow<Epoch>
+            + Borrow<Rand>,
+    >(
+        matter: &'a T,
+    ) -> Self {
+        Self::wrap(
+            matter.borrow(),
+            matter.borrow(),
+            matter.borrow(),
+            *matter.borrow(),
+        )
+    }
+
+    #[inline(always)]
+    pub fn wrap(
+        pase: &'a RefCell<PaseMgr>,
+        fabric: &'a RefCell<FabricMgr>,
+        mdns: &'a dyn Mdns,
+        rand: Rand,
+    ) -> Self {
+        Self {
+            fabric,
             pase,
-            case: Case::new(fabric_mgr),
+            mdns,
+            rand,
         }
     }
-}
 
-impl proto_demux::HandleProto for SecureChannel {
-    fn handle_proto_id(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
-        let proto_opcode: OpCode =
-            num::FromPrimitive::from_u8(ctx.rx.get_proto_opcode()).ok_or(Error::Invalid)?;
-        ctx.tx.set_proto_id(PROTO_ID_SECURE_CHANNEL as u16);
-        info!("Received Opcode: {:?}", proto_opcode);
-        info!("Received Data:");
-        tlv::print_tlv_list(ctx.rx.as_borrow_slice());
-        let result = match proto_opcode {
-            OpCode::MRPStandAloneAck => Ok(ResponseRequired::No),
-            OpCode::PBKDFParamRequest => self.pase.pbkdfparamreq_handler(ctx),
-            OpCode::PASEPake1 => self.pase.pasepake1_handler(ctx),
-            OpCode::PASEPake3 => self.pase.pasepake3_handler(ctx),
-            OpCode::CASESigma1 => self.case.casesigma1_handler(ctx),
-            OpCode::CASESigma3 => self.case.casesigma3_handler(ctx),
-            _ => {
-                error!("OpCode Not Handled: {:?}", proto_opcode);
-                Err(Error::InvalidOpcode)
+    pub async fn handle(
+        &self,
+        exchange: &mut Exchange<'_>,
+        rx: &mut Packet<'_>,
+        tx: &mut Packet<'_>,
+    ) -> Result<(), Error> {
+        match rx.get_proto_opcode()? {
+            OpCode::PBKDFParamRequest => {
+                Pake::new(self.pase)
+                    .handle(exchange, rx, tx, self.mdns)
+                    .await
             }
-        };
-        if result == Ok(ResponseRequired::Yes) {
-            info!("Sending response");
-            tlv::print_tlv_list(ctx.tx.as_borrow_slice());
+            OpCode::CASESigma1 => {
+                Case::new(self.fabric, self.rand)
+                    .handle(exchange, rx, tx)
+                    .await
+            }
+            proto_opcode => {
+                error!("OpCode not handled: {:?}", proto_opcode);
+                Err(ErrorCode::InvalidOpcode.into())
+            }
         }
-        result
-    }
-
-    fn get_proto_id(&self) -> usize {
-        PROTO_ID_SECURE_CHANNEL
     }
 }

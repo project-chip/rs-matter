@@ -15,109 +15,88 @@
  *    limitations under the License.
  */
 
-use std::{
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime},
-};
+use core::{cell::RefCell, fmt::Write, time::Duration};
 
 use super::{
-    common::{create_sc_status_report, SCStatusCodes},
+    common::{SCStatusCodes, PROTO_ID_SECURE_CHANNEL},
     spake2p::{Spake2P, VerifierData},
 };
 use crate::{
-    crypto,
-    error::Error,
-    mdns::{self, Mdns},
-    secure_channel::common::OpCode,
-    sys::SysMdnsService,
-    tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV},
+    alloc, crypto,
+    error::{Error, ErrorCode},
+    mdns::{Mdns, ServiceMode},
+    secure_channel::common::{complete_with_status, OpCode},
+    tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType, ToTLV},
     transport::{
-        exchange::ExchangeCtx,
-        network::Address,
-        proto_demux::{ProtoCtx, ResponseRequired},
-        queue::{Msg, WorkQ},
+        exchange::{Exchange, ExchangeId},
+        packet::Packet,
         session::{CloneData, SessionMode},
     },
+    utils::{epoch::Epoch, rand::Rand},
 };
 use log::{error, info};
-use rand::prelude::*;
 
-enum PaseMgrState {
-    Enabled(PAKE, SysMdnsService),
-    Disabled,
+struct PaseSession {
+    mdns_service_name: heapless::String<16>,
+    verifier: VerifierData,
 }
 
-pub struct PaseMgrInternal {
-    state: PaseMgrState,
+pub struct PaseMgr {
+    session: Option<PaseSession>,
+    timeout: Option<Timeout>,
+    epoch: Epoch,
+    rand: Rand,
 }
-
-#[derive(Clone)]
-// Could this lock be avoided?
-pub struct PaseMgr(Arc<Mutex<PaseMgrInternal>>);
 
 impl PaseMgr {
-    pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(PaseMgrInternal {
-            state: PaseMgrState::Disabled,
-        })))
+    #[inline(always)]
+    pub fn new(epoch: Epoch, rand: Rand) -> Self {
+        Self {
+            session: None,
+            timeout: None,
+            epoch,
+            rand,
+        }
+    }
+
+    pub fn is_pase_session_enabled(&self) -> bool {
+        self.session.is_some()
     }
 
     pub fn enable_pase_session(
         &mut self,
         verifier: VerifierData,
         discriminator: u16,
+        mdns: &dyn Mdns,
     ) -> Result<(), Error> {
-        let mut s = self.0.lock().unwrap();
-        let name: u64 = rand::thread_rng().gen_range(0..0xFFFFFFFFFFFFFFFF);
-        let name = format!("{:016X}", name);
-        let mdns = Mdns::get()?
-            .publish_service(&name, mdns::ServiceMode::Commissionable(discriminator))?;
-        s.state = PaseMgrState::Enabled(PAKE::new(verifier), mdns);
+        let mut buf = [0; 8];
+        (self.rand)(&mut buf);
+        let num = u64::from_be_bytes(buf);
+
+        let mut mdns_service_name = heapless::String::<16>::new();
+        write!(&mut mdns_service_name, "{:016X}", num).unwrap();
+
+        mdns.add(
+            &mdns_service_name,
+            ServiceMode::Commissionable(discriminator),
+        )?;
+
+        self.session = Some(PaseSession {
+            mdns_service_name,
+            verifier,
+        });
+
         Ok(())
     }
 
-    pub fn disable_pase_session(&mut self) {
-        let mut s = self.0.lock().unwrap();
-        s.state = PaseMgrState::Disabled;
-    }
-
-    /// If the PASE Session is enabled, execute the closure,
-    /// if not enabled, generate SC Status Report
-    fn if_enabled<F>(&mut self, ctx: &mut ProtoCtx, f: F) -> Result<(), Error>
-    where
-        F: FnOnce(&mut PAKE, &mut ProtoCtx) -> Result<(), Error>,
-    {
-        let mut s = self.0.lock().unwrap();
-        if let PaseMgrState::Enabled(pake, _) = &mut s.state {
-            f(pake, ctx)
-        } else {
-            error!("PASE Not enabled");
-            create_sc_status_report(&mut ctx.tx, SCStatusCodes::InvalidParameter, None)
+    pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<(), Error> {
+        if let Some(session) = self.session.as_ref() {
+            mdns.remove(&session.mdns_service_name)?;
         }
-    }
 
-    pub fn pbkdfparamreq_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
-        ctx.tx.set_proto_opcode(OpCode::PBKDFParamResponse as u8);
-        self.if_enabled(ctx, |pake, ctx| pake.handle_pbkdfparamrequest(ctx))?;
-        Ok(ResponseRequired::Yes)
-    }
+        self.session = None;
 
-    pub fn pasepake1_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
-        ctx.tx.set_proto_opcode(OpCode::PASEPake2 as u8);
-        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake1(ctx))?;
-        Ok(ResponseRequired::Yes)
-    }
-
-    pub fn pasepake3_handler(&mut self, ctx: &mut ProtoCtx) -> Result<ResponseRequired, Error> {
-        self.if_enabled(ctx, |pake, ctx| pake.handle_pasepake3(ctx))?;
-        self.disable_pase_session();
-        Ok(ResponseRequired::Yes)
-    }
-}
-
-impl Default for PaseMgr {
-    fn default() -> Self {
-        Self::new()
+        Ok(())
     }
 }
 
@@ -130,101 +109,75 @@ const PASE_DISCARD_TIMEOUT_SECS: Duration = Duration::from_secs(60);
 
 const SPAKE2_SESSION_KEYS_INFO: [u8; 11] = *b"SessionKeys";
 
-struct SessionData {
-    start_time: SystemTime,
-    exch_id: u16,
-    peer_addr: Address,
-    spake2p: Box<Spake2P>,
+struct Timeout {
+    start_time: Duration,
+    exch_id: ExchangeId,
 }
 
-impl SessionData {
-    fn is_sess_expired(&self) -> Result<bool, Error> {
-        if SystemTime::now().duration_since(self.start_time)? > PASE_DISCARD_TIMEOUT_SECS {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-enum PakeState {
-    Idle,
-    InProgress(SessionData),
-}
-
-impl PakeState {
-    fn take(&mut self) -> Result<SessionData, Error> {
-        let new = std::mem::replace(self, PakeState::Idle);
-        if let PakeState::InProgress(s) = new {
-            Ok(s)
-        } else {
-            Err(Error::InvalidSignature)
+impl Timeout {
+    fn new(exchange: &Exchange, epoch: Epoch) -> Self {
+        Self {
+            start_time: epoch(),
+            exch_id: exchange.id().clone(),
         }
     }
 
-    fn is_idle(&self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(&PakeState::Idle)
-    }
-
-    fn take_sess_data(&mut self, exch_ctx: &ExchangeCtx) -> Result<SessionData, Error> {
-        let sd = self.take()?;
-        if sd.exch_id != exch_ctx.exch.get_id() || sd.peer_addr != exch_ctx.sess.get_peer_addr() {
-            Err(Error::InvalidState)
-        } else {
-            Ok(sd)
-        }
-    }
-
-    fn make_in_progress(&mut self, spake2p: Box<Spake2P>, exch_ctx: &ExchangeCtx) {
-        *self = PakeState::InProgress(SessionData {
-            start_time: SystemTime::now(),
-            spake2p,
-            exch_id: exch_ctx.exch.get_id(),
-            peer_addr: exch_ctx.sess.get_peer_addr(),
-        });
-    }
-
-    fn set_sess_data(&mut self, sd: SessionData) {
-        *self = PakeState::InProgress(sd);
+    fn is_sess_expired(&self, epoch: Epoch) -> bool {
+        epoch() - self.start_time > PASE_DISCARD_TIMEOUT_SECS
     }
 }
 
-impl Default for PakeState {
-    fn default() -> Self {
-        Self::Idle
-    }
+pub struct Pake<'a> {
+    pase: &'a RefCell<PaseMgr>,
 }
 
-pub struct PAKE {
-    pub verifier: VerifierData,
-    state: PakeState,
-}
-
-impl PAKE {
-    pub fn new(verifier: VerifierData) -> Self {
+impl<'a> Pake<'a> {
+    pub const fn new(pase: &'a RefCell<PaseMgr>) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
-        PAKE {
-            verifier,
-            state: Default::default(),
-        }
+        Self { pase }
+    }
+
+    pub async fn handle(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        rx: &mut Packet<'_>,
+        tx: &mut Packet<'_>,
+        mdns: &dyn Mdns,
+    ) -> Result<(), Error> {
+        let mut spake2p = alloc!(Spake2P::new());
+
+        self.handle_pbkdfparamrequest(exchange, rx, tx, &mut spake2p)
+            .await?;
+        self.handle_pasepake1(exchange, rx, tx, &mut spake2p)
+            .await?;
+        self.handle_pasepake3(exchange, rx, tx, mdns, &mut spake2p)
+            .await
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_pasepake3(&mut self, ctx: &mut ProtoCtx) -> Result<(), Error> {
-        let mut sd = self.state.take_sess_data(&ctx.exch_ctx)?;
+    async fn handle_pasepake3(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        rx: &mut Packet<'_>,
+        tx: &mut Packet<'_>,
+        mdns: &dyn Mdns,
+        spake2p: &mut Spake2P,
+    ) -> Result<(), Error> {
+        rx.check_proto_opcode(OpCode::PASEPake3 as _)?;
+        self.update_timeout(exchange, tx, true).await?;
 
-        let cA = extract_pasepake_1_or_3_params(ctx.rx.as_borrow_slice())?;
-        let (status_code, Ke) = sd.spake2p.handle_cA(cA);
+        let cA = extract_pasepake_1_or_3_params(rx.as_slice())?;
+        let (status_code, ke) = spake2p.handle_cA(cA);
 
-        if status_code == SCStatusCodes::SessionEstablishmentSuccess {
+        let clone_data = if status_code == SCStatusCodes::SessionEstablishmentSuccess {
             // Get the keys
-            let Ke = Ke.ok_or(Error::Invalid)?;
+            let ke = ke.ok_or(ErrorCode::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
-            crypto::hkdf_sha256(&[], Ke, &SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
-                .map_err(|_x| Error::NoSpace)?;
+            crypto::hkdf_sha256(&[], ke, &SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+                .map_err(|_x| ErrorCode::NoSpace)?;
 
             // Create a session
-            let data = sd.spake2p.get_app_data();
+            let data = spake2p.get_app_data();
             let peer_sessid: u16 = (data & 0xffff) as u16;
             let local_sessid: u16 = ((data >> 16) & 0xffff) as u16;
             let mut clone_data = CloneData::new(
@@ -232,7 +185,7 @@ impl PAKE {
                 0,
                 peer_sessid,
                 local_sessid,
-                ctx.exch_ctx.sess.get_peer_addr(),
+                exchange.with_session(|sess| Ok(sess.get_peer_addr()))?,
                 SessionMode::Pase,
             );
             clone_data.dec_key.copy_from_slice(&session_keys[0..16]);
@@ -242,67 +195,94 @@ impl PAKE {
                 .copy_from_slice(&session_keys[32..48]);
 
             // Queue a transport mgr request to add a new session
-            WorkQ::get()?.sync_send(Msg::NewSession(clone_data))?;
+            Some(clone_data)
+        } else {
+            None
+        };
+
+        if let Some(clone_data) = clone_data {
+            // TODO: Handle NoSpace
+            exchange.with_session_mgr_mut(|sess_mgr| sess_mgr.clone_session(&clone_data))?;
+
+            self.pase.borrow_mut().disable_pase_session(mdns)?;
         }
 
-        create_sc_status_report(&mut ctx.tx, status_code, None)?;
-        ctx.exch_ctx.exch.close();
+        complete_with_status(exchange, tx, status_code, None).await?;
+
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_pasepake1(&mut self, ctx: &mut ProtoCtx) -> Result<(), Error> {
-        let mut sd = self.state.take_sess_data(&ctx.exch_ctx)?;
+    #[allow(clippy::await_holding_refcell_ref)]
+    async fn handle_pasepake1(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        rx: &mut Packet<'_>,
+        tx: &mut Packet<'_>,
+        spake2p: &mut Spake2P,
+    ) -> Result<(), Error> {
+        rx.check_proto_opcode(OpCode::PASEPake1 as _)?;
+        self.update_timeout(exchange, tx, false).await?;
 
-        let pA = extract_pasepake_1_or_3_params(ctx.rx.as_borrow_slice())?;
+        let pase = self.pase.borrow();
+        let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+
+        let pA = extract_pasepake_1_or_3_params(rx.as_slice())?;
         let mut pB: [u8; 65] = [0; 65];
         let mut cB: [u8; 32] = [0; 32];
-        sd.spake2p.start_verifier(&self.verifier)?;
-        sd.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
+        spake2p.start_verifier(&session.verifier)?;
+        spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
 
-        let mut tw = TLVWriter::new(ctx.tx.get_writebuf()?);
+        // Generate response
+        tx.reset();
+        tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
+        tx.set_proto_opcode(OpCode::PASEPake2 as u8);
+
+        let mut tw = TLVWriter::new(tx.get_writebuf()?);
         let resp = Pake1Resp {
             pb: OctetStr(&pB),
             cb: OctetStr(&cB),
         };
         resp.to_tlv(&mut tw, TagType::Anonymous)?;
 
-        self.state.set_sess_data(sd);
-
-        Ok(())
+        drop(pase);
+        exchange.exchange(tx, rx).await
     }
 
-    pub fn handle_pbkdfparamrequest(&mut self, ctx: &mut ProtoCtx) -> Result<(), Error> {
-        if !self.state.is_idle() {
-            let sd = self.state.take()?;
-            if sd.is_sess_expired()? {
-                info!("Previous session expired, clearing it");
-                self.state = PakeState::Idle;
-            } else {
-                info!("Previous session in-progress, denying new request");
-                // little-endian timeout (here we've hardcoded 500ms)
-                create_sc_status_report(&mut ctx.tx, SCStatusCodes::Busy, Some(&[0xf4, 0x01]))?;
-                return Ok(());
-            }
-        }
+    #[allow(clippy::await_holding_refcell_ref)]
+    async fn handle_pbkdfparamrequest(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        rx: &mut Packet<'_>,
+        tx: &mut Packet<'_>,
+        spake2p: &mut Spake2P,
+    ) -> Result<(), Error> {
+        rx.check_proto_opcode(OpCode::PBKDFParamRequest as _)?;
+        self.update_timeout(exchange, tx, true).await?;
 
-        let root = tlv::get_root_node(ctx.rx.as_borrow_slice())?;
+        let pase = self.pase.borrow();
+        let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+
+        let root = tlv::get_root_node(rx.as_slice())?;
         let a = PBKDFParamReq::from_tlv(&root)?;
         if a.passcode_id != 0 {
             error!("Can't yet handle passcode_id != 0");
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
 
         let mut our_random: [u8; 32] = [0; 32];
-        rand::thread_rng().fill_bytes(&mut our_random);
+        (self.pase.borrow().rand)(&mut our_random);
 
-        let local_sessid = ctx.exch_ctx.sess.reserve_new_sess_id();
+        let local_sessid = exchange.with_session_mgr_mut(|mgr| Ok(mgr.get_next_sess_id()))?;
         let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
-        let mut spake2p = Box::new(Spake2P::new());
         spake2p.set_app_data(spake2p_data);
 
         // Generate response
-        let mut tw = TLVWriter::new(ctx.tx.get_writebuf()?);
+        tx.reset();
+        tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
+        tx.set_proto_opcode(OpCode::PBKDFParamResponse as u8);
+
+        let mut tw = TLVWriter::new(tx.get_writebuf()?);
         let mut resp = PBKDFParamResp {
             init_random: a.initiator_random,
             our_random: OctetStr(&our_random),
@@ -311,17 +291,76 @@ impl PAKE {
         };
         if !a.has_params {
             let params_resp = PBKDFParamRespParams {
-                count: self.verifier.count,
-                salt: OctetStr(&self.verifier.salt),
+                count: session.verifier.count,
+                salt: OctetStr(&session.verifier.salt),
             };
             resp.params = Some(params_resp);
         }
         resp.to_tlv(&mut tw, TagType::Anonymous)?;
 
-        spake2p.set_context(ctx.rx.as_borrow_slice(), ctx.tx.as_borrow_slice())?;
-        self.state.make_in_progress(spake2p, &ctx.exch_ctx);
+        spake2p.set_context(rx.as_slice(), tx.as_mut_slice())?;
 
-        Ok(())
+        drop(pase);
+
+        exchange.exchange(tx, rx).await
+    }
+
+    #[allow(clippy::await_holding_refcell_ref)]
+    async fn update_timeout(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        tx: &mut Packet<'_>,
+        new: bool,
+    ) -> Result<(), Error> {
+        self.check_session(exchange, tx).await?;
+
+        let mut pase = self.pase.borrow_mut();
+
+        if pase
+            .timeout
+            .as_ref()
+            .map(|sd| sd.is_sess_expired(pase.epoch))
+            .unwrap_or(false)
+        {
+            pase.timeout = None;
+        }
+
+        let status = if let Some(sd) = pase.timeout.as_mut() {
+            if &sd.exch_id != exchange.id() {
+                info!("Other PAKE session in progress");
+                Some(SCStatusCodes::Busy)
+            } else {
+                None
+            }
+        } else if new {
+            None
+        } else {
+            error!("PAKE session not found or expired");
+            Some(SCStatusCodes::SessionNotFound)
+        };
+
+        if let Some(status) = status {
+            drop(pase);
+
+            complete_with_status(exchange, tx, status, None).await
+        } else {
+            pase.timeout = Some(Timeout::new(exchange, pase.epoch));
+
+            Ok(())
+        }
+    }
+
+    async fn check_session(
+        &mut self,
+        exchange: &mut Exchange<'_>,
+        tx: &mut Packet<'_>,
+    ) -> Result<(), Error> {
+        if self.pase.borrow().session.is_none() {
+            error!("PASE not enabled");
+            complete_with_status(exchange, tx, SCStatusCodes::InvalidParameter, None).await
+        } else {
+            Ok(())
+        }
     }
 }
 

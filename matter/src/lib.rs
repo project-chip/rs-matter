@@ -23,7 +23,7 @@
 //! Currently Ethernet based transport is supported.
 //!
 //! # Examples
-//! ```
+//! TODO: Fix once new API has stabilized a bit
 //! use matter::{Matter, CommissioningData};
 //! use matter::data_model::device_types::device_type_add_on_off_light;
 //! use matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -65,8 +65,12 @@
 //! }
 //! // Start the Matter Daemon
 //! // matter.start_daemon().unwrap();
-//! ```
+//!
 //! Start off exploring by going to the [Matter] object.
+#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(feature = "nightly", feature(async_fn_in_trait))]
+#![cfg_attr(feature = "nightly", feature(impl_trait_projections))]
+#![cfg_attr(feature = "nightly", allow(incomplete_features))]
 
 pub mod acl;
 pub mod cert;
@@ -80,10 +84,29 @@ pub mod group_keys;
 pub mod interaction_model;
 pub mod mdns;
 pub mod pairing;
+pub mod persist;
 pub mod secure_channel;
-pub mod sys;
 pub mod tlv;
 pub mod transport;
 pub mod utils;
 
 pub use crate::core::*;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(feature = "alloc")]
+#[macro_export]
+macro_rules! alloc {
+    ($val:expr) => {
+        alloc::boxed::Box::new($val)
+    };
+}
+
+#[cfg(not(feature = "alloc"))]
+#[macro_export]
+macro_rules! alloc {
+    ($val:expr) => {
+        $val
+    };
+}

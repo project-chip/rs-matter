@@ -15,9 +15,12 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use core::fmt::{self, Debug};
 
-use super::CryptoKeyPair;
+use crate::error::{Error, ErrorCode};
+use crate::utils::rand::Rand;
+
+use alloc::vec;
 use foreign_types::ForeignTypeRef;
 use log::error;
 use openssl::asn1::Asn1Type;
@@ -40,6 +43,9 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder, X509};
 // problem while using OpenSSL's Signer
 // TODO: Use proper OpenSSL method for this
 use hmac::{Hmac, Mac};
+
+extern crate alloc;
+
 pub struct HmacSha256 {
     ctx: Hmac<sha2::Sha256>,
 }
@@ -47,7 +53,8 @@ pub struct HmacSha256 {
 impl HmacSha256 {
     pub fn new(key: &[u8]) -> Result<Self, Error> {
         Ok(Self {
-            ctx: Hmac::<sha2::Sha256>::new_from_slice(key).map_err(|_x| Error::InvalidKeyLength)?,
+            ctx: Hmac::<sha2::Sha256>::new_from_slice(key)
+                .map_err(|_x| ErrorCode::InvalidKeyLength)?,
         })
     }
 
@@ -62,16 +69,18 @@ impl HmacSha256 {
     }
 }
 
+#[derive(Debug)]
 pub enum KeyType {
     Public(EcKey<pkey::Public>),
     Private(EcKey<pkey::Private>),
 }
+#[derive(Debug)]
 pub struct KeyPair {
     key: KeyType,
 }
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(_rand: Rand) -> Result<Self, Error> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
         let key = EcKey::generate(&group)?;
         Ok(Self {
@@ -108,14 +117,12 @@ impl KeyPair {
 
     fn private_key(&self) -> Result<&EcKey<Private>, Error> {
         match &self.key {
-            KeyType::Public(_) => Err(Error::Invalid),
+            KeyType::Public(_) => Err(ErrorCode::Invalid.into()),
             KeyType::Private(k) => Ok(&k),
         }
     }
-}
 
-impl CryptoKeyPair for KeyPair {
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
         let mut bn_ctx = BigNumContext::new()?;
         let s = self.public_key_point().to_bytes(
@@ -128,14 +135,14 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
         let s = self.private_key()?.private_key().to_vec();
         let len = s.len();
         priv_key[..len].copy_from_slice(s.as_slice());
         Ok(len)
     }
 
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
+    pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
         let self_pkey = PKey::from_ec_key(self.private_key()?.clone())?;
 
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
@@ -149,7 +156,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(deriver.derive(secret)?)
     }
 
-    fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         let mut builder = X509ReqBuilder::new()?;
         builder.set_version(0)?;
 
@@ -170,18 +177,18 @@ impl CryptoKeyPair for KeyPair {
             a.copy_from_slice(csr);
             Ok(a)
         } else {
-            Err(Error::NoSpace)
+            Err(ErrorCode::NoSpace.into())
         }
     }
 
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
+    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
         // First get the SHA256 of the message
         let mut h = Hasher::new(MessageDigest::sha256())?;
         h.update(msg)?;
         let msg = h.finish()?;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         safemem::write_bytes(signature, 0);
 
@@ -193,7 +200,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(64)
     }
 
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
+    pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
         // First get the SHA256 of the message
         let mut h = Hasher::new(MessageDigest::sha256())?;
         h.update(msg)?;
@@ -208,11 +215,11 @@ impl CryptoKeyPair for KeyPair {
             KeyType::Public(key) => key,
             _ => {
                 error!("Not yet supported");
-                return Err(Error::Invalid);
+                return Err(ErrorCode::Invalid.into());
             }
         };
         if !sig.verify(&msg, k)? {
-            Err(Error::InvalidSignature)
+            Err(ErrorCode::InvalidSignature.into())
         } else {
             Ok(())
         }
@@ -223,7 +230,7 @@ const P256_KEY_LEN: usize = 256 / 8;
 pub fn pubkey_from_der<'a>(der: &'a [u8], out_key: &mut [u8]) -> Result<(), Error> {
     if out_key.len() != P256_KEY_LEN {
         error!("Insufficient length");
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     } else {
         let key = X509::from_der(der)?.public_key()?.public_key_to_der()?;
         let len = key.len();
@@ -235,7 +242,7 @@ pub fn pubkey_from_der<'a>(der: &'a [u8], out_key: &mut [u8]) -> Result<(), Erro
 
 pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
     openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, MessageDigest::sha256(), key)
-        .map_err(|_e| Error::TLSStack)
+        .map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), Error> {
@@ -295,7 +302,7 @@ pub fn lowlevel_encrypt_aead(
     aad: &[u8],
     data: &[u8],
     tag: &mut [u8],
-) -> Result<Vec<u8>, ErrorStack> {
+) -> Result<alloc::vec::Vec<u8>, ErrorStack> {
     let t = symm::Cipher::aes_128_ccm();
     let mut ctx = CipherCtx::new()?;
     CipherCtxRef::encrypt_init(
@@ -331,7 +338,7 @@ pub fn lowlevel_decrypt_aead(
     aad: &[u8],
     data: &[u8],
     tag: &[u8],
-) -> Result<Vec<u8>, ErrorStack> {
+) -> Result<alloc::vec::Vec<u8>, ErrorStack> {
     let t = symm::Cipher::aes_128_ccm();
     let mut ctx = CipherCtx::new()?;
     CipherCtxRef::decrypt_init(
@@ -375,12 +382,20 @@ impl Sha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.hasher.update(data).map_err(|_| Error::TLSStack)
+        self.hasher
+            .update(data)
+            .map_err(|_| ErrorCode::TLSStack.into())
     }
 
     pub fn finish(mut self, data: &mut [u8]) -> Result<(), Error> {
         let h = self.hasher.finish()?;
         data.copy_from_slice(h.as_ref());
         Ok(())
+    }
+}
+
+impl Debug for Sha256 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "Sha256")
     }
 }

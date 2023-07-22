@@ -21,16 +21,11 @@ use crate::utils::writebuf::WriteBuf;
 use bitflags::bitflags;
 use log::info;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Default, Copy, Clone)]
 pub enum SessionType {
+    #[default]
     None,
     Encrypted,
-}
-
-impl Default for SessionType {
-    fn default() -> SessionType {
-        SessionType::None
-    }
 }
 
 bitflags! {
@@ -43,7 +38,7 @@ bitflags! {
 }
 
 // This is the unencrypted message
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PlainHdr {
     pub flags: MsgFlags,
     pub sess_type: SessionType,
@@ -70,7 +65,7 @@ impl PlainHdr {
 impl PlainHdr {
     // it will have an additional 'message length' field first
     pub fn decode(&mut self, msg: &mut ParseBuf) -> Result<(), Error> {
-        self.flags = MsgFlags::from_bits(msg.le_u8()?).ok_or(Error::Invalid)?;
+        self.flags = MsgFlags::from_bits(msg.le_u8()?).ok_or(ErrorCode::Invalid)?;
         self.sess_id = msg.le_u16()?;
         let _sec_flags = msg.le_u8()?;
         self.sess_type = if self.sess_id != 0 {

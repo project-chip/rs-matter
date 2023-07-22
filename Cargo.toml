@@ -1,4 +1,17 @@
 [workspace]
-members = ["matter", "matter_macro_derive", "boxslab", "tools/tlv_tool"]
+resolver = "2"
+members = ["matter", "matter_macro_derive"]
 
-exclude = ["examples/*"]
+exclude = ["examples/*", "tools/tlv_tool"]
+
+# For compatibility with ESP IDF
+[patch.crates-io]
+polling = { git = "https://github.com/esp-rs-compat/polling" }
+socket2 = { git = "https://github.com/esp-rs-compat/socket2" }
+
+[profile.release]
+opt-level = 3
+
+[profile.dev]
+debug = true
+opt-level = 3

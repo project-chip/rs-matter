@@ -17,13 +17,13 @@
 
 use crate::{
     data_model::objects::{ClusterId, EndptId},
-    error::Error,
-    tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
+    error::{Error, ErrorCode},
+    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
 };
 
 // A generic path with endpoint, clusters, and a leaf
 // The leaf could be command, attribute, event
-#[derive(Default, Clone, Copy, Debug, PartialEq, FromTLV, ToTLV)]
+#[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
 #[tlvargs(datatype = "list")]
 pub struct GenericPath {
     pub endpoint: Option<EndptId>,
@@ -48,7 +48,7 @@ impl GenericPath {
                 cluster: Some(c),
                 leaf: Some(l),
             } => Ok((e, c, l)),
-            _ => Err(Error::Invalid),
+            _ => Err(ErrorCode::Invalid.into()),
         }
     }
     /// Returns true, if the path is wildcard
@@ -69,7 +69,7 @@ pub mod msg {
     use crate::{
         error::Error,
         interaction_model::core::IMStatusCode,
-        tlv::{FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
+        tlv::{FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
     };
 
     use super::ib::{
@@ -77,7 +77,7 @@ pub mod msg {
         EventPath,
     };
 
-    #[derive(Default, FromTLV, ToTLV)]
+    #[derive(Debug, Default, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct SubscribeReq<'a> {
         pub keep_subs: bool,
@@ -105,16 +105,6 @@ pub mod msg {
         pub fn set_attr_requests(mut self, requests: &'a [AttrPath]) -> Self {
             self.attr_requests = Some(TLVArray::new(requests));
             self
-        }
-
-        pub fn to_read_req(&self) -> ReadReq<'a> {
-            ReadReq {
-                attr_requests: self.attr_requests,
-                event_requests: self.event_requests,
-                event_filters: self.event_filters,
-                fabric_filtered: self.fabric_filtered,
-                dataver_filters: self.dataver_filters,
-            }
         }
     }
 
@@ -160,13 +150,6 @@ pub mod msg {
         pub inv_requests: Option<TLVArray<'a, CmdData<'a>>>,
     }
 
-    // This enum is helpful when we are constructing the response
-    // step by step in incremental manner
-    pub enum InvRespTag {
-        SupressResponse = 0,
-        InvokeResponses = 1,
-    }
-
     #[derive(FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct InvResp<'a> {
@@ -174,7 +157,14 @@ pub mod msg {
         pub inv_responses: Option<TLVArray<'a, ib::InvResp<'a>>>,
     }
 
-    #[derive(Default, ToTLV, FromTLV)]
+    // This enum is helpful when we are constructing the response
+    // step by step in incremental manner
+    pub enum InvRespTag {
+        SupressResponse = 0,
+        InvokeResponses = 1,
+    }
+
+    #[derive(Default, ToTLV, FromTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct ReadReq<'a> {
         pub attr_requests: Option<TLVArray<'a, AttrPath>>,
@@ -198,17 +188,17 @@ pub mod msg {
         }
     }
 
-    #[derive(ToTLV, FromTLV)]
-    #[tlvargs(lifetime = "'b")]
-    pub struct WriteReq<'a, 'b> {
+    #[derive(FromTLV, ToTLV, Debug)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct WriteReq<'a> {
         pub supress_response: Option<bool>,
         timed_request: Option<bool>,
-        pub write_requests: TLVArray<'a, AttrData<'b>>,
+        pub write_requests: TLVArray<'a, AttrData<'a>>,
         more_chunked: Option<bool>,
     }
 
-    impl<'a, 'b> WriteReq<'a, 'b> {
-        pub fn new(supress_response: bool, write_requests: &'a [AttrData<'b>]) -> Self {
+    impl<'a> WriteReq<'a> {
+        pub fn new(supress_response: bool, write_requests: &'a [AttrData<'a>]) -> Self {
             let mut w = Self {
                 supress_response: None,
                 write_requests: TLVArray::new(write_requests),
@@ -223,7 +213,7 @@ pub mod msg {
     }
 
     // Report Data
-    #[derive(FromTLV, ToTLV)]
+    #[derive(FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct ReportDataMsg<'a> {
         pub subscription_id: Option<u32>,
@@ -243,7 +233,7 @@ pub mod msg {
     }
 
     // Write Response
-    #[derive(ToTLV, FromTLV)]
+    #[derive(ToTLV, FromTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct WriteResp<'a> {
         pub write_responses: TLVArray<'a, AttrStatus>,
@@ -255,11 +245,11 @@ pub mod msg {
 }
 
 pub mod ib {
-    use std::fmt::Debug;
+    use core::fmt::Debug;
 
     use crate::{
-        data_model::objects::{AttrDetails, AttrId, ClusterId, EncodeValue, EndptId},
-        error::Error,
+        data_model::objects::{AttrDetails, AttrId, ClusterId, CmdId, EncodeValue, EndptId},
+        error::{Error, ErrorCode},
         interaction_model::core::IMStatusCode,
         tlv::{FromTLV, Nullable, TLVElement, TLVWriter, TagType, ToTLV},
     };
@@ -268,7 +258,7 @@ pub mod ib {
     use super::GenericPath;
 
     // Command Response
-    #[derive(Clone, Copy, FromTLV, ToTLV, Debug)]
+    #[derive(Clone, FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub enum InvResp<'a> {
         Cmd(CmdData<'a>),
@@ -276,18 +266,6 @@ pub mod ib {
     }
 
     impl<'a> InvResp<'a> {
-        pub fn cmd_new(
-            endpoint: EndptId,
-            cluster: ClusterId,
-            cmd: u16,
-            data: EncodeValue<'a>,
-        ) -> Self {
-            Self::Cmd(CmdData::new(
-                CmdPath::new(Some(endpoint), Some(cluster), Some(cmd)),
-                data,
-            ))
-        }
-
         pub fn status_new(cmd_path: CmdPath, status: IMStatusCode, cluster_status: u16) -> Self {
             Self::Status(CmdStatus {
                 path: cmd_path,
@@ -296,7 +274,24 @@ pub mod ib {
         }
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone, PartialEq, Debug)]
+    impl<'a> From<CmdData<'a>> for InvResp<'a> {
+        fn from(value: CmdData<'a>) -> Self {
+            Self::Cmd(value)
+        }
+    }
+
+    pub enum InvRespTag {
+        Cmd = 0,
+        Status = 1,
+    }
+
+    impl<'a> From<CmdStatus> for InvResp<'a> {
+        fn from(value: CmdStatus) -> Self {
+            Self::Status(value)
+        }
+    }
+
+    #[derive(FromTLV, ToTLV, Clone, PartialEq, Debug)]
     pub struct CmdStatus {
         path: CmdPath,
         status: Status,
@@ -314,7 +309,7 @@ pub mod ib {
         }
     }
 
-    #[derive(Debug, Clone, Copy, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct CmdData<'a> {
         pub path: CmdPath,
@@ -327,8 +322,13 @@ pub mod ib {
         }
     }
 
+    pub enum CmdDataTag {
+        Path = 0,
+        Data = 1,
+    }
+
     // Status
-    #[derive(Debug, Clone, Copy, PartialEq, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
     pub struct Status {
         pub status: IMStatusCode,
         pub cluster_status: u16,
@@ -344,7 +344,7 @@ pub mod ib {
     }
 
     // Attribute Response
-    #[derive(Clone, Copy, FromTLV, ToTLV, PartialEq, Debug)]
+    #[derive(Clone, FromTLV, ToTLV, PartialEq, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub enum AttrResp<'a> {
         Status(AttrStatus),
@@ -352,10 +352,6 @@ pub mod ib {
     }
 
     impl<'a> AttrResp<'a> {
-        pub fn new(data_ver: u32, path: &AttrPath, data: EncodeValue<'a>) -> Self {
-            AttrResp::Data(AttrData::new(Some(data_ver), *path, data))
-        }
-
         pub fn unwrap_data(self) -> AttrData<'a> {
             match self {
                 AttrResp::Data(d) => d,
@@ -366,8 +362,25 @@ pub mod ib {
         }
     }
 
+    impl<'a> From<AttrData<'a>> for AttrResp<'a> {
+        fn from(value: AttrData<'a>) -> Self {
+            Self::Data(value)
+        }
+    }
+
+    impl<'a> From<AttrStatus> for AttrResp<'a> {
+        fn from(value: AttrStatus) -> Self {
+            Self::Status(value)
+        }
+    }
+
+    pub enum AttrRespTag {
+        Status = 0,
+        Data = 1,
+    }
+
     // Attribute Data
-    #[derive(Clone, Copy, PartialEq, FromTLV, ToTLV, Debug)]
+    #[derive(Clone, PartialEq, FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct AttrData<'a> {
         pub data_ver: Option<u32>,
@@ -385,6 +398,12 @@ pub mod ib {
         }
     }
 
+    pub enum AttrDataTag {
+        DataVer = 0,
+        Path = 1,
+        Data = 2,
+    }
+
     #[derive(Debug)]
     /// Operations on an Interaction Model List
     pub enum ListOperation {
@@ -399,13 +418,9 @@ pub mod ib {
     }
 
     /// Attribute Lists in Attribute Data are special. Infer the correct meaning using this function
-    pub fn attr_list_write<F>(
-        attr: &AttrDetails,
-        data: &TLVElement,
-        mut f: F,
-    ) -> Result<(), IMStatusCode>
+    pub fn attr_list_write<F>(attr: &AttrDetails, data: &TLVElement, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(ListOperation, &TLVElement) -> Result<(), IMStatusCode>,
+        F: FnMut(ListOperation, &TLVElement) -> Result<(), Error>,
     {
         if let Some(Nullable::NotNull(index)) = attr.list_index {
             // If list index is valid,
@@ -422,7 +437,7 @@ pub mod ib {
             f(ListOperation::DeleteList, data)?;
             // Now the data must be a list, that should be added item by item
 
-            let container = data.enter().ok_or(Error::Invalid)?;
+            let container = data.enter().ok_or(ErrorCode::Invalid)?;
             for d in container {
                 f(ListOperation::AddItem, &d)?;
             }
@@ -433,7 +448,7 @@ pub mod ib {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
     pub struct AttrStatus {
         path: AttrPath,
         status: Status,
@@ -449,7 +464,7 @@ pub mod ib {
     }
 
     // Attribute Path
-    #[derive(Default, Clone, Copy, Debug, PartialEq, FromTLV, ToTLV)]
+    #[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
     #[tlvargs(datatype = "list")]
     pub struct AttrPath {
         pub tag_compression: Option<bool>,
@@ -476,7 +491,7 @@ pub mod ib {
     }
 
     // Command Path
-    #[derive(Default, Debug, Copy, Clone, PartialEq)]
+    #[derive(Default, Debug, Clone, PartialEq)]
     pub struct CmdPath {
         pub path: GenericPath,
     }
@@ -499,13 +514,13 @@ pub mod ib {
         pub fn new(
             endpoint: Option<EndptId>,
             cluster: Option<ClusterId>,
-            command: Option<u16>,
+            command: Option<CmdId>,
         ) -> Self {
             Self {
                 path: GenericPath {
                     endpoint,
                     cluster,
-                    leaf: command.map(|a| a as u32),
+                    leaf: command,
                 },
             }
         }
@@ -519,7 +534,7 @@ pub mod ib {
 
             if c.path.leaf.is_none() {
                 error!("Wildcard command parameter not supported");
-                Err(Error::CommandNotFound)
+                Err(ErrorCode::CommandNotFound.into())
             } else {
                 Ok(c)
             }
@@ -532,20 +547,20 @@ pub mod ib {
         }
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     pub struct ClusterPath {
         pub node: Option<u64>,
         pub endpoint: EndptId,
         pub cluster: ClusterId,
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     pub struct DataVersionFilter {
         pub path: ClusterPath,
         pub data_ver: u32,
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     #[tlvargs(datatype = "list")]
     pub struct EventPath {
         pub node: Option<u64>,
@@ -555,7 +570,7 @@ pub mod ib {
         pub is_urgent: Option<bool>,
     }
 
-    #[derive(FromTLV, ToTLV, Copy, Clone)]
+    #[derive(FromTLV, ToTLV, Clone, Debug)]
     pub struct EventFilter {
         pub node: Option<u64>,
         pub event_min: Option<u64>,

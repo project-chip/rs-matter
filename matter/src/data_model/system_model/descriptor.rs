@@ -15,18 +15,20 @@
  *    limitations under the License.
  */
 
-use num_derive::FromPrimitive;
+use core::convert::TryInto;
 
-use crate::data_model::core::DataModel;
+use strum::FromRepr;
+
+use crate::attribute_enum;
 use crate::data_model::objects::*;
-use crate::error::*;
-use crate::interaction_model::messages::GenericPath;
+use crate::error::Error;
 use crate::tlv::{TLVWriter, TagType, ToTLV};
-use log::error;
+use crate::utils::rand::Rand;
 
 pub const ID: u32 = 0x001D;
 
-#[derive(FromPrimitive)]
+#[derive(FromRepr)]
+#[repr(u16)]
 #[allow(clippy::enum_variant_names)]
 pub enum Attributes {
     DeviceTypeList = 0,
@@ -35,134 +37,210 @@ pub enum Attributes {
     PartsList = 3,
 }
 
-pub struct DescriptorCluster {
-    base: Cluster,
-    endpoint_id: EndptId,
-    data_model: DataModel,
+attribute_enum!(Attributes);
+
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID as _,
+    feature_map: 0,
+    attributes: &[
+        FEATURE_MAP,
+        ATTRIBUTE_LIST,
+        Attribute::new(Attributes::DeviceTypeList as u16, Access::RV, Quality::NONE),
+        Attribute::new(Attributes::ServerList as u16, Access::RV, Quality::NONE),
+        Attribute::new(Attributes::PartsList as u16, Access::RV, Quality::NONE),
+        Attribute::new(Attributes::ClientList as u16, Access::RV, Quality::NONE),
+    ],
+    commands: &[],
+};
+
+struct StandardPartsMatcher;
+
+impl PartsMatcher for StandardPartsMatcher {
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        our_endpoint == 0 && endpoint != our_endpoint
+    }
 }
 
-impl DescriptorCluster {
-    pub fn new(endpoint_id: EndptId, data_model: DataModel) -> Result<Box<Self>, Error> {
-        let mut c = Box::new(DescriptorCluster {
-            endpoint_id,
-            data_model,
-            base: Cluster::new(ID)?,
-        });
-        let attrs = [
-            Attribute::new(
-                Attributes::DeviceTypeList as u16,
-                AttrValue::Custom,
-                Access::RV,
-                Quality::NONE,
-            ),
-            Attribute::new(
-                Attributes::ServerList as u16,
-                AttrValue::Custom,
-                Access::RV,
-                Quality::NONE,
-            ),
-            Attribute::new(
-                Attributes::PartsList as u16,
-                AttrValue::Custom,
-                Access::RV,
-                Quality::NONE,
-            ),
-            Attribute::new(
-                Attributes::ClientList as u16,
-                AttrValue::Custom,
-                Access::RV,
-                Quality::NONE,
-            ),
-        ];
-        c.base.add_attributes(&attrs[..])?;
-        Ok(c)
+struct AggregatorPartsMatcher;
+
+impl PartsMatcher for AggregatorPartsMatcher {
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        endpoint != our_endpoint && endpoint != 0
+    }
+}
+
+pub trait PartsMatcher {
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool;
+}
+
+impl<T> PartsMatcher for &T
+where
+    T: PartsMatcher,
+{
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        (**self).describe(our_endpoint, endpoint)
+    }
+}
+
+impl<T> PartsMatcher for &mut T
+where
+    T: PartsMatcher,
+{
+    fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool {
+        (**self).describe(our_endpoint, endpoint)
+    }
+}
+
+pub struct DescriptorCluster<'a> {
+    matcher: &'a dyn PartsMatcher,
+    data_ver: Dataver,
+}
+
+impl DescriptorCluster<'static> {
+    pub fn new(rand: Rand) -> Self {
+        Self::new_matching(&StandardPartsMatcher, rand)
     }
 
-    fn encode_devtype_list(&self, tag: TagType, tw: &mut TLVWriter) {
-        let path = GenericPath {
-            endpoint: Some(self.endpoint_id),
-            cluster: None,
-            leaf: None,
-        };
-        let _ = tw.start_array(tag);
-        let dm = self.data_model.node.read().unwrap();
-        let _ = dm.for_each_endpoint(&path, |_, e| {
-            let dev_type = e.get_dev_type();
-            let _ = dev_type.to_tlv(tw, TagType::Anonymous);
-            Ok(())
-        });
-        let _ = tw.end_container();
+    pub fn new_aggregator(rand: Rand) -> Self {
+        Self::new_matching(&AggregatorPartsMatcher, rand)
+    }
+}
+
+impl<'a> DescriptorCluster<'a> {
+    pub fn new_matching(matcher: &'a dyn PartsMatcher, rand: Rand) -> DescriptorCluster<'a> {
+        Self {
+            matcher,
+            data_ver: Dataver::new(rand),
+        }
     }
 
-    fn encode_server_list(&self, tag: TagType, tw: &mut TLVWriter) {
-        let path = GenericPath {
-            endpoint: Some(self.endpoint_id),
-            cluster: None,
-            leaf: None,
-        };
-        let _ = tw.start_array(tag);
-        let dm = self.data_model.node.read().unwrap();
-        let _ = dm.for_each_cluster(&path, |_current_path, c| {
-            let _ = tw.u32(TagType::Anonymous, c.base().id());
-            Ok(())
-        });
-        let _ = tw.end_container();
-    }
-
-    fn encode_parts_list(&self, tag: TagType, tw: &mut TLVWriter) {
-        let path = GenericPath {
-            endpoint: None,
-            cluster: None,
-            leaf: None,
-        };
-        let _ = tw.start_array(tag);
-        if self.endpoint_id == 0 {
-            // TODO: If endpoint is another than 0, need to figure out what to do
-            let dm = self.data_model.node.read().unwrap();
-            let _ = dm.for_each_endpoint(&path, |current_path, _| {
-                if let Some(endpoint_id) = current_path.endpoint {
-                    if endpoint_id != 0 {
-                        let _ = tw.u16(TagType::Anonymous, endpoint_id);
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::DeviceTypeList => {
+                        self.encode_devtype_list(
+                            attr.node,
+                            attr.endpoint_id,
+                            AttrDataWriter::TAG,
+                            &mut writer,
+                        )?;
+                        writer.complete()
+                    }
+                    Attributes::ServerList => {
+                        self.encode_server_list(
+                            attr.node,
+                            attr.endpoint_id,
+                            AttrDataWriter::TAG,
+                            &mut writer,
+                        )?;
+                        writer.complete()
+                    }
+                    Attributes::PartsList => {
+                        self.encode_parts_list(
+                            attr.node,
+                            attr.endpoint_id,
+                            AttrDataWriter::TAG,
+                            &mut writer,
+                        )?;
+                        writer.complete()
+                    }
+                    Attributes::ClientList => {
+                        self.encode_client_list(
+                            attr.node,
+                            attr.endpoint_id,
+                            AttrDataWriter::TAG,
+                            &mut writer,
+                        )?;
+                        writer.complete()
                     }
                 }
-                Ok(())
-            });
+            }
+        } else {
+            Ok(())
         }
-        let _ = tw.end_container();
     }
 
-    fn encode_client_list(&self, tag: TagType, tw: &mut TLVWriter) {
+    fn encode_devtype_list(
+        &self,
+        node: &Node,
+        endpoint_id: u16,
+        tag: TagType,
+        tw: &mut TLVWriter,
+    ) -> Result<(), Error> {
+        tw.start_array(tag)?;
+        for endpoint in node.endpoints {
+            if endpoint.id == endpoint_id {
+                let dev_type = endpoint.device_type;
+                dev_type.to_tlv(tw, TagType::Anonymous)?;
+            }
+        }
+
+        tw.end_container()
+    }
+
+    fn encode_server_list(
+        &self,
+        node: &Node,
+        endpoint_id: u16,
+        tag: TagType,
+        tw: &mut TLVWriter,
+    ) -> Result<(), Error> {
+        tw.start_array(tag)?;
+        for endpoint in node.endpoints {
+            if endpoint.id == endpoint_id {
+                for cluster in endpoint.clusters {
+                    tw.u32(TagType::Anonymous, cluster.id as _)?;
+                }
+            }
+        }
+
+        tw.end_container()
+    }
+
+    fn encode_parts_list(
+        &self,
+        node: &Node,
+        endpoint_id: u16,
+        tag: TagType,
+        tw: &mut TLVWriter,
+    ) -> Result<(), Error> {
+        tw.start_array(tag)?;
+
+        for endpoint in node.endpoints {
+            if self.matcher.describe(endpoint_id, endpoint.id) {
+                tw.u16(TagType::Anonymous, endpoint.id)?;
+            }
+        }
+
+        tw.end_container()
+    }
+
+    fn encode_client_list(
+        &self,
+        _node: &Node,
+        _endpoint_id: u16,
+        tag: TagType,
+        tw: &mut TLVWriter,
+    ) -> Result<(), Error> {
         // No Clients supported
-        let _ = tw.start_array(tag);
-        let _ = tw.end_container();
+        tw.start_array(tag)?;
+        tw.end_container()
     }
 }
 
-impl ClusterType for DescriptorCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
+impl<'a> Handler for DescriptorCluster<'a> {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        DescriptorCluster::read(self, attr, encoder)
     }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
-    }
+}
 
-    fn read_custom_attribute(&self, encoder: &mut dyn Encoder, attr: &AttrDetails) {
-        match num::FromPrimitive::from_u16(attr.attr_id) {
-            Some(Attributes::DeviceTypeList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                self.encode_devtype_list(tag, tw)
-            })),
-            Some(Attributes::ServerList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                self.encode_server_list(tag, tw)
-            })),
-            Some(Attributes::PartsList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                self.encode_parts_list(tag, tw)
-            })),
-            Some(Attributes::ClientList) => encoder.encode(EncodeValue::Closure(&|tag, tw| {
-                self.encode_client_list(tag, tw)
-            })),
-            _ => {
-                error!("Attribute not supported: this shouldn't happen");
-            }
-        }
+impl<'a> NonBlockingHandler for DescriptorCluster<'a> {}
+
+impl<'a> ChangeNotifier<()> for DescriptorCluster<'a> {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
     }
 }

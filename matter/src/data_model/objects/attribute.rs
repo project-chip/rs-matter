@@ -15,15 +15,11 @@
  *    limitations under the License.
  */
 
-use super::{AttrId, GlobalElements, Privilege};
-use crate::{
-    error::*,
-    // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
-    tlv::{TLVElement, TLVWriter, TagType, ToTLV},
-};
+use crate::data_model::objects::GlobalElements;
+
+use super::{AttrId, Privilege};
 use bitflags::bitflags;
-use log::error;
-use std::fmt::{self, Debug, Formatter};
+use core::fmt::{self, Debug};
 
 bitflags! {
     #[derive(Default)]
@@ -83,110 +79,24 @@ bitflags! {
     }
 }
 
-/* This file needs some major revamp.
- * - instead of allocating all over the heap, we should use some kind of slab/block allocator
- * - instead of arrays, can use linked-lists to conserve space and avoid the internal fragmentation
- */
-
-#[derive(PartialEq, PartialOrd, Clone)]
-pub enum AttrValue {
-    Int64(i64),
-    Uint8(u8),
-    Uint16(u16),
-    Uint32(u32),
-    Uint64(u64),
-    Bool(bool),
-    Utf8(String),
-    Custom,
-}
-
-impl Debug for AttrValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match &self {
-            AttrValue::Int64(v) => write!(f, "{:?}", *v),
-            AttrValue::Uint8(v) => write!(f, "{:?}", *v),
-            AttrValue::Uint16(v) => write!(f, "{:?}", *v),
-            AttrValue::Uint32(v) => write!(f, "{:?}", *v),
-            AttrValue::Uint64(v) => write!(f, "{:?}", *v),
-            AttrValue::Bool(v) => write!(f, "{:?}", *v),
-            AttrValue::Utf8(v) => write!(f, "{:?}", *v),
-            AttrValue::Custom => write!(f, "custom-attribute"),
-        }?;
-        Ok(())
-    }
-}
-
-impl ToTLV for AttrValue {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        // What is the time complexity of such long match statements?
-        match self {
-            AttrValue::Bool(v) => tw.bool(tag_type, *v),
-            AttrValue::Uint8(v) => tw.u8(tag_type, *v),
-            AttrValue::Uint16(v) => tw.u16(tag_type, *v),
-            AttrValue::Uint32(v) => tw.u32(tag_type, *v),
-            AttrValue::Uint64(v) => tw.u64(tag_type, *v),
-            AttrValue::Utf8(v) => tw.utf8(tag_type, v.as_bytes()),
-            _ => {
-                error!("Attribute type not yet supported");
-                Err(Error::AttributeNotFound)
-            }
-        }
-    }
-}
-
-impl AttrValue {
-    pub fn update_from_tlv(&mut self, tr: &TLVElement) -> Result<(), Error> {
-        match self {
-            AttrValue::Bool(v) => *v = tr.bool()?,
-            AttrValue::Uint8(v) => *v = tr.u8()?,
-            AttrValue::Uint16(v) => *v = tr.u16()?,
-            AttrValue::Uint32(v) => *v = tr.u32()?,
-            AttrValue::Uint64(v) => *v = tr.u64()?,
-            _ => {
-                error!("Attribute type not yet supported");
-                return Err(Error::AttributeNotFound);
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Attribute {
-    pub(super) id: AttrId,
-    pub(super) value: AttrValue,
-    pub(super) quality: Quality,
-    pub(super) access: Access,
-}
-
-impl Default for Attribute {
-    fn default() -> Attribute {
-        Attribute {
-            id: 0,
-            value: AttrValue::Bool(true),
-            quality: Default::default(),
-            access: Default::default(),
-        }
-    }
+    pub id: AttrId,
+    pub quality: Quality,
+    pub access: Access,
 }
 
 impl Attribute {
-    pub fn new(id: AttrId, value: AttrValue, access: Access, quality: Quality) -> Self {
-        Attribute {
+    pub const fn new(id: AttrId, access: Access, quality: Quality) -> Self {
+        Self {
             id,
-            value,
             access,
             quality,
         }
     }
 
-    pub fn set_value(&mut self, value: AttrValue) -> Result<(), Error> {
-        if !self.quality.contains(Quality::FIXED) {
-            self.value = value;
-            Ok(())
-        } else {
-            Err(Error::Invalid)
-        }
+    pub fn is_system(&self) -> bool {
+        Self::is_system_attr(self.id)
     }
 
     pub fn is_system_attr(attr_id: AttrId) -> bool {
@@ -194,9 +104,9 @@ impl Attribute {
     }
 }
 
-impl std::fmt::Display for Attribute {
+impl core::fmt::Display for Attribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {:?}", self.id, self.value)
+        write!(f, "{}", self.id)
     }
 }
 

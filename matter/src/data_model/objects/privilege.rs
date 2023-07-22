@@ -16,7 +16,7 @@
  */
 
 use crate::{
-    error::Error,
+    error::{Error, ErrorCode},
     tlv::{FromTLV, TLVElement, ToTLV},
 };
 use log::error;
@@ -47,12 +47,12 @@ impl FromTLV<'_> for Privilege {
             1 => Ok(Privilege::VIEW),
             2 => {
                 error!("ProxyView privilege not yet supporteds");
-                Err(Error::Invalid)
+                Err(ErrorCode::Invalid.into())
             }
             3 => Ok(Privilege::OPERATE),
             4 => Ok(Privilege::MANAGE),
             5 => Ok(Privilege::ADMIN),
-            _ => Err(Error::Invalid),
+            _ => Err(ErrorCode::Invalid.into()),
         }
     }
 }

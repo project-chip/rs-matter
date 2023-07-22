@@ -30,15 +30,15 @@ pub enum ExpectedInvResp {
 
 pub fn assert_inv_response(resp: &msg::InvResp, expected: &[ExpectedInvResp]) {
     let mut index = 0;
-    for inv_response in resp.inv_responses.unwrap().iter() {
+    for inv_response in resp.inv_responses.as_ref().unwrap().iter() {
         println!("Validating index {}", index);
-        match expected[index] {
+        match &expected[index] {
             ExpectedInvResp::Cmd(e_c, e_d) => match inv_response {
                 InvResp::Cmd(c) => {
-                    assert_eq!(e_c, c.path);
+                    assert_eq!(e_c, &c.path);
                     match c.data {
                         EncodeValue::Tlv(t) => {
-                            assert_eq!(e_d, t.find_tag(0).unwrap().u8().unwrap())
+                            assert_eq!(*e_d, t.find_tag(0).unwrap().u8().unwrap())
                         }
                         _ => panic!("Incorrect CmdDataType"),
                     }
@@ -49,7 +49,7 @@ pub fn assert_inv_response(resp: &msg::InvResp, expected: &[ExpectedInvResp]) {
             },
             ExpectedInvResp::Status(e_status) => match inv_response {
                 InvResp::Status(status) => {
-                    assert_eq!(e_status, status);
+                    assert_eq!(e_status, &status);
                 }
                 _ => {
                     panic!("Invalid response, expected InvResponse::Status");
@@ -64,7 +64,7 @@ pub fn assert_inv_response(resp: &msg::InvResp, expected: &[ExpectedInvResp]) {
 
 #[macro_export]
 macro_rules! cmd_data {
-    ($path:ident, $data:literal) => {
+    ($path:expr, $data:literal) => {
         CmdData::new($path, EncodeValue::Value(&($data as u32)))
     };
 }
@@ -76,7 +76,7 @@ macro_rules! echo_req {
             CmdPath::new(
                 Some($endpoint),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Commands::EchoReq as u16),
+                Some(echo_cluster::Commands::EchoReq as u32),
             ),
             EncodeValue::Value(&($data as u32)),
         )
@@ -90,7 +90,7 @@ macro_rules! echo_resp {
             CmdPath::new(
                 Some($endpoint),
                 Some(echo_cluster::ID),
-                Some(echo_cluster::Commands::EchoResp as u16),
+                Some(echo_cluster::RespCommands::EchoResp as u32),
             ),
             $data,
         )

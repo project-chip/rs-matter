@@ -21,11 +21,12 @@ use elliptic_curve::ops::*;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use elliptic_curve::Field;
 use elliptic_curve::PrimeField;
+use rand_core::CryptoRng;
+use rand_core::RngCore;
 use sha2::Digest;
 
 use crate::error::Error;
-
-use super::crypto::CryptoSpake2;
+use crate::utils::rand::Rand;
 
 const MATTER_M_BIN: [u8; 65] = [
     0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
@@ -44,7 +45,7 @@ const MATTER_N_BIN: [u8; 65] = [
 
 #[allow(non_snake_case)]
 
-pub struct CryptoRustCrypto {
+pub struct CryptoSpake2 {
     xy: p256::Scalar,
     w0: p256::Scalar,
     w1: p256::Scalar,
@@ -54,15 +55,15 @@ pub struct CryptoRustCrypto {
     pB: p256::EncodedPoint,
 }
 
-impl CryptoSpake2 for CryptoRustCrypto {
+impl CryptoSpake2 {
     #[allow(non_snake_case)]
-    fn new() -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         let M = p256::EncodedPoint::from_bytes(MATTER_M_BIN).unwrap();
         let N = p256::EncodedPoint::from_bytes(MATTER_N_BIN).unwrap();
         let L = p256::EncodedPoint::default();
         let pB = p256::EncodedPoint::default();
 
-        Ok(CryptoRustCrypto {
+        Ok(Self {
             xy: p256::Scalar::ZERO,
             w0: p256::Scalar::ZERO,
             w1: p256::Scalar::ZERO,
@@ -74,7 +75,7 @@ impl CryptoSpake2 for CryptoRustCrypto {
     }
 
     // Computes w0 from w0s respectively
-    fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error> {
+    pub fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error> {
         // From the Matter Spec,
         //         w0 = w0s mod p
         //   where p is the order of the curve
@@ -103,7 +104,7 @@ impl CryptoSpake2 for CryptoRustCrypto {
         Ok(())
     }
 
-    fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    pub fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter Spec,
         //         w1 = w1s mod p
         //   where p is the order of the curve
@@ -132,14 +133,14 @@ impl CryptoSpake2 for CryptoRustCrypto {
         Ok(())
     }
 
-    fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
+    pub fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
         self.w0 =
             p256::Scalar::from_repr(*elliptic_curve::generic_array::GenericArray::from_slice(w0))
                 .unwrap();
         Ok(())
     }
 
-    fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
+    pub fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
         self.w1 =
             p256::Scalar::from_repr(*elliptic_curve::generic_array::GenericArray::from_slice(w1))
                 .unwrap();
@@ -148,12 +149,13 @@ impl CryptoSpake2 for CryptoRustCrypto {
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
-    fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
+    pub fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
         self.L = p256::EncodedPoint::from_bytes(l).unwrap();
         Ok(())
     }
 
-    fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+    #[allow(non_snake_case)]
+    pub fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
@@ -163,14 +165,14 @@ impl CryptoSpake2 for CryptoRustCrypto {
     }
 
     #[allow(non_snake_case)]
-    fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
+    pub fn get_pB(&mut self, pB: &mut [u8], rand: Rand) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
         //   - Y = y*P + w0*N
         //   - pB = Y
-        let mut rng = rand::thread_rng();
-        self.xy = p256::Scalar::random(&mut rng);
+        let mut rand = RandRngCore(rand);
+        self.xy = p256::Scalar::random(&mut rand);
 
         let P = p256::AffinePoint::GENERATOR;
         let N = p256::AffinePoint::from_encoded_point(&self.N).unwrap();
@@ -182,7 +184,7 @@ impl CryptoSpake2 for CryptoRustCrypto {
     }
 
     #[allow(non_snake_case)]
-    fn get_TT_as_verifier(
+    pub fn get_TT_as_verifier(
         &mut self,
         context: &[u8],
         pA: &[u8],
@@ -222,9 +224,7 @@ impl CryptoSpake2 for CryptoRustCrypto {
 
         Ok(())
     }
-}
 
-impl CryptoRustCrypto {
     fn add_to_tt(tt: &mut sha2::Sha256, buf: &[u8]) -> Result<(), Error> {
         tt.update((buf.len() as u64).to_le_bytes());
         if !buf.is_empty() {
@@ -266,11 +266,11 @@ impl CryptoRustCrypto {
 
         let mut tmp = x * w0;
         let N_neg = N.neg();
-        let Z = CryptoRustCrypto::do_add_mul(Y, x, N_neg, tmp)?;
+        let Z = Self::do_add_mul(Y, x, N_neg, tmp)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
         tmp = w1 * w0;
-        let V = CryptoRustCrypto::do_add_mul(Y, w1, N_neg, tmp)?;
+        let V = Self::do_add_mul(Y, w1, N_neg, tmp)?;
         Ok((Z, V))
     }
 
@@ -297,12 +297,41 @@ impl CryptoRustCrypto {
 
         let tmp = y * w0;
         let M_neg = M.neg();
-        let Z = CryptoRustCrypto::do_add_mul(X, y, M_neg, tmp)?;
+        let Z = Self::do_add_mul(X, y, M_neg, tmp)?;
         // Cofactor for P256 is 1, so that is a No-Op
         let V = (L * y).to_encoded_point(false);
         Ok((Z, V))
     }
 }
+
+pub struct RandRngCore(pub Rand);
+
+impl RngCore for RandRngCore {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0; 4];
+        self.fill_bytes(&mut buf);
+
+        u32::from_be_bytes(buf)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0; 8];
+        self.fill_bytes(&mut buf);
+
+        u64::from_be_bytes(buf)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        (self.0)(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for RandRngCore {}
 
 #[cfg(test)]
 mod tests {
@@ -310,14 +339,13 @@ mod tests {
 
     use elliptic_curve::sec1::FromEncodedPoint;
 
-    use crate::secure_channel::crypto::CryptoSpake2;
     use crate::secure_channel::spake2p_test_vectors::test_vectors::*;
 
     #[test]
     #[allow(non_snake_case)]
     fn test_get_X() {
         for t in RFC_T {
-            let mut c = CryptoRustCrypto::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let x = p256::Scalar::from_repr(
                 *elliptic_curve::generic_array::GenericArray::from_slice(&t.x),
             )
@@ -325,7 +353,7 @@ mod tests {
             c.set_w0(&t.w0).unwrap();
             let P = p256::AffinePoint::GENERATOR;
             let M = p256::AffinePoint::from_encoded_point(&c.M).unwrap();
-            let r: p256::EncodedPoint = CryptoRustCrypto::do_add_mul(P, x, M, c.w0).unwrap();
+            let r: p256::EncodedPoint = CryptoSpake2::do_add_mul(P, x, M, c.w0).unwrap();
             assert_eq!(&t.X, r.as_bytes());
         }
     }
@@ -334,7 +362,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_Y() {
         for t in RFC_T {
-            let mut c = CryptoRustCrypto::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let y = p256::Scalar::from_repr(
                 *elliptic_curve::generic_array::GenericArray::from_slice(&t.y),
             )
@@ -342,7 +370,7 @@ mod tests {
             c.set_w0(&t.w0).unwrap();
             let P = p256::AffinePoint::GENERATOR;
             let N = p256::AffinePoint::from_encoded_point(&c.N).unwrap();
-            let r = CryptoRustCrypto::do_add_mul(P, y, N, c.w0).unwrap();
+            let r = CryptoSpake2::do_add_mul(P, y, N, c.w0).unwrap();
             assert_eq!(&t.Y, r.as_bytes());
         }
     }
@@ -351,7 +379,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_prover() {
         for t in RFC_T {
-            let mut c = CryptoRustCrypto::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let x = p256::Scalar::from_repr(
                 *elliptic_curve::generic_array::GenericArray::from_slice(&t.x),
             )
@@ -361,7 +389,7 @@ mod tests {
             let Y = p256::EncodedPoint::from_bytes(t.Y).unwrap();
             let Y = p256::AffinePoint::from_encoded_point(&Y).unwrap();
             let N = p256::AffinePoint::from_encoded_point(&c.N).unwrap();
-            let (Z, V) = CryptoRustCrypto::get_ZV_as_prover(c.w0, c.w1, N, Y, x).unwrap();
+            let (Z, V) = CryptoSpake2::get_ZV_as_prover(c.w0, c.w1, N, Y, x).unwrap();
 
             assert_eq!(&t.Z, Z.as_bytes());
             assert_eq!(&t.V, V.as_bytes());
@@ -372,7 +400,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_verifier() {
         for t in RFC_T {
-            let mut c = CryptoRustCrypto::new().unwrap();
+            let mut c = CryptoSpake2::new().unwrap();
             let y = p256::Scalar::from_repr(
                 *elliptic_curve::generic_array::GenericArray::from_slice(&t.y),
             )
@@ -383,7 +411,7 @@ mod tests {
             let L = p256::EncodedPoint::from_bytes(t.L).unwrap();
             let L = p256::AffinePoint::from_encoded_point(&L).unwrap();
             let M = p256::AffinePoint::from_encoded_point(&c.M).unwrap();
-            let (Z, V) = CryptoRustCrypto::get_ZV_as_verifier(c.w0, L, M, X, y).unwrap();
+            let (Z, V) = CryptoSpake2::get_ZV_as_verifier(c.w0, L, M, X, y).unwrap();
 
             assert_eq!(&t.Z, Z.as_bytes());
             assert_eq!(&t.V, V.as_bytes());

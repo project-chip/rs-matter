@@ -2,6 +2,7 @@
 name = "matter_macro_derive"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
@@ -11,3 +12,4 @@ proc-macro = true
 syn = { version = "1", features = ["extra-traits"]}
 quote = "1"
 proc-macro2 = "1"
+proc-macro-crate = "1.3"

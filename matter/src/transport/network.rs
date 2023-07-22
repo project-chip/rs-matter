@@ -15,16 +15,23 @@
  *    limitations under the License.
  */
 
-use std::{
-    fmt::{Debug, Display},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-};
+use core::fmt::{Debug, Display};
+#[cfg(not(feature = "std"))]
+pub use no_std_net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+#[cfg(feature = "std")]
+pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use crate::error::Error;
-
-#[derive(PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub enum Address {
     Udp(SocketAddr),
+}
+
+impl Address {
+    pub fn unwrap_udp(self) -> SocketAddr {
+        match self {
+            Self::Udp(addr) => addr,
+        }
+    }
 }
 
 impl Default for Address {
@@ -34,7 +41,7 @@ impl Default for Address {
 }
 
 impl Display for Address {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Address::Udp(addr) => writeln!(f, "{}", addr),
         }
@@ -42,14 +49,36 @@ impl Display for Address {
 }
 
 impl Debug for Address {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Address::Udp(addr) => writeln!(f, "{}", addr),
         }
     }
 }
 
-pub trait NetworkInterface {
-    fn recv(&self, in_buf: &mut [u8]) -> Result<(usize, Address), Error>;
-    fn send(&self, out_buf: &[u8], addr: Address) -> Result<usize, Error>;
+#[cfg(all(feature = "std", not(feature = "embassy-net")))]
+pub use std_stack::*;
+
+#[cfg(feature = "embassy-net")]
+pub use embassy_net_stack::*;
+
+#[cfg(feature = "std")]
+pub mod std_stack {
+    pub trait NetworkStackDriver {}
+
+    impl NetworkStackDriver for () {}
+
+    pub struct NetworkStack<D>(D);
+
+    impl NetworkStack<()> {
+        pub const fn new() -> Self {
+            Self(())
+        }
+    }
+}
+
+#[cfg(feature = "embassy-net")]
+pub mod embassy_net_stack {
+    pub use embassy_net::Stack as NetworkStack;
+    pub use embassy_net_driver::Driver as NetworkStackDriver;
 }

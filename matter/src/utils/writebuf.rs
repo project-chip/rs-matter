@@ -18,47 +18,28 @@
 use crate::error::*;
 use byteorder::{ByteOrder, LittleEndian};
 
-/// Shrink WriteBuf
-///
-/// This Macro creates a new (child) WriteBuf which has a truncated slice end.
-/// - It accepts a WriteBuf, and the size to reserve (truncate) towards the end.
-/// - It returns the new (child) WriteBuf
-#[macro_export]
-macro_rules! wb_shrink {
-    ($orig_wb:ident, $reserve:ident) => {{
-        let m_data = $orig_wb.empty_as_mut_slice();
-        let m_wb = WriteBuf::new(m_data, m_data.len() - $reserve);
-        (m_wb)
-    }};
-}
-
-/// Unshrink WriteBuf
-///
-/// This macro unshrinks the WriteBuf
-/// - It accepts the original WriteBuf and the child WriteBuf (that was the result of wb_shrink)
-/// After this call, the child WriteBuf shouldn't be used
-#[macro_export]
-macro_rules! wb_unshrink {
-    ($orig_wb:ident, $new_wb:ident) => {{
-        let m_data_len = $new_wb.as_slice().len();
-        $orig_wb.forward_tail_by(m_data_len);
-    }};
-}
-
 #[derive(Debug)]
 pub struct WriteBuf<'a> {
     buf: &'a mut [u8],
+    buf_size: usize,
     start: usize,
     end: usize,
 }
 
 impl<'a> WriteBuf<'a> {
-    pub fn new(buf: &'a mut [u8], len: usize) -> WriteBuf<'a> {
-        WriteBuf {
-            buf: &mut buf[..len],
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        let buf_size = buf.len();
+
+        Self {
+            buf,
+            buf_size,
             start: 0,
             end: 0,
         }
+    }
+
+    pub fn get_start(&self) -> usize {
+        self.start
     }
 
     pub fn get_tail(&self) -> usize {
@@ -73,11 +54,7 @@ impl<'a> WriteBuf<'a> {
         self.end += new_offset
     }
 
-    pub fn as_borrow_slice(&self) -> &[u8] {
-        &self.buf[self.start..self.end]
-    }
-
-    pub fn as_slice(self) -> &'a [u8] {
+    pub fn as_slice(&self) -> &[u8] {
         &self.buf[self.start..self.end]
     }
 
@@ -86,20 +63,55 @@ impl<'a> WriteBuf<'a> {
     }
 
     pub fn empty_as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf[self.end..]
+        &mut self.buf[self.end..self.buf_size]
     }
 
-    pub fn reset(&mut self, reserve: usize) {
-        self.start = reserve;
-        self.end = reserve;
+    pub fn reset(&mut self) {
+        self.buf_size = self.buf.len();
+        self.start = 0;
+        self.end = 0;
+    }
+
+    pub fn load(&mut self, wb: &WriteBuf) -> Result<(), Error> {
+        if self.buf_size < wb.end {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        self.buf[0..wb.end].copy_from_slice(&wb.buf[..wb.end]);
+        self.start = wb.start;
+        self.end = wb.end;
+
+        Ok(())
     }
 
     pub fn reserve(&mut self, reserve: usize) -> Result<(), Error> {
-        if self.end != 0 || self.start != 0 {
-            return Err(Error::Invalid);
+        if self.end != 0 || self.start != 0 || self.buf_size != self.buf.len() {
+            Err(ErrorCode::Invalid.into())
+        } else if reserve > self.buf_size {
+            Err(ErrorCode::NoSpace.into())
+        } else {
+            self.start = reserve;
+            self.end = reserve;
+            Ok(())
         }
-        self.reset(reserve);
-        Ok(())
+    }
+
+    pub fn shrink(&mut self, with: usize) -> Result<(), Error> {
+        if self.end + with <= self.buf_size {
+            self.buf_size -= with;
+            Ok(())
+        } else {
+            Err(ErrorCode::NoSpace.into())
+        }
+    }
+
+    pub fn expand(&mut self, by: usize) -> Result<(), Error> {
+        if self.buf.len() - self.buf_size >= by {
+            self.buf_size += by;
+            Ok(())
+        } else {
+            Err(ErrorCode::NoSpace.into())
+        }
     }
 
     pub fn prepend_with<F>(&mut self, size: usize, f: F) -> Result<(), Error>
@@ -111,7 +123,7 @@ impl<'a> WriteBuf<'a> {
             self.start -= size;
             return Ok(());
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn prepend(&mut self, src: &[u8]) -> Result<(), Error> {
@@ -125,12 +137,12 @@ impl<'a> WriteBuf<'a> {
     where
         F: FnOnce(&mut Self),
     {
-        if self.end + size <= self.buf.len() {
+        if self.end + size <= self.buf_size {
             f(self);
             self.end += size;
             return Ok(());
         }
-        Err(Error::NoSpace)
+        Err(ErrorCode::NoSpace.into())
     }
 
     pub fn append(&mut self, src: &[u8]) -> Result<(), Error> {
@@ -201,9 +213,8 @@ mod tests {
 
     #[test]
     fn test_append_le_with_success() {
-        let mut test_slice: [u8; 22] = [0; 22];
-        let test_slice_len = test_slice.len();
-        let mut buf = WriteBuf::new(&mut test_slice, test_slice_len);
+        let mut test_slice = [0; 22];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u8(1).unwrap();
@@ -222,8 +233,8 @@ mod tests {
 
     #[test]
     fn test_len_param() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 5);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice[..5]);
         buf.reserve(5).unwrap();
 
         let _ = buf.le_u8(1);
@@ -236,8 +247,8 @@ mod tests {
 
     #[test]
     fn test_overrun() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(4).unwrap();
         buf.le_u64(0xcafebabecafebabe).unwrap();
         buf.le_u64(0xcafebabecafebabe).unwrap();
@@ -262,8 +273,8 @@ mod tests {
 
     #[test]
     fn test_as_slice() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u8(1).unwrap();
@@ -285,8 +296,8 @@ mod tests {
 
     #[test]
     fn test_copy_as_slice() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -301,8 +312,8 @@ mod tests {
 
     #[test]
     fn test_copy_as_slice_overrun() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 7);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice[..7]);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -314,8 +325,8 @@ mod tests {
 
     #[test]
     fn test_prepend() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -329,8 +340,8 @@ mod tests {
 
     #[test]
     fn test_prepend_overrun() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -342,8 +353,8 @@ mod tests {
 
     #[test]
     fn test_rewind_tail() {
-        let mut test_slice: [u8; 20] = [0; 20];
-        let mut buf = WriteBuf::new(&mut test_slice, 20);
+        let mut test_slice = [0; 20];
+        let mut buf = WriteBuf::new(&mut test_slice);
         buf.reserve(5).unwrap();
 
         buf.le_u16(65).unwrap();
@@ -352,13 +363,10 @@ mod tests {
 
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
         buf.copy_from_slice(&new_slice).unwrap();
-        assert_eq!(
-            buf.as_borrow_slice(),
-            [65, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,]
-        );
+        assert_eq!(buf.as_slice(), [65, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,]);
 
         buf.rewind_tail_to(anchor);
         buf.le_u16(66).unwrap();
-        assert_eq!(buf.as_borrow_slice(), [65, 0, 66, 0,]);
+        assert_eq!(buf.as_slice(), [65, 0, 66, 0,]);
     }
 }

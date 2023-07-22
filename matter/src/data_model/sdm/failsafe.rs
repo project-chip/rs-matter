@@ -15,9 +15,11 @@
  *    limitations under the License.
  */
 
-use crate::{error::Error, transport::session::SessionMode};
+use crate::{
+    error::{Error, ErrorCode},
+    transport::session::SessionMode,
+};
 use log::error;
-use std::sync::RwLock;
 
 #[derive(PartialEq)]
 #[allow(dead_code)]
@@ -42,26 +44,20 @@ pub enum State {
     Armed(ArmedCtx),
 }
 
-pub struct FailSafeInner {
+pub struct FailSafe {
     state: State,
 }
 
-pub struct FailSafe {
-    state: RwLock<FailSafeInner>,
-}
-
 impl FailSafe {
-    pub fn new() -> Self {
-        Self {
-            state: RwLock::new(FailSafeInner { state: State::Idle }),
-        }
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self { state: State::Idle }
     }
 
-    pub fn arm(&self, timeout: u8, session_mode: SessionMode) -> Result<(), Error> {
-        let mut inner = self.state.write()?;
-        match &mut inner.state {
+    pub fn arm(&mut self, timeout: u8, session_mode: SessionMode) -> Result<(), Error> {
+        match &mut self.state {
             State::Idle => {
-                inner.state = State::Armed(ArmedCtx {
+                self.state = State::Armed(ArmedCtx {
                     session_mode,
                     timeout,
                     noc_state: NocState::NocNotRecvd,
@@ -69,7 +65,8 @@ impl FailSafe {
             }
             State::Armed(c) => {
                 if c.session_mode != session_mode {
-                    return Err(Error::Invalid);
+                    error!("Received Fail-Safe Arm with different session modes; current {:?}, incoming {:?}", c.session_mode, session_mode);
+                    Err(ErrorCode::Invalid)?;
                 }
                 // re-arm
                 c.timeout = timeout;
@@ -78,58 +75,55 @@ impl FailSafe {
         Ok(())
     }
 
-    pub fn disarm(&self, session_mode: SessionMode) -> Result<(), Error> {
-        let mut inner = self.state.write()?;
-        match &mut inner.state {
+    pub fn disarm(&mut self, session_mode: SessionMode) -> Result<(), Error> {
+        match &mut self.state {
             State::Idle => {
                 error!("Received Fail-Safe Disarm without it being armed");
-                return Err(Error::Invalid);
+                Err(ErrorCode::Invalid)?;
             }
             State::Armed(c) => {
                 match c.noc_state {
-                    NocState::NocNotRecvd => return Err(Error::Invalid),
+                    NocState::NocNotRecvd => Err(ErrorCode::Invalid)?,
                     NocState::AddNocRecvd(idx) | NocState::UpdateNocRecvd(idx) => {
                         if let SessionMode::Case(c) = session_mode {
                             if c.fab_idx != idx {
                                 error!(
                                     "Received disarm in separate session from previous Add/Update NOC"
                                 );
-                                return Err(Error::Invalid);
+                                Err(ErrorCode::Invalid)?;
                             }
                         } else {
                             error!("Received disarm in a non-CASE session");
-                            return Err(Error::Invalid);
+                            Err(ErrorCode::Invalid)?;
                         }
                     }
                 }
-                inner.state = State::Idle;
+                self.state = State::Idle;
             }
         }
         Ok(())
     }
 
     pub fn is_armed(&self) -> bool {
-        self.state.read().unwrap().state != State::Idle
+        self.state != State::Idle
     }
 
-    pub fn record_add_noc(&self, fabric_index: u8) -> Result<(), Error> {
-        let mut inner = self.state.write()?;
-        match &mut inner.state {
-            State::Idle => Err(Error::Invalid),
+    pub fn record_add_noc(&mut self, fabric_index: u8) -> Result<(), Error> {
+        match &mut self.state {
+            State::Idle => Err(ErrorCode::Invalid.into()),
             State::Armed(c) => {
                 if c.noc_state == NocState::NocNotRecvd {
                     c.noc_state = NocState::AddNocRecvd(fabric_index);
                     Ok(())
                 } else {
-                    Err(Error::Invalid)
+                    Err(ErrorCode::Invalid.into())
                 }
             }
         }
     }
 
     pub fn allow_noc_change(&self) -> Result<bool, Error> {
-        let mut inner = self.state.write()?;
-        let allow = match &mut inner.state {
+        let allow = match &self.state {
             State::Idle => false,
             State::Armed(c) => c.noc_state == NocState::NocNotRecvd,
         };

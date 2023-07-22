@@ -15,14 +15,14 @@
  *    limitations under the License.
  */
 
-use log::{error, trace};
-use std::sync::Mutex;
-
-use boxslab::box_slab;
+use log::{error, info, trace};
+use owo_colors::OwoColorize;
 
 use crate::{
-    error::Error,
-    sys::MAX_PACKET_POOL_SIZE,
+    error::{Error, ErrorCode},
+    interaction_model::core::PROTO_ID_INTERACTION_MODEL,
+    secure_channel::common::PROTO_ID_SECURE_CHANNEL,
+    tlv,
     utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
 };
 
@@ -33,56 +33,10 @@ use super::{
 };
 
 pub const MAX_RX_BUF_SIZE: usize = 1583;
-type Buffer = [u8; MAX_RX_BUF_SIZE];
+pub const MAX_RX_STATUS_BUF_SIZE: usize = 100;
+pub const MAX_TX_BUF_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
 
-// TODO: I am not very happy with this construction, need to find another way to do this
-pub struct BufferPool {
-    buffers: [Option<Buffer>; MAX_PACKET_POOL_SIZE],
-}
-
-impl BufferPool {
-    const INIT: Option<Buffer> = None;
-    fn get() -> &'static Mutex<BufferPool> {
-        static mut BUFFER_HOLDER: Option<Mutex<BufferPool>> = None;
-        static ONCE: Once = Once::new();
-        unsafe {
-            ONCE.call_once(|| {
-                BUFFER_HOLDER = Some(Mutex::new(BufferPool {
-                    buffers: [BufferPool::INIT; MAX_PACKET_POOL_SIZE],
-                }));
-            });
-            BUFFER_HOLDER.as_ref().unwrap()
-        }
-    }
-
-    pub fn alloc() -> Option<(usize, &'static mut Buffer)> {
-        trace!("Buffer Alloc called\n");
-
-        let mut pool = BufferPool::get().lock().unwrap();
-        for i in 0..MAX_PACKET_POOL_SIZE {
-            if pool.buffers[i].is_none() {
-                pool.buffers[i] = Some([0; MAX_RX_BUF_SIZE]);
-                // Sigh! to by-pass the borrow-checker telling us we are stealing a mutable reference
-                // from under the lock
-                // In this case the lock only protects against the setting of Some/None,
-                // the objects then are independently accessed in a unique way
-                let buffer = unsafe { &mut *(pool.buffers[i].as_mut().unwrap() as *mut Buffer) };
-                return Some((i, buffer));
-            }
-        }
-        None
-    }
-
-    pub fn free(index: usize) {
-        trace!("Buffer Free called\n");
-        let mut pool = BufferPool::get().lock().unwrap();
-        if pool.buffers[index].is_some() {
-            pool.buffers[index] = None;
-        }
-    }
-}
-
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 enum RxState {
     Uninit,
     PlainDecode,
@@ -94,51 +48,95 @@ enum Direction<'a> {
     Rx(ParseBuf<'a>, RxState),
 }
 
+impl<'a> Direction<'a> {
+    pub fn load(&mut self, direction: &Direction) -> Result<(), Error> {
+        if matches!(self, Self::Tx(_)) != matches!(direction, Direction::Tx(_)) {
+            Err(ErrorCode::Invalid)?;
+        }
+
+        match self {
+            Self::Tx(wb) => match direction {
+                Direction::Tx(src_wb) => wb.load(src_wb)?,
+                Direction::Rx(_, _) => Err(ErrorCode::Invalid)?,
+            },
+            Self::Rx(pb, state) => match direction {
+                Direction::Tx(_) => Err(ErrorCode::Invalid)?,
+                Direction::Rx(src_pb, src_state) => {
+                    pb.load(src_pb)?;
+                    *state = *src_state;
+                }
+            },
+        }
+
+        Ok(())
+    }
+}
+
 pub struct Packet<'a> {
     pub plain: PlainHdr,
     pub proto: ProtoHdr,
     pub peer: Address,
     data: Direction<'a>,
-    buffer_index: usize,
 }
 
 impl<'a> Packet<'a> {
     const HDR_RESERVE: usize = plain_hdr::max_plain_hdr_len() + proto_hdr::max_proto_hdr_len();
 
-    pub fn new_rx() -> Result<Self, Error> {
-        let (buffer_index, buffer) = BufferPool::alloc().ok_or(Error::NoSpace)?;
-        let buf_len = buffer.len();
-        Ok(Self {
+    pub fn new_rx(buf: &'a mut [u8]) -> Self {
+        Self {
             plain: Default::default(),
             proto: Default::default(),
-            buffer_index,
             peer: Address::default(),
-            data: Direction::Rx(ParseBuf::new(buffer, buf_len), RxState::Uninit),
-        })
+            data: Direction::Rx(ParseBuf::new(buf), RxState::Uninit),
+        }
     }
 
-    pub fn new_tx() -> Result<Self, Error> {
-        let (buffer_index, buffer) = BufferPool::alloc().ok_or(Error::NoSpace)?;
-        let buf_len = buffer.len();
+    pub fn new_tx(buf: &'a mut [u8]) -> Self {
+        let mut wb = WriteBuf::new(buf);
+        wb.reserve(Packet::HDR_RESERVE).unwrap();
 
-        let mut wb = WriteBuf::new(buffer, buf_len);
-        wb.reserve(Packet::HDR_RESERVE)?;
+        // Reliability on by default
+        let mut proto: ProtoHdr = Default::default();
+        proto.set_reliable();
 
-        let mut p = Self {
+        Self {
             plain: Default::default(),
-            proto: Default::default(),
-            buffer_index,
+            proto,
             peer: Address::default(),
             data: Direction::Tx(wb),
-        };
-        // Reliability on by default
-        p.proto.set_reliable();
-        Ok(p)
+        }
     }
 
-    pub fn as_borrow_slice(&mut self) -> &mut [u8] {
+    pub fn reset(&mut self) {
+        if let Direction::Tx(wb) = &mut self.data {
+            wb.reset();
+            wb.reserve(Packet::HDR_RESERVE).unwrap();
+
+            self.plain = Default::default();
+            self.proto = Default::default();
+            self.peer = Address::default();
+
+            self.proto.set_reliable();
+        }
+    }
+
+    pub fn load(&mut self, packet: &Packet) -> Result<(), Error> {
+        self.plain = packet.plain.clone();
+        self.proto = packet.proto.clone();
+        self.peer = packet.peer;
+        self.data.load(&packet.data)
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        match &self.data {
+            Direction::Rx(pb, _) => pb.as_slice(),
+            Direction::Tx(wb) => wb.as_slice(),
+        }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match &mut self.data {
-            Direction::Rx(pb, _) => pb.as_borrow_slice(),
+            Direction::Rx(pb, _) => pb.as_mut_slice(),
             Direction::Tx(wb) => wb.as_mut_slice(),
         }
     }
@@ -147,7 +145,7 @@ impl<'a> Packet<'a> {
         if let Direction::Rx(pbuf, _) = &mut self.data {
             Ok(pbuf)
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 
@@ -155,7 +153,7 @@ impl<'a> Packet<'a> {
         if let Direction::Tx(wbuf) = &mut self.data {
             Ok(wbuf)
         } else {
-            Err(Error::Invalid)
+            Err(ErrorCode::Invalid.into())
         }
     }
 
@@ -167,8 +165,20 @@ impl<'a> Packet<'a> {
         self.proto.proto_id = proto_id;
     }
 
-    pub fn get_proto_opcode(&self) -> u8 {
+    pub fn get_proto_opcode<T: num::FromPrimitive>(&self) -> Result<T, Error> {
+        num::FromPrimitive::from_u8(self.proto.proto_opcode).ok_or(ErrorCode::Invalid.into())
+    }
+
+    pub fn get_proto_raw_opcode(&self) -> u8 {
         self.proto.proto_opcode
+    }
+
+    pub fn check_proto_opcode(&self, opcode: u8) -> Result<(), Error> {
+        if self.proto.proto_opcode == opcode {
+            Ok(())
+        } else {
+            Err(ErrorCode::Invalid.into())
+        }
     }
 
     pub fn set_proto_opcode(&mut self, proto_opcode: u8) {
@@ -196,11 +206,57 @@ impl<'a> Packet<'a> {
                         .decrypt_and_decode(&self.plain, pb, peer_nodeid, dec_key)
                 } else {
                     error!("Invalid state for proto_decode");
-                    Err(Error::InvalidState)
+                    Err(ErrorCode::InvalidState.into())
                 }
             }
-            _ => Err(Error::InvalidState),
+            _ => Err(ErrorCode::InvalidState.into()),
         }
+    }
+
+    pub fn proto_encode(
+        &mut self,
+        peer: Address,
+        peer_nodeid: Option<u64>,
+        local_nodeid: u64,
+        plain_text: bool,
+        enc_key: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        self.peer = peer;
+
+        // Generate encrypted header
+        let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        self.proto.encode(&mut write_buf)?;
+        self.get_writebuf()?.prepend(write_buf.as_slice())?;
+
+        // Generate plain-text header
+        if plain_text {
+            if let Some(d) = peer_nodeid {
+                self.plain.set_dest_u64(d);
+            }
+        }
+
+        let mut tmp_buf = [0_u8; plain_hdr::max_plain_hdr_len()];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        self.plain.encode(&mut write_buf)?;
+        let plain_hdr_bytes = write_buf.as_slice();
+
+        trace!("unencrypted packet: {:x?}", self.as_mut_slice());
+        let ctr = self.plain.ctr;
+        if let Some(e) = enc_key {
+            proto_hdr::encrypt_in_place(
+                ctr,
+                local_nodeid,
+                plain_hdr_bytes,
+                self.get_writebuf()?,
+                e,
+            )?;
+        }
+
+        self.get_writebuf()?.prepend(plain_hdr_bytes)?;
+        trace!("Full encrypted packet: {:x?}", self.as_mut_slice());
+
+        Ok(())
     }
 
     pub fn is_plain_hdr_decoded(&self) -> Result<bool, Error> {
@@ -209,7 +265,7 @@ impl<'a> Packet<'a> {
                 RxState::Uninit => Ok(false),
                 _ => Ok(true),
             },
-            _ => Err(Error::InvalidState),
+            _ => Err(ErrorCode::InvalidState.into()),
         }
     }
 
@@ -221,19 +277,50 @@ impl<'a> Packet<'a> {
                     self.plain.decode(pb)
                 } else {
                     error!("Invalid state for plain_decode");
-                    Err(Error::InvalidState)
+                    Err(ErrorCode::InvalidState.into())
                 }
             }
-            _ => Err(Error::InvalidState),
+            _ => Err(ErrorCode::InvalidState.into()),
+        }
+    }
+
+    pub fn log(&self, operation: &str) {
+        match self.get_proto_id() {
+            PROTO_ID_SECURE_CHANNEL => {
+                if let Ok(opcode) = self.get_proto_opcode::<crate::secure_channel::common::OpCode>()
+                {
+                    info!("{} SC:{:?}: ", operation.cyan(), opcode);
+                } else {
+                    info!(
+                        "{} SC:{}??: ",
+                        operation.cyan(),
+                        self.get_proto_raw_opcode()
+                    );
+                }
+
+                tlv::print_tlv_list(self.as_slice());
+            }
+            PROTO_ID_INTERACTION_MODEL => {
+                if let Ok(opcode) =
+                    self.get_proto_opcode::<crate::interaction_model::core::OpCode>()
+                {
+                    info!("{} IM:{:?}: ", operation.cyan(), opcode);
+                } else {
+                    info!(
+                        "{} IM:{}??: ",
+                        operation.cyan(),
+                        self.get_proto_raw_opcode()
+                    );
+                }
+
+                tlv::print_tlv_list(self.as_slice());
+            }
+            other => info!(
+                "{} {}??:{}??: ",
+                operation.cyan(),
+                other,
+                self.get_proto_raw_opcode()
+            ),
         }
     }
 }
-
-impl<'a> Drop for Packet<'a> {
-    fn drop(&mut self) {
-        BufferPool::free(self.buffer_index);
-        trace!("Dropping Packet......");
-    }
-}
-
-box_slab!(PacketPool, Packet<'static>, MAX_PACKET_POOL_SIZE);

@@ -16,10 +16,10 @@
  */
 
 use super::{ElementType, TLVContainerIterator, TLVElement, TLVWriter, TagType};
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
+use core::fmt::Debug;
 use core::slice::Iter;
 use log::error;
-use std::fmt::Debug;
 
 pub trait FromTLV<'a> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error>
@@ -31,31 +31,52 @@ pub trait FromTLV<'a> {
     where
         Self: Sized,
     {
-        Err(Error::TLVNotFound)
+        Err(ErrorCode::TLVNotFound.into())
     }
 }
 
-impl<'a, T: Default + FromTLV<'a> + Copy, const N: usize> FromTLV<'a> for [T; N] {
+impl<'a, T: FromTLV<'a> + Default, const N: usize> FromTLV<'a> for [T; N] {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error>
     where
         Self: Sized,
     {
         t.confirm_array()?;
-        let mut a: [T; N] = [Default::default(); N];
-        let mut index = 0;
+
+        let mut a = heapless::Vec::<T, N>::new();
         if let Some(tlv_iter) = t.enter() {
             for element in tlv_iter {
-                if index < N {
-                    a[index] = T::from_tlv(&element)?;
-                    index += 1;
-                } else {
-                    error!("Received TLV Array with elements larger than current size");
-                    break;
-                }
+                a.push(T::from_tlv(&element)?)
+                    .map_err(|_| ErrorCode::NoSpace)?;
             }
         }
-        Ok(a)
+
+        // TODO: This was the old behavior before rebasing the
+        // implementation on top of heapless::Vec (to avoid requiring Copy)
+        // Not sure why we actually need that yet, but without it unit tests fail
+        while a.len() < N {
+            a.push(Default::default()).map_err(|_| ErrorCode::NoSpace)?;
+        }
+
+        a.into_array().map_err(|_| ErrorCode::Invalid.into())
     }
+}
+
+pub fn from_tlv<'a, T: FromTLV<'a>, const N: usize>(
+    vec: &mut heapless::Vec<T, N>,
+    t: &TLVElement<'a>,
+) -> Result<(), Error> {
+    vec.clear();
+
+    t.confirm_array()?;
+
+    if let Some(tlv_iter) = t.enter() {
+        for element in tlv_iter {
+            vec.push(T::from_tlv(&element)?)
+                .map_err(|_| ErrorCode::NoSpace)?;
+        }
+    }
+
+    Ok(())
 }
 
 macro_rules! fromtlv_for {
@@ -70,10 +91,19 @@ macro_rules! fromtlv_for {
     };
 }
 
-fromtlv_for!(u8 u16 u32 u64 bool);
+fromtlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
 
 pub trait ToTLV {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error>;
+}
+
+impl<T> ToTLV for &T
+where
+    T: ToTLV,
+{
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        (**self).to_tlv(tw, tag)
+    }
 }
 
 macro_rules! totlv_for {
@@ -98,30 +128,39 @@ impl<T: ToTLV, const N: usize> ToTLV for [T; N] {
     }
 }
 
+impl<'a, T: ToTLV> ToTLV for &'a [T] {
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        tw.start_array(tag)?;
+        for i in *self {
+            i.to_tlv(tw, TagType::Anonymous)?;
+        }
+        tw.end_container()
+    }
+}
+
 // Generate ToTLV for standard data types
-totlv_for!(i8 u8 u16 u32 u64 bool);
+totlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
 
 // We define a few common data types that will be required here
 //
 // - UtfStr, OctetStr: These are versions that map to utfstr and ostr in the TLV spec
 //     - These only have references into the original list
-// - String, Vec<u8>: Is the owned version of utfstr and ostr, data is cloned into this
-//     - String is only partially implemented
+// - heapless::String<N>, Vheapless::ec<u8, N>: Is the owned version of utfstr and ostr, data is cloned into this
+//     - heapless::String is only partially implemented
 //
 // - TLVArray: Is an array of entries, with reference within the original list
-// - TLVArrayOwned: Is the owned version of this, data is cloned into this
 
 /// Implements UTFString from the spec
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct UtfStr<'a>(pub &'a [u8]);
 
 impl<'a> UtfStr<'a> {
-    pub fn new(str: &'a [u8]) -> Self {
+    pub const fn new(str: &'a [u8]) -> Self {
         Self(str)
     }
 
-    pub fn to_string(self) -> Result<String, Error> {
-        String::from_utf8(self.0.to_vec()).map_err(|_| Error::Invalid)
+    pub fn as_str(&self) -> Result<&str, Error> {
+        core::str::from_utf8(self.0).map_err(|_| ErrorCode::Invalid.into())
     }
 }
 
@@ -138,7 +177,7 @@ impl<'a> FromTLV<'a> for UtfStr<'a> {
 }
 
 /// Implements OctetString from the spec
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct OctetStr<'a>(pub &'a [u8]);
 
 impl<'a> OctetStr<'a> {
@@ -160,35 +199,32 @@ impl<'a> ToTLV for OctetStr<'a> {
 }
 
 /// Implements the Owned version of Octet String
-impl FromTLV<'_> for Vec<u8> {
-    fn from_tlv(t: &TLVElement) -> Result<Vec<u8>, Error> {
-        t.slice().map(|x| x.to_owned())
+impl<const N: usize> FromTLV<'_> for heapless::Vec<u8, N> {
+    fn from_tlv(t: &TLVElement) -> Result<heapless::Vec<u8, N>, Error> {
+        heapless::Vec::from_slice(t.slice()?).map_err(|_| ErrorCode::NoSpace.into())
     }
 }
 
-impl ToTLV for Vec<u8> {
+impl<const N: usize> ToTLV for heapless::Vec<u8, N> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.str16(tag, self.as_slice())
     }
 }
 
 /// Implements the Owned version of UTF String
-impl FromTLV<'_> for String {
-    fn from_tlv(t: &TLVElement) -> Result<String, Error> {
-        match t.slice() {
-            Ok(x) => {
-                if let Ok(s) = String::from_utf8(x.to_vec()) {
-                    Ok(s)
-                } else {
-                    Err(Error::Invalid)
-                }
-            }
-            Err(e) => Err(e),
-        }
+impl<const N: usize> FromTLV<'_> for heapless::String<N> {
+    fn from_tlv(t: &TLVElement) -> Result<heapless::String<N>, Error> {
+        let mut string = heapless::String::new();
+
+        string
+            .push_str(core::str::from_utf8(t.slice()?)?)
+            .map_err(|_| ErrorCode::NoSpace)?;
+
+        Ok(string)
     }
 }
 
-impl ToTLV for String {
+impl<const N: usize> ToTLV for heapless::String<N> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.utf16(tag, self.as_bytes())
     }
@@ -262,38 +298,7 @@ impl<T: ToTLV> ToTLV for Nullable<T> {
     }
 }
 
-/// Owned version of a TLVArray
-pub struct TLVArrayOwned<T>(Vec<T>);
-impl<'a, T: FromTLV<'a>> FromTLV<'a> for TLVArrayOwned<T> {
-    fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
-        t.confirm_array()?;
-        let mut vec = Vec::<T>::new();
-        if let Some(tlv_iter) = t.enter() {
-            for element in tlv_iter {
-                vec.push(T::from_tlv(&element)?);
-            }
-        }
-        Ok(Self(vec))
-    }
-}
-
-impl<T: ToTLV> ToTLV for TLVArrayOwned<T> {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.start_array(tag_type)?;
-        for t in &self.0 {
-            t.to_tlv(tw, TagType::Anonymous)?;
-        }
-        tw.end_container()
-    }
-}
-
-impl<T> TLVArrayOwned<T> {
-    pub fn iter(&self) -> Iter<T> {
-        self.0.iter()
-    }
-}
-
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum TLVArray<'a, T> {
     // This is used for the to-tlv path
     Slice(&'a [T]),
@@ -312,14 +317,14 @@ impl<'a, T: ToTLV> TLVArray<'a, T> {
     }
 
     pub fn iter(&self) -> TLVArrayIter<'a, T> {
-        match *self {
+        match self {
             Self::Slice(s) => TLVArrayIter::Slice(s.iter()),
             Self::Ptr(p) => TLVArrayIter::Ptr(p.enter()),
         }
     }
 }
 
-impl<'a, T: ToTLV + FromTLV<'a> + Copy> TLVArray<'a, T> {
+impl<'a, T: ToTLV + FromTLV<'a> + Clone> TLVArray<'a, T> {
     pub fn get_index(&self, index: usize) -> T {
         for (curr, element) in self.iter().enumerate() {
             if curr == index {
@@ -330,12 +335,12 @@ impl<'a, T: ToTLV + FromTLV<'a> + Copy> TLVArray<'a, T> {
     }
 }
 
-impl<'a, T: FromTLV<'a> + Copy> Iterator for TLVArrayIter<'a, T> {
+impl<'a, T: FromTLV<'a> + Clone> Iterator for TLVArrayIter<'a, T> {
     type Item = T;
     /* Code for going to the next Element */
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Slice(s_iter) => s_iter.next().copied(),
+            Self::Slice(s_iter) => s_iter.next().cloned(),
             Self::Ptr(p_iter) => {
                 if let Some(tlv_iter) = p_iter.as_mut() {
                     let e = tlv_iter.next();
@@ -354,7 +359,7 @@ impl<'a, T: FromTLV<'a> + Copy> Iterator for TLVArrayIter<'a, T> {
 
 impl<'a, T> PartialEq<&[T]> for TLVArray<'a, T>
 where
-    T: ToTLV + FromTLV<'a> + Copy + PartialEq,
+    T: ToTLV + FromTLV<'a> + Clone + PartialEq,
 {
     fn eq(&self, other: &&[T]) -> bool {
         let mut iter1 = self.iter();
@@ -373,34 +378,46 @@ where
     }
 }
 
-impl<'a, T: ToTLV> ToTLV for TLVArray<'a, T> {
+impl<'a, T: FromTLV<'a> + Clone + ToTLV> ToTLV for TLVArray<'a, T> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        match *self {
-            Self::Slice(s) => {
-                tw.start_array(tag_type)?;
-                for a in s {
-                    a.to_tlv(tw, TagType::Anonymous)?;
-                }
-                tw.end_container()
-            }
-            Self::Ptr(t) => t.to_tlv(tw, tag_type),
+        tw.start_array(tag_type)?;
+        for a in self.iter() {
+            a.to_tlv(tw, TagType::Anonymous)?;
         }
+        tw.end_container()
+        // match *self {
+        //     Self::Slice(s) => {
+        //         tw.start_array(tag_type)?;
+        //         for a in s {
+        //             a.to_tlv(tw, TagType::Anonymous)?;
+        //         }
+        //         tw.end_container()
+        //     }
+        //     Self::Ptr(t) => t.to_tlv(tw, tag_type), <-- TODO: this fails the unit tests of Cert from/to TLV
+        // }
     }
 }
 
 impl<'a, T> FromTLV<'a> for TLVArray<'a, T> {
     fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
         t.confirm_array()?;
-        Ok(Self::Ptr(*t))
+        Ok(Self::Ptr(t.clone()))
     }
 }
 
-impl<'a, T: Debug + ToTLV + FromTLV<'a> + Copy> Debug for TLVArray<'a, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'a, T: Debug + ToTLV + FromTLV<'a> + Clone> Debug for TLVArray<'a, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "TLVArray [")?;
+        let mut first = true;
         for i in self.iter() {
-            writeln!(f, "{:?}", i)?;
+            if !first {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{:?}", i)?;
+            first = false;
         }
-        writeln!(f)
+        write!(f, "]")
     }
 }
 
@@ -423,7 +440,7 @@ impl<'a> ToTLV for TLVElement<'a> {
             ElementType::EndCnt => tw.end_container(),
             _ => {
                 error!("ToTLV Not supported");
-                Err(Error::Invalid)
+                Err(ErrorCode::Invalid.into())
             }
         }
     }
@@ -431,7 +448,7 @@ impl<'a> ToTLV for TLVElement<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV};
+    use super::{FromTLV, OctetStr, TLVWriter, TagType, ToTLV};
     use crate::{error::Error, tlv::TLVList, utils::writebuf::WriteBuf};
     use matter_macro_derive::{FromTLV, ToTLV};
 
@@ -442,9 +459,8 @@ mod tests {
     }
     #[test]
     fn test_derive_totlv() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         let abc = TestDerive {
@@ -525,9 +541,8 @@ mod tests {
 
     #[test]
     fn test_derive_totlv_fab_scoped() {
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         let abc = TestDeriveFabScoped { a: 20, fab_idx: 3 };
@@ -557,9 +572,8 @@ mod tests {
         enum_val = TestDeriveEnum::ValueB(10);
 
         // Test ToTLV
-        let mut buf: [u8; 20] = [0; 20];
-        let buf_len = buf.len();
-        let mut writebuf = WriteBuf::new(&mut buf, buf_len);
+        let mut buf = [0; 20];
+        let mut writebuf = WriteBuf::new(&mut buf);
         let mut tw = TLVWriter::new(&mut writebuf);
 
         enum_val.to_tlv(&mut tw, TagType::Anonymous).unwrap();

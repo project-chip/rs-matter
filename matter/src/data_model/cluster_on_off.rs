@@ -15,114 +15,154 @@
  *    limitations under the License.
  */
 
+use core::{cell::Cell, convert::TryInto};
+
 use super::objects::*;
 use crate::{
-    cmd_enter,
-    error::*,
-    interaction_model::{command::CommandReq, core::IMStatusCode},
+    attribute_enum, cmd_enter, command_enum, error::Error, tlv::TLVElement,
+    transport::exchange::Exchange, utils::rand::Rand,
 };
 use log::info;
-use num_derive::FromPrimitive;
+use strum::{EnumDiscriminants, FromRepr};
 
 pub const ID: u32 = 0x0006;
 
+#[derive(FromRepr, EnumDiscriminants)]
+#[repr(u16)]
 pub enum Attributes {
-    OnOff = 0x0,
+    OnOff(AttrType<bool>) = 0x0,
 }
 
-#[derive(FromPrimitive)]
+attribute_enum!(Attributes);
+
+#[derive(FromRepr, EnumDiscriminants)]
+#[repr(u32)]
 pub enum Commands {
     Off = 0x0,
     On = 0x01,
     Toggle = 0x02,
 }
 
-fn attr_on_off_new() -> Attribute {
-    // OnOff, Value: false
-    Attribute::new(
-        Attributes::OnOff as u16,
-        AttrValue::Bool(false),
-        Access::RV,
-        Quality::PERSISTENT,
-    )
-}
+command_enum!(Commands);
+
+pub const CLUSTER: Cluster<'static> = Cluster {
+    id: ID as _,
+    feature_map: 0,
+    attributes: &[
+        FEATURE_MAP,
+        ATTRIBUTE_LIST,
+        Attribute::new(
+            AttributesDiscriminants::OnOff as u16,
+            Access::RV,
+            Quality::PERSISTENT,
+        ),
+    ],
+    commands: &[
+        CommandsDiscriminants::Off as _,
+        CommandsDiscriminants::On as _,
+        CommandsDiscriminants::Toggle as _,
+    ],
+};
 
 pub struct OnOffCluster {
-    base: Cluster,
+    data_ver: Dataver,
+    on: Cell<bool>,
 }
 
 impl OnOffCluster {
-    pub fn new() -> Result<Box<Self>, Error> {
-        let mut cluster = Box::new(OnOffCluster {
-            base: Cluster::new(ID)?,
-        });
-        cluster.base.add_attribute(attr_on_off_new())?;
-        Ok(cluster)
-    }
-}
-
-impl ClusterType for OnOffCluster {
-    fn base(&self) -> &Cluster {
-        &self.base
-    }
-    fn base_mut(&mut self) -> &mut Cluster {
-        &mut self.base
+    pub fn new(rand: Rand) -> Self {
+        Self {
+            data_ver: Dataver::new(rand),
+            on: Cell::new(false),
+        }
     }
 
-    fn handle_command(&mut self, cmd_req: &mut CommandReq) -> Result<(), IMStatusCode> {
-        let cmd = cmd_req
-            .cmd
-            .path
-            .leaf
-            .map(num::FromPrimitive::from_u32)
-            .ok_or(IMStatusCode::UnsupportedCommand)?
-            .ok_or(IMStatusCode::UnsupportedCommand)?;
-        match cmd {
+    pub fn set(&self, on: bool) {
+        if self.on.get() != on {
+            self.on.set(on);
+            self.data_ver.changed();
+        }
+    }
+
+    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::OnOff(codec) => codec.encode(writer, self.on.get()),
+                }
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        let data = data.with_dataver(self.data_ver.get())?;
+
+        match attr.attr_id.try_into()? {
+            Attributes::OnOff(codec) => self.set(codec.decode(data)?),
+        }
+
+        self.data_ver.changed();
+
+        Ok(())
+    }
+
+    pub fn invoke(
+        &self,
+        _exchange: &Exchange,
+        cmd: &CmdDetails,
+        _data: &TLVElement,
+        _encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        match cmd.cmd_id.try_into()? {
             Commands::Off => {
                 cmd_enter!("Off");
-                let value = self
-                    .base
-                    .read_attribute_raw(Attributes::OnOff as u16)
-                    .unwrap();
-                if AttrValue::Bool(true) == *value {
-                    self.base
-                        .write_attribute_raw(Attributes::OnOff as u16, AttrValue::Bool(false))
-                        .map_err(|_| IMStatusCode::Failure)?;
-                }
-                cmd_req.trans.complete();
-                Err(IMStatusCode::Success)
+                self.set(false);
             }
             Commands::On => {
                 cmd_enter!("On");
-                let value = self
-                    .base
-                    .read_attribute_raw(Attributes::OnOff as u16)
-                    .unwrap();
-                if AttrValue::Bool(false) == *value {
-                    self.base
-                        .write_attribute_raw(Attributes::OnOff as u16, AttrValue::Bool(true))
-                        .map_err(|_| IMStatusCode::Failure)?;
-                }
-
-                cmd_req.trans.complete();
-                Err(IMStatusCode::Success)
+                self.set(true);
             }
             Commands::Toggle => {
                 cmd_enter!("Toggle");
-                let value = match self
-                    .base
-                    .read_attribute_raw(Attributes::OnOff as u16)
-                    .unwrap()
-                {
-                    &AttrValue::Bool(v) => v,
-                    _ => false,
-                };
-                self.base
-                    .write_attribute_raw(Attributes::OnOff as u16, AttrValue::Bool(!value))
-                    .map_err(|_| IMStatusCode::Failure)?;
-                cmd_req.trans.complete();
-                Err(IMStatusCode::Success)
+                self.set(!self.on.get());
             }
         }
+
+        self.data_ver.changed();
+
+        Ok(())
+    }
+}
+
+impl Handler for OnOffCluster {
+    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+        OnOffCluster::read(self, attr, encoder)
+    }
+
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        OnOffCluster::write(self, attr, data)
+    }
+
+    fn invoke(
+        &self,
+        exchange: &Exchange,
+        cmd: &CmdDetails,
+        data: &TLVElement,
+        encoder: CmdDataEncoder,
+    ) -> Result<(), Error> {
+        OnOffCluster::invoke(self, exchange, cmd, data, encoder)
+    }
+}
+
+// TODO: Might be removed once the `on` member is externalized
+impl NonBlockingHandler for OnOffCluster {}
+
+impl ChangeNotifier<()> for OnOffCluster {
+    fn consume_change(&mut self) -> Option<()> {
+        self.data_ver.consume_change(())
     }
 }

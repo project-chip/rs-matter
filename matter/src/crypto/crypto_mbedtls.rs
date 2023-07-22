@@ -15,9 +15,13 @@
  *    limitations under the License.
  */
 
-use std::sync::Arc;
+extern crate alloc;
 
-use log::error;
+use core::fmt::{self, Debug};
+
+use alloc::sync::Arc;
+
+use log::{error, info};
 use mbedtls::{
     bignum::Mpi,
     cipher::{Authenticated, Cipher},
@@ -28,12 +32,12 @@ use mbedtls::{
     x509,
 };
 
-use super::CryptoKeyPair;
 use crate::{
     // TODO: We should move ASN1Writer out of Cert,
     // so Crypto doesn't have to depend on Cert
     cert::{ASN1Writer, CertConsumer},
-    error::Error,
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
 };
 
 pub struct HmacSha256 {
@@ -48,11 +52,13 @@ impl HmacSha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.inner.update(data).map_err(|_| Error::TLSStack)
+        self.inner
+            .update(data)
+            .map_err(|_| ErrorCode::TLSStack.into())
     }
 
     pub fn finish(self, out: &mut [u8]) -> Result<(), Error> {
-        self.inner.finish(out).map_err(|_| Error::TLSStack)?;
+        self.inner.finish(out).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
     }
 }
@@ -62,7 +68,7 @@ pub struct KeyPair {
 }
 
 impl KeyPair {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(_rand: Rand) -> Result<Self, Error> {
         let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         Ok(Self {
             key: Pk::generate_ec(&mut ctr_drbg, EcGroupId::SecP256R1)?,
@@ -85,10 +91,8 @@ impl KeyPair {
             key: Pk::public_from_ec_components(group, pub_key)?,
         })
     }
-}
 
-impl CryptoKeyPair for KeyPair {
-    fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         let tmp_priv = self.key.ec_private()?;
         let mut tmp_key =
             Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_priv)?;
@@ -103,16 +107,16 @@ impl CryptoKeyPair for KeyPair {
             Ok(Some(a)) => Ok(a),
             Ok(None) => {
                 error!("Error in writing CSR: None received");
-                Err(Error::Invalid)
+                Err(ErrorCode::Invalid.into())
             }
             Err(e) => {
                 error!("Error in writing CSR {}", e);
-                Err(Error::TLSStack)
+                Err(ErrorCode::TLSStack.into())
             }
         }
     }
 
-    fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
         let public_key = self.key.ec_public()?;
         let group = EcGroup::new(EcGroupId::SecP256R1)?;
         let vec = public_key.to_binary(&group, false)?;
@@ -122,7 +126,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
+    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
         let priv_key_mpi = self.key.ec_private()?;
         let vec = priv_key_mpi.to_binary()?;
 
@@ -131,7 +135,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
+    pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
 
@@ -149,7 +153,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
+    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
         let tmp_key = self.key.ec_private()?;
@@ -162,7 +166,7 @@ impl CryptoKeyPair for KeyPair {
         let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(Error::NoSpace);
+            Err(ErrorCode::NoSpace)?;
         }
         safemem::write_bytes(signature, 0);
 
@@ -175,7 +179,7 @@ impl CryptoKeyPair for KeyPair {
         Ok(len)
     }
 
-    fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
+    pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
         let tmp_key = self.key.ec_public()?;
@@ -192,11 +196,17 @@ impl CryptoKeyPair for KeyPair {
         let mbedtls_sign = &mbedtls_sign[..len];
 
         if let Err(e) = tmp_key.verify(hash::Type::Sha256, &msg_hash, mbedtls_sign) {
-            println!("The error is {}", e);
-            Err(Error::InvalidSignature)
+            info!("The error is {}", e);
+            Err(ErrorCode::InvalidSignature.into())
         } else {
             Ok(())
         }
+    }
+}
+
+impl core::fmt::Debug for KeyPair {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("KeyPair").finish()
     }
 }
 
@@ -224,7 +234,7 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 
         // Type 0x2 is Integer (first integer is r)
         if signature[offset] != 2 {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         offset += 1;
 
@@ -249,7 +259,7 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 
         // Type 0x2 is Integer (this integer is s)
         if signature[offset] != 2 {
-            return Err(Error::Invalid);
+            Err(ErrorCode::Invalid)?;
         }
         offset += 1;
 
@@ -268,17 +278,17 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 
         Ok(64)
     } else {
-        Err(Error::Invalid)
+        Err(ErrorCode::Invalid.into())
     }
 }
 
 pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
     mbedtls::hash::pbkdf2_hmac(Type::Sha256, pass, salt, iter as u32, key)
-        .map_err(|_e| Error::TLSStack)
+        .map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    Hkdf::hkdf(Type::Sha256, salt, ikm, info, key).map_err(|_e| Error::TLSStack)
+    Hkdf::hkdf(Type::Sha256, salt, ikm, info, key).map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn encrypt_in_place(
@@ -299,7 +309,7 @@ pub fn encrypt_in_place(
     cipher
         .encrypt_auth_inplace(ad, data, tag)
         .map(|(len, _)| len)
-        .map_err(|_e| Error::TLSStack)
+        .map_err(|_e| ErrorCode::TLSStack.into())
 }
 
 pub fn decrypt_in_place(
@@ -321,7 +331,7 @@ pub fn decrypt_in_place(
         .map(|(len, _)| len)
         .map_err(|e| {
             error!("Error during decryption: {:?}", e);
-            Error::TLSStack
+            ErrorCode::TLSStack.into()
         })
 }
 
@@ -338,12 +348,18 @@ impl Sha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.ctx.update(data).map_err(|_| Error::TLSStack)?;
+        self.ctx.update(data).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
     }
 
     pub fn finish(self, digest: &mut [u8]) -> Result<(), Error> {
-        self.ctx.finish(digest).map_err(|_| Error::TLSStack)?;
+        self.ctx.finish(digest).map_err(|_| ErrorCode::TLSStack)?;
         Ok(())
+    }
+}
+
+impl Debug for Sha256 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "Sha256")
     }
 }

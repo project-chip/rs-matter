@@ -15,13 +15,11 @@
  *    limitations under the License.
  */
 
-extern crate clap;
 use clap::{App, Arg};
 use matter::cert;
 use matter::tlv;
 use simple_logger::SimpleLogger;
 use std::process;
-use std::u8;
 
 fn main() {
     SimpleLogger::new()

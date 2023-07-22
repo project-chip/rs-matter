@@ -15,15 +15,10 @@
  *    limitations under the License.
  */
 
-use std::{
-    array::TryFromSliceError, fmt, string::FromUtf8Error, sync::PoisonError, time::SystemTimeError,
-};
+use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
-use async_channel::{SendError, TryRecvError};
-use log::error;
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Error {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ErrorCode {
     AttributeNotFound,
     AttributeIsCustom,
     BufferTooSmall,
@@ -31,6 +26,13 @@ pub enum Error {
     CommandNotFound,
     Duplicate,
     EndpointNotFound,
+    InvalidAction,
+    InvalidCommand,
+    InvalidDataType,
+    UnsupportedAccess,
+    ResourceExhausted,
+    Busy,
+    DataVersionMismatch,
     Crypto,
     TLSStack,
     MdnsError,
@@ -71,78 +73,155 @@ pub enum Error {
     Utf8Fail,
 }
 
+impl From<ErrorCode> for Error {
+    fn from(code: ErrorCode) -> Self {
+        Self::new(code)
+    }
+}
+
+pub struct Error {
+    code: ErrorCode,
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    backtrace: std::backtrace::Backtrace,
+}
+
+impl Error {
+    pub fn new(code: ErrorCode) -> Self {
+        Self {
+            code,
+            #[cfg(all(feature = "std", feature = "backtrace"))]
+            backtrace: std::backtrace::Backtrace::capture(),
+        }
+    }
+
+    pub const fn code(&self) -> ErrorCode {
+        self.code
+    }
+
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    pub const fn backtrace(&self) -> &std::backtrace::Backtrace {
+        &self.backtrace
+    }
+
+    pub fn remap<F>(self, matcher: F, to: Self) -> Self
+    where
+        F: FnOnce(&Self) -> bool,
+    {
+        if matcher(&self) {
+            to
+        } else {
+            self
+        }
+    }
+
+    pub fn map_invalid(self, to: Self) -> Self {
+        self.remap(
+            |e| matches!(e.code(), ErrorCode::Invalid | ErrorCode::InvalidData),
+            to,
+        )
+    }
+
+    pub fn map_invalid_command(self) -> Self {
+        self.map_invalid(Error::new(ErrorCode::InvalidCommand))
+    }
+
+    pub fn map_invalid_action(self) -> Self {
+        self.map_invalid(Error::new(ErrorCode::InvalidAction))
+    }
+
+    pub fn map_invalid_data_type(self) -> Self {
+        self.map_invalid(Error::new(ErrorCode::InvalidDataType))
+    }
+}
+
+#[cfg(feature = "std")]
 impl From<std::io::Error> for Error {
     fn from(_e: std::io::Error) -> Self {
         // Keep things simple for now
-        Self::StdIoError
+        Self::new(ErrorCode::StdIoError)
     }
 }
 
-impl<T> From<PoisonError<T>> for Error {
-    fn from(_e: PoisonError<T>) -> Self {
-        Self::RwLock
+#[cfg(feature = "std")]
+impl<T> From<std::sync::PoisonError<T>> for Error {
+    fn from(_e: std::sync::PoisonError<T>) -> Self {
+        Self::new(ErrorCode::RwLock)
     }
 }
 
-#[cfg(feature = "crypto_openssl")]
+#[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for Error {
     fn from(e: openssl::error::ErrorStack) -> Self {
-        error!("Error in TLS: {}", e);
-        Self::TLSStack
+        ::log::error!("Error in TLS: {}", e);
+        Self::new(ErrorCode::TLSStack)
     }
 }
 
-#[cfg(feature = "crypto_mbedtls")]
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 impl From<mbedtls::Error> for Error {
     fn from(e: mbedtls::Error) -> Self {
-        error!("Error in TLS: {}", e);
-        Self::TLSStack
+        ::log::error!("Error in TLS: {}", e);
+        Self::new(ErrorCode::TLSStack)
     }
 }
 
-#[cfg(feature = "crypto_rustcrypto")]
+#[cfg(target_os = "espidf")]
+impl From<esp_idf_sys::EspError> for Error {
+    fn from(e: esp_idf_sys::EspError) -> Self {
+        ::log::error!("Error in ESP: {}", e);
+        Self::new(ErrorCode::TLSStack) // TODO: Not a good mapping
+    }
+}
+
+#[cfg(feature = "rustcrypto")]
 impl From<ccm::aead::Error> for Error {
     fn from(_e: ccm::aead::Error) -> Self {
-        Self::Crypto
+        Self::new(ErrorCode::Crypto)
     }
 }
 
-impl From<SystemTimeError> for Error {
-    fn from(_e: SystemTimeError) -> Self {
-        Self::SysTimeFail
+#[cfg(feature = "std")]
+impl From<std::time::SystemTimeError> for Error {
+    fn from(_e: std::time::SystemTimeError) -> Self {
+        Error::new(ErrorCode::SysTimeFail)
     }
 }
 
 impl From<TryFromSliceError> for Error {
     fn from(_e: TryFromSliceError) -> Self {
-        Self::Invalid
+        Self::new(ErrorCode::Invalid)
     }
 }
 
-impl<T> From<SendError<T>> for Error {
-    fn from(e: SendError<T>) -> Self {
-        error!("Error in channel send {}", e);
-        Self::Invalid
+impl From<Utf8Error> for Error {
+    fn from(_e: Utf8Error) -> Self {
+        Self::new(ErrorCode::Utf8Fail)
     }
 }
 
-impl From<FromUtf8Error> for Error {
-    fn from(_e: FromUtf8Error) -> Self {
-        Self::Utf8Fail
-    }
-}
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(not(all(feature = "std", feature = "backtrace")))]
+        {
+            write!(f, "Error::{}", self)?;
+        }
 
-impl From<TryRecvError> for Error {
-    fn from(e: TryRecvError) -> Self {
-        error!("Error in channel try_recv {}", e);
-        Self::Invalid
+        #[cfg(all(feature = "std", feature = "backtrace"))]
+        {
+            writeln!(f, "Error::{} {{", self)?;
+            write!(f, "{}", self.backtrace())?;
+            writeln!(f, "}}")?;
+        }
+
+        Ok(())
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{:?}", self.code())
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {}
