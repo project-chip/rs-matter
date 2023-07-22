@@ -18,16 +18,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Fmt
-        run: cd tools/tlv; cargo fmt -- --check
+        run: cargo fmt -- --check
+        working-directory: tools/tlv
 
       - name: Clippy
-        run: cd tools/tlv; cargo clippy --no-deps -- -Dwarnings
+        run: cargo clippy --no-deps -- -Dwarnings
+        working-directory: tools/tlv
 
       - name: Build
-        run: cd tools/tlv; cargo build
+        run: cargo build
+        working-directory: tools/tlv
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v2

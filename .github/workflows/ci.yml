@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  rust_toolchain: nightly-2023-07-01
+  RUST_TOOLCHAIN: nightly-2023-07-01
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
 
@@ -28,21 +28,21 @@ jobs:
         if: matrix.toolchain == 'nightly'
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: ${{ env.rust_toolchain }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy, rust-src
 
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Fmt
-        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} fmt -- --check
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.RUST_TOOLCHAIN || 'stable'}} fmt -- --check
 
       - name: Clippy
-        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}} -- -Dwarnings
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.RUST_TOOLCHAIN || 'stable'}} clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}} -- -Dwarnings
 
       - name: Build
-        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}}
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.RUST_TOOLCHAIN || 'stable'}} build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}}
 
       - name: Test
         if: matrix.features == 'os'
-        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}} -- --test-threads=1
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.RUST_TOOLCHAIN || 'stable'}} test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}} -- --test-threads=1
