@@ -9,7 +9,7 @@ use crate::{
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
 use log::info;
 
-use super::ServiceMode;
+use super::{MdnsRunBuffers, ServiceMode};
 
 /// Only for API-compatibility with builtin::MdnsRunner
 pub struct MdnsUdpBuffers(());
@@ -91,12 +91,23 @@ impl<'a> MdnsService<'a> {
     }
 
     /// Only for API-compatibility with builtin::MdnsRunner
-    pub async fn run_udp(&mut self, buffers: &mut MdnsUdpBuffers) -> Result<(), Error> {
+    pub async fn run_piped(
+        &mut self,
+        _tx_pipe: &Pipe<'_>,
+        _rx_pipe: &Pipe<'_>,
+    ) -> Result<(), Error> {
         core::future::pending::<Result<(), Error>>().await
     }
 
     /// Only for API-compatibility with builtin::MdnsRunner
-    pub async fn run(&self, _tx_pipe: &Pipe<'_>, _rx_pipe: &Pipe<'_>) -> Result<(), Error> {
+    pub async fn run<D>(
+        &self,
+        _stack: &crate::transport::network::NetworkStack<D>,
+        _buffers: &mut MdnsRunBuffers,
+    ) -> Result<(), Error>
+    where
+        D: crate::transport::network::NetworkStackDriver,
+    {
         core::future::pending::<Result<(), Error>>().await
     }
 }
