@@ -20,19 +20,19 @@ use core::pin::pin;
 
 use embassy_futures::select::select3;
 use log::info;
-use matter::core::{CommissioningData, Matter};
-use matter::data_model::cluster_basic_information::BasicInfoConfig;
-use matter::data_model::cluster_on_off;
-use matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use matter::data_model::objects::*;
-use matter::data_model::root_endpoint;
-use matter::data_model::system_model::descriptor;
-use matter::error::Error;
-use matter::mdns::{MdnsRunBuffers, MdnsService};
-use matter::secure_channel::spake2p::VerifierData;
-use matter::transport::core::RunBuffers;
-use matter::transport::network::{Ipv4Addr, Ipv6Addr, NetworkStack};
-use matter::utils::select::EitherUnwrap;
+use rs_matter::core::{CommissioningData, Matter};
+use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
+use rs_matter::data_model::cluster_on_off;
+use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::data_model::objects::*;
+use rs_matter::data_model::root_endpoint;
+use rs_matter::data_model::system_model::descriptor;
+use rs_matter::error::Error;
+use rs_matter::mdns::{MdnsRunBuffers, MdnsService};
+use rs_matter::secure_channel::spake2p::VerifierData;
+use rs_matter::transport::core::RunBuffers;
+use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr, NetworkStack};
+use rs_matter::utils::select::EitherUnwrap;
 
 mod dev_att;
 
@@ -79,26 +79,26 @@ fn run() -> Result<(), Error> {
     let dev_att = dev_att::HardCodedDevAtt::new();
 
     #[cfg(feature = "std")]
-    let epoch = matter::utils::epoch::sys_epoch;
+    let epoch = rs_matter::utils::epoch::sys_epoch;
 
     #[cfg(feature = "std")]
-    let rand = matter::utils::rand::sys_rand;
+    let rand = rs_matter::utils::rand::sys_rand;
 
     // NOTE (no_std): For no_std, provide your own function here
     #[cfg(not(feature = "std"))]
-    let epoch = matter::utils::epoch::dummy_epoch;
+    let epoch = rs_matter::utils::epoch::dummy_epoch;
 
     // NOTE (no_std): For no_std, provide your own function here
     #[cfg(not(feature = "std"))]
-    let rand = matter::utils::rand::dummy_rand;
+    let rand = rs_matter::utils::rand::dummy_rand;
 
     let mdns = MdnsService::new(
         0,
-        "matter-demo",
+        "rs-matter-demo",
         ipv4_addr.octets(),
         Some((ipv6_addr.octets(), interface)),
         &dev_det,
-        matter::MATTER_PORT,
+        rs_matter::MATTER_PORT,
     );
 
     info!("mDNS initialized");
@@ -110,13 +110,13 @@ fn run() -> Result<(), Error> {
         &mdns,
         epoch,
         rand,
-        matter::MATTER_PORT,
+        rs_matter::MATTER_PORT,
     );
 
     info!("Matter initialized");
 
     #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    let mut psm = matter::persist::Psm::new(&matter, std::env::temp_dir().join("matter-iot"))?;
+    let mut psm = rs_matter::persist::Psm::new(&matter, std::env::temp_dir().join("rs-matter"))?;
 
     let handler = HandlerCompat(handler(&matter));
 
@@ -223,8 +223,8 @@ fn initialize_logger() {
 #[inline(never)]
 fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
     use log::error;
-    use matter::error::ErrorCode;
     use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
+    use rs_matter::error::ErrorCode;
 
     let interfaces = || {
         nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {

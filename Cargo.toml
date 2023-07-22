@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["matter", "matter_macro_derive"]
+members = ["rs-matter", "rs-matter-macros"]
 
-exclude = ["examples/*", "tools/tlv_tool"]
+exclude = ["examples/*", "tools/tlv"]
 
 # For compatibility with ESP IDF
 [patch.crates-io]

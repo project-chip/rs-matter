@@ -1,4 +1,4 @@
-# matter-rs: The Rust Implementation of Matter
+# rs-matter: The Rust Implementation of Matter
 
 ![experimental](https://img.shields.io/badge/status-Experimental-red) [![license](https://img.shields.io/badge/license-Apache2-green.svg)](https://raw.githubusercontent.com/project-chip/matter-rs/main/LICENSE)
 

@@ -17,10 +17,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Build
-      run: cd tools/tlv_tool; cargo build --verbose
+      run: cd tools/tlv; cargo build
     - name: Archive artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: tlv_tool
-        path: tools/tlv_tool/target/debug/tlv_tool
-
+        name: tlv
+        path: tools/tlv/target/debug/tlv
