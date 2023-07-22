@@ -1,0 +1,32 @@
+name: Publish
+
+on: workflow_dispatch
+
+env:
+  CRATE_NAME: rs-matter
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Login
+        run: cargo login ${{ secrets.crates_io_token }}
+
+      - name: Publish
+        run: cargo publish -p rs-matter
+
+      - name: Get the crate version from cargo
+        run: |
+          version=$(cd rs-matter; cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"${{env.CRATE_NAME}}\") | .version")
+          echo "crate_version=$version" >> $GITHUB_ENV
+          echo "${{env.CRATE_NAME}} version: $version"
+
+      - name: Tag the new release
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: v${{env.crate_version}}
+          message: "Release v${{env.crate_version}}"

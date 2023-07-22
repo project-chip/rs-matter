@@ -235,7 +235,7 @@ impl CryptoSpake2 {
         let mut len_buf: [u8; 8] = [0; 8];
         LittleEndian::write_u64(&mut len_buf, buf.len() as u64);
         tt.update(&len_buf)?;
-        if buf.len() > 0 {
+        if !buf.is_empty() {
             tt.update(buf)?;
         }
         Ok(())
@@ -263,6 +263,7 @@ impl CryptoSpake2 {
     #[inline(always)]
     #[allow(non_snake_case)]
     #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
     fn get_ZV_as_prover(
         w0: &BigNum,
         w1: &BigNum,
@@ -298,6 +299,7 @@ impl CryptoSpake2 {
     #[inline(always)]
     #[allow(non_snake_case)]
     #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
     fn get_ZV_as_verifier(
         w0: &BigNum,
         L: &EcPoint,

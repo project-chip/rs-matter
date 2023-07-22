@@ -133,7 +133,7 @@ fn run() -> Result<(), Error> {
     let mut mdns_runner = pin!(mdns.run(&stack, &mut mdns_buffers));
 
     let mut buffers = RunBuffers::new();
-    let mut runner = matter.run(
+    let runner = matter.run(
         &stack,
         &mut buffers,
         CommissioningData {
@@ -157,10 +157,10 @@ fn run() -> Result<(), Error> {
     #[cfg(not(all(feature = "std", not(target_os = "espidf"))))]
     let mut psm_runner = pin!(core::future::pending());
 
-    let mut runner = select3(&mut runner, &mut mdns_runner, &mut psm_runner);
+    let runner = select3(&mut runner, &mut mdns_runner, &mut psm_runner);
 
     #[cfg(feature = "std")]
-    async_io::block_on(&mut runner).unwrap()?;
+    async_io::block_on(runner).unwrap()?;
 
     // NOTE (no_std): For no_std, replace with your own more efficient no_std executor,
     // because the executor used below is a simple busy-loop poller

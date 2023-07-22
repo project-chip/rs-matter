@@ -1,0 +1,17 @@
+name: PublishMacros
+
+on: workflow_dispatch
+
+jobs:
+  publish_macros:
+    name: PublishMacros
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Login
+        run: cargo login ${{ secrets.crates_io_token }}
+
+      - name: Publish-Macros
+        run: cargo publish -p rs-matter-macros

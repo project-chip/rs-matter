@@ -1,0 +1,36 @@
+name: CITLVTool
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: "20 7 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_tlv_tool:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Fmt
+        run: cd tools/tlv; cargo fmt -- --check
+
+      - name: Clippy
+        run: cd tools/tlv; cargo clippy --no-deps -- -Dwarnings
+
+      - name: Build
+        run: cd tools/tlv; cargo build
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: tlv
+          path: tools/tlv/target/debug/tlv

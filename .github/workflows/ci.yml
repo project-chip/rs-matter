@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: "50 6 * * *"
+  workflow_dispatch:
+
+env:
+  rust_toolchain: nightly-2023-07-01
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crypto-backend: ['rustcrypto', 'mbedtls', 'openssl']
+        features: ['', 'alloc', 'os']
+        toolchain: ['stable', 'nightly']
+
+    steps:
+      - name: Rust
+        if: matrix.toolchain == 'nightly'
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.rust_toolchain }}
+          components: rustfmt, clippy, rust-src
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Fmt
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} fmt -- --check
+
+      - name: Clippy
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}} -- -Dwarnings
+
+      - name: Build
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}}
+
+      - name: Test
+        if: matrix.features == 'os'
+        run: cargo +${{ matrix.toolchain == 'nightly' && env.rust_toolchain || 'stable'}} test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},${{ matrix.toolchain == 'nightly' && 'nightly' || ''}} -- --test-threads=1

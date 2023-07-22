@@ -1,0 +1,17 @@
+name: PublishDryRun
+
+on: workflow_dispatch
+
+env:
+  CRATE_NAME: rs-matter
+
+jobs:
+  publish_dry_run:
+    name: PublishDryRun
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: PublishDryRun
+        run: cargo publish -p rs-matter --dry-run

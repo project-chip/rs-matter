@@ -141,7 +141,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
 
                     #[cfg(feature = "nightly")]
                     {
-                        handler.read(&attr, encoder).await
+                        handler.read(attr, encoder).await
                     }
                 };
 
@@ -181,9 +181,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
 
                     #[cfg(feature = "nightly")]
                     {
-                        handler
-                            .write(&attr, AttrData::new(attr.dataver, &data))
-                            .await
+                        handler.write(attr, AttrData::new(attr.dataver, data)).await
                     }
                 };
 
@@ -357,7 +355,7 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
 
                     #[cfg(feature = "nightly")]
                     {
-                        handler.invoke(exchange, &cmd, &data, encoder).await
+                        handler.invoke(exchange, cmd, data, encoder).await
                     }
                 };
 

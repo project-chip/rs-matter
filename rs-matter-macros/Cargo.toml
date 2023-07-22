@@ -2,6 +2,12 @@
 name = "rs-matter-macros"
 version = "0.1.0"
 edition = "2021"
+authors = ["Kedar Sovani <kedars@gmail.com>"]
+description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - Proc-macros"
+repository = "https://github.com/project-chip/matter-rs"
+readme = "README.md"
+keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
+categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
