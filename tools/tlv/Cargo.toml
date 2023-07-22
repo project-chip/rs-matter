@@ -1,0 +1,13 @@
+[package]
+name = "tlv"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rs-matter = { path = "../../rs-matter" }
+log = {version = "0.4.14", features = ["max_level_trace", "release_max_level_warn"]}
+simple_logger = "1.16.0"
+clap = "2.34"

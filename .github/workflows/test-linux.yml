@@ -20,6 +20,6 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Build
-      run: cd matter; cargo build --no-default-features --features ${{matrix.crypto-backend}}
+      run: cd rs-matter; cargo build --no-default-features --features ${{matrix.crypto-backend}}
     - name: Run tests
-      run: cd matter; cargo test --no-default-features --features os,${{matrix.crypto-backend}} -- --test-threads=1
+      run: cd rs-matter; cargo test --no-default-features --features os,${{matrix.crypto-backend}} -- --test-threads=1

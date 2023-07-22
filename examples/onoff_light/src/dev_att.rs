@@ -15,8 +15,8 @@
  *    limitations under the License.
  */
 
-use matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
-use matter::error::{Error, ErrorCode};
+use rs_matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
+use rs_matter::error::{Error, ErrorCode};
 
 pub struct HardCodedDevAtt {}
 
