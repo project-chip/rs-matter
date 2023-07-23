@@ -76,6 +76,8 @@ bitflags! {
         const PERSISTENT = 0x02; // Short: N
         const FIXED = 0x04;      // Short: F
         const NULLABLE = 0x08;   // Short: X
+
+        const SN = Self::SCENE.bits | Self::PERSISTENT.bits;
     }
 }
 
