@@ -1,9 +1,11 @@
 # rs-matter: The Rust Implementation of Matter
 
-![experimental](https://img.shields.io/badge/status-Experimental-red) [![license](https://img.shields.io/badge/license-Apache2-green.svg)](https://raw.githubusercontent.com/project-chip/matter-rs/main/LICENSE)
-
-[![Test Linux (OpenSSL)](https://github.com/project-chip/matter-rs/actions/workflows/test-linux-openssl.yml/badge.svg)](https://github.com/project-chip/matter-rs/actions/workflows/test-linux-openssl.yml)
-[![Test Linux (mbedTLS)](https://github.com/project-chip/matter-rs/actions/workflows/test-linux-mbedtls.yml/badge.svg)](https://github.com/project-chip/matter-rs/actions/workflows/test-linux-mbedtls.yml)
+![experimental](https://img.shields.io/badge/status-Experimental-red)
+[![license](https://img.shields.io/badge/license-Apache2-green.svg)](https://raw.githubusercontent.com/project-chip/matter-rs/main/LICENSE)
+[![CI](https://github.com/project-chip/matter-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/project-chip/matter-rs/actions/workflows/ci.yml)
+[![CI - TLV](https://github.com/project-chip/matter-rs/actions/workflows/ci-tlv-tool.yml/badge.svg)](https://github.com/project-chip/matter-rs/actions/workflows/ci-tlv-tool.yml)
+[![crates.io](https://img.shields.io/crates/v/rs-matter.svg)](https://crates.io/crates/rs-matter)
+[![Matrix](https://img.shields.io/matrix/matter-rs:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#matter-rs:matrix.org)
 
 ## Build
 
