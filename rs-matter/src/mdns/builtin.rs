@@ -230,7 +230,7 @@ impl<'a> MdnsService<'a> {
                                 let len = self.host.broadcast(self, data.buf, 60)?;
 
                                 if len > 0 {
-                                    info!("Broadasting mDNS entry to {}:{}", addr, PORT);
+                                    info!("Broadcasting mDNS entry to {}:{}", addr, PORT);
 
                                     data.chunk = Some(Chunk {
                                         start: 0,
