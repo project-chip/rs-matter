@@ -485,7 +485,7 @@ impl<'a> Case<'a> {
     fn get_sigma2_key(
         ipk: &[u8],
         our_random: &[u8],
-        case_session: &mut CaseSession,
+        case_session: &CaseSession,
         key: &mut [u8],
     ) -> Result<(), Error> {
         const S2K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x32];

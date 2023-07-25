@@ -1,0 +1,14 @@
+name: PublishMacrosDryRun
+
+on: workflow_dispatch
+
+jobs:
+  publish_macros_dry_run:
+    name: PublishMacrosDryRun
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: PublishDryRun-Macros
+        run: cargo publish -p rs-matter-macros --dry-run

@@ -1,4 +1,4 @@
-# rs-matter-macros
+# rs-matter-macros: The Rust Implementation of Matter Library - Proc-macros
 
 Proc-macros for implementing the `ToTLV` and `FromTLV` traits.
 

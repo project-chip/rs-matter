@@ -59,7 +59,8 @@ impl HmacSha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        Ok(self.ctx.update(data))
+        self.ctx.update(data);
+        Ok(())
     }
 
     pub fn finish(self, out: &mut [u8]) -> Result<(), Error> {
@@ -118,7 +119,7 @@ impl KeyPair {
     fn private_key(&self) -> Result<&EcKey<Private>, Error> {
         match &self.key {
             KeyType::Public(_) => Err(ErrorCode::Invalid.into()),
-            KeyType::Private(k) => Ok(&k),
+            KeyType::Private(k) => Ok(k),
         }
     }
 
@@ -227,7 +228,7 @@ impl KeyPair {
 }
 
 const P256_KEY_LEN: usize = 256 / 8;
-pub fn pubkey_from_der<'a>(der: &'a [u8], out_key: &mut [u8]) -> Result<(), Error> {
+pub fn pubkey_from_der(der: &[u8], out_key: &mut [u8]) -> Result<(), Error> {
     if out_key.len() != P256_KEY_LEN {
         error!("Insufficient length");
         Err(ErrorCode::NoSpace.into())
@@ -286,7 +287,7 @@ pub fn decrypt_in_place(
 ) -> Result<usize, Error> {
     let tag_start = data.len() - super::AEAD_MIC_LEN_BYTES;
     let (data, tag) = data.split_at_mut(tag_start);
-    let result = lowlevel_decrypt_aead(key, Some(nonce), ad, data, &tag)?;
+    let result = lowlevel_decrypt_aead(key, Some(nonce), ad, data, tag)?;
     data[..result.len()].copy_from_slice(result.as_slice());
     Ok(result.len())
 }

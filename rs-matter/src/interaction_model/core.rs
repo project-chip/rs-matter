@@ -632,7 +632,7 @@ impl<'a, 'r, 'p> Interaction<'a, 'r, 'p> {
     #[inline(always)]
     pub fn new<S>(
         exchange: &'r mut Exchange<'a>,
-        rx: &'r mut Packet<'p>,
+        rx: &'r Packet<'p>,
         tx: &'r mut Packet<'p>,
         rx_status: &'r mut Packet<'p>,
         subscription_id: S,
