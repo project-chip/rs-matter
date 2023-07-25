@@ -54,7 +54,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Attribute::new(
             AttributesDiscriminants::OnOff as u16,
             Access::RV,
-            Quality::PERSISTENT,
+            Quality::SN,
         ),
     ],
     commands: &[

@@ -73,10 +73,12 @@ bitflags! {
     #[derive(Default)]
     pub struct Quality: u8 {
         const NONE = 0x00;
-        const SCENE = 0x01;
-        const PERSISTENT = 0x02;
-        const FIXED = 0x03;
-        const NULLABLE = 0x04;
+        const SCENE = 0x01;      // Short: S
+        const PERSISTENT = 0x02; // Short: N
+        const FIXED = 0x04;      // Short: F
+        const NULLABLE = 0x08;   // Short: X
+
+        const SN = Self::SCENE.bits | Self::PERSISTENT.bits;
     }
 }
 
