@@ -2,7 +2,7 @@
 name = "rs-matter-macros"
 version = "0.1.0"
 edition = "2021"
-authors = ["Kedar Sovani <kedars@gmail.com>"]
+authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem - Proc-macros"
 repository = "https://github.com/project-chip/matter-rs"
 readme = "README.md"
