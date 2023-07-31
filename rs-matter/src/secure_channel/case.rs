@@ -96,7 +96,7 @@ impl<'a> Case<'a> {
     ) -> Result<(), Error> {
         rx.check_proto_opcode(OpCode::CASESigma3 as _)?;
 
-        let status = {
+        let result = {
             let fabric_mgr = self.fabric_mgr.borrow();
 
             let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
@@ -133,7 +133,7 @@ impl<'a> Case<'a> {
 
                 if let Err(e) = Case::validate_certs(fabric, &initiator_noc, initiator_icac_mut) {
                     error!("Certificate Chain doesn't match: {}", e);
-                    SCStatusCodes::InvalidParameter
+                    Err(SCStatusCodes::InvalidParameter)
                 } else if let Err(e) = Case::validate_sigma3_sign(
                     d.initiator_noc.0,
                     d.initiator_icac.map(|a| a.0),
@@ -142,30 +142,33 @@ impl<'a> Case<'a> {
                     case_session,
                 ) {
                     error!("Sigma3 Signature doesn't match: {}", e);
-                    SCStatusCodes::InvalidParameter
+                    Err(SCStatusCodes::InvalidParameter)
                 } else {
                     // Only now do we add this message to the TT Hash
                     let mut peer_catids: NocCatIds = Default::default();
                     initiator_noc.get_cat_ids(&mut peer_catids);
                     case_session.tt_hash.update(rx.as_slice())?;
-                    let clone_data = Case::get_session_clone_data(
+
+                    Ok(Case::get_session_clone_data(
                         fabric.ipk.op_key(),
                         fabric.get_node_id(),
                         initiator_noc.get_node_id()?,
                         exchange.with_session(|sess| Ok(sess.get_peer_addr()))?,
                         case_session,
                         &peer_catids,
-                    )?;
-
-                    // TODO: Handle NoSpace
-                    exchange
-                        .with_session_mgr_mut(|sess_mgr| sess_mgr.clone_session(&clone_data))?;
-
-                    SCStatusCodes::SessionEstablishmentSuccess
+                    )?)
                 }
             } else {
-                SCStatusCodes::NoSharedTrustRoots
+                Err(SCStatusCodes::NoSharedTrustRoots)
             }
+        };
+
+        let status = match result {
+            Ok(clone_data) => {
+                exchange.clone_session(tx, &clone_data).await?;
+                SCStatusCodes::SessionEstablishmentSuccess
+            }
+            Err(status) => status,
         };
 
         complete_with_status(exchange, tx, status, None).await
@@ -201,7 +204,7 @@ impl<'a> Case<'a> {
             return Ok(());
         }
 
-        let local_sessid = exchange.with_session_mgr_mut(|mgr| Ok(mgr.get_next_sess_id()))?;
+        let local_sessid = exchange.get_next_sess_id();
         case_session.peer_sessid = r.initiator_sessid;
         case_session.local_sessid = local_sessid;
         case_session.tt_hash.update(rx_buf)?;

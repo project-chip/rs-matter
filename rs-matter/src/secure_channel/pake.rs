@@ -167,9 +167,9 @@ impl<'a> Pake<'a> {
         self.update_timeout(exchange, tx, true).await?;
 
         let cA = extract_pasepake_1_or_3_params(rx.as_slice())?;
-        let (status_code, ke) = spake2p.handle_cA(cA);
+        let (status, ke) = spake2p.handle_cA(cA);
 
-        let clone_data = if status_code == SCStatusCodes::SessionEstablishmentSuccess {
+        let result = if status == SCStatusCodes::SessionEstablishmentSuccess {
             // Get the keys
             let ke = ke.ok_or(ErrorCode::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
@@ -194,22 +194,22 @@ impl<'a> Pake<'a> {
                 .att_challenge
                 .copy_from_slice(&session_keys[32..48]);
 
-            // Queue a transport mgr request to add a new session
-            Some(clone_data)
+            Ok(clone_data)
         } else {
-            None
+            Err(status)
         };
 
-        if let Some(clone_data) = clone_data {
-            // TODO: Handle NoSpace
-            exchange.with_session_mgr_mut(|sess_mgr| sess_mgr.clone_session(&clone_data))?;
+        let status = match result {
+            Ok(clone_data) => {
+                exchange.clone_session(tx, &clone_data).await?;
+                self.pase.borrow_mut().disable_pase_session(mdns)?;
 
-            self.pase.borrow_mut().disable_pase_session(mdns)?;
-        }
+                SCStatusCodes::SessionEstablishmentSuccess
+            }
+            Err(status) => status,
+        };
 
-        complete_with_status(exchange, tx, status_code, None).await?;
-
-        Ok(())
+        complete_with_status(exchange, tx, status, None).await
     }
 
     #[allow(non_snake_case)]
@@ -273,7 +273,7 @@ impl<'a> Pake<'a> {
             let mut our_random: [u8; 32] = [0; 32];
             (self.pase.borrow().rand)(&mut our_random);
 
-            let local_sessid = exchange.with_session_mgr_mut(|mgr| Ok(mgr.get_next_sess_id()))?;
+            let local_sessid = exchange.get_next_sess_id();
             let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
             spake2p.set_app_data(spake2p_data);
 

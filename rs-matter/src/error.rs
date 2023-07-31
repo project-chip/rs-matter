@@ -47,6 +47,8 @@ pub enum ErrorCode {
     NoMemory,
     NoSession,
     NoSpace,
+    NoSpaceExchanges,
+    NoSpaceSessions,
     NoSpaceAckTable,
     NoSpaceRetransTable,
     NoTagFound,

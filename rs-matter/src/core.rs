@@ -17,6 +17,8 @@
 
 use core::{borrow::Borrow, cell::RefCell};
 
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+
 use crate::{
     acl::AclMgr,
     data_model::{
@@ -61,6 +63,8 @@ pub struct Matter<'a> {
     dev_att: &'a dyn DevAttDataFetcher,
     pub(crate) port: u16,
     pub(crate) exchanges: RefCell<heapless::Vec<ExchangeCtx, MAX_EXCHANGES>>,
+    pub(crate) ephemeral: RefCell<Option<ExchangeCtx>>,
+    pub(crate) ephemeral_mutex: Mutex<NoopRawMutex, ()>,
     pub session_mgr: RefCell<SessionMgr>, // Public for tests
 }
 
@@ -108,6 +112,8 @@ impl<'a> Matter<'a> {
             dev_att,
             port,
             exchanges: RefCell::new(heapless::Vec::new()),
+            ephemeral: RefCell::new(None),
+            ephemeral_mutex: Mutex::new(()),
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
         }
     }
