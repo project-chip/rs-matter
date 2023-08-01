@@ -17,7 +17,10 @@
 
 pub mod admin_commissioning;
 pub mod dev_att;
+pub mod ethernet_nw_diagnostics;
 pub mod failsafe;
 pub mod general_commissioning;
+pub mod general_diagnostics;
+pub mod group_key_management;
 pub mod noc;
 pub mod nw_commissioning;
