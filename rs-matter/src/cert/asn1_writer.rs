@@ -264,8 +264,8 @@ impl<'a> CertConsumer for ASN1Writer<'a> {
         self.write_str(0x06, oid)
     }
 
-    fn utctime(&mut self, _tag: &str, epoch: u32) -> Result<(), Error> {
-        let matter_epoch = MATTER_EPOCH_SECS + epoch as u64;
+    fn utctime(&mut self, _tag: &str, epoch: u64) -> Result<(), Error> {
+        let matter_epoch = MATTER_EPOCH_SECS + epoch;
 
         let dt = OffsetDateTime::from_unix_timestamp(matter_epoch as _).unwrap();
 

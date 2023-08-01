@@ -122,8 +122,8 @@ impl<'a, 'b> CertConsumer for CertPrinter<'a, 'b> {
         }
         Ok(())
     }
-    fn utctime(&mut self, tag: &str, epoch: u32) -> Result<(), Error> {
-        let matter_epoch = MATTER_EPOCH_SECS + epoch as u64;
+    fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), Error> {
+        let matter_epoch = MATTER_EPOCH_SECS + epoch;
 
         let dt = OffsetDateTime::from_unix_timestamp(matter_epoch as _).unwrap();
 
