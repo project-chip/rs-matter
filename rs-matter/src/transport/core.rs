@@ -397,7 +397,6 @@ impl<'a> Matter<'a> {
     }
 
     #[inline(always)]
-    #[cfg_attr(feature = "nightly", allow(clippy::await_holding_refcell_ref))] // Fine because of the async mutex
     pub async fn handle_exchange<H>(
         &self,
         tx_buf: &mut [u8; MAX_TX_BUF_SIZE],

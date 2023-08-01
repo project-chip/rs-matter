@@ -213,7 +213,6 @@ impl<'a> Pake<'a> {
     }
 
     #[allow(non_snake_case)]
-    #[allow(clippy::await_holding_refcell_ref)]
     async fn handle_pasepake1(
         &mut self,
         exchange: &mut Exchange<'_>,
@@ -224,32 +223,32 @@ impl<'a> Pake<'a> {
         rx.check_proto_opcode(OpCode::PASEPake1 as _)?;
         self.update_timeout(exchange, tx, false).await?;
 
-        let pase = self.pase.borrow();
-        let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+        {
+            let pase = self.pase.borrow();
+            let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
 
-        let pA = extract_pasepake_1_or_3_params(rx.as_slice())?;
-        let mut pB: [u8; 65] = [0; 65];
-        let mut cB: [u8; 32] = [0; 32];
-        spake2p.start_verifier(&session.verifier)?;
-        spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
+            let pA = extract_pasepake_1_or_3_params(rx.as_slice())?;
+            let mut pB: [u8; 65] = [0; 65];
+            let mut cB: [u8; 32] = [0; 32];
+            spake2p.start_verifier(&session.verifier)?;
+            spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
 
-        // Generate response
-        tx.reset();
-        tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
-        tx.set_proto_opcode(OpCode::PASEPake2 as u8);
+            // Generate response
+            tx.reset();
+            tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
+            tx.set_proto_opcode(OpCode::PASEPake2 as u8);
 
-        let mut tw = TLVWriter::new(tx.get_writebuf()?);
-        let resp = Pake1Resp {
-            pb: OctetStr(&pB),
-            cb: OctetStr(&cB),
-        };
-        resp.to_tlv(&mut tw, TagType::Anonymous)?;
+            let mut tw = TLVWriter::new(tx.get_writebuf()?);
+            let resp = Pake1Resp {
+                pb: OctetStr(&pB),
+                cb: OctetStr(&cB),
+            };
+            resp.to_tlv(&mut tw, TagType::Anonymous)?;
+        }
 
-        drop(pase);
         exchange.exchange(tx, rx).await
     }
 
-    #[allow(clippy::await_holding_refcell_ref)]
     async fn handle_pbkdfparamrequest(
         &mut self,
         exchange: &mut Exchange<'_>,
@@ -260,52 +259,51 @@ impl<'a> Pake<'a> {
         rx.check_proto_opcode(OpCode::PBKDFParamRequest as _)?;
         self.update_timeout(exchange, tx, true).await?;
 
-        let pase = self.pase.borrow();
-        let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+        {
+            let pase = self.pase.borrow();
+            let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
 
-        let root = tlv::get_root_node(rx.as_slice())?;
-        let a = PBKDFParamReq::from_tlv(&root)?;
-        if a.passcode_id != 0 {
-            error!("Can't yet handle passcode_id != 0");
-            Err(ErrorCode::Invalid)?;
-        }
+            let root = tlv::get_root_node(rx.as_slice())?;
+            let a = PBKDFParamReq::from_tlv(&root)?;
+            if a.passcode_id != 0 {
+                error!("Can't yet handle passcode_id != 0");
+                Err(ErrorCode::Invalid)?;
+            }
 
-        let mut our_random: [u8; 32] = [0; 32];
-        (self.pase.borrow().rand)(&mut our_random);
+            let mut our_random: [u8; 32] = [0; 32];
+            (self.pase.borrow().rand)(&mut our_random);
 
-        let local_sessid = exchange.with_session_mgr_mut(|mgr| Ok(mgr.get_next_sess_id()))?;
-        let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
-        spake2p.set_app_data(spake2p_data);
+            let local_sessid = exchange.with_session_mgr_mut(|mgr| Ok(mgr.get_next_sess_id()))?;
+            let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
+            spake2p.set_app_data(spake2p_data);
 
-        // Generate response
-        tx.reset();
-        tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
-        tx.set_proto_opcode(OpCode::PBKDFParamResponse as u8);
+            // Generate response
+            tx.reset();
+            tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
+            tx.set_proto_opcode(OpCode::PBKDFParamResponse as u8);
 
-        let mut tw = TLVWriter::new(tx.get_writebuf()?);
-        let mut resp = PBKDFParamResp {
-            init_random: a.initiator_random,
-            our_random: OctetStr(&our_random),
-            local_sessid,
-            params: None,
-        };
-        if !a.has_params {
-            let params_resp = PBKDFParamRespParams {
-                count: session.verifier.count,
-                salt: OctetStr(&session.verifier.salt),
+            let mut tw = TLVWriter::new(tx.get_writebuf()?);
+            let mut resp = PBKDFParamResp {
+                init_random: a.initiator_random,
+                our_random: OctetStr(&our_random),
+                local_sessid,
+                params: None,
             };
-            resp.params = Some(params_resp);
+            if !a.has_params {
+                let params_resp = PBKDFParamRespParams {
+                    count: session.verifier.count,
+                    salt: OctetStr(&session.verifier.salt),
+                };
+                resp.params = Some(params_resp);
+            }
+            resp.to_tlv(&mut tw, TagType::Anonymous)?;
+
+            spake2p.set_context(rx.as_slice(), tx.as_mut_slice())?;
         }
-        resp.to_tlv(&mut tw, TagType::Anonymous)?;
-
-        spake2p.set_context(rx.as_slice(), tx.as_mut_slice())?;
-
-        drop(pase);
 
         exchange.exchange(tx, rx).await
     }
 
-    #[allow(clippy::await_holding_refcell_ref)]
     async fn update_timeout(
         &mut self,
         exchange: &mut Exchange<'_>,
@@ -314,36 +312,38 @@ impl<'a> Pake<'a> {
     ) -> Result<(), Error> {
         self.check_session(exchange, tx).await?;
 
-        let mut pase = self.pase.borrow_mut();
+        let status = {
+            let mut pase = self.pase.borrow_mut();
 
-        if pase
-            .timeout
-            .as_ref()
-            .map(|sd| sd.is_sess_expired(pase.epoch))
-            .unwrap_or(false)
-        {
-            pase.timeout = None;
-        }
-
-        let status = if let Some(sd) = pase.timeout.as_mut() {
-            if &sd.exch_id != exchange.id() {
-                info!("Other PAKE session in progress");
-                Some(SCStatusCodes::Busy)
-            } else {
-                None
+            if pase
+                .timeout
+                .as_ref()
+                .map(|sd| sd.is_sess_expired(pase.epoch))
+                .unwrap_or(false)
+            {
+                pase.timeout = None;
             }
-        } else if new {
-            None
-        } else {
-            error!("PAKE session not found or expired");
-            Some(SCStatusCodes::SessionNotFound)
+
+            if let Some(sd) = pase.timeout.as_mut() {
+                if &sd.exch_id != exchange.id() {
+                    info!("Other PAKE session in progress");
+                    Some(SCStatusCodes::Busy)
+                } else {
+                    None
+                }
+            } else if new {
+                None
+            } else {
+                error!("PAKE session not found or expired");
+                Some(SCStatusCodes::SessionNotFound)
+            }
         };
 
         if let Some(status) = status {
-            drop(pase);
-
             complete_with_status(exchange, tx, status, None).await
         } else {
+            let mut pase = self.pase.borrow_mut();
+
             pase.timeout = Some(Timeout::new(exchange, pase.epoch));
 
             Ok(())
