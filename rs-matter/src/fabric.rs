@@ -33,7 +33,6 @@ use crate::{
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
-#[allow(dead_code)]
 #[derive(Debug, ToTLV)]
 #[tlvargs(lifetime = "'a", start = 1)]
 pub struct FabricDescriptor<'a> {
