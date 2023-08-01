@@ -186,7 +186,7 @@ impl CryptoSpake2 {
         let (Z, V) = Self::get_ZV_as_verifier(
             &self.w0,
             &self.L,
-            &mut self.M,
+            &self.M,
             &X,
             &self.xy,
             &self.order,
@@ -228,7 +228,7 @@ impl CryptoSpake2 {
     fn get_ZV_as_prover(
         w0: &Mpi,
         w1: &Mpi,
-        N: &mut EcPoint,
+        N: &EcPoint,
         Y: &EcPoint,
         x: &Mpi,
         order: &Mpi,
@@ -264,7 +264,7 @@ impl CryptoSpake2 {
     fn get_ZV_as_verifier(
         w0: &Mpi,
         L: &EcPoint,
-        M: &mut EcPoint,
+        M: &EcPoint,
         X: &EcPoint,
         y: &Mpi,
         order: &Mpi,
@@ -292,7 +292,7 @@ impl CryptoSpake2 {
         Ok((Z, V))
     }
 
-    fn invert(group: &mut EcGroup, num: &EcPoint) -> Result<EcPoint, mbedtls::Error> {
+    fn invert(group: &EcGroup, num: &EcPoint) -> Result<EcPoint, mbedtls::Error> {
         let p = group.p()?;
         let num_y = num.y()?;
         let inverted_num_y = p.sub(&num_y)?;

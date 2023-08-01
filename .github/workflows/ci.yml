@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUST_TOOLCHAIN: nightly-2023-07-01
+  RUST_TOOLCHAIN: nightly
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
 

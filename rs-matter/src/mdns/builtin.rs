@@ -208,7 +208,6 @@ impl<'a> MdnsService<'a> {
         select(&mut broadcast, &mut respond).await.unwrap()
     }
 
-    #[allow(clippy::await_holding_refcell_ref)]
     async fn broadcast(&self, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
         loop {
             select(
@@ -258,7 +257,6 @@ impl<'a> MdnsService<'a> {
         }
     }
 
-    #[allow(clippy::await_holding_refcell_ref)]
     async fn respond(&self, rx_pipe: &Pipe<'_>, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
         loop {
             {
