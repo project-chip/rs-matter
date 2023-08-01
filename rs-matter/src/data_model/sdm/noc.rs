@@ -186,7 +186,7 @@ struct NocResp<'a> {
 #[tlvargs(lifetime = "'a")]
 struct AddNocReq<'a> {
     noc_value: OctetStr<'a>,
-    icac_value: OctetStr<'a>,
+    icac_value: Option<OctetStr<'a>>,
     ipk_value: OctetStr<'a>,
     case_admin_subject: u64,
     vendor_id: u16,
@@ -358,13 +358,17 @@ impl<'a> NocCluster<'a> {
 
         let noc = heapless::Vec::from_slice(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
 
-        let icac = if !r.icac_value.0.is_empty() {
-            let icac_cert = Cert::new(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-            info!("Received ICAC as: {}", icac_cert);
+        let icac = if let Some(icac_value) = r.icac_value {
+            if !icac_value.0.is_empty() {
+                let icac_cert = Cert::new(icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+                info!("Received ICAC as: {}", icac_cert);
 
-            let icac =
-                heapless::Vec::from_slice(r.icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-            Some(icac)
+                let icac =
+                    heapless::Vec::from_slice(icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+                Some(icac)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -601,6 +605,20 @@ impl<'a> NocCluster<'a> {
         Ok(())
     }
 
+    fn add_rca_to_session_noc_data(exchange: &Exchange, data: &TLVElement) -> Result<(), Error> {
+        exchange.with_session_mut(|sess| {
+            let noc_data = sess.get_noc_data().ok_or(ErrorCode::NoSession)?;
+
+            let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
+            info!("Received Trusted Cert:{:x?}", req.str);
+
+            noc_data.root_ca =
+                heapless::Vec::from_slice(req.str.0).map_err(|_| ErrorCode::BufferTooSmall)?;
+
+            Ok(())
+        })
+    }
+
     fn handle_command_addtrustedrootcert(
         &self,
         exchange: &Exchange,
@@ -613,21 +631,12 @@ impl<'a> NocCluster<'a> {
 
         // This may happen on CASE or PASE. For PASE, the existence of NOC Data is necessary
         match exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))? {
-            SessionMode::Case(_) => error!("CASE: AddTrustedRootCert handling pending"), // For a CASE Session, we just return success for now,
+            SessionMode::Case(_) => {
+                // TODO - Updating the Trusted RCA of an existing Fabric
+                Self::add_rca_to_session_noc_data(exchange, data)?;
+            }
             SessionMode::Pase => {
-                exchange.with_session_mut(|sess| {
-                    let noc_data = sess.get_noc_data().ok_or(ErrorCode::NoSession)?;
-
-                    let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-                    info!("Received Trusted Cert:{:x?}", req.str);
-
-                    noc_data.root_ca = heapless::Vec::from_slice(req.str.0)
-                        .map_err(|_| ErrorCode::BufferTooSmall)?;
-
-                    Ok(())
-                })?;
-
-                // TODO
+                Self::add_rca_to_session_noc_data(exchange, data)?;
             }
             _ => (),
         }
