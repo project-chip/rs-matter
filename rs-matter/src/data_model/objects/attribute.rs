@@ -40,9 +40,12 @@ bitflags! {
         const READ_PRIVILEGE_MASK = Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits | Self::NEED_OPERATE.bits | Self::NEED_ADMIN.bits;
         const WRITE_PRIVILEGE_MASK = Self::NEED_MANAGE.bits | Self::NEED_OPERATE.bits | Self::NEED_ADMIN.bits;
         const RV = Self::READ.bits | Self::NEED_VIEW.bits;
+        const RF = Self::READ.bits | Self::FAB_SCOPED.bits;
+        const RA = Self::READ.bits | Self::NEED_ADMIN.bits;
         const RWVA = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_ADMIN.bits;
         const RWFA = Self::READ.bits | Self::WRITE.bits | Self::FAB_SCOPED.bits | Self::NEED_ADMIN.bits;
         const RWVM = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits;
+        const RWFVM = Self::READ.bits | Self::WRITE.bits | Self::FAB_SCOPED.bits |Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits;
     }
 }
 
@@ -79,6 +82,10 @@ bitflags! {
         const NULLABLE = 0x08;   // Short: X
 
         const SN = Self::SCENE.bits | Self::PERSISTENT.bits;
+        const S = Self::SCENE.bits;
+        const N = Self::PERSISTENT.bits;
+        const F = Self::FIXED.bits;
+        const X = Self::NULLABLE.bits;
     }
 }
 
