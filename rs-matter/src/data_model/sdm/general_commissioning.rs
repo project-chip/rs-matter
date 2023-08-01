@@ -121,9 +121,15 @@ struct FailSafeParams {
     bread_crumb: u8,
 }
 
+#[derive(ToTLV)]
+struct BasicCommissioningInfo {
+    expiry_len: u16,
+    max_cmltv_failsafe_secs: u16,
+}
+
 pub struct GenCommCluster<'a> {
     data_ver: Dataver,
-    expiry_len: u16,
+    basic_comm_info: BasicCommissioningInfo,
     failsafe: &'a RefCell<FailSafe>,
 }
 
@@ -133,7 +139,10 @@ impl<'a> GenCommCluster<'a> {
             data_ver: Dataver::new(rand),
             failsafe,
             // TODO: Arch-Specific
-            expiry_len: 120,
+            basic_comm_info: BasicCommissioningInfo {
+                expiry_len: 120,
+                max_cmltv_failsafe_secs: 120,
+            },
         }
     }
 
@@ -157,10 +166,8 @@ impl<'a> GenCommCluster<'a> {
                         codec.encode(writer, RegLocationType::IndoorOutdoor as _)
                     }
                     Attributes::BasicCommissioningInfo(_) => {
-                        writer.start_struct(AttrDataWriter::TAG)?;
-                        writer.u16(TagType::Context(0), self.expiry_len)?;
-                        writer.end_container()?;
-
+                        self.basic_comm_info
+                            .to_tlv(&mut writer, AttrDataWriter::TAG)?;
                         writer.complete()
                     }
                 }
