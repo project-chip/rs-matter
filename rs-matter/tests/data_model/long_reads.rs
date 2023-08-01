@@ -19,7 +19,10 @@ use rs_matter::{
     data_model::{
         cluster_basic_information as basic_info, cluster_on_off as onoff,
         objects::{EncodeValue, GlobalElements},
-        sdm::{admin_commissioning as adm_comm, general_commissioning as gen_comm, noc},
+        sdm::{
+            admin_commissioning as adm_comm, general_commissioning as gen_comm, noc,
+            nw_commissioning,
+        },
         system_model::{access_control as acl, descriptor},
     },
     interaction_model::{
@@ -130,6 +133,48 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
         ),
         attr_data!(0, 49, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 49, GlobalElements::AttributeList, dont_care.clone()),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::MaxNetworks,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::Networks,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::ConnectMaxTimeSecs,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::InterfaceEnabled,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::LastNetworkingStatus,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::LastNetworkID,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            49,
+            nw_commissioning::Attributes::LastConnectErrorValue,
+            dont_care.clone()
+        ),
         attr_data!(0, 60, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 60, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
@@ -158,6 +203,9 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             noc::AttributesDiscriminants::CurrentFabricIndex,
             dont_care.clone()
         ),
+    ];
+
+    let part2 = vec![
         attr_data!(
             0,
             62,
@@ -185,9 +233,6 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             acl::AttributesDiscriminants::Extension,
             dont_care.clone()
         ),
-    ];
-
-    let part2 = vec![
         attr_data!(
             0,
             31,

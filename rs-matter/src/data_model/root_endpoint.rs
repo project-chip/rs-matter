@@ -15,8 +15,12 @@ use super::{
     sdm::{
         admin_commissioning::{self, AdminCommCluster},
         dev_att::DevAttDataFetcher,
+        ethernet_nw_diagnostics::{self, EthNwDiagCluster},
         failsafe::FailSafe,
         general_commissioning::{self, GenCommCluster},
+        general_diagnostics::{self, GenDiagCluster},
+        group_key_management,
+        group_key_management::GrpKeyMgmtCluster,
         noc::{self, NocCluster},
         nw_commissioning::{self, NwCommCluster},
     },
@@ -33,10 +37,13 @@ pub type RootEndpointHandler<'a> = handler_chain_type!(
     NwCommCluster,
     AdminCommCluster<'a>,
     NocCluster<'a>,
-    AccessControlCluster<'a>
+    AccessControlCluster<'a>,
+    GenDiagCluster,
+    EthNwDiagCluster,
+    GrpKeyMgmtCluster
 );
 
-pub const CLUSTERS: [Cluster<'static>; 7] = [
+pub const CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
     cluster_basic_information::CLUSTER,
     general_commissioning::CLUSTER,
@@ -44,6 +51,9 @@ pub const CLUSTERS: [Cluster<'static>; 7] = [
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
     access_control::CLUSTER,
+    general_diagnostics::CLUSTER,
+    ethernet_nw_diagnostics::CLUSTER,
+    group_key_management::CLUSTER,
 ];
 
 pub const fn endpoint(id: EndptId) -> Endpoint<'static> {
@@ -95,6 +105,21 @@ pub fn wrap<'a>(
     rand: Rand,
 ) -> RootEndpointHandler<'a> {
     EmptyHandler
+        .chain(
+            endpoint_id,
+            group_key_management::ID,
+            GrpKeyMgmtCluster::new(rand),
+        )
+        .chain(
+            endpoint_id,
+            ethernet_nw_diagnostics::ID,
+            EthNwDiagCluster::new(rand),
+        )
+        .chain(
+            endpoint_id,
+            general_diagnostics::ID,
+            GenDiagCluster::new(rand),
+        )
         .chain(
             endpoint_id,
             access_control::ID,
