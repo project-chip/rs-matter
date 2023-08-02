@@ -127,7 +127,7 @@ impl<'a> MdnsService<'a> {
         buffers: &mut MdnsRunBuffers,
     ) -> Result<(), Error>
     where
-        D: crate::transport::network::NetworkStackDriver,
+        D: crate::transport::network::NetworkStackDriver + 'static,
     {
         let mut udp = crate::transport::udp::UdpListener::new(
             stack,

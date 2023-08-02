@@ -129,7 +129,7 @@ impl<'a> Matter<'a> {
         handler: &H,
     ) -> Result<(), Error>
     where
-        D: crate::transport::network::NetworkStackDriver,
+        D: crate::transport::network::NetworkStackDriver + 'static,
         H: DataModelHandler,
     {
         let udp = crate::transport::udp::UdpListener::new(
