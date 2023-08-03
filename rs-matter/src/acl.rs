@@ -299,7 +299,7 @@ impl AclEntry {
     pub fn new(fab_idx: u8, privilege: Privilege, auth_mode: AuthMode) -> Self {
         const INIT_SUBJECTS: Option<u64> = None;
         const INIT_TARGETS: Option<Target> = None;
-        let privilege = privilege;
+
         Self {
             fab_idx: Some(fab_idx),
             privilege,
