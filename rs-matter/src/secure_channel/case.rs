@@ -90,7 +90,7 @@ impl<'a> Case<'a> {
     async fn handle_casesigma3(
         &mut self,
         exchange: &mut Exchange<'_>,
-        rx: &mut Packet<'_>,
+        rx: &Packet<'_>,
         tx: &mut Packet<'_>,
         case_session: &mut CaseSession,
     ) -> Result<(), Error> {

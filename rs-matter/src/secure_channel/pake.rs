@@ -158,7 +158,7 @@ impl<'a> Pake<'a> {
     async fn handle_pasepake3(
         &mut self,
         exchange: &mut Exchange<'_>,
-        rx: &mut Packet<'_>,
+        rx: &Packet<'_>,
         tx: &mut Packet<'_>,
         mdns: &dyn Mdns,
         spake2p: &mut Spake2P,

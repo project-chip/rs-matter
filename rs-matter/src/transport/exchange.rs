@@ -90,6 +90,9 @@ impl<'a> ExchangeCtr<'a> {
         self.exchange.id()
     }
 
+    #[allow(clippy::all)]
+    // Should be #[allow(clippy::needless_pass_by_ref_mut)], but this is only in 1.73 which is not released yet
+    // rx is actually modified, but via an unsafe `*mut Packet<'static>` and apparently Clippy can't see this
     pub async fn get(mut self, rx: &mut Packet<'_>) -> Result<Exchange<'a>, Error> {
         let construction_notification = self.construction_notification;
 
