@@ -72,6 +72,8 @@ fn run() -> Result<(), Error> {
         sw_ver_str: "1",
         serial_no: "aabbccdd",
         device_name: "OnOff Light",
+        product_name: "Light123",
+        vendor_name: "Vendor PQR",
     };
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;

@@ -70,6 +70,8 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     sw_ver_str: "13",
     serial_no: "aabbccdd",
     device_name: "Test Device",
+    product_name: "TestProd",
+    vendor_name: "TestVendor",
 };
 
 struct DummyDevAtt;

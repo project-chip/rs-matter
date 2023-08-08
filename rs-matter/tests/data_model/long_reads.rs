@@ -72,13 +72,31 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
         attr_data!(
             0,
             40,
+            basic_info::AttributesDiscriminants::VendorName,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            40,
             basic_info::AttributesDiscriminants::VendorId,
             dont_care.clone()
         ),
         attr_data!(
             0,
             40,
+            basic_info::AttributesDiscriminants::ProductName,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            40,
             basic_info::AttributesDiscriminants::ProductId,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            40,
+            basic_info::AttributesDiscriminants::NodeLabel,
             dont_care.clone()
         ),
         attr_data!(
@@ -195,6 +213,9 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             adm_comm::AttributesDiscriminants::AdminVendorId,
             dont_care.clone()
         ),
+    ];
+
+    let part2 = vec![
         attr_data!(0, 62, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 62, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
@@ -203,9 +224,6 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             noc::AttributesDiscriminants::CurrentFabricIndex,
             dont_care.clone()
         ),
-    ];
-
-    let part2 = vec![
         attr_data!(
             0,
             62,
