@@ -265,6 +265,20 @@ pub enum Nullable<T> {
 }
 
 impl<T> Nullable<T> {
+    pub fn as_mut(&mut self) -> Nullable<&mut T> {
+        match self {
+            Nullable::Null => Nullable::Null,
+            Nullable::NotNull(t) => Nullable::NotNull(t),
+        }
+    }
+
+    pub fn as_ref(&self) -> Nullable<&T> {
+        match self {
+            Nullable::Null => Nullable::Null,
+            Nullable::NotNull(t) => Nullable::NotNull(t),
+        }
+    }
+
     pub fn is_null(&self) -> bool {
         match self {
             Nullable::Null => true,
@@ -272,7 +286,7 @@ impl<T> Nullable<T> {
         }
     }
 
-    pub fn unwrap_notnull(self) -> Option<T> {
+    pub fn notnull(self) -> Option<T> {
         match self {
             Nullable::Null => None,
             Nullable::NotNull(t) => Some(t),

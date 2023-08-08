@@ -22,7 +22,7 @@ use crate::{
     error::{Error, ErrorCode},
     fabric,
     interaction_model::messages::GenericPath,
-    tlv::{self, FromTLV, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
+    tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
     transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC},
     utils::writebuf::WriteBuf,
 };
@@ -282,7 +282,15 @@ impl Target {
 }
 
 type Subjects = [Option<u64>; SUBJECTS_PER_ENTRY];
-type Targets = [Option<Target>; TARGETS_PER_ENTRY];
+
+type Targets = Nullable<[Option<Target>; TARGETS_PER_ENTRY]>;
+impl Targets {
+    fn init_notnull() -> Self {
+        const INIT_TARGETS: Option<Target> = None;
+        Nullable::NotNull([INIT_TARGETS; TARGETS_PER_ENTRY])
+    }
+}
+
 #[derive(ToTLV, FromTLV, Clone, Debug, PartialEq)]
 #[tlvargs(start = 1)]
 pub struct AclEntry {
@@ -298,14 +306,12 @@ pub struct AclEntry {
 impl AclEntry {
     pub fn new(fab_idx: u8, privilege: Privilege, auth_mode: AuthMode) -> Self {
         const INIT_SUBJECTS: Option<u64> = None;
-        const INIT_TARGETS: Option<Target> = None;
-
         Self {
             fab_idx: Some(fab_idx),
             privilege,
             auth_mode,
             subjects: [INIT_SUBJECTS; SUBJECTS_PER_ENTRY],
-            targets: [INIT_TARGETS; TARGETS_PER_ENTRY],
+            targets: Targets::init_notnull(),
         }
     }
 
@@ -324,12 +330,20 @@ impl AclEntry {
     }
 
     pub fn add_target(&mut self, target: Target) -> Result<(), Error> {
+        if self.targets.is_null() {
+            self.targets = Targets::init_notnull();
+        }
         let index = self
             .targets
+            .as_ref()
+            .notnull()
+            .unwrap()
             .iter()
             .position(|s| s.is_none())
             .ok_or(ErrorCode::NoSpace)?;
-        self.targets[index] = Some(target);
+
+        self.targets.as_mut().notnull().unwrap()[index] = Some(target);
+
         Ok(())
     }
 
@@ -358,12 +372,17 @@ impl AclEntry {
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
         let mut allow = false;
         let mut entries_exist = false;
-        for t in self.targets.iter().flatten() {
-            entries_exist = true;
-            if (t.endpoint.is_none() || t.endpoint == object.path.endpoint)
-                && (t.cluster.is_none() || t.cluster == object.path.cluster)
-            {
-                allow = true
+        match self.targets.as_ref().notnull() {
+            None => allow = true, // Allow if targets are NULL
+            Some(targets) => {
+                for t in targets.iter().flatten() {
+                    entries_exist = true;
+                    if (t.endpoint.is_none() || t.endpoint == object.path.endpoint)
+                        && (t.cluster.is_none() || t.cluster == object.path.cluster)
+                    {
+                        allow = true
+                    }
+                }
             }
         }
         if !entries_exist {
