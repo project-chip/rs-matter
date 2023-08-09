@@ -1,6 +1,6 @@
 [package]
 name = "rs-matter"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
 description = "Native Rust implementation of the Matter (Smart-Home) ecosystem"
