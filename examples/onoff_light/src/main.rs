@@ -39,7 +39,7 @@ mod dev_att;
 #[cfg(feature = "std")]
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
-        .stack_size(150 * 1024)
+        .stack_size(160 * 1024)
         .spawn(run)
         .unwrap();
 
