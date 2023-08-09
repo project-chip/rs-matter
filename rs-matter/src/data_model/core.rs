@@ -28,6 +28,12 @@ use crate::{
 // TODO: For now...
 static SUBS_ID: AtomicU32 = AtomicU32::new(1);
 
+/// The Maximum number of expanded writer request per transaction
+///
+/// The write requests are first wildcard-expanded, and these many number of
+/// write requests per-transaction will be supported.
+pub const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 7;
+
 pub struct DataModel<T>(T);
 
 impl<T> DataModel<T> {
@@ -93,8 +99,21 @@ impl<T> DataModel<T> {
                     ref mut driver,
                 } => {
                     let accessor = driver.accessor()?;
+                    // The spec expects that a single write request like DeleteList + AddItem
+                    // should cause all ACLs of that fabric to be deleted and the new one to be added (Case 1).
+                    //
+                    // This is in conflict with the immediate-effect expectation of ACL: an ACL
+                    // write should instantaneously update the ACL so that immediate next WriteAttribute
+                    // *in the same WriteRequest* should see that effect (Case 2).
+                    //
+                    // As with the C++ SDK, here we do all the ACLs checks first, before any write begins.
+                    // Thus we support the Case1 by doing this. It does come at the cost of maintaining an
+                    // additional list of expanded write requests as we start processing those.
+                    let node = metadata.node();
+                    let write_attrs: heapless::Vec<_, MAX_WRITE_ATTRS_IN_ONE_TRANS> =
+                        node.write(req, &accessor).collect();
 
-                    for item in metadata.node().write(req, &accessor) {
+                    for item in write_attrs {
                         AttrDataEncoder::handle_write(&item, &self.0, &mut driver.writer()?)
                             .await?;
                     }

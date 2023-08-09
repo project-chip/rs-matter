@@ -371,6 +371,18 @@ fn insufficient_perms_write() {
     );
 }
 
+/// Disabling this test as it conflicts with another part of the spec.
+///
+/// The spec expects that a single write request like DeleteList + AddItem
+/// should cause all ACLs of that fabric to be deleted and the new one to be added
+///
+/// This is in conflict with the immediate-effect expectation of ACL: an ACL
+/// write should instantaneously update the ACL so that immediate next WriteAttribute
+/// *in the same WriteRequest* should see that effect.
+///
+/// This test validates the immediate effect expectation of ACL, but that is disabled
+/// since ecosystems routinely send DeleteList+AddItem, so we support that over this.
+#[ignore]
 #[test]
 /// Ensure that a write to the ACL attribute instantaneously grants permission
 /// Here we have 2 ACLs, the first (basic_acl) allows access only to the ACL cluster
