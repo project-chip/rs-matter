@@ -15,10 +15,15 @@
  *    limitations under the License.
  */
 
-use core::convert::TryInto;
+use core::{cell::RefCell, convert::TryInto};
 
 use super::objects::*;
-use crate::{attribute_enum, error::Error, utils::rand::Rand};
+use crate::{
+    attribute_enum,
+    error::{Error, ErrorCode},
+    utils::rand::Rand,
+};
+use heapless::String;
 use strum::FromRepr;
 
 pub const ID: u32 = 0x0028;
@@ -27,8 +32,11 @@ pub const ID: u32 = 0x0028;
 #[repr(u16)]
 pub enum Attributes {
     DMRevision(AttrType<u8>) = 0,
+    VendorName(AttrUtfType) = 1,
     VendorId(AttrType<u16>) = 2,
+    ProductName(AttrUtfType) = 3,
     ProductId(AttrType<u16>) = 4,
+    NodeLabel(AttrUtfType) = 5,
     HwVer(AttrType<u16>) = 7,
     SwVer(AttrType<u32>) = 9,
     SwVerString(AttrUtfType) = 0xa,
@@ -39,8 +47,11 @@ attribute_enum!(Attributes);
 
 pub enum AttributesDiscriminants {
     DMRevision = 0,
+    VendorName = 1,
     VendorId = 2,
+    ProductName = 3,
     ProductId = 4,
+    NodeLabel = 5,
     HwVer = 7,
     SwVer = 9,
     SwVerString = 0xa,
@@ -57,6 +68,8 @@ pub struct BasicInfoConfig<'a> {
     pub serial_no: &'a str,
     /// Device name; up to 32 characters
     pub device_name: &'a str,
+    pub vendor_name: &'a str,
+    pub product_name: &'a str,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -71,7 +84,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
         Attribute::new(
+            AttributesDiscriminants::VendorName as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
             AttributesDiscriminants::VendorId as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::ProductName as u16,
             Access::RV,
             Quality::FIXED,
         ),
@@ -79,6 +102,11 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             AttributesDiscriminants::ProductId as u16,
             Access::RV,
             Quality::FIXED,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::NodeLabel as u16,
+            Access::RWVM,
+            Quality::N,
         ),
         Attribute::new(
             AttributesDiscriminants::HwVer as u16,
@@ -107,13 +135,16 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 pub struct BasicInfoCluster<'a> {
     data_ver: Dataver,
     cfg: &'a BasicInfoConfig<'a>,
+    node_label: RefCell<String<32>>, // Max node-label as per the spec
 }
 
 impl<'a> BasicInfoCluster<'a> {
     pub fn new(cfg: &'a BasicInfoConfig<'a>, rand: Rand) -> Self {
+        let node_label = RefCell::new(String::from(""));
         Self {
             data_ver: Dataver::new(rand),
             cfg,
+            node_label,
         }
     }
 
@@ -124,8 +155,13 @@ impl<'a> BasicInfoCluster<'a> {
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::DMRevision(codec) => codec.encode(writer, 1),
+                    Attributes::VendorName(codec) => codec.encode(writer, self.cfg.vendor_name),
                     Attributes::VendorId(codec) => codec.encode(writer, self.cfg.vid),
+                    Attributes::ProductName(codec) => codec.encode(writer, self.cfg.product_name),
                     Attributes::ProductId(codec) => codec.encode(writer, self.cfg.pid),
+                    Attributes::NodeLabel(codec) => {
+                        codec.encode(writer, self.node_label.borrow().as_str())
+                    }
                     Attributes::HwVer(codec) => codec.encode(writer, self.cfg.hw_ver),
                     Attributes::SwVer(codec) => codec.encode(writer, self.cfg.sw_ver),
                     Attributes::SwVerString(codec) => codec.encode(writer, self.cfg.sw_ver_str),
@@ -136,11 +172,34 @@ impl<'a> BasicInfoCluster<'a> {
             Ok(())
         }
     }
+
+    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        let data = data.with_dataver(self.data_ver.get())?;
+
+        match attr.attr_id.try_into()? {
+            Attributes::NodeLabel(codec) => {
+                *self.node_label.borrow_mut() = String::from(
+                    codec
+                        .decode(data)
+                        .map_err(|_| Error::new(ErrorCode::InvalidAction))?,
+                );
+            }
+            _ => return Err(Error::new(ErrorCode::InvalidAction)),
+        }
+
+        self.data_ver.changed();
+
+        Ok(())
+    }
 }
 
 impl<'a> Handler for BasicInfoCluster<'a> {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         BasicInfoCluster::read(self, attr, encoder)
+    }
+
+    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        BasicInfoCluster::write(self, attr, data)
     }
 }
 
