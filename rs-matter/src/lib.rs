@@ -24,6 +24,7 @@
 //!
 //! # Examples
 //! TODO: Fix once new API has stabilized a bit
+//! ```rust
 //! use rs_matter::{Matter, CommissioningData};
 //! use rs_matter::data_model::device_types::device_type_add_on_off_light;
 //! use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
@@ -65,6 +66,7 @@
 //! }
 //! // Start the Matter Daemon
 //! // matter.start_daemon().unwrap();
+//! ```
 //!
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
