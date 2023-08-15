@@ -97,6 +97,10 @@ embedded-svc = { version = "0.25" }
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
 
+[[example]]
+name = "window_covering"
+path = "../examples/window_covering/src/main.rs"
+
 # [[example]]
 # name = "speaker"
 # path = "../examples/speaker/src/main.rs"
