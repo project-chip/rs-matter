@@ -87,7 +87,7 @@ impl ToTLV for TypeAttribute {
     }
 }
 
-#[derive( Copy, Clone, PartialEq, Default)]
+#[derive(Copy, Clone, PartialEq, Default)]
 pub struct ConfigStatus {
     /// Conformance Mandatory
     operational: bool,
@@ -96,16 +96,16 @@ pub struct ConfigStatus {
     lift_movement_reversed: bool,
 
     /// Conformance LF
-    lift_control_position_aware : bool,
+    lift_control_position_aware: bool,
 
     /// Conformance TL
-    tilt_control_position_aware : bool,
+    tilt_control_position_aware: bool,
 
     // Conformance LF & PA_LF
-    lift_controller_uses_encoder : bool,
-    
+    lift_controller_uses_encoder: bool,
+
     // Conformance TL & PA_TL
-    tilt_controller_uses_encoder : bool,
+    tilt_controller_uses_encoder: bool,
 }
 
 impl From<u8> for ConfigStatus {
@@ -188,15 +188,15 @@ impl Into<u8> for CoveringStatus {
 /// The OperationalStatus attribute keeps track of currently ongoing operations and applies to all type of devices. See below for details about the meaning of individual bits.
 #[derive(Copy, Clone, PartialEq, Default)]
 pub struct OperationalStatus {
-    /// Indicates in which direction the covering is cur­ rently moving or if it has stopped. 
+    /// Indicates in which direction the covering is cur­ rently moving or if it has stopped.
     /// Bit : 0..1
     status: CoveringStatus,
-    /// Indicates in which direction the covering’s Lift is currently moving or if it has stopped. 
+    /// Indicates in which direction the covering’s Lift is currently moving or if it has stopped.
     /// Bit : 2..3
-    status_lift : CoveringStatus,
+    status_lift: CoveringStatus,
     /// Indicates in which direction the covering’s Tilt is currently moving or if it has stopped.
     /// Bit : 4..5
-    status_tilt : CoveringStatus,
+    status_tilt: CoveringStatus,
 }
 
 impl From<u8> for OperationalStatus {
@@ -314,10 +314,10 @@ impl ToTLV for EndProductType {
 
 #[derive(Copy, Clone, PartialEq, Default)]
 pub struct Mode {
-    lift_movement_reverse : bool,
-    calibrating : bool,
-    maintenance : bool,
-    led_feedback : bool,
+    lift_movement_reverse: bool,
+    calibrating: bool,
+    maintenance: bool,
+    led_feedback: bool,
 }
 
 impl From<u8> for Mode {
@@ -366,40 +366,40 @@ impl ToTLV for Mode {
 struct Safety {
     /// Movement commands are ignored (locked out). e.g. not granted authorization, outside some time/date range.
     /// Bit : 0
-    remote_lockout : bool,
+    remote_lockout: bool,
     /// Tampering detected on sensors or any other safety equip­ ment. Ex: a device has been forcedly moved without its actuator(s).
     /// Bit : 1
-    tamper_detected : bool,
+    tamper_detected: bool,
     /// Communication failure to sensors or other safety equip­ ment.
     /// Bit : 2
-    communication_failure : bool,
+    communication_failure: bool,
     /// Device has failed to reach the desired position. e.g. with Position Aware device, time expired before TargetPosition is reached.
     /// Bit : 3
-    position_failure : bool,
+    position_failure: bool,
     /// Motor(s) and/or electric circuit thermal protection acti­ vated.
     /// Bit : 4
-    thermal_protection : bool,
+    thermal_protection: bool,
     /// An obstacle is preventing actuator movement.
     /// Bit : 5
-    obstacle_detected : bool,
+    obstacle_detected: bool,
     /// Device has power related issue or limitation e.g. device is running w/ the help of a backup battery or power might not be fully available at the moment.
     /// Bit : 6
-    power_source_failure : bool,
+    power_source_failure: bool,
     /// Local safety sensor (not a direct obstacle) is preventing movements (e.g. Safety EU Standard EN60335).
     /// Bit : 7
-    stop_input : bool,
+    stop_input: bool,
     /// Mechanical problem related to the motor(s) detected.
     /// Bit : 8
-    motor_jammed : bool,
+    motor_jammed: bool,
     /// PCB, fuse and other electrics problems.
     /// Bit : 9
-    hardware_failure : bool,
+    hardware_failure: bool,
     /// Actuator is manually operated and is preventing actuator movement (e.g. actuator is disengaged/decoupled).
     /// Bit : 10
-    manual_operation : bool,
+    manual_operation: bool,
     /// Protection is activated.
     /// Bit : 11
-    protection_activated : bool,
+    protection_activated: bool,
 }
 
 #[derive(FromRepr, EnumDiscriminants)]
@@ -506,10 +506,26 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         FEATURE_MAP,
         ATTRIBUTE_LIST,
         Attribute::new(AttributesDiscriminants::Type as u16, Access::RV, Quality::F),
-        Attribute::new(AttributesDiscriminants::ConfigStatus as u16, Access::RV, Quality::N),
-        Attribute::new(AttributesDiscriminants::OperationalStatus as u16, Access::RV, Quality::P),
-        Attribute::new(AttributesDiscriminants::EndProductType as u16, Access::RV, Quality::F),
-        Attribute::new(AttributesDiscriminants::Mode as u16, Access::RWVM, Quality::N),
+        Attribute::new(
+            AttributesDiscriminants::ConfigStatus as u16,
+            Access::RV,
+            Quality::N,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::OperationalStatus as u16,
+            Access::RV,
+            Quality::P,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::EndProductType as u16,
+            Access::RV,
+            Quality::F,
+        ),
+        Attribute::new(
+            AttributesDiscriminants::Mode as u16,
+            Access::RWVM,
+            Quality::N,
+        ),
     ],
     commands: &[
         CommandsDiscriminants::UpOrOpen as _,
@@ -525,10 +541,10 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 pub struct WindowCoveringCluster {
     data_ver: Dataver,
     type_attribute: Cell<TypeAttribute>,
-    config_status : Cell<ConfigStatus>,
-    operational_status : Cell<OperationalStatus>,
-    end_product_type : Cell<EndProductType>,
-    mode : Cell<Mode>
+    config_status: Cell<ConfigStatus>,
+    operational_status: Cell<OperationalStatus>,
+    end_product_type: Cell<EndProductType>,
+    mode: Cell<Mode>,
 }
 
 impl WindowCoveringCluster {
@@ -536,10 +552,10 @@ impl WindowCoveringCluster {
         Self {
             data_ver: Dataver::new(rand),
             type_attribute: Cell::new(TypeAttribute::default()),
-            config_status : Cell::new(ConfigStatus::default()),
-            operational_status : Cell::new(OperationalStatus::default()),
-            end_product_type : Cell::new(EndProductType::default()),
-            mode : Cell::new(Mode::default())
+            config_status: Cell::new(ConfigStatus::default()),
+            operational_status: Cell::new(OperationalStatus::default()),
+            end_product_type: Cell::new(EndProductType::default()),
+            mode: Cell::new(Mode::default()),
         }
     }
 
@@ -557,10 +573,16 @@ impl WindowCoveringCluster {
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::Type(codec) => codec.encode(writer, self.type_attribute.get()),
-                    Attributes::ConfigStatus(codec) => codec.encode(writer, self.config_status.get()),
-                    Attributes::OperationalStatus(codec) => codec.encode(writer, self.operational_status.get()),
-                    Attributes::EndProductType(codec) => codec.encode(writer, self.end_product_type.get()),
-                    Attributes::Mode(codec) => codec.encode(writer, self.mode.get()),                
+                    Attributes::ConfigStatus(codec) => {
+                        codec.encode(writer, self.config_status.get())
+                    }
+                    Attributes::OperationalStatus(codec) => {
+                        codec.encode(writer, self.operational_status.get())
+                    }
+                    Attributes::EndProductType(codec) => {
+                        codec.encode(writer, self.end_product_type.get())
+                    }
+                    Attributes::Mode(codec) => codec.encode(writer, self.mode.get()),
                     _ => todo!("read {:?}", attr.attr_id),
                 }
             }

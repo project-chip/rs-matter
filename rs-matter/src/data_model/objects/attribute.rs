@@ -81,7 +81,7 @@ bitflags! {
         const FIXED = 0x04;      // Short: F
         const NULLABLE = 0x08;   // Short: X
         /// if best effort reporting is supported then the attribute supports a reporting configuration
-        const REPORTABLE = 0x16; // Short: P 
+        const REPORTABLE = 0x16; // Short: P
 
         const SN = Self::SCENE.bits | Self::PERSISTENT.bits;
         const XN = Self::X.bits | Self::N.bits;
