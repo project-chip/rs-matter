@@ -18,13 +18,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
-use syn::Lit::{Int, Str};
-use syn::NestedMeta::{Lit, Meta};
-use syn::{parse_macro_input, DeriveInput, Lifetime};
-use syn::{
-    Meta::{List, NameValue},
-    MetaList, MetaNameValue, Type,
-};
+use syn::{parse_macro_input, DeriveInput, Lifetime, Token, Meta, Expr, Lit, Type, LitInt};
+use syn::punctuated::Punctuated;
 
 struct TlvArgs {
     start: u8,
@@ -46,38 +41,33 @@ impl Default for TlvArgs {
 
 fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
     let mut tlvargs: TlvArgs = Default::default();
-
-    if !ast.attrs.is_empty() {
-        if let List(MetaList {
-            path,
-            paren_token: _,
-            nested,
-        }) = ast.attrs[0].parse_meta().unwrap()
-        {
-            if path.is_ident("tlvargs") {
-                for a in nested {
-                    if let Meta(NameValue(MetaNameValue {
-                        path: key_path,
-                        eq_token: _,
-                        lit: key_val,
-                    })) = a
-                    {
-                        if key_path.is_ident("start") {
-                            if let Int(litint) = key_val {
-                                tlvargs.start = litint.base10_parse::<u8>().unwrap();
-                            }
-                        } else if key_path.is_ident("lifetime") {
-                            if let Str(litstr) = key_val {
-                                tlvargs.lifetime =
-                                    Lifetime::new(&litstr.value(), Span::call_site());
-                            }
-                        } else if key_path.is_ident("datatype") {
-                            if let Str(litstr) = key_val {
-                                tlvargs.datatype = litstr.value();
-                            }
-                        } else if key_path.is_ident("unordered") {
-                            tlvargs.unordered = true;
+    for attr in &ast.attrs {
+        if attr.path().is_ident("tlvargs") {
+            let nested = attr
+                .parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated)
+                .unwrap();
+            for e in nested {
+                if let Meta::NameValue(kv) = e {
+                    if kv.path.is_ident("lifetime") {
+                        if let Expr::Lit(syn::ExprLit {
+                                             lit: Lit::Str(ref lit),
+                                             ..
+                                         }) = kv.value
+                        {
+                            tlvargs.lifetime = Lifetime::new(&lit.value(), Span::call_site());
                         }
+                    }
+                    if kv.path.is_ident("start") {
+                        if let Expr::Lit(syn::ExprLit {
+                                             lit: Lit::Int(ref lit),
+                                             ..
+                                         }) = kv.value
+                        {
+                            tlvargs.start = lit.base10_parse().unwrap();
+                        }
+                    }
+                    if kv.path.is_ident("unordered") {
+                        tlvargs.unordered = true;
                     }
                 }
             }
@@ -87,23 +77,20 @@ fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
 }
 
 fn parse_tag_val(field: &syn::Field) -> Option<u8> {
-    if !field.attrs.is_empty() {
-        if let List(MetaList {
-            path,
-            paren_token: _,
-            nested,
-        }) = field.attrs[0].parse_meta().unwrap()
-        {
-            if path.is_ident("tagval") {
-                for a in nested {
-                    if let Lit(Int(litint)) = a {
-                        return Some(litint.base10_parse::<u8>().unwrap());
-                    }
-                }
-            }
+    let mut res: Option<u8> = None;
+    for a in &field.attrs {
+        if a.path().is_ident("tagval") {
+            a.parse_nested_meta(|meta| {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let lit: LitInt = content.parse()?;
+                let v: u8 = lit.base10_parse()?;
+                res = Some(v);
+                Ok(())
+            }).ok()?;
         }
     }
-    None
+    res
 }
 
 /// Generate a ToTlv implementation for a structure
@@ -218,7 +205,6 @@ fn gen_totlv_for_enum(
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
-
 #[proc_macro_derive(ToTLV, attributes(tlvargs, tagval))]
 pub fn derive_totlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
@@ -228,9 +214,9 @@ pub fn derive_totlv(item: TokenStream) -> TokenStream {
     let generics = ast.generics;
 
     if let syn::Data::Struct(syn::DataStruct {
-        fields: syn::Fields::Named(ref fields),
-        ..
-    }) = ast.data
+                                 fields: syn::Fields::Named(ref fields),
+                                 ..
+                             }) = ast.data
     {
         gen_totlv_for_struct(fields, name, &tlvargs, &generics)
     } else if let syn::Data::Enum(data_enum) = ast.data {
@@ -407,7 +393,6 @@ fn gen_fromtlv_for_enum(
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
-
 #[proc_macro_derive(FromTLV, attributes(tlvargs, tagval))]
 pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
@@ -418,9 +403,9 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     let generics = ast.generics;
 
     if let syn::Data::Struct(syn::DataStruct {
-        fields: syn::Fields::Named(ref fields),
-        ..
-    }) = ast.data
+                                 fields: syn::Fields::Named(ref fields),
+                                 ..
+                             }) = ast.data
     {
         gen_fromtlv_for_struct(fields, name, tlvargs, &generics)
     } else if let syn::Data::Enum(data_enum) = ast.data {
