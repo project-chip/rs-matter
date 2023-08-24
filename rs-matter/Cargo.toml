@@ -14,7 +14,7 @@ license = "Apache-2.0"
 default = ["os", "mbedtls"]
 os = ["std", "backtrace", "env_logger", "nix", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 esp-idf = ["std", "rustcrypto", "esp-idf-sys"]
-std = ["alloc", "rand", "qrcode", "async-io", "esp-idf-sys?/std", "embassy-time/generic-queue-16"]
+std = ["alloc", "rand", "async-io", "esp-idf-sys?/std", "embassy-time/generic-queue-16"]
 backtrace = []
 alloc = []
 nightly = []
@@ -45,6 +45,7 @@ embassy-sync = "0.2"
 critical-section = "1.1.1"
 domain = { version = "0.7.2", default_features = false, features = ["heapless"] }
 portable-atomic = "1"
+qrcodegen-no-heap = "1.8"
 
 # embassy-net dependencies
 embassy-net = { version = "0.1", features = ["igmp", "proto-ipv6", "udp"], optional = true }
@@ -53,7 +54,6 @@ smoltcp = { version = "0.10", default-features = false, optional = true }
 
 # STD-only dependencies
 rand = { version = "0.8.5", optional = true }
-qrcode = { version = "0.12", default-features = false, optional = true } # Print QR code
 async-io = { version = "=1.12", optional = true } # =1.12 for compatibility with ESP IDF
 
 # crypto

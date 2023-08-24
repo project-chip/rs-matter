@@ -15,6 +15,10 @@
  *    limitations under the License.
  */
 
+use core::mem::MaybeUninit;
+
+use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
+
 use crate::{
     error::ErrorCode,
     tlv::{TLVWriter, TagType},
@@ -319,28 +323,153 @@ fn estimate_struct_overhead(first_field_size: usize) -> usize {
     first_field_size + 4 + 2
 }
 
-pub(super) fn print_qr_code(qr_code: &str) {
-    info!("QR Code: {}", qr_code);
+pub(crate) fn print_qr_code(qr_code_text: &str) -> Result<(), Error> {
+    info!("QR Code Text: {}", qr_code_text);
 
-    #[cfg(feature = "std")]
-    {
-        use qrcode::{render::unicode, QrCode, Version};
+    let mut tmp_buf = MaybeUninit::<[u8; Version::MAX.buffer_len()]>::uninit();
+    let mut out_buf = MaybeUninit::<[u8; 7000]>::uninit();
 
-        let needed_version = compute_qr_version(qr_code);
-        let code =
-            QrCode::with_version(qr_code, Version::Normal(needed_version), qrcode::EcLevel::M)
-                .unwrap();
-        let image = code
-            .render::<unicode::Dense1x2>()
-            .dark_color(unicode::Dense1x2::Light)
-            .light_color(unicode::Dense1x2::Dark)
-            .build();
+    let tmp_buf = unsafe { tmp_buf.assume_init_mut() };
+    let out_buf = unsafe { out_buf.assume_init_mut() };
 
-        info!("\n{}", image);
+    let qr_code = compute_qr_code(qr_code_text, out_buf, tmp_buf)?;
+
+    info!(
+        "\n{}",
+        TextImage::Unicode.render(&qr_code, 4, false, out_buf)?
+    );
+
+    Ok(())
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TextImage {
+    Ascii,
+    Ansi,
+    Unicode,
+}
+
+impl TextImage {
+    pub fn render<'a>(
+        &self,
+        qr_code: &QrCode,
+        border: u8,
+        invert: bool,
+        out_buf: &'a mut [u8],
+    ) -> Result<&'a str, Error> {
+        let mut offset = 0;
+
+        for c in self.render_iter(qr_code, border, invert) {
+            let mut dst = [0; 4];
+            let bytes = c.encode_utf8(&mut dst).as_bytes();
+
+            if offset + bytes.len() > out_buf.len() {
+                return Err(ErrorCode::BufferTooSmall)?;
+            } else {
+                out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
+                offset += bytes.len();
+            }
+        }
+
+        Ok(unsafe { core::str::from_utf8_unchecked(&out_buf[..offset]) })
+    }
+
+    pub fn render_iter<'a>(
+        &self,
+        qr_code: &'a QrCode<'a>,
+        border: u8,
+        invert: bool,
+    ) -> impl Iterator<Item = char> + 'a {
+        let border: i32 = border as _;
+        let console_type = *self;
+
+        (-border..qr_code.size() + border)
+            .filter(move |y| console_type != Self::Unicode || (y - -border) % 2 == 0)
+            .flat_map(move |y| (-border..qr_code.size() + border + 1).map(move |x| (x, y)))
+            .map(move |(x, y)| {
+                if x < qr_code.size() + border {
+                    let white = !qr_code.get_module(x, y) ^ invert;
+
+                    match console_type {
+                        Self::Ascii => {
+                            if white {
+                                "#"
+                            } else {
+                                " "
+                            }
+                        }
+                        Self::Ansi => {
+                            let prev_white = if x > -border {
+                                Some(qr_code.get_module(x - 1, y))
+                            } else {
+                                None
+                            }
+                            .map(|prev_white| !prev_white ^ invert);
+
+                            if prev_white != Some(white) {
+                                if white {
+                                    "\x1b[47m "
+                                } else {
+                                    "\x1b[40m "
+                                }
+                            } else {
+                                " "
+                            }
+                        }
+                        Self::Unicode => {
+                            if white == !qr_code.get_module(x, y + 1) ^ invert {
+                                if white {
+                                    "\u{2588}"
+                                } else {
+                                    " "
+                                }
+                            } else if white {
+                                "\u{2580}"
+                            } else {
+                                "\u{2584}"
+                            }
+                        }
+                    }
+                } else {
+                    "\x1b[0m\n"
+                }
+            })
+            .flat_map(str::chars)
     }
 }
 
 pub fn compute_qr_code<'a>(
+    qr_code_text: &str,
+    tmp_buf: &mut [u8],
+    out_buf: &'a mut [u8],
+) -> Result<QrCode<'a>, Error> {
+    let needed_version = compute_qr_code_version(qr_code_text);
+
+    let code = QrCode::encode_text(
+        qr_code_text,
+        tmp_buf,
+        out_buf,
+        QrCodeEcc::Medium,
+        Version::new(needed_version),
+        Version::new(needed_version),
+        None,
+        false,
+    )
+    .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+    Ok(code)
+}
+
+pub fn compute_qr_code_version(qr_code_text: &str) -> u8 {
+    match qr_code_text.len() {
+        0..=38 => 2,
+        39..=61 => 3,
+        62..=90 => 4,
+        _ => 5,
+    }
+}
+
+pub fn compute_qr_code_text<'a>(
     dev_det: &BasicInfoConfig,
     comm_data: &CommissioningData,
     discovery_capabilities: DiscoveryCapabilities,
@@ -348,16 +477,6 @@ pub fn compute_qr_code<'a>(
 ) -> Result<&'a str, Error> {
     let qr_code_data = QrSetupPayload::new(dev_det, comm_data, discovery_capabilities);
     payload_base38_representation(&qr_code_data, buf)
-}
-
-#[cfg(feature = "std")]
-fn compute_qr_version(qr_data: &str) -> i16 {
-    match qr_data.len() {
-        0..=38 => 2,
-        39..=61 => 3,
-        62..=90 => 4,
-        _ => 5,
-    }
 }
 
 fn populate_bits(
