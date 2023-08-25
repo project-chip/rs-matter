@@ -140,25 +140,25 @@ impl FromTLV<'_> for ConfigStatus {
     }
 }
 
-impl Into<u8> for ConfigStatus {
-    fn into(self) -> u8 {
+impl From<ConfigStatus> for u8 {
+    fn from(val : ConfigStatus) -> Self {
         let mut v = 0u8;
-        if self.operational {
+        if val.operational {
             v |= 0b0000_0001;
         }
-        if self.lift_movement_reversed {
+        if val.lift_movement_reversed {
             v |= 0b0000_0100;
         }
-        if self.lift_control_position_aware {
+        if val.lift_control_position_aware {
             v |= 0b0000_1000;
         }
-        if self.tilt_control_position_aware {
+        if val.tilt_control_position_aware {
             v |= 0b0001_0000;
         }
-        if self.lift_controller_uses_encoder {
+        if val.lift_controller_uses_encoder {
             v |= 0b0010_0000;
         }
-        if self.tilt_controller_uses_encoder {
+        if val.tilt_controller_uses_encoder {
             v |= 0b0100_0000;
         }
         v
@@ -167,7 +167,7 @@ impl Into<u8> for ConfigStatus {
 
 impl ToTLV for ConfigStatus {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.u8(tag_type, self.clone().into())
+        tw.u8(tag_type, (*self).into())
     }
 }
 
@@ -192,9 +192,9 @@ impl From<u8> for CoveringStatus {
     }
 }
 
-impl Into<u8> for CoveringStatus {
-    fn into(self) -> u8 {
-        self as u8
+impl From<CoveringStatus> for u8 {
+    fn from(val: CoveringStatus) -> Self {
+        val as u8
     }
 }
 
@@ -228,19 +228,19 @@ impl FromTLV<'_> for OperationalStatus {
     }
 }
 
-impl Into<u8> for OperationalStatus {
-    fn into(self) -> u8 {
+impl From<OperationalStatus> for u8 {
+    fn from(val: OperationalStatus) -> Self {
         let mut v = 0u8;
-        v |= self.status as u8;
-        v |= (self.status_lift as u8) << 2;
-        v |= (self.status_tilt as u8) << 4;
+        v |= val.status as u8;
+        v |= (val.status_lift as u8) << 2;
+        v |= (val.status_tilt as u8) << 4;
         v
     }
 }
 
 impl ToTLV for OperationalStatus {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.u8(tag_type, self.clone().into())
+        tw.u8(tag_type, (*self).into())
     }
 }
 
@@ -313,15 +313,15 @@ impl FromTLV<'_> for EndProductType {
     }
 }
 
-impl Into<u8> for EndProductType {
-    fn into(self) -> u8 {
-        self as u8
+impl From<EndProductType> for u8 {
+    fn from(val: EndProductType) -> Self {
+        val as u8
     }
 }
 
 impl ToTLV for EndProductType {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.u8(tag_type, self.clone().into())
+        tw.u8(tag_type, (*self).into())
     }
 }
 
@@ -350,19 +350,19 @@ impl FromTLV<'_> for Mode {
     }
 }
 
-impl Into<u8> for Mode {
-    fn into(self) -> u8 {
+impl From<Mode> for u8 {
+    fn from(val: Mode) -> Self {
         let mut value = 0;
-        if self.lift_movement_reverse {
+        if val.lift_movement_reverse {
             value |= 0b0000_0001;
         }
-        if self.calibrating {
+        if val.calibrating {
             value |= 0b0000_0010;
         }
-        if self.maintenance {
+        if val.maintenance {
             value |= 0b0000_0100;
         }
-        if self.led_feedback {
+        if val.led_feedback {
             value |= 0b0000_1000;
         }
         value
@@ -371,7 +371,7 @@ impl Into<u8> for Mode {
 
 impl ToTLV for Mode {
     fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.u8(tag_type, self.clone().into())
+        tw.u8(tag_type, (*self).into())
     }
 }
 
