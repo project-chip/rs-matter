@@ -25,7 +25,7 @@ use crate::{
     transport::exchange::Exchange,
     utils::rand::Rand,
 };
-use domain::rdata::A;
+
 use log::info;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
@@ -47,7 +47,7 @@ pub enum Features {
     PositionAwareTiltControl = 0b0001_0000,
 }
 
-#[derive(FromRepr, EnumDiscriminants, FromPrimitive, Copy, Clone, PartialEq, Default)]
+#[derive(FromRepr, EnumDiscriminants, FromPrimitive, Copy, Clone, PartialEq, Default, Debug)]
 #[repr(u8)]
 pub enum TypeAttribute {
     /// Lift
@@ -87,7 +87,7 @@ impl ToTLV for TypeAttribute {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Default)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct ConfigStatus {
     /// Conformance Mandatory
     operational: bool,
@@ -106,6 +106,19 @@ pub struct ConfigStatus {
 
     // Conformance TL & PA_TL
     tilt_controller_uses_encoder: bool,
+}
+
+impl Default for ConfigStatus {
+    fn default() -> Self {
+        ConfigStatus {
+            operational: true,
+            lift_movement_reversed: false,
+            lift_control_position_aware: false,
+            tilt_control_position_aware: false,
+            lift_controller_uses_encoder: false,
+            tilt_controller_uses_encoder: false,
+        }
+    }
 }
 
 impl From<u8> for ConfigStatus {
@@ -158,7 +171,7 @@ impl ToTLV for ConfigStatus {
     }
 }
 
-#[derive(FromRepr, EnumDiscriminants, FromPrimitive, Copy, Clone, PartialEq, Default)]
+#[derive(FromRepr, EnumDiscriminants, FromPrimitive, Copy, Clone, PartialEq, Default, Debug)]
 #[repr(u8)]
 pub enum CoveringStatus {
     #[default]
@@ -186,7 +199,7 @@ impl Into<u8> for CoveringStatus {
 }
 
 /// The OperationalStatus attribute keeps track of currently ongoing operations and applies to all type of devices. See below for details about the meaning of individual bits.
-#[derive(Copy, Clone, PartialEq, Default)]
+#[derive(Copy, Clone, PartialEq, Default, Debug)]
 pub struct OperationalStatus {
     /// Indicates in which direction the covering is cur­ rently moving or if it has stopped.
     /// Bit : 0..1
@@ -231,7 +244,7 @@ impl ToTLV for OperationalStatus {
     }
 }
 
-#[derive(FromRepr, EnumDiscriminants, FromPrimitive, Copy, Clone, PartialEq, Default)]
+#[derive(FromRepr, EnumDiscriminants, FromPrimitive, Copy, Clone, PartialEq, Default, Debug)]
 #[repr(u8)]
 pub enum EndProductType {
     #[default]
@@ -312,7 +325,7 @@ impl ToTLV for EndProductType {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Default)]
+#[derive(Copy, Clone, PartialEq, Default, Debug)]
 pub struct Mode {
     lift_movement_reverse: bool,
     calibrating: bool,
@@ -402,7 +415,7 @@ struct Safety {
     protection_activated: bool,
 }
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
 #[repr(u16)]
 pub enum Attributes {
     /// Conformance Mandatory
@@ -437,10 +450,10 @@ pub enum Attributes {
     /// Conformance Mandatory
     /// map
     OperationalStatus(AttrType<OperationalStatus>) = 0x000A,
-    /// Conformance [LF & PA_LF]
+    /// Conformance LF & PA_LF
     /// unit : 0.01% | 0 to 10000
     TargetPositionLiftPercent100ths(AttrType<u16>) = 0x000B,
-    /// Conformance [TL & PA_TL]
+    /// Conformance TL & PA_TL
     /// unit : 0.01% | 0 to 10000
     TargetPositionTiltPercent100ths(AttrType<u16>) = 0x000C,
     /// Conformance Mandatory
@@ -465,12 +478,12 @@ pub enum Attributes {
     /// unit : 0.1°
     InstalledClosedLimitTilt(AttrType<u16>) = 0x0013,
 
-    // .. 0x0014 - 0x0016 Attributes with conformance D : Deleted
+    // .. 0x0014 - 0x0016 Attributes with conformance D : Deprecated
     /// Conformance Mandatory
     /// map
     Mode(AttrType<Mode>) = 0x0017,
 
-    // .. 0x0018 - 0x0019 Attributes with conformance D : Deleted
+    // .. 0x0018 - 0x0019 Attributes with conformance D : Deprecated
     /// Conformance Optional
     /// map
     SafetyStatus(AttrType<u16>) = 0x001A,
@@ -501,7 +514,7 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
-    feature_map: 0,
+    feature_map: Features::LiftControl as u32,
     attributes: &[
         FEATURE_MAP,
         ATTRIBUTE_LIST,
@@ -531,32 +544,119 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         CommandsDiscriminants::UpOrOpen as _,
         CommandsDiscriminants::DownOrClose as _,
         CommandsDiscriminants::StopMotion as _,
-        CommandsDiscriminants::GoToLiftValue as _,
-        CommandsDiscriminants::GoToLiftPercentage as _,
-        CommandsDiscriminants::GoToTiltValue as _,
-        CommandsDiscriminants::GoToTiltPercentage as _,
     ],
 };
 
+#[derive(Clone, Default)]
+pub struct WindowCoveringClusterBuilder {
+    pub type_attribute: Cell<TypeAttribute>,
+    pub phy_closed_limit_lift : Cell<Option<u16>>,
+    pub phys_closed_limit_tilt : Cell<Option<u16>>,
+    pub current_position_lift : Cell<Option<u16>>,
+    pub current_position_tilt : Cell<Option<u16>>,
+    pub number_of_actuations_lift : Cell<Option<u16>>,
+    pub number_of_actuations_tilt : Cell<Option<u16>>,
+    pub config_status: Cell<ConfigStatus>,
+    pub current_position_lift_percentage : Cell<Option<u8>>,
+    pub current_position_tilt_percentage : Cell<Option<u8>>,
+    pub operational_status: Cell<OperationalStatus>,
+    pub target_position_lift_percent_100ths : Cell<Option<u16>>,
+    pub target_position_tilt_percent_100ths : Cell<Option<u16>>,
+    pub end_product_type: Cell<EndProductType>,
+    pub current_position_lift_percent_100ths : Cell<Option<u16>>,
+    pub current_position_tilt_percent_100ths : Cell<Option<u16>>,
+    pub installed_open_limit_lift : Cell<Option<u16>>,
+    pub installed_closed_limit_lift : Cell<Option<u16>>,
+    pub installed_open_limit_tilt : Cell<Option<u16>>,
+    pub installed_closed_limit_tilt : Cell<Option<u16>>,
+    pub mode: Cell<Mode>,
+    pub safety_status: Cell<Option<u16>>,
+}
+
+impl WindowCoveringClusterBuilder {
+    // TODO: provide a way to populate the different features
+}
+
 pub struct WindowCoveringCluster {
     data_ver: Dataver,
-    type_attribute: Cell<TypeAttribute>,
-    config_status: Cell<ConfigStatus>,
-    operational_status: Cell<OperationalStatus>,
-    end_product_type: Cell<EndProductType>,
-    mode: Cell<Mode>,
+    pub type_attribute: Cell<TypeAttribute>,
+    pub phy_closed_limit_lift : Cell<Option<u16>>,
+    pub phys_closed_limit_tilt : Cell<Option<u16>>,
+    pub current_position_lift : Cell<Option<u16>>,
+    pub current_position_tilt : Cell<Option<u16>>,
+    pub number_of_actuations_lift : Cell<Option<u16>>,
+    pub number_of_actuations_tilt : Cell<Option<u16>>,
+    pub config_status: Cell<ConfigStatus>,
+    pub current_position_lift_percentage : Cell<Option<u8>>,
+    pub current_position_tilt_percentage : Cell<Option<u8>>,
+    pub operational_status: Cell<OperationalStatus>,
+    pub target_position_lift_percent_100ths : Cell<Option<u16>>,
+    pub target_position_tilt_percent_100ths : Cell<Option<u16>>,
+    pub end_product_type: Cell<EndProductType>,
+    pub current_position_lift_percent_100ths : Cell<Option<u16>>,
+    pub current_position_tilt_percent_100ths : Cell<Option<u16>>,
+    pub installed_open_limit_lift : Cell<Option<u16>>,
+    pub installed_closed_limit_lift : Cell<Option<u16>>,
+    pub installed_open_limit_tilt : Cell<Option<u16>>,
+    pub installed_closed_limit_tilt : Cell<Option<u16>>,
+    pub mode: Cell<Mode>,
+    pub safety_status: Cell<Option<u16>>,
 }
 
 impl WindowCoveringCluster {
-    pub fn new(rand: Rand) -> Self {
-        Self {
+    pub fn from_builder(builder : WindowCoveringClusterBuilder, rand : Rand) -> Self {
+        // TODO : sanity check on builder
+        Self { 
             data_ver: Dataver::new(rand),
-            type_attribute: Cell::new(TypeAttribute::default()),
-            config_status: Cell::new(ConfigStatus::default()),
-            operational_status: Cell::new(OperationalStatus::default()),
-            end_product_type: Cell::new(EndProductType::default()),
-            mode: Cell::new(Mode::default()),
+            type_attribute: builder.type_attribute,
+            phy_closed_limit_lift : builder.phy_closed_limit_lift,
+            phys_closed_limit_tilt : builder.phys_closed_limit_tilt,
+            current_position_lift : builder.current_position_lift,
+            current_position_tilt : builder.current_position_tilt,
+            number_of_actuations_lift : builder.number_of_actuations_lift,
+            number_of_actuations_tilt : builder.number_of_actuations_tilt,
+            config_status: builder.config_status,
+            current_position_lift_percentage : builder.current_position_lift_percentage,
+            current_position_tilt_percentage : builder.current_position_tilt_percentage,
+            operational_status: builder.operational_status,
+            target_position_lift_percent_100ths : builder.target_position_lift_percent_100ths,
+            target_position_tilt_percent_100ths : builder.target_position_tilt_percent_100ths,
+            end_product_type: builder.end_product_type,
+            current_position_lift_percent_100ths : builder.current_position_lift_percent_100ths,
+            current_position_tilt_percent_100ths : builder.current_position_tilt_percent_100ths,
+            installed_open_limit_lift : builder.installed_open_limit_lift,
+            installed_closed_limit_lift : builder.installed_closed_limit_lift,
+            installed_open_limit_tilt : builder.installed_open_limit_tilt,
+            installed_closed_limit_tilt : builder.installed_closed_limit_tilt,
+            mode: builder.mode,
+            safety_status: builder.safety_status,
         }
+    }
+
+    pub fn feature_map(&self) -> u32 {
+        Features::LiftControl as u32 // TODO: check active features by checking which attributes are valid
+    }
+
+    /// Returns the list of supported attributes
+    pub fn attributes(&self) -> Vec<AttributesDiscriminants> {
+        // TODO: create list based on which attributes are not None
+        vec![
+            AttributesDiscriminants::Type,
+            AttributesDiscriminants::ConfigStatus,
+            AttributesDiscriminants::OperationalStatus,
+            AttributesDiscriminants::EndProductType,
+            AttributesDiscriminants::Mode,
+        ]
+    }
+
+    /// Returns the list of supported commands
+    pub fn commands(&self) -> Vec<CommandsDiscriminants> {
+        // TODO: create list based on active features
+        vec![
+            CommandsDiscriminants::UpOrOpen,
+            CommandsDiscriminants::DownOrClose,
+            CommandsDiscriminants::StopMotion,
+        ]
     }
 
     pub fn set_type(&self, device_type: TypeAttribute) {
@@ -571,7 +671,10 @@ impl WindowCoveringCluster {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
             } else {
-                match attr.attr_id.try_into()? {
+                let attr = attr.attr_id.try_into();
+                dbg!("Read", &attr);
+                let attr = attr ?;
+                match attr {
                     Attributes::Type(codec) => codec.encode(writer, self.type_attribute.get()),
                     Attributes::ConfigStatus(codec) => {
                         codec.encode(writer, self.config_status.get())
@@ -583,7 +686,8 @@ impl WindowCoveringCluster {
                         codec.encode(writer, self.end_product_type.get())
                     }
                     Attributes::Mode(codec) => codec.encode(writer, self.mode.get()),
-                    _ => todo!("read {:?}", attr.attr_id),
+                    
+                    _ => todo!("read {:?} : remaining attribute ids not implemented yet", &attr), // TODO: remaining attribute ids not implemented yet
                 }
             }
         } else {
@@ -594,9 +698,13 @@ impl WindowCoveringCluster {
     pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         let data = data.with_dataver(self.data_ver.get())?;
 
-        match attr.attr_id.try_into()? {
+        let attr = attr.attr_id.try_into();
+        dbg!("Write", &attr);
+        let attr = attr ?;
+
+        match attr {
             Attributes::Type(codec) => self.set_type(codec.decode(data)?),
-            _ => todo!("write {:?}", attr.attr_id),
+            _ => todo!("write {:?} : remaining attribute ids not implemented yet", attr), // TODO: remaining attribute ids not implemented yet
         }
 
         self.data_ver.changed();
@@ -614,9 +722,32 @@ impl WindowCoveringCluster {
         match cmd.cmd_id.try_into()? {
             Commands::DownOrClose => {
                 cmd_enter!("DownOrClose");
-                todo!("DownOrClose");
-            }
-            _ => todo!("invoke {:?}", cmd.cmd_id),
+                let status = OperationalStatus {
+                    status: CoveringStatus::Closing,
+                    status_lift: CoveringStatus::Closing,
+                    status_tilt: CoveringStatus::NotMoving,
+                };
+                self.operational_status.set(status);
+            },
+            Commands::UpOrOpen => {
+                cmd_enter!("UpOrOpen");
+                let status = OperationalStatus {
+                    status: CoveringStatus::Opening,
+                    status_lift: CoveringStatus::Opening,
+                    status_tilt: CoveringStatus::NotMoving,
+                };
+                self.operational_status.set(status);
+            },
+            Commands::StopMotion => {
+                cmd_enter!("StopMotion");
+                let status = OperationalStatus {
+                    status: CoveringStatus::NotMoving,
+                    status_lift: CoveringStatus::NotMoving,
+                    status_tilt: CoveringStatus::NotMoving,
+                };
+                self.operational_status.set(status);
+            },
+            _ => todo!("invoke {:?} : remaining commands not implemented yet", cmd.cmd_id), // TODO : implement remaining commands
         }
 
         #[allow(unreachable_code)]

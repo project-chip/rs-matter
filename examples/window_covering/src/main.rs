@@ -22,7 +22,7 @@ use embassy_futures::select::select3;
 use log::info;
 use rs_matter::core::{CommissioningData, Matter};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter::data_model::cluster_window_covering;
+use rs_matter::data_model::cluster_window_covering::{self, WindowCoveringClusterBuilder};
 use rs_matter::data_model::device_types::DEV_TYPE_WINDOW_COVERING;
 use rs_matter::data_model::objects::*;
 use rs_matter::data_model::root_endpoint;
@@ -185,6 +185,8 @@ const NODE: Node<'static> = Node {
 };
 
 fn handler<'a>(matter: &'a Matter<'a>) -> impl Metadata + NonBlockingHandler + 'a {
+    let builder = WindowCoveringClusterBuilder::default();
+
     (
         NODE,
         root_endpoint::handler(0, matter)
@@ -196,7 +198,7 @@ fn handler<'a>(matter: &'a Matter<'a>) -> impl Metadata + NonBlockingHandler + '
             .chain(
                 1,
                 cluster_window_covering::ID,
-                cluster_window_covering::WindowCoveringCluster::new(*matter.borrow()),
+                cluster_window_covering::WindowCoveringCluster::from_builder(builder, *matter.borrow()),
             ),
     )
 }
