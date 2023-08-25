@@ -141,7 +141,7 @@ impl FromTLV<'_> for ConfigStatus {
 }
 
 impl From<ConfigStatus> for u8 {
-    fn from(val : ConfigStatus) -> Self {
+    fn from(val: ConfigStatus) -> Self {
         let mut v = 0u8;
         if val.operational {
             v |= 0b0000_0001;
@@ -550,25 +550,25 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 #[derive(Clone, Default)]
 pub struct WindowCoveringClusterBuilder {
     pub type_attribute: Cell<TypeAttribute>,
-    pub phy_closed_limit_lift : Cell<Option<u16>>,
-    pub phys_closed_limit_tilt : Cell<Option<u16>>,
-    pub current_position_lift : Cell<Option<u16>>,
-    pub current_position_tilt : Cell<Option<u16>>,
-    pub number_of_actuations_lift : Cell<Option<u16>>,
-    pub number_of_actuations_tilt : Cell<Option<u16>>,
+    pub phy_closed_limit_lift: Cell<Option<u16>>,
+    pub phys_closed_limit_tilt: Cell<Option<u16>>,
+    pub current_position_lift: Cell<Option<u16>>,
+    pub current_position_tilt: Cell<Option<u16>>,
+    pub number_of_actuations_lift: Cell<Option<u16>>,
+    pub number_of_actuations_tilt: Cell<Option<u16>>,
     pub config_status: Cell<ConfigStatus>,
-    pub current_position_lift_percentage : Cell<Option<u8>>,
-    pub current_position_tilt_percentage : Cell<Option<u8>>,
+    pub current_position_lift_percentage: Cell<Option<u8>>,
+    pub current_position_tilt_percentage: Cell<Option<u8>>,
     pub operational_status: Cell<OperationalStatus>,
-    pub target_position_lift_percent_100ths : Cell<Option<u16>>,
-    pub target_position_tilt_percent_100ths : Cell<Option<u16>>,
+    pub target_position_lift_percent_100ths: Cell<Option<u16>>,
+    pub target_position_tilt_percent_100ths: Cell<Option<u16>>,
     pub end_product_type: Cell<EndProductType>,
-    pub current_position_lift_percent_100ths : Cell<Option<u16>>,
-    pub current_position_tilt_percent_100ths : Cell<Option<u16>>,
-    pub installed_open_limit_lift : Cell<Option<u16>>,
-    pub installed_closed_limit_lift : Cell<Option<u16>>,
-    pub installed_open_limit_tilt : Cell<Option<u16>>,
-    pub installed_closed_limit_tilt : Cell<Option<u16>>,
+    pub current_position_lift_percent_100ths: Cell<Option<u16>>,
+    pub current_position_tilt_percent_100ths: Cell<Option<u16>>,
+    pub installed_open_limit_lift: Cell<Option<u16>>,
+    pub installed_closed_limit_lift: Cell<Option<u16>>,
+    pub installed_open_limit_tilt: Cell<Option<u16>>,
+    pub installed_closed_limit_tilt: Cell<Option<u16>>,
     pub mode: Cell<Mode>,
     pub safety_status: Cell<Option<u16>>,
 }
@@ -580,54 +580,54 @@ impl WindowCoveringClusterBuilder {
 pub struct WindowCoveringCluster {
     data_ver: Dataver,
     pub type_attribute: Cell<TypeAttribute>,
-    pub phy_closed_limit_lift : Cell<Option<u16>>,
-    pub phys_closed_limit_tilt : Cell<Option<u16>>,
-    pub current_position_lift : Cell<Option<u16>>,
-    pub current_position_tilt : Cell<Option<u16>>,
-    pub number_of_actuations_lift : Cell<Option<u16>>,
-    pub number_of_actuations_tilt : Cell<Option<u16>>,
+    pub phy_closed_limit_lift: Cell<Option<u16>>,
+    pub phys_closed_limit_tilt: Cell<Option<u16>>,
+    pub current_position_lift: Cell<Option<u16>>,
+    pub current_position_tilt: Cell<Option<u16>>,
+    pub number_of_actuations_lift: Cell<Option<u16>>,
+    pub number_of_actuations_tilt: Cell<Option<u16>>,
     pub config_status: Cell<ConfigStatus>,
-    pub current_position_lift_percentage : Cell<Option<u8>>,
-    pub current_position_tilt_percentage : Cell<Option<u8>>,
+    pub current_position_lift_percentage: Cell<Option<u8>>,
+    pub current_position_tilt_percentage: Cell<Option<u8>>,
     pub operational_status: Cell<OperationalStatus>,
-    pub target_position_lift_percent_100ths : Cell<Option<u16>>,
-    pub target_position_tilt_percent_100ths : Cell<Option<u16>>,
+    pub target_position_lift_percent_100ths: Cell<Option<u16>>,
+    pub target_position_tilt_percent_100ths: Cell<Option<u16>>,
     pub end_product_type: Cell<EndProductType>,
-    pub current_position_lift_percent_100ths : Cell<Option<u16>>,
-    pub current_position_tilt_percent_100ths : Cell<Option<u16>>,
-    pub installed_open_limit_lift : Cell<Option<u16>>,
-    pub installed_closed_limit_lift : Cell<Option<u16>>,
-    pub installed_open_limit_tilt : Cell<Option<u16>>,
-    pub installed_closed_limit_tilt : Cell<Option<u16>>,
+    pub current_position_lift_percent_100ths: Cell<Option<u16>>,
+    pub current_position_tilt_percent_100ths: Cell<Option<u16>>,
+    pub installed_open_limit_lift: Cell<Option<u16>>,
+    pub installed_closed_limit_lift: Cell<Option<u16>>,
+    pub installed_open_limit_tilt: Cell<Option<u16>>,
+    pub installed_closed_limit_tilt: Cell<Option<u16>>,
     pub mode: Cell<Mode>,
     pub safety_status: Cell<Option<u16>>,
 }
 
 impl WindowCoveringCluster {
-    pub fn from_builder(builder : WindowCoveringClusterBuilder, rand : Rand) -> Self {
+    pub fn from_builder(builder: WindowCoveringClusterBuilder, rand: Rand) -> Self {
         // TODO : sanity check on builder
-        Self { 
+        Self {
             data_ver: Dataver::new(rand),
             type_attribute: builder.type_attribute,
-            phy_closed_limit_lift : builder.phy_closed_limit_lift,
-            phys_closed_limit_tilt : builder.phys_closed_limit_tilt,
-            current_position_lift : builder.current_position_lift,
-            current_position_tilt : builder.current_position_tilt,
-            number_of_actuations_lift : builder.number_of_actuations_lift,
-            number_of_actuations_tilt : builder.number_of_actuations_tilt,
+            phy_closed_limit_lift: builder.phy_closed_limit_lift,
+            phys_closed_limit_tilt: builder.phys_closed_limit_tilt,
+            current_position_lift: builder.current_position_lift,
+            current_position_tilt: builder.current_position_tilt,
+            number_of_actuations_lift: builder.number_of_actuations_lift,
+            number_of_actuations_tilt: builder.number_of_actuations_tilt,
             config_status: builder.config_status,
-            current_position_lift_percentage : builder.current_position_lift_percentage,
-            current_position_tilt_percentage : builder.current_position_tilt_percentage,
+            current_position_lift_percentage: builder.current_position_lift_percentage,
+            current_position_tilt_percentage: builder.current_position_tilt_percentage,
             operational_status: builder.operational_status,
-            target_position_lift_percent_100ths : builder.target_position_lift_percent_100ths,
-            target_position_tilt_percent_100ths : builder.target_position_tilt_percent_100ths,
+            target_position_lift_percent_100ths: builder.target_position_lift_percent_100ths,
+            target_position_tilt_percent_100ths: builder.target_position_tilt_percent_100ths,
             end_product_type: builder.end_product_type,
-            current_position_lift_percent_100ths : builder.current_position_lift_percent_100ths,
-            current_position_tilt_percent_100ths : builder.current_position_tilt_percent_100ths,
-            installed_open_limit_lift : builder.installed_open_limit_lift,
-            installed_closed_limit_lift : builder.installed_closed_limit_lift,
-            installed_open_limit_tilt : builder.installed_open_limit_tilt,
-            installed_closed_limit_tilt : builder.installed_closed_limit_tilt,
+            current_position_lift_percent_100ths: builder.current_position_lift_percent_100ths,
+            current_position_tilt_percent_100ths: builder.current_position_tilt_percent_100ths,
+            installed_open_limit_lift: builder.installed_open_limit_lift,
+            installed_closed_limit_lift: builder.installed_closed_limit_lift,
+            installed_open_limit_tilt: builder.installed_open_limit_tilt,
+            installed_closed_limit_tilt: builder.installed_closed_limit_tilt,
             mode: builder.mode,
             safety_status: builder.safety_status,
         }
@@ -673,7 +673,7 @@ impl WindowCoveringCluster {
             } else {
                 let attr = attr.attr_id.try_into();
                 dbg!("Read", &attr);
-                let attr = attr ?;
+                let attr = attr?;
                 match attr {
                     Attributes::Type(codec) => codec.encode(writer, self.type_attribute.get()),
                     Attributes::ConfigStatus(codec) => {
@@ -686,8 +686,11 @@ impl WindowCoveringCluster {
                         codec.encode(writer, self.end_product_type.get())
                     }
                     Attributes::Mode(codec) => codec.encode(writer, self.mode.get()),
-                    
-                    _ => todo!("read {:?} : remaining attribute ids not implemented yet", &attr), // TODO: remaining attribute ids not implemented yet
+
+                    _ => todo!(
+                        "read {:?} : remaining attribute ids not implemented yet",
+                        &attr
+                    ), // TODO: remaining attribute ids not implemented yet
                 }
             }
         } else {
@@ -700,11 +703,14 @@ impl WindowCoveringCluster {
 
         let attr = attr.attr_id.try_into();
         dbg!("Write", &attr);
-        let attr = attr ?;
+        let attr = attr?;
 
         match attr {
             Attributes::Type(codec) => self.set_type(codec.decode(data)?),
-            _ => todo!("write {:?} : remaining attribute ids not implemented yet", attr), // TODO: remaining attribute ids not implemented yet
+            _ => todo!(
+                "write {:?} : remaining attribute ids not implemented yet",
+                attr
+            ), // TODO: remaining attribute ids not implemented yet
         }
 
         self.data_ver.changed();
@@ -728,7 +734,7 @@ impl WindowCoveringCluster {
                     status_tilt: CoveringStatus::NotMoving,
                 };
                 self.operational_status.set(status);
-            },
+            }
             Commands::UpOrOpen => {
                 cmd_enter!("UpOrOpen");
                 let status = OperationalStatus {
@@ -737,7 +743,7 @@ impl WindowCoveringCluster {
                     status_tilt: CoveringStatus::NotMoving,
                 };
                 self.operational_status.set(status);
-            },
+            }
             Commands::StopMotion => {
                 cmd_enter!("StopMotion");
                 let status = OperationalStatus {
@@ -746,8 +752,11 @@ impl WindowCoveringCluster {
                     status_tilt: CoveringStatus::NotMoving,
                 };
                 self.operational_status.set(status);
-            },
-            _ => todo!("invoke {:?} : remaining commands not implemented yet", cmd.cmd_id), // TODO : implement remaining commands
+            }
+            _ => todo!(
+                "invoke {:?} : remaining commands not implemented yet",
+                cmd.cmd_id
+            ), // TODO : implement remaining commands
         }
 
         #[allow(unreachable_code)]

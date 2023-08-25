@@ -198,7 +198,10 @@ fn handler<'a>(matter: &'a Matter<'a>) -> impl Metadata + NonBlockingHandler + '
             .chain(
                 1,
                 cluster_window_covering::ID,
-                cluster_window_covering::WindowCoveringCluster::from_builder(builder, *matter.borrow()),
+                cluster_window_covering::WindowCoveringCluster::from_builder(
+                    builder,
+                    *matter.borrow(),
+                ),
             ),
     )
 }
