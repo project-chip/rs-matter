@@ -1,0 +1,213 @@
+[2023-08-25T15:24:33Z INFO  window_covering] Matter memory: mDNS=72, Matter=32000, MdnsBuffers=2815, RunBuffers=26135
+[2023-08-25T15:24:33Z INFO  window_covering] Will use network interface en0 with 192.168.6.29/fe80::88c:a063:f2f6:90fd for mDNS
+[2023-08-25T15:24:33Z INFO  window_covering] mDNS initialized
+[2023-08-25T15:24:33Z INFO  window_covering] Matter initialized
+[2023-08-25T15:24:33Z INFO  rs_matter::persist::fileio] Persisting from/to /var/folders/zf/jdpvrr2n04v_pgcx1_hjkn300000gn/T/rs-matter
+[2023-08-25T15:24:33Z INFO  window_covering] Matter transport runner memory: 16568
+[2023-08-25T15:24:33Z INFO  rs_matter::transport::udp::async_io] Listening on [::]:5540
+[2023-08-25T15:24:33Z INFO  rs_matter::transport::core] Running Matter transport
+[2023-08-25T15:24:33Z INFO  rs_matter::pairing::code] Pairing Code: 0087-6800-071
+[2023-08-25T15:24:33Z INFO  rs_matter::pairing::qr] QR Code: MT:Y.K90Q1212Z6Q66D33P084L90Z.I332SQ43I15T0
+[2023-08-25T15:24:33Z INFO  rs_matter::pairing::qr] 
+    █████████████████████████████████████
+    █████████████████████████████████████
+    ████ ▄▄▄▄▄ █▀██ █▀▀▄ █  ▄█ ▄▄▄▄▄ ████
+    ████ █   █ █ ▀█▀▄▄█▄▀▄ ▄▄█ █   █ ████
+    ████ █▄▄▄█ ██▄ █ ██ ▄ ▀▀▀█ █▄▄▄█ ████
+    ████▄▄▄▄▄▄▄█ █▄█ █ ▀ █ █ █▄▄▄▄▄▄▄████
+    ████▄▀▀▀▀▀▄█▄▀█ █▀██ ▀ ██▄ ▀▀ ▄ ▀████
+    ████▀█  ▀▀▄ ▄▄▀▄▄ ▄▄▄█▀█▄██▄ ▄▀▀▄████
+    ████▀ ▀ █▄▄▀▄▀▀█ ▄█▄ ▀ ▀█ ██   ▀▀████
+    ████ █  █▀▄█  ▄▀▀██▀█▀█ ▀▄ ▀ ██ ▄████
+    ████▀▄▄█▄ ▄ ▀ ▀ ▄▀▀█▄▀█▀▄▄▀▄▄▀ ▀ ████
+    ████ ▄▀█▄█▄ ▄█▀▄█▀█▄█▄▄▄█▄█  ▄  ▀████
+    ████▄█▄██▄▄█▀▀   █ ▄█▀█▄ ▄▄▄ ▄▀▀▄████
+    ████ ▄▄▄▄▄ ██▀█ ▄█▀▀▀▀ ▀ █▄█ ▄▄ ▄████
+    ████ █   █ ██ ▀█▄▄ █▄▀██▄▄▄ ▄▄ ▀▄████
+    ████ █▄▄▄█ ██ ▀▀ ▄█▄▀▄▀█▀▄▀ ▀  ▄█████
+    ████▄▄▄▄▄▄▄█▄█████▄▄██▄▄█▄██▄█▄▄█████
+    █████████████████████████████████████
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] Registering mDNS service 391DD54A62120918/Commissionable(250)
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key D val 250
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key CM val 1
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key DN val OnOff Light
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key VP val 65521+32768
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key SII val 5000
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key SAI val 300
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key PH val 33
+[2023-08-25T15:24:33Z INFO  rs_matter::mdns::astro] mDNS TXT key PI val 
+[2023-08-25T15:24:34Z INFO  astro_dnssd::os::apple::register] Got reply
+[2023-08-25T15:24:34Z INFO  astro_dnssd::os::apple::register] Reply info sent
+[2023-08-25T15:24:34Z INFO  rs_matter::transport::core] Comissioning started
+[2023-08-25T15:24:34Z INFO  rs_matter::transport::core] Creating queue for 1 exchanges
+[2023-08-25T15:24:34Z INFO  rs_matter::transport::core] Creating 8 handlers
+[2023-08-25T15:24:34Z INFO  rs_matter::transport::core] Handlers size: 13640
+[2023-08-25T15:24:34Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 92381548
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::session] Creating new session
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 40886, Proto: 0, Opcode: 32, Flags: R|I| 
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Creating new exchange: ExchangeId { id: 40886, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:61352
+    , peer_nodeid: Some(14054030020983603665), is_encrypted: false } }
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:PBKDFParamRequest: 
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     1: len[32][8d, ed, 51, 94, c5, 2f, 79, 2f, c3, a2, 83, 7d, 15, 4a, 75, 12, 11, 45, aa, b, 35, 33, b0, ad, c3, 77, ee, f3, c1, c6, 58, 5]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     2: U16(25395)
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     3: U8(0)
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     4: False
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Transport: got new exchange: ExchangeId { id: 40886, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:61352
+    , peer_nodeid: Some(14054030020983603665), is_encrypted: false } }
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Transport: exchange sent
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Handler 0: Got exchange ExchangeId { id: 40886, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:61352
+    , peer_nodeid: Some(14054030020983603665), is_encrypted: false } }
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Transport: exchange started
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::packet] [36mSending packet[39m SC:PBKDFParamResponse: 
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     1: len[32][8d, ed, 51, 94, c5, 2f, 79, 2f, c3, a2, 83, 7d, 15, 4a, 75, 12, 11, 45, aa, b, 35, 33, b0, ad, c3, 77, ee, f3, c1, c6, 58, 5]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     2: len[32][1b, 93, ad, ac, d0, 72, 4e, 45, 46, 53, 58, 26, c0, 11, 88, 60, fb, 13, bc, ac, b7, 71, 74, d5, 6a, e8, 7b, fe, 55, 52, dd, 4c]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     3: U8(1)
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     4: {
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]         1: U16(2000)
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]         2: len[32][d, c3, d3, 8c, 4, 85, 86, c2, 42, 16, 39, c2, c8, 20, 3b, c3, 31, cd, 24, 71, 35, ec, 44, b0, ed, 82, 78, 1b, e4, d6, dd, ec]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     }
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::proto_hdr] [encode] ExId: 40886, Proto: 0, Opcode: 33, Flags: R|A|
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 92381549
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 40886, Proto: 0, Opcode: 34, Flags: R|A|I| 
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:PASEPake1: 
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     1: len[65][4, fa, d3, b7, 10, af, c9, af, 36, 35, 16, 10, a5, 2f, 41, 51, 2a, 8c, f, 9c, ad, 67, c6, 2d, 93, 81, d1, cf, f8, 73, 77, da, 82, f4, 5a, d9, be, 47, e7, 2b, f7, 6b, be, d1, 31, f, 0, 76, 35, 71, 1c, 45, d, fb, 94, a6, f9, e3, c4, fe, 23, 85, 12, 33, a3]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::packet] [36mSending packet[39m SC:PASEPake2: 
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     1: len[65][4, fd, ce, ee, 95, e3, b9, f8, fd, 29, d0, 66, 6, d7, f7, 66, 3f, 6d, 19, 2c, 4f, 56, 15, 65, 8, 6d, 29, 73, 1f, 33, 15, 8, 24, 88, 13, e8, 47, 97, 54, c6, 85, 2b, 55, 4, 38, cb, 23, 6d, a2, db, d1, 83, 9d, 98, 95, c3, cf, 85, fe, 45, f0, 7, fc, e9, 3a]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser]     2: len[32][fb, 1d, c5, 2d, 37, cc, b9, 85, 79, 9f, cc, 80, 3d, 7c, cd, e, 22, 1b, 3f, 22, f6, 28, 41, 76, 92, 33, 1a, f4, bc, ce, 1, dd]
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::proto_hdr] [encode] ExId: 40886, Proto: 0, Opcode: 35, Flags: R|A|
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 92381550
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 40886, Proto: 0, Opcode: 64, Flags: R|A|I| 
+[2023-08-25T15:25:39Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:StatusReport: 
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] S16(0)
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] S8(0)
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] S8(2)
+[2023-08-25T15:25:39Z ERROR rs_matter::tlv::parser] Invalid value found: 0 self TLVListIterator { buf: [1, 0, 0, 0, 0, 0, 2, 0], current: 8 } size 1
+[2023-08-25T15:25:39Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:25:39Z WARN  rs_matter::transport::core] Handler 0: Exchange closed because of error: Error::Invalid {
+    disabled backtrace}
+    
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 263074586
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::session] Creating new session
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 51884, Proto: 0, Opcode: 32, Flags: R|I| 
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Creating new exchange: ExchangeId { id: 51884, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:51093
+    , peer_nodeid: Some(17618639401709571427), is_encrypted: false } }
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:PBKDFParamRequest: 
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     1: len[32][5a, 5c, 62, a2, ed, 40, d8, 4b, 3, a8, 1e, 77, e, 2a, 10, da, 4c, 21, 8f, 4b, 12, 16, 4d, 63, a4, b2, 87, 5, 61, 74, 7, 5f]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     2: U16(60352)
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     3: U8(0)
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     4: False
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Transport: got new exchange: ExchangeId { id: 51884, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:51093
+    , peer_nodeid: Some(17618639401709571427), is_encrypted: false } }
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Transport: exchange sent
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Handler 0: Got exchange ExchangeId { id: 51884, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:51093
+    , peer_nodeid: Some(17618639401709571427), is_encrypted: false } }
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Transport: exchange started
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::packet] [36mSending packet[39m SC:PBKDFParamResponse: 
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     1: len[32][5a, 5c, 62, a2, ed, 40, d8, 4b, 3, a8, 1e, 77, e, 2a, 10, da, 4c, 21, 8f, 4b, 12, 16, 4d, 63, a4, b2, 87, 5, 61, 74, 7, 5f]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     2: len[32][51, f4, c1, 86, a2, cf, 6d, 4d, 56, 6b, bd, a3, 82, 23, f3, 5, 7c, e5, b7, a8, df, 53, 3a, 8e, 61, 84, c1, d2, 73, e1, ce, 14]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     3: U8(2)
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     4: {
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]         1: U16(2000)
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]         2: len[32][d, c3, d3, 8c, 4, 85, 86, c2, 42, 16, 39, c2, c8, 20, 3b, c3, 31, cd, 24, 71, 35, ec, 44, b0, ed, 82, 78, 1b, e4, d6, dd, ec]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     }
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::proto_hdr] [encode] ExId: 51884, Proto: 0, Opcode: 33, Flags: R|A|
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 263074587
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 51884, Proto: 0, Opcode: 34, Flags: R|A|I| 
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:PASEPake1: 
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     1: len[65][4, 19, 5b, ca, 5b, eb, e6, eb, 66, e4, e6, 73, c2, 3d, 24, ce, bf, 7d, e8, c7, 19, fc, 5f, f4, cf, 98, 27, 66, be, 2, ba, 61, 1c, c5, 79, e, 8b, 6d, f0, af, 24, a5, b0, c2, 27, 82, 53, 5d, c2, f, 4d, 19, 19, 1a, a1, ce, 46, 6f, c7, 58, c7, 8f, 61, d0, ec]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::packet] [36mSending packet[39m SC:PASEPake2: 
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     1: len[65][4, a, 9f, 53, 79, 34, ee, 52, ff, 84, c1, 37, cb, d1, c1, 4b, 95, ff, 0, 5a, 46, 3f, 62, 66, c5, 6d, f1, 59, 7a, a7, 4e, d6, 56, e5, 99, 5a, cc, 5c, f0, 6c, 1c, f5, ad, 79, 52, c1, a2, 66, c6, a5, 46, eb, 57, cc, 62, f2, 9d, 77, 85, 78, d8, 7c, 1f, a2, bd]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser]     2: len[32][23, 37, 1, 3b, e0, f4, bd, a5, b7, 4a, 93, 62, 1e, 93, d1, a8, 7b, 76, c, 89, 23, fa, bd, 68, 14, b5, a5, 45, c0, b, 48, c3]
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::proto_hdr] [encode] ExId: 51884, Proto: 0, Opcode: 35, Flags: R|A|
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 263074588
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 51884, Proto: 0, Opcode: 64, Flags: R|A|I| 
+[2023-08-25T15:28:24Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:StatusReport: 
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] S16(0)
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] S8(0)
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] S8(2)
+[2023-08-25T15:28:24Z ERROR rs_matter::tlv::parser] Invalid value found: 0 self TLVListIterator { buf: [1, 0, 0, 0, 0, 0, 2, 0], current: 8 } size 1
+[2023-08-25T15:28:24Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:24Z WARN  rs_matter::transport::core] Handler 0: Exchange closed because of error: Error::Invalid {
+    disabled backtrace}
+    
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 224279685
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::session] Creating new session
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 61056, Proto: 0, Opcode: 32, Flags: R|I| 
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Creating new exchange: ExchangeId { id: 61056, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:53072
+    , peer_nodeid: Some(9895499931543611185), is_encrypted: false } }
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:PBKDFParamRequest: 
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] {
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser]     1: len[32][80, b4, 67, fe, 79, 4f, 61, b6, 5e, ee, cf, 9e, 1e, 83, c2, 6b, 24, 1f, 3f, ea, 95, f3, cb, 7b, d9, 48, 92, a8, cd, 8b, d, 59]
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser]     2: U16(46172)
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser]     3: U8(0)
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser]     4: False
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] }
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Transport: got new exchange: ExchangeId { id: 61056, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:53072
+    , peer_nodeid: Some(9895499931543611185), is_encrypted: false } }
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Transport: exchange sent
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Handler 0: Got exchange ExchangeId { id: 61056, session_id: SessionId { id: 0, peer_addr: [fe80::704c:4cff:fe62:c6a4%4]:53072
+    , peer_nodeid: Some(9895499931543611185), is_encrypted: false } }
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Transport: exchange started
+[2023-08-25T15:28:50Z INFO  rs_matter::secure_channel::pake] Other PAKE session in progress
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::packet] [36mSending packet[39m SC:StatusReport: 
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] S16(0)
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] S8(0)
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] S8(4)
+[2023-08-25T15:28:50Z ERROR rs_matter::tlv::parser] Invalid value found: 0 self TLVListIterator { buf: [1, 0, 0, 0, 0, 0, 4, 0], current: 8 } size 1
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::proto_hdr] [encode] ExId: 61056, Proto: 0, Opcode: 64, Flags: R|A|
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::core] Transport: waiting for incoming packets
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::plain_hdr] [decode] flags: SRC_ADDR_PRESENT, session type: None, sess_id: 0, ctr: 224279686
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::proto_hdr] [decode] ExId: 61056, Proto: 0, Opcode: 16, Flags: A|I| 
+[2023-08-25T15:28:50Z INFO  rs_matter::transport::packet] [36mGot packet[39m SC:MRPStandAloneAck: 
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] TLV list:
+[2023-08-25T15:28:50Z INFO  rs_matter::tlv::parser] ---------
+[2023-08-25T15:28:50Z WARN  rs_matter::transport::core] Handler 0: Exchange closed because of error: Error::NoExchange {
+    disabled backtrace}
+    
