@@ -34,7 +34,7 @@ export MCU=esp32; export CARGO_TARGET_XTENSA_ESP32_ESPIDF_LINKER=ldproxy; export
   * esp32s3 / xtensa-esp32s3-espidf
   * esp32c3 / riscv32imc-esp-espidf
   * esp32c5 / riscv32imc-esp-espidf
-  * esp32c6 / risxcv32imac-esp-espidf
+  * esp32c6 / riscv32imac-esp-espidf
 * Put in `WIFI_SSID` / `WIFI_PASS` the SSID & password for your wireless router
 * Flash using the `espflash` utility described in the build prerequsites' link above
 
