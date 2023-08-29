@@ -83,6 +83,8 @@ pub struct Error {
     code: ErrorCode,
     #[cfg(all(feature = "std", feature = "backtrace"))]
     backtrace: std::backtrace::Backtrace,
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    inner: Option<Box<dyn std::error::Error + Send>>,
 }
 
 impl Error {
@@ -91,6 +93,22 @@ impl Error {
             code,
             #[cfg(all(feature = "std", feature = "backtrace"))]
             backtrace: std::backtrace::Backtrace::capture(),
+            #[cfg(all(feature = "std", feature = "backtrace"))]
+            inner: None,
+        }
+    }
+
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    pub fn new_with_details(
+        code: ErrorCode,
+        detailed_err: Box<dyn std::error::Error + Send>,
+    ) -> Self {
+        Self {
+            code,
+            #[cfg(all(feature = "std", feature = "backtrace"))]
+            backtrace: std::backtrace::Backtrace::capture(),
+            #[cfg(all(feature = "std", feature = "backtrace"))]
+            inner: Some(detailed_err),
         }
     }
 
@@ -101,6 +119,11 @@ impl Error {
     #[cfg(all(feature = "std", feature = "backtrace"))]
     pub const fn backtrace(&self) -> &std::backtrace::Backtrace {
         &self.backtrace
+    }
+
+    #[cfg(all(feature = "std", feature = "backtrace"))]
+    pub fn details(&self) -> Option<&(dyn std::error::Error + Send)> {
+        self.inner.as_ref().map(|err| err.as_ref())
     }
 
     pub fn remap<F>(self, matcher: F, to: Self) -> Self
@@ -134,10 +157,16 @@ impl Error {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "backtrace"))]
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::new_with_details(ErrorCode::StdIoError, Box::new(e))
+    }
+}
+
+#[cfg(all(feature = "std", not(feature = "backtrace")))]
 impl From<std::io::Error> for Error {
     fn from(_e: std::io::Error) -> Self {
-        // Keep things simple for now
         Self::new(ErrorCode::StdIoError)
     }
 }
@@ -219,7 +248,21 @@ impl fmt::Debug for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.code())
+        #[cfg(all(feature = "std", feature = "backtrace"))]
+        {
+            write!(
+                f,
+                "{:?}: {}",
+                self.code(),
+                self.inner
+                    .as_ref()
+                    .map_or(String::new(), |err| { err.to_string() })
+            )
+        }
+        #[cfg(not(all(feature = "std", feature = "backtrace")))]
+        {
+            write!(f, "{:?}", self.code())
+        }
     }
 }
 
