@@ -78,8 +78,8 @@ pub fn create_sc_status_report(
             // the session will be closed soon
             GeneralCode::Success
         }
-        SCStatusCodes::Busy
-        | SCStatusCodes::InvalidParameter
+        SCStatusCodes::Busy => GeneralCode::Busy,
+        SCStatusCodes::InvalidParameter
         | SCStatusCodes::NoSharedTrustRoots
         | SCStatusCodes::SessionNotFound => GeneralCode::Failure,
     };

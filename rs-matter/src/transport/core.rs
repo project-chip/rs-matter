@@ -25,6 +25,9 @@ use embassy_time::{Duration, Timer};
 
 use log::{error, info, warn};
 
+use crate::interaction_model::core::IMStatusCode;
+use crate::secure_channel::common::SCStatusCodes;
+use crate::secure_channel::status_report::{create_status_report, GeneralCode};
 use crate::utils::select::Notification;
 use crate::CommissioningData;
 use crate::{
@@ -41,6 +44,7 @@ use crate::{
     Matter,
 };
 
+use super::exchange::SessionId;
 use super::{
     exchange::{
         Exchange, ExchangeCtr, ExchangeCtx, ExchangeId, ExchangeState, Role, MAX_EXCHANGES,
@@ -97,7 +101,7 @@ impl RunBuffers {
 pub struct PacketBuffers {
     tx: [TxBuf; MAX_EXCHANGES],
     rx: [RxBuf; MAX_EXCHANGES],
-    sx: [SxBuf; MAX_EXCHANGES],
+    sx: [SxBuf; MAX_EXCHANGES + 1],
 }
 
 impl PacketBuffers {
@@ -107,7 +111,7 @@ impl PacketBuffers {
 
     const TX_INIT: [TxBuf; MAX_EXCHANGES] = [Self::TX_ELEM; MAX_EXCHANGES];
     const RX_INIT: [RxBuf; MAX_EXCHANGES] = [Self::RX_ELEM; MAX_EXCHANGES];
-    const SX_INIT: [SxBuf; MAX_EXCHANGES] = [Self::SX_ELEM; MAX_EXCHANGES];
+    const SX_INIT: [SxBuf; MAX_EXCHANGES + 1] = [Self::SX_ELEM; MAX_EXCHANGES + 1];
 
     #[inline(always)]
     pub const fn new() -> Self {
@@ -266,7 +270,12 @@ impl<'a> Matter<'a> {
                 .unwrap();
         }
 
-        let mut rx = pin!(self.handle_rx_multiplex(rx_pipe, construction_notification, &channel));
+        let mut rx = pin!(self.handle_rx_multiplex(
+            rx_pipe,
+            unsafe { buffers.sx[MAX_EXCHANGES].assume_init_mut() },
+            construction_notification,
+            &channel,
+        ));
 
         let result = select(&mut rx, select_slice(&mut handlers)).await;
 
@@ -291,7 +300,7 @@ impl<'a> Matter<'a> {
                     if data.chunk.is_none() {
                         let mut tx = alloc!(Packet::new_tx(data.buf));
 
-                        if self.pull_tx(&mut tx).await? {
+                        if self.pull_tx(&mut tx)? {
                             data.chunk = Some(Chunk {
                                 start: tx.get_writebuf()?.get_start(),
                                 end: tx.get_writebuf()?.get_tail(),
@@ -315,12 +324,15 @@ impl<'a> Matter<'a> {
     pub async fn handle_rx_multiplex<'t, 'e, const N: usize>(
         &'t self,
         rx_pipe: &Pipe<'_>,
+        sts_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
         construction_notification: &'e Notification,
         channel: &Channel<NoopRawMutex, ExchangeCtr<'e>, N>,
     ) -> Result<(), Error>
     where
         't: 'e,
     {
+        let mut sts_tx = alloc!(Packet::new_tx(sts_buf));
+
         loop {
             info!("Transport: waiting for incoming packets");
 
@@ -331,8 +343,9 @@ impl<'a> Matter<'a> {
                     let mut rx = alloc!(Packet::new_rx(&mut data.buf[chunk.start..chunk.end]));
                     rx.peer = chunk.addr;
 
-                    if let Some(exchange_ctr) =
-                        self.process_rx(construction_notification, &mut rx)?
+                    if let Some(exchange_ctr) = self
+                        .process_rx(construction_notification, &mut rx, &mut sts_tx)
+                        .await?
                     {
                         let exchange_id = exchange_ctr.id().clone();
 
@@ -444,24 +457,39 @@ impl<'a> Matter<'a> {
         self.session_mgr.borrow_mut().reset();
     }
 
-    pub fn process_rx<'r>(
+    pub async fn process_rx<'r>(
         &'r self,
         construction_notification: &'r Notification,
         src_rx: &mut Packet<'_>,
+        sts_tx: &mut Packet<'_>,
     ) -> Result<Option<ExchangeCtr<'r>>, Error> {
+        src_rx.plain_hdr_decode()?;
+
         self.purge()?;
 
+        let (exchange_index, new) = loop {
+            let result = self.assign_exchange(&mut self.exchanges.borrow_mut(), src_rx);
+
+            match result {
+                Err(e) => match e.code() {
+                    ErrorCode::Duplicate => {
+                        self.send_notification.signal(());
+                        return Ok(None);
+                    }
+                    // TODO: NoSession, NoExchange and others
+                    ErrorCode::NoSpaceSessions => self.evict_session(sts_tx).await?,
+                    ErrorCode::NoSpaceExchanges => {
+                        self.send_busy(src_rx, sts_tx).await?;
+                        return Ok(None);
+                    }
+                    _ => break Err(e),
+                },
+                other => break other,
+            }
+        }?;
+
         let mut exchanges = self.exchanges.borrow_mut();
-        let (ctx, new) = match self.post_recv(&mut exchanges, src_rx) {
-            Ok((ctx, new)) => (ctx, new),
-            Err(e) => match e.code() {
-                ErrorCode::Duplicate => {
-                    self.send_notification.signal(());
-                    return Ok(None);
-                }
-                _ => Err(e)?,
-            },
-        };
+        let ctx = &mut exchanges[exchange_index];
 
         src_rx.log("Got packet");
 
@@ -516,6 +544,8 @@ impl<'a> Matter<'a> {
                 ExchangeState::ExchangeRecv {
                     rx, notification, ..
                 } => {
+                    // TODO: Handle Busy status codes
+
                     let rx = unsafe { rx.as_mut() }.unwrap();
                     rx.load(src_rx)?;
 
@@ -572,12 +602,24 @@ impl<'a> Matter<'a> {
         Ok(())
     }
 
-    pub async fn pull_tx(&self, dest_tx: &mut Packet<'_>) -> Result<bool, Error> {
+    pub fn pull_tx(&self, dest_tx: &mut Packet) -> Result<bool, Error> {
         self.purge()?;
 
+        let mut ephemeral = self.ephemeral.borrow_mut();
         let mut exchanges = self.exchanges.borrow_mut();
 
-        let ctx = exchanges.iter_mut().find(|ctx| {
+        self.pull_tx_exchanges(ephemeral.iter_mut().chain(exchanges.iter_mut()), dest_tx)
+    }
+
+    fn pull_tx_exchanges<'i, I>(
+        &self,
+        mut exchanges: I,
+        dest_tx: &mut Packet,
+    ) -> Result<bool, Error>
+    where
+        I: Iterator<Item = &'i mut ExchangeCtx>,
+    {
+        let ctx = exchanges.find(|ctx| {
             matches!(
                 &ctx.state,
                 ExchangeState::Acknowledge { .. }
@@ -629,10 +671,15 @@ impl<'a> Matter<'a> {
                     let tx = unsafe { tx.as_ref() }.unwrap();
                     dest_tx.load(tx)?;
 
-                    *state = ExchangeState::CompleteAcknowledge {
-                        _tx: tx as *const _,
-                        notification: *notification,
-                    };
+                    if dest_tx.is_reliable() {
+                        *state = ExchangeState::CompleteAcknowledge {
+                            _tx: tx as *const _,
+                            notification: *notification,
+                        };
+                    } else {
+                        unsafe { notification.as_ref() }.unwrap().signal(());
+                        ctx.state = ExchangeState::Closed;
+                    }
 
                     true
                 }
@@ -648,8 +695,6 @@ impl<'a> Matter<'a> {
 
             if send {
                 dest_tx.log("Sending packet");
-
-                self.pre_send(ctx, dest_tx)?;
                 self.notify_changed();
 
                 return Ok(true);
@@ -675,13 +720,88 @@ impl<'a> Matter<'a> {
         Ok(())
     }
 
-    fn post_recv<'r>(
-        &self,
-        exchanges: &'r mut heapless::Vec<ExchangeCtx, MAX_EXCHANGES>,
-        rx: &mut Packet<'_>,
-    ) -> Result<(&'r mut ExchangeCtx, bool), Error> {
-        rx.plain_hdr_decode()?;
+    pub(crate) async fn evict_session(&self, tx: &mut Packet<'_>) -> Result<(), Error> {
+        let sess_index = self.session_mgr.borrow().get_session_for_eviction();
+        if let Some(sess_index) = sess_index {
+            let ctx = {
+                create_status_report(
+                    tx,
+                    GeneralCode::Success,
+                    PROTO_ID_SECURE_CHANNEL as _,
+                    SCStatusCodes::CloseSession as _,
+                    None,
+                )?;
 
+                let mut session_mgr = self.session_mgr.borrow_mut();
+                let session_id = session_mgr.mut_by_index(sess_index).unwrap().id();
+                warn!("Evicting session: {:?}", session_id);
+
+                let ctx = ExchangeCtx::prep_ephemeral(session_id, &mut session_mgr, None, tx)?;
+
+                session_mgr.remove(sess_index);
+
+                ctx
+            };
+
+            self.send_ephemeral(ctx, tx).await
+        } else {
+            Err(ErrorCode::NoSpaceSessions.into())
+        }
+    }
+
+    async fn send_busy(&self, rx: &Packet<'_>, tx: &mut Packet<'_>) -> Result<(), Error> {
+        warn!("Sending Busy as all exchanges are occupied");
+
+        create_status_report(
+            tx,
+            GeneralCode::Busy,
+            rx.get_proto_id() as _,
+            if rx.get_proto_id() == PROTO_ID_SECURE_CHANNEL {
+                SCStatusCodes::Busy as _
+            } else {
+                IMStatusCode::Busy as _
+            },
+            None, // TODO: ms
+        )?;
+
+        let ctx = ExchangeCtx::prep_ephemeral(
+            SessionId::load(rx),
+            &mut self.session_mgr.borrow_mut(),
+            Some(rx),
+            tx,
+        )?;
+
+        self.send_ephemeral(ctx, tx).await
+    }
+
+    async fn send_ephemeral(&self, mut ctx: ExchangeCtx, tx: &mut Packet<'_>) -> Result<(), Error> {
+        let _guard = self.ephemeral_mutex.lock().await;
+
+        let notification = Notification::new();
+
+        let tx: &'static mut Packet<'static> = unsafe { core::mem::transmute(tx) };
+
+        ctx.state = ExchangeState::Complete {
+            tx,
+            notification: &notification,
+        };
+
+        *self.ephemeral.borrow_mut() = Some(ctx);
+
+        self.send_notification.signal(());
+
+        notification.wait().await;
+
+        *self.ephemeral.borrow_mut() = None;
+
+        Ok(())
+    }
+
+    fn assign_exchange(
+        &self,
+        exchanges: &mut heapless::Vec<ExchangeCtx, MAX_EXCHANGES>,
+        rx: &mut Packet<'_>,
+    ) -> Result<(usize, bool), Error> {
         // Get the session
 
         let mut session_mgr = self.session_mgr.borrow_mut();
@@ -693,8 +813,7 @@ impl<'a> Matter<'a> {
         session.recv(self.epoch, rx)?;
 
         // Get the exchange
-        // TODO: Handle out of space
-        let (exch, new) = Self::register(
+        let (exchange_index, new) = Self::register(
             exchanges,
             ExchangeId::load(rx),
             Role::complementary(rx.proto.is_initiator()),
@@ -703,32 +822,9 @@ impl<'a> Matter<'a> {
         )?;
 
         // Message Reliability Protocol
-        exch.mrp.recv(rx, self.epoch)?;
+        exchanges[exchange_index].mrp.recv(rx, self.epoch)?;
 
-        Ok((exch, new))
-    }
-
-    fn pre_send(&self, ctx: &mut ExchangeCtx, tx: &mut Packet) -> Result<(), Error> {
-        let mut session_mgr = self.session_mgr.borrow_mut();
-        let sess_index = session_mgr
-            .get(
-                ctx.id.session_id.id,
-                ctx.id.session_id.peer_addr,
-                ctx.id.session_id.peer_nodeid,
-                ctx.id.session_id.is_encrypted,
-            )
-            .ok_or(ErrorCode::NoSession)?;
-
-        let session = session_mgr.mut_by_index(sess_index).unwrap();
-
-        tx.proto.exch_id = ctx.id.id;
-        if ctx.role == Role::Initiator {
-            tx.proto.set_initiator();
-        }
-
-        session.pre_send(tx)?;
-        ctx.mrp.pre_send(tx)?;
-        session_mgr.send(sess_index, tx)
+        Ok((exchange_index, new))
     }
 
     fn register(
@@ -736,7 +832,7 @@ impl<'a> Matter<'a> {
         id: ExchangeId,
         role: Role,
         create_new: bool,
-    ) -> Result<(&mut ExchangeCtx, bool), Error> {
+    ) -> Result<(usize, bool), Error> {
         let exchange_index = exchanges
             .iter_mut()
             .enumerate()
@@ -745,7 +841,7 @@ impl<'a> Matter<'a> {
         if let Some(exchange_index) = exchange_index {
             let exchange = &mut exchanges[exchange_index];
             if exchange.role == role {
-                Ok((exchange, false))
+                Ok((exchange_index, false))
             } else {
                 Err(ErrorCode::NoExchange.into())
             }
@@ -759,9 +855,11 @@ impl<'a> Matter<'a> {
                 state: ExchangeState::Active,
             };
 
-            exchanges.push(exchange).map_err(|_| ErrorCode::NoSpace)?;
+            exchanges
+                .push(exchange)
+                .map_err(|_| ErrorCode::NoSpaceExchanges)?;
 
-            Ok((exchanges.iter_mut().next_back().unwrap(), true))
+            Ok((exchanges.len() - 1, true))
         } else {
             Err(ErrorCode::NoExchange.into())
         }

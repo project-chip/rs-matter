@@ -1,7 +1,7 @@
 use crate::{
     acl::Accessor,
     error::{Error, ErrorCode},
-    utils::select::Notification,
+    utils::{epoch::Epoch, select::Notification},
     Matter,
 };
 
@@ -9,7 +9,7 @@ use super::{
     mrp::ReliableMessage,
     network::Address,
     packet::Packet,
-    session::{Session, SessionMgr},
+    session::{CloneData, Session, SessionMgr},
 };
 
 pub const MAX_EXCHANGES: usize = 8;
@@ -45,6 +45,101 @@ impl ExchangeCtx {
         id: &ExchangeId,
     ) -> Option<&'r mut ExchangeCtx> {
         exchanges.iter_mut().find(|exchange| exchange.id == *id)
+    }
+
+    pub fn new_ephemeral(session_id: SessionId, reply_to: Option<&Packet<'_>>) -> Self {
+        Self {
+            id: ExchangeId {
+                id: if let Some(rx) = reply_to {
+                    rx.proto.exch_id
+                } else {
+                    0
+                },
+                session_id: session_id.clone(),
+            },
+            role: if reply_to.is_some() {
+                Role::Responder
+            } else {
+                Role::Initiator
+            },
+            mrp: ReliableMessage::new(),
+            state: ExchangeState::Active,
+        }
+    }
+
+    pub(crate) fn prep_ephemeral(
+        session_id: SessionId,
+        session_mgr: &mut SessionMgr,
+        reply_to: Option<&Packet<'_>>,
+        tx: &mut Packet<'_>,
+    ) -> Result<ExchangeCtx, Error> {
+        let mut ctx = Self::new_ephemeral(session_id.clone(), reply_to);
+
+        let sess_index = session_mgr.get(
+            session_id.id,
+            session_id.peer_addr,
+            session_id.peer_nodeid,
+            session_id.is_encrypted,
+        );
+
+        let epoch = session_mgr.epoch;
+        let rand = session_mgr.rand;
+
+        if let Some(rx) = reply_to {
+            ctx.mrp.recv(rx, epoch)?;
+        } else {
+            tx.proto.set_initiator();
+        }
+
+        tx.unset_reliable();
+
+        if let Some(sess_index) = sess_index {
+            let session = session_mgr.mut_by_index(sess_index).unwrap();
+            ctx.pre_send_sess(session, tx, epoch)?;
+        } else {
+            let mut session =
+                Session::new(session_id.peer_addr, session_id.peer_nodeid, epoch, rand);
+            ctx.pre_send_sess(&mut session, tx, epoch)?;
+        }
+
+        Ok(ctx)
+    }
+
+    pub(crate) fn pre_send(
+        &mut self,
+        session_mgr: &mut SessionMgr,
+        tx: &mut Packet,
+    ) -> Result<(), Error> {
+        let epoch = session_mgr.epoch;
+
+        let sess_index = session_mgr
+            .get(
+                self.id.session_id.id,
+                self.id.session_id.peer_addr,
+                self.id.session_id.peer_nodeid,
+                self.id.session_id.is_encrypted,
+            )
+            .ok_or(ErrorCode::NoSession)?;
+
+        let session = session_mgr.mut_by_index(sess_index).unwrap();
+
+        self.pre_send_sess(session, tx, epoch)
+    }
+
+    pub(crate) fn pre_send_sess(
+        &mut self,
+        session: &mut Session,
+        tx: &mut Packet,
+        epoch: Epoch,
+    ) -> Result<(), Error> {
+        tx.proto.exch_id = self.id.id;
+        if self.role == Role::Initiator {
+            tx.proto.set_initiator();
+        }
+
+        session.pre_send(tx)?;
+        self.mrp.pre_send(tx)?;
+        session.send(epoch, tx)
     }
 }
 
@@ -192,15 +287,6 @@ impl<'a> Exchange<'a> {
         self.with_session_mut(|sess| f(sess))
     }
 
-    pub fn with_session_mgr_mut<F, T>(&self, f: F) -> Result<T, Error>
-    where
-        F: FnOnce(&mut SessionMgr) -> Result<T, Error>,
-    {
-        let mut session_mgr = self.matter.session_mgr.borrow_mut();
-
-        f(&mut session_mgr)
-    }
-
     pub async fn acknowledge(&mut self) -> Result<(), Error> {
         let wait = self.with_ctx_mut(|_self, ctx| {
             if !matches!(ctx.state, ExchangeState::Active) {
@@ -226,14 +312,21 @@ impl<'a> Exchange<'a> {
         Ok(())
     }
 
-    pub async fn exchange(&mut self, tx: &Packet<'_>, rx: &mut Packet<'_>) -> Result<(), Error> {
-        let tx: &Packet<'static> = unsafe { core::mem::transmute(tx) };
+    pub async fn exchange(
+        &mut self,
+        tx: &mut Packet<'_>,
+        rx: &mut Packet<'_>,
+    ) -> Result<(), Error> {
+        let tx: &mut Packet<'static> = unsafe { core::mem::transmute(tx) };
         let rx: &mut Packet<'static> = unsafe { core::mem::transmute(rx) };
 
         self.with_ctx_mut(|_self, ctx| {
             if !matches!(ctx.state, ExchangeState::Active) {
                 Err(ErrorCode::NoExchange)?;
             }
+
+            let mut session_mgr = _self.matter.session_mgr.borrow_mut();
+            ctx.pre_send(&mut session_mgr, tx)?;
 
             ctx.state = ExchangeState::ExchangeSend {
                 tx: tx as *const _,
@@ -250,17 +343,20 @@ impl<'a> Exchange<'a> {
         Ok(())
     }
 
-    pub async fn complete(mut self, tx: &Packet<'_>) -> Result<(), Error> {
+    pub async fn complete(mut self, tx: &mut Packet<'_>) -> Result<(), Error> {
         self.send_complete(tx).await
     }
 
-    pub async fn send_complete(&mut self, tx: &Packet<'_>) -> Result<(), Error> {
-        let tx: &Packet<'static> = unsafe { core::mem::transmute(tx) };
+    pub async fn send_complete(&mut self, tx: &mut Packet<'_>) -> Result<(), Error> {
+        let tx: &mut Packet<'static> = unsafe { core::mem::transmute(tx) };
 
         self.with_ctx_mut(|_self, ctx| {
             if !matches!(ctx.state, ExchangeState::Active) {
                 Err(ErrorCode::NoExchange)?;
             }
+
+            let mut session_mgr = _self.matter.session_mgr.borrow_mut();
+            ctx.pre_send(&mut session_mgr, tx)?;
 
             ctx.state = ExchangeState::Complete {
                 tx: tx as *const _,
@@ -274,6 +370,31 @@ impl<'a> Exchange<'a> {
         self.notification.wait().await;
 
         Ok(())
+    }
+
+    pub(crate) fn get_next_sess_id(&mut self) -> u16 {
+        self.matter.session_mgr.borrow_mut().get_next_sess_id()
+    }
+
+    pub(crate) async fn clone_session(
+        &mut self,
+        tx: &mut Packet<'_>,
+        clone_data: &CloneData,
+    ) -> Result<usize, Error> {
+        loop {
+            let result = self
+                .matter
+                .session_mgr
+                .borrow_mut()
+                .clone_session(clone_data);
+
+            match result {
+                Err(err) if err.code() == ErrorCode::NoSpaceSessions => {
+                    self.matter.evict_session(tx).await?
+                }
+                other => break other,
+            }
+        }
     }
 
     fn with_ctx<F, T>(&self, f: F) -> Result<T, Error>
