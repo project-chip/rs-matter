@@ -31,7 +31,7 @@ use crate::{
 
 use self::{
     code::{compute_pairing_code, pretty_print_pairing_code},
-    qr::{compute_qr_code, print_qr_code},
+    qr::{compute_qr_code_text, print_qr_code},
 };
 
 pub struct DiscoveryCapabilities {
@@ -88,10 +88,10 @@ pub fn print_pairing_code_and_qr(
     buf: &mut [u8],
 ) -> Result<(), Error> {
     let pairing_code = compute_pairing_code(comm_data);
-    let qr_code = compute_qr_code(dev_det, comm_data, discovery_capabilities, buf)?;
+    let qr_code = compute_qr_code_text(dev_det, comm_data, discovery_capabilities, buf)?;
 
     pretty_print_pairing_code(&pairing_code);
-    print_qr_code(qr_code);
+    print_qr_code(qr_code)?;
 
     Ok(())
 }

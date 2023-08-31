@@ -19,13 +19,13 @@ use crate::data_model::sdm::noc::NocData;
 use crate::utils::epoch::Epoch;
 use crate::utils::rand::Rand;
 use core::fmt;
-use core::ops::{Deref, DerefMut};
 use core::time::Duration;
 
 use crate::{error::*, transport::plain_hdr};
 use log::info;
 
 use super::dedup::RxCtrState;
+use super::exchange::SessionId;
 use super::{network::Address, packet::Packet};
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
@@ -151,6 +151,15 @@ impl Session {
         }
     }
 
+    pub fn id(&self) -> SessionId {
+        SessionId {
+            id: self.local_sess_id,
+            peer_addr: self.peer_addr,
+            peer_nodeid: self.peer_nodeid,
+            is_encrypted: self.is_encrypted(),
+        }
+    }
+
     pub fn set_noc_data(&mut self, data: NocData) {
         self.data = Some(data);
     }
@@ -251,7 +260,7 @@ impl Session {
         Ok(())
     }
 
-    fn send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
+    pub(crate) fn send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
         self.last_use = epoch();
 
         tx.proto_encode(
@@ -291,8 +300,8 @@ pub const MAX_SESSIONS: usize = 16;
 pub struct SessionMgr {
     next_sess_id: u16,
     sessions: heapless::Vec<Option<Session>, MAX_SESSIONS>,
-    epoch: Epoch,
-    rand: Rand,
+    pub(crate) epoch: Epoch,
+    pub(crate) rand: Rand,
 }
 
 impl SessionMgr {
@@ -327,7 +336,11 @@ impl SessionMgr {
             }
 
             // Ensure the currently selected id doesn't match any existing session
-            if self.get_with_id(next_sess_id).is_none() {
+            if self.sessions.iter().all(|sess| {
+                sess.as_ref()
+                    .map(|sess| sess.get_local_sess_id() != next_sess_id)
+                    .unwrap_or(true)
+            }) {
                 break;
             }
         }
@@ -381,12 +394,12 @@ impl SessionMgr {
         } else if self.sessions.len() < MAX_SESSIONS {
             self.sessions
                 .push(Some(session))
-                .map_err(|_| ErrorCode::NoSpace)
+                .map_err(|_| ErrorCode::NoSpaceSessions)
                 .unwrap();
 
             Ok(self.sessions.len() - 1)
         } else {
-            Err(ErrorCode::NoSpace.into())
+            Err(ErrorCode::NoSpaceSessions.into())
         }
     }
 
@@ -417,14 +430,6 @@ impl SessionMgr {
                 false
             }
         })
-    }
-
-    pub fn get_with_id(&mut self, sess_id: u16) -> Option<SessionHandle> {
-        let index = self
-            .sessions
-            .iter_mut()
-            .position(|x| x.as_ref().map(|s| s.local_sess_id) == Some(sess_id))?;
-        Some(self.get_session_handle(index))
     }
 
     pub fn get_or_add(
@@ -472,13 +477,6 @@ impl SessionMgr {
             .ok_or(ErrorCode::NoSession)?
             .send(self.epoch, tx)
     }
-
-    pub fn get_session_handle(&mut self, sess_idx: usize) -> SessionHandle {
-        SessionHandle {
-            sess_mgr: self,
-            sess_idx,
-        }
-    }
 }
 
 impl fmt::Display for SessionMgr {
@@ -489,45 +487,6 @@ impl fmt::Display for SessionMgr {
         }
         write!(f, "], next_sess_id: {}", self.next_sess_id)?;
         write!(f, "}}")
-    }
-}
-
-pub struct SessionHandle<'a> {
-    pub(crate) sess_mgr: &'a mut SessionMgr,
-    sess_idx: usize,
-}
-
-impl<'a> SessionHandle<'a> {
-    pub fn session(&self) -> &Session {
-        self.sess_mgr.sessions[self.sess_idx].as_ref().unwrap()
-    }
-
-    pub fn session_mut(&mut self) -> &mut Session {
-        self.sess_mgr.sessions[self.sess_idx].as_mut().unwrap()
-    }
-
-    pub fn reserve_new_sess_id(&mut self) -> u16 {
-        self.sess_mgr.get_next_sess_id()
-    }
-
-    pub fn send(&mut self, tx: &mut Packet) -> Result<(), Error> {
-        self.sess_mgr.send(self.sess_idx, tx)
-    }
-}
-
-impl<'a> Deref for SessionHandle<'a> {
-    type Target = Session;
-
-    fn deref(&self) -> &Self::Target {
-        // There is no other option but to panic if this is None
-        self.session()
-    }
-}
-
-impl<'a> DerefMut for SessionHandle<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        // There is no other option but to panic if this is None
-        self.session_mut()
     }
 }
 
@@ -545,12 +504,12 @@ mod tests {
     fn test_next_sess_id_doesnt_reuse() {
         let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
         let sess_idx = sm.add(Address::default(), None).unwrap();
-        let mut sess = sm.get_session_handle(sess_idx);
+        let sess = sm.mut_by_index(sess_idx).unwrap();
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         assert_eq!(sm.get_next_sess_id(), 3);
         let sess_idx = sm.add(Address::default(), None).unwrap();
-        let mut sess = sm.get_session_handle(sess_idx);
+        let sess = sm.mut_by_index(sess_idx).unwrap();
         sess.set_local_sess_id(4);
         assert_eq!(sm.get_next_sess_id(), 5);
     }
@@ -559,7 +518,7 @@ mod tests {
     fn test_next_sess_id_overflows() {
         let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
         let sess_idx = sm.add(Address::default(), None).unwrap();
-        let mut sess = sm.get_session_handle(sess_idx);
+        let sess = sm.mut_by_index(sess_idx).unwrap();
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         sm.next_sess_id = 65534;
