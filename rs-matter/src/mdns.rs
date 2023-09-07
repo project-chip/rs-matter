@@ -23,6 +23,8 @@ use crate::{data_model::cluster_basic_information::BasicInfoConfig, error::Error
 pub mod astro;
 pub mod builtin;
 pub mod proto;
+#[cfg(all(feature = "std", feature = "zeroconf", target_os = "linux"))]
+pub mod zeroconf;
 
 pub trait Mdns {
     fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error>;

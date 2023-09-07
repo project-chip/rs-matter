@@ -22,6 +22,7 @@ openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
 embassy-net = ["dep:embassy-net", "dep:embassy-net-driver", "smoltcp"]
+zeroconf = ["dep:zeroconf"]
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
@@ -75,6 +76,9 @@ x509-cert = { version = "0.2.0", default-features = false, features = ["pem"], o
 
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = { version = "0.3" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zeroconf = { version = "0.11.1", optional = true }
 
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
 mbedtls = { version = "0.9", optional = true }
