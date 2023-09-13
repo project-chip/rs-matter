@@ -54,14 +54,22 @@ impl<'a> MdnsService<'a> {
         let _ = self.remove(name);
 
         mode.service(self.dev_det, self.matter_port, name, |service| {
+            let name = service.service.strip_prefix('_').unwrap_or(service.service);
+            let protocol = service
+                .protocol
+                .strip_prefix('_')
+                .unwrap_or(service.protocol);
+
             let service_type = if !service.service_subtypes.is_empty() {
-                ServiceType::with_sub_types(
-                    service.service,
-                    service.protocol,
-                    Vec::from(service.service_subtypes),
-                )
+                let subtypes = service
+                    .service_subtypes
+                    .into_iter()
+                    .map(|subtype| subtype.strip_prefix('_').unwrap_or(*subtype))
+                    .collect();
+
+                ServiceType::with_sub_types(name, protocol, subtypes)
             } else {
-                ServiceType::new(service.service, service.protocol)
+                ServiceType::new(name, protocol)
             }
             .map_err(|err| {
                 log::error!(
@@ -93,6 +101,7 @@ impl<'a> MdnsService<'a> {
                     }
                 }
                 mdns_service.set_txt_record(txt_record);
+                mdns_service.set_registered_callback(Box::new(|_, _| {}));
 
                 match mdns_service.register() {
                     Ok(event_loop) => loop {
