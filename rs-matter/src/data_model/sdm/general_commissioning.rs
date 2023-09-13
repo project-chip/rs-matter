@@ -117,8 +117,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 
 #[derive(FromTLV, ToTLV)]
 struct FailSafeParams {
-    expiry_len: u8,
-    bread_crumb: u8,
+    expiry_len: u16,
+    bread_crumb: u64,
 }
 
 #[derive(ToTLV)]
