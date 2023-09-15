@@ -34,7 +34,7 @@ enum NocState {
 #[derive(PartialEq)]
 pub struct ArmedCtx {
     session_mode: SessionMode,
-    timeout: u8,
+    timeout: u16,
     noc_state: NocState,
 }
 
@@ -54,7 +54,7 @@ impl FailSafe {
         Self { state: State::Idle }
     }
 
-    pub fn arm(&mut self, timeout: u8, session_mode: SessionMode) -> Result<(), Error> {
+    pub fn arm(&mut self, timeout: u16, session_mode: SessionMode) -> Result<(), Error> {
         match &mut self.state {
             State::Idle => {
                 self.state = State::Armed(ArmedCtx {
