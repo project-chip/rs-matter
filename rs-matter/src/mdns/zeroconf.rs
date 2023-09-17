@@ -54,7 +54,7 @@ impl<'a> MdnsService<'a> {
         let _ = self.remove(name);
 
         mode.service(self.dev_det, self.matter_port, name, |service| {
-            let name = service.service.strip_prefix('_').unwrap_or(service.service);
+            let service_name = service.service.strip_prefix('_').unwrap_or(service.service);
             let protocol = service
                 .protocol
                 .strip_prefix('_')
@@ -67,9 +67,9 @@ impl<'a> MdnsService<'a> {
                     .map(|subtype| subtype.strip_prefix('_').unwrap_or(*subtype))
                     .collect();
 
-                ServiceType::with_sub_types(name, protocol, subtypes)
+                ServiceType::with_sub_types(service_name, protocol, subtypes)
             } else {
-                ServiceType::new(name, protocol)
+                ServiceType::new(service_name, protocol)
             }
             .map_err(|err| {
                 log::error!(
@@ -87,6 +87,8 @@ impl<'a> MdnsService<'a> {
                 txt_kvs.push((k.to_string(), v.to_string()));
             }
 
+            let name_copy = name.to_owned();
+
             std::thread::spawn(move || {
                 let mut mdns_service = zeroconf::MdnsService::new(service_type, service_port);
 
@@ -100,6 +102,7 @@ impl<'a> MdnsService<'a> {
                         );
                     }
                 }
+                mdns_service.set_name(&name_copy);
                 mdns_service.set_txt_record(txt_record);
                 mdns_service.set_registered_callback(Box::new(|_, _| {}));
 
