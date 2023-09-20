@@ -215,8 +215,8 @@ fn encode_extension_end(w: &mut dyn CertConsumer) -> Result<(), Error> {
     w.end_seq()
 }
 
-#[derive(ToTLV, Default, Debug, PartialEq)]
-#[tlvargs(lifetime = "'a", start = 1, datatype = "list")]
+#[derive(FromTLV, ToTLV, Default, Debug, PartialEq)]
+#[tlvargs(lifetime = "'a", start = 1, datatype = "list", unordered)]
 struct Extensions<'a> {
     basic_const: Option<BasicConstraints>,
     key_usage: Option<u16>,
@@ -269,56 +269,6 @@ impl<'a> Extensions<'a> {
         w.end_seq()?;
         w.end_ctx()?;
         Ok(())
-    }
-}
-
-impl<'a> crate::tlv::FromTLV<'a> for Extensions<'a> {
-    fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
-        let tlv_iter = t
-            .confirm_list()?
-            .enter()
-            .ok_or_else(|| Error::new(ErrorCode::Invalid))?;
-        let mut extensions = Extensions::default();
-        for item in tlv_iter {
-            if item.check_ctx_tag(1u8) {
-                if extensions.basic_const.is_none() {
-                    extensions.basic_const = Option::from_tlv(&item)?;
-                } else {
-                    return Err(Error::new(ErrorCode::InvalidData));
-                }
-            } else if item.check_ctx_tag(2u8) {
-                if extensions.key_usage.is_none() {
-                    extensions.key_usage = Option::from_tlv(&item)?;
-                } else {
-                    return Err(Error::new(ErrorCode::InvalidData));
-                }
-            } else if item.check_ctx_tag(3u8) {
-                if extensions.ext_key_usage.is_none() {
-                    extensions.ext_key_usage = Option::from_tlv(&item)?;
-                } else {
-                    return Err(Error::new(ErrorCode::InvalidData));
-                }
-            } else if item.check_ctx_tag(4u8) {
-                if extensions.subj_key_id.is_none() {
-                    extensions.subj_key_id = Option::from_tlv(&item)?;
-                } else {
-                    return Err(Error::new(ErrorCode::InvalidData));
-                }
-            } else if item.check_ctx_tag(5u8) {
-                if extensions.auth_key_id.is_none() {
-                    extensions.auth_key_id = Option::from_tlv(&item)?;
-                } else {
-                    return Err(Error::new(ErrorCode::InvalidData));
-                }
-            } else if item.check_ctx_tag(6u8) {
-                if extensions.future_extensions.is_none() {
-                    extensions.future_extensions = Option::from_tlv(&item)?;
-                } else {
-                    return Err(Error::new(ErrorCode::InvalidData));
-                }
-            }
-        }
-        Ok(extensions)
     }
 }
 
