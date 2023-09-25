@@ -64,7 +64,7 @@ pub use embassy_net_stack::*;
 
 #[cfg(feature = "std")]
 pub mod std_stack {
-    pub trait NetworkStackDriver {}
+    pub trait NetworkStackDriver: 'static {}
 
     impl NetworkStackDriver for () {}
 
