@@ -78,7 +78,7 @@ x509-cert = { version = "0.2.0", default-features = false, features = ["pem"], o
 astro-dnssd = { version = "0.3" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-zeroconf = { version = "0.11.1", optional = true, git = "https://github.com/ssnover/zeroconf-rs" }
+zeroconf = { version = "0.12", optional = true }
 
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
 mbedtls = { version = "0.9", optional = true }
