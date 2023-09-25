@@ -220,7 +220,7 @@ impl<'a> ImEngine<'a> {
         let out = &out[out.len() - 1];
         let root = tlv::get_root_node_struct(&out.data).unwrap();
 
-        match expected {
+        match *expected {
             WriteResponse::TransactionSuccess(t) => {
                 assert_eq!(out.action, OpCode::WriteResponse);
                 let resp = WriteResp::from_tlv(&root).unwrap();

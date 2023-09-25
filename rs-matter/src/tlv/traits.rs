@@ -371,6 +371,28 @@ impl<'a, T: FromTLV<'a> + Clone> Iterator for TLVArrayIter<'a, T> {
     }
 }
 
+impl<'a, 'b, T> PartialEq<TLVArray<'b, T>> for TLVArray<'a, T>
+where
+    T: ToTLV + FromTLV<'a> + Clone + PartialEq,
+    'b: 'a,
+{
+    fn eq(&self, other: &TLVArray<'b, T>) -> bool {
+        let mut iter1 = self.iter();
+        let mut iter2 = other.iter();
+        loop {
+            match (iter1.next(), iter2.next()) {
+                (None, None) => return true,
+                (Some(x), Some(y)) => {
+                    if x != y {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
 impl<'a, T> PartialEq<&[T]> for TLVArray<'a, T>
 where
     T: ToTLV + FromTLV<'a> + Clone + PartialEq,

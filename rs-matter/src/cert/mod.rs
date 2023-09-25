@@ -175,7 +175,7 @@ fn encode_extended_key_usage(
     w.end_seq()
 }
 
-#[derive(FromTLV, ToTLV, Default, Debug)]
+#[derive(FromTLV, ToTLV, Default, Debug, PartialEq)]
 #[tlvargs(start = 1)]
 struct BasicConstraints {
     is_ca: bool,
@@ -215,8 +215,8 @@ fn encode_extension_end(w: &mut dyn CertConsumer) -> Result<(), Error> {
     w.end_seq()
 }
 
-#[derive(FromTLV, ToTLV, Default, Debug)]
-#[tlvargs(lifetime = "'a", start = 1, datatype = "list")]
+#[derive(FromTLV, ToTLV, Default, Debug, PartialEq)]
+#[tlvargs(lifetime = "'a", start = 1, datatype = "list", unordered)]
 struct Extensions<'a> {
     basic_const: Option<BasicConstraints>,
     key_usage: Option<u16>,
@@ -298,7 +298,7 @@ enum DnTags {
     NocCat = 22,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum DistNameValue<'a> {
     Uint(u64),
     Utf8Str(&'a [u8]),
@@ -307,7 +307,7 @@ enum DistNameValue<'a> {
 
 const MAX_DN_ENTRIES: usize = 5;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq)]
 struct DistNames<'a> {
     // The order in which the DNs arrive is important, as the signing
     // requires that the ASN1 notation retains the same order
@@ -545,7 +545,7 @@ fn encode_dn_value(
     w.end_set()
 }
 
-#[derive(FromTLV, ToTLV, Default, Debug)]
+#[derive(FromTLV, ToTLV, Default, Debug, PartialEq)]
 #[tlvargs(lifetime = "'a", start = 1)]
 pub struct Cert<'a> {
     serial_no: OctetStr<'a>,
@@ -858,9 +858,10 @@ mod tests {
 
     #[test]
     fn test_tlv_conversions() {
-        let test_input: [&[u8]; 3] = [
+        let test_input: [&[u8]; 4] = [
             &test_vectors::NOC1_SUCCESS,
             &test_vectors::ICAC1_SUCCESS,
+            &test_vectors::ICAC2_SUCCESS,
             &test_vectors::RCA1_SUCCESS,
         ];
 
@@ -872,7 +873,10 @@ mod tests {
             let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
             cert.to_tlv(&mut tw, TagType::Anonymous).unwrap();
-            assert_eq!(*input, wb.as_slice());
+
+            let root2 = tlv::get_root_node(wb.as_slice()).unwrap();
+            let cert2 = Cert::from_tlv(&root2).unwrap();
+            assert_eq!(cert, cert2);
         }
     }
 
@@ -910,6 +914,23 @@ mod tests {
             246, 204, 182, 247, 41, 81, 91, 33, 155, 230, 223, 212, 116, 33, 162, 208, 148, 100,
             89, 175, 253, 78, 212, 7, 69, 207, 140, 45, 129, 249, 64, 104, 70, 68, 43, 164, 19,
             126, 114, 138, 79, 104, 238, 20, 226, 88, 118, 105, 56, 12, 92, 31, 171, 24,
+        ];
+        // This cert has two of the fields in the extensions list swapped to a different order to be non-consecutive
+        pub const ICAC2_SUCCESS: [u8; 263] = [
+            21, 48, 1, 16, 67, 38, 73, 198, 26, 31, 20, 101, 57, 46, 16, 143, 77, 160, 128, 161,
+            36, 2, 1, 55, 3, 39, 20, 255, 90, 200, 17, 145, 105, 71, 215, 24, 38, 4, 123, 59, 211,
+            42, 38, 5, 35, 11, 27, 52, 55, 6, 39, 19, 254, 111, 27, 53, 189, 134, 103, 200, 24, 36,
+            7, 1, 36, 8, 1, 48, 9, 65, 4, 88, 188, 13, 87, 50, 3, 213, 248, 182, 12, 240, 164, 220,
+            127, 150, 65, 81, 244, 125, 24, 48, 203, 83, 111, 133, 175, 182, 10, 40, 80, 147, 28,
+            39, 121, 183, 61, 159, 178, 231, 133, 75, 189, 143, 136, 191, 254, 115, 228, 186, 129,
+            56, 137, 213, 177, 13, 46, 97, 202, 95, 41, 5, 16, 24, 228, 55, 10, 53, 1, 41, 1, 36,
+            2, 0, 24, 48, 5, 20, 243, 119, 107, 152, 3, 212, 205, 76, 85, 38, 158, 240, 27, 213,
+            11, 235, 33, 21, 38, 5, 48, 4, 20, 88, 240, 172, 159, 2, 82, 193, 71, 83, 67, 184, 97,
+            99, 61, 125, 67, 232, 202, 171, 107, 36, 2, 96, 24, 48, 11, 64, 70, 43, 150, 195, 194,
+            170, 43, 125, 91, 213, 210, 221, 175, 131, 131, 85, 22, 247, 213, 18, 101, 189, 30,
+            134, 20, 226, 217, 145, 41, 225, 181, 150, 28, 200, 52, 237, 218, 195, 144, 209, 205,
+            73, 88, 114, 139, 216, 85, 170, 63, 238, 164, 69, 35, 69, 39, 87, 211, 234, 57, 98, 19,
+            43, 13, 0, 24,
         ];
         // A single byte in the auth key id is changed in this
         pub const NOC1_AUTH_KEY_FAIL: [u8; 247] = [
