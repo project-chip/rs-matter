@@ -18,13 +18,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
-use syn::Lit::{Int, Str};
-use syn::NestedMeta::{Lit, Meta};
-use syn::{parse_macro_input, DeriveInput, Lifetime};
-use syn::{
-    Meta::{List, NameValue},
-    MetaList, MetaNameValue, Type,
-};
+use syn::Type;
+use syn::{parse_macro_input, DeriveInput, Lifetime, LitInt, LitStr};
 
 struct TlvArgs {
     start: u8,
@@ -44,66 +39,42 @@ impl Default for TlvArgs {
     }
 }
 
-fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
+fn parse_tlvargs(ast: &DeriveInput) -> syn::Result<TlvArgs> {
     let mut tlvargs: TlvArgs = Default::default();
-
-    if !ast.attrs.is_empty() {
-        if let List(MetaList {
-            path,
-            paren_token: _,
-            nested,
-        }) = ast.attrs[0].parse_meta().unwrap()
-        {
-            if path.is_ident("tlvargs") {
-                for a in nested {
-                    if let Meta(NameValue(MetaNameValue {
-                        path: key_path,
-                        eq_token: _,
-                        lit: key_val,
-                    })) = a
-                    {
-                        if key_path.is_ident("start") {
-                            if let Int(litint) = key_val {
-                                tlvargs.start = litint.base10_parse::<u8>().unwrap();
-                            }
-                        } else if key_path.is_ident("lifetime") {
-                            if let Str(litstr) = key_val {
-                                tlvargs.lifetime =
-                                    Lifetime::new(&litstr.value(), Span::call_site());
-                            }
-                        } else if key_path.is_ident("datatype") {
-                            if let Str(litstr) = key_val {
-                                tlvargs.datatype = litstr.value();
-                            }
-                        } else if key_path.is_ident("unordered") {
-                            tlvargs.unordered = true;
-                        }
-                    }
+    if let Some(attr) = ast.attrs.first() {
+        if attr.path().is_ident("tlvargs") {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("start") {
+                    let litint: LitInt = meta.value()?.parse()?;
+                    tlvargs.start = litint.base10_parse::<u8>()?;
+                } else if meta.path.is_ident("lifetime") {
+                    let litstr: LitStr = meta.value()?.parse()?;
+                    tlvargs.lifetime = Lifetime::new(&litstr.value(), Span::call_site());
+                } else if meta.path.is_ident("datatype") {
+                    let litstr: LitStr = meta.value()?.parse()?;
+                    tlvargs.datatype = litstr.value();
+                } else if meta.path.is_ident("unordered") {
+                    tlvargs.unordered = true;
+                } else {
+                    return Err(meta.error("unsupported tlv argument"));
                 }
-            }
+
+                Ok(())
+            })?;
         }
     }
-    tlvargs
+    Ok(tlvargs)
 }
 
-fn parse_tag_val(field: &syn::Field) -> Option<u8> {
-    if !field.attrs.is_empty() {
-        if let List(MetaList {
-            path,
-            paren_token: _,
-            nested,
-        }) = field.attrs[0].parse_meta().unwrap()
-        {
-            if path.is_ident("tagval") {
-                for a in nested {
-                    if let Lit(Int(litint)) = a {
-                        return Some(litint.base10_parse::<u8>().unwrap());
-                    }
-                }
-            }
+fn parse_tag_val(field: &syn::Field) -> syn::Result<Option<u8>> {
+    if let Some(attr) = field.attrs.first() {
+        if attr.path().is_ident("tagval") {
+            let litint: LitInt = attr.parse_args()?;
+            return Ok(Some(litint.base10_parse::<u8>()?));
         }
     }
-    None
+
+    Ok(None)
 }
 
 fn get_crate_name() -> String {
@@ -124,7 +95,7 @@ fn gen_totlv_for_struct(
     struct_name: &proc_macro2::Ident,
     tlvargs: &TlvArgs,
     generics: &syn::Generics,
-) -> TokenStream {
+) -> syn::Result<TokenStream> {
     let mut tag_start = tlvargs.start;
     let datatype = format_ident!("start_{}", tlvargs.datatype);
 
@@ -139,7 +110,7 @@ fn gen_totlv_for_struct(
         //        keys.push(quote! { #literal_key_str });
         idents.push(&field.ident);
         //        types.push(type_name.to_token_stream());
-        if let Some(a) = parse_tag_val(field) {
+        if let Some(a) = parse_tag_val(field)? {
             tags.push(a);
         } else {
             tags.push(tag_start);
@@ -168,7 +139,7 @@ fn gen_totlv_for_struct(
         }
     };
     //    panic!("The generated code is {}", expanded);
-    expanded.into()
+    Ok(expanded.into())
 }
 
 /// Generate a ToTlv implementation for an enum
@@ -256,7 +227,10 @@ pub fn derive_totlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
     let name = &ast.ident;
 
-    let tlvargs = parse_tlvargs(&ast);
+    let tlvargs = match parse_tlvargs(&ast) {
+        Ok(tlvargs) => tlvargs,
+        Err(e) => return e.to_compile_error().into(),
+    };
     let generics = ast.generics;
 
     if let syn::Data::Struct(syn::DataStruct {
@@ -265,6 +239,7 @@ pub fn derive_totlv(item: TokenStream) -> TokenStream {
     }) = ast.data
     {
         gen_totlv_for_struct(fields, name, &tlvargs, &generics)
+            .unwrap_or_else(|e| e.to_compile_error().into())
     } else if let syn::Data::Enum(data_enum) = ast.data {
         gen_totlv_for_enum(&data_enum, name, &tlvargs, &generics)
     } else {
@@ -281,7 +256,7 @@ fn gen_fromtlv_for_struct(
     struct_name: &proc_macro2::Ident,
     tlvargs: TlvArgs,
     generics: &syn::Generics,
-) -> TokenStream {
+) -> syn::Result<TokenStream> {
     let mut tag_start = tlvargs.start;
     let lifetime = tlvargs.lifetime;
     let datatype = format_ident!("confirm_{}", tlvargs.datatype);
@@ -292,7 +267,7 @@ fn gen_fromtlv_for_struct(
 
     for field in fields.named.iter() {
         let type_name = &field.ty;
-        if let Some(a) = parse_tag_val(field) {
+        if let Some(a) = parse_tag_val(field)? {
             // TODO: The current limitation with this is that a hard-coded integer
             // value has to be mentioned in the tagval attribute. This is because
             // our tags vector is for integers, and pushing an 'identifier' on it
@@ -359,7 +334,7 @@ fn gen_fromtlv_for_struct(
         }
     };
     //        panic!("The generated code is {}", expanded);
-    expanded.into()
+    Ok(expanded.into())
 }
 
 /// Generate a FromTlv implementation for an enum
@@ -449,7 +424,10 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
     let name = &ast.ident;
 
-    let tlvargs = parse_tlvargs(&ast);
+    let tlvargs = match parse_tlvargs(&ast) {
+        Ok(tlvargs) => tlvargs,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     let generics = ast.generics;
 
@@ -459,6 +437,7 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     }) = ast.data
     {
         gen_fromtlv_for_struct(fields, name, tlvargs, &generics)
+            .unwrap_or_else(|e| e.to_compile_error().into())
     } else if let syn::Data::Enum(data_enum) = ast.data {
         gen_fromtlv_for_enum(&data_enum, name, tlvargs, &generics)
     } else {
