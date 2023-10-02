@@ -72,6 +72,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     device_name: "Test Device",
     product_name: "TestProd",
     vendor_name: "TestVendor",
+    unique_id: "aabbccdd",
 };
 
 struct DummyDevAtt;

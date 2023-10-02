@@ -46,10 +46,10 @@ use crate::{
     },
 };
 
-fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
+fn wildcard_read_resp(part: u8, subscription: bool) -> Vec<AttrResp<'static>> {
     // For brevity, we only check the AttrPath, not the actual 'data'
     let dont_care = ElementType::U8(0);
-    let part1 = vec![
+    let mut part1 = vec![
         attr_data!(0, 29, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 29, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
@@ -121,6 +121,12 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             0,
             40,
             basic_info::AttributesDiscriminants::SerialNo,
+            dont_care.clone()
+        ),
+        attr_data!(
+            0,
+            40,
+            basic_info::AttributesDiscriminants::UniqueId,
             dont_care.clone()
         ),
         attr_data!(0, 48, GlobalElements::FeatureMap, dont_care.clone()),
@@ -201,21 +207,15 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             adm_comm::AttributesDiscriminants::WindowStatus,
             dont_care.clone()
         ),
-        attr_data!(
-            0,
-            60,
-            adm_comm::AttributesDiscriminants::AdminFabricIndex,
-            dont_care.clone()
-        ),
+    ];
+
+    let mut part2 = vec![
         attr_data!(
             0,
             60,
             adm_comm::AttributesDiscriminants::AdminVendorId,
             dont_care.clone()
         ),
-    ];
-
-    let part2 = vec![
         attr_data!(0, 62, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 62, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
@@ -336,9 +336,22 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             1,
             echo::ID,
             echo::AttributesDiscriminants::AttCustom,
-            dont_care
+            dont_care.clone()
         ),
     ];
+
+    let attr_data = attr_data!(
+        0,
+        60,
+        adm_comm::AttributesDiscriminants::AdminFabricIndex,
+        dont_care
+    );
+
+    if subscription {
+        part2.insert(0, attr_data);
+    } else {
+        part1.push(attr_data);
+    }
 
     if part == 1 {
         part1
@@ -362,12 +375,12 @@ fn test_long_read_success() {
 
     let read_all = [AttrPath::new(&wc_path)];
     let read_req = ReadReq::new(true).set_attr_requests(&read_all);
-    let expected_part1 = wildcard_read_resp(1);
+    let expected_part1 = wildcard_read_resp(1, false);
 
     let status_report = StatusResp {
         status: IMStatusCode::Success,
     };
-    let expected_part2 = wildcard_read_resp(2);
+    let expected_part2 = wildcard_read_resp(2, false);
 
     im.process(
         &handler,
@@ -411,12 +424,12 @@ fn test_long_read_subscription_success() {
 
     let read_all = [AttrPath::new(&wc_path)];
     let subs_req = SubscribeReq::new(true, 1, 20).set_attr_requests(&read_all);
-    let expected_part1 = wildcard_read_resp(1);
+    let expected_part1 = wildcard_read_resp(1, true);
 
     let status_report = StatusResp {
         status: IMStatusCode::Success,
     };
-    let expected_part2 = wildcard_read_resp(2);
+    let expected_part2 = wildcard_read_resp(2, true);
 
     im.process(
         &handler,
