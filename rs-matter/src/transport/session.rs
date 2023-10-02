@@ -263,6 +263,8 @@ impl Session {
     pub(crate) fn send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
         self.last_use = epoch();
 
+        tx.log("About to send packet");
+
         tx.proto_encode(
             self.peer_addr,
             self.peer_nodeid,

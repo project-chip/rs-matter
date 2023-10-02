@@ -30,7 +30,7 @@ use crate::{
     interaction_model::messages::ib::{AttrDataTag, AttrRespTag},
     tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
 };
-use log::error;
+use log::{error, warn};
 
 use super::{AttrDetails, CmdDetails, DataModelHandler};
 
@@ -149,7 +149,10 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         };
 
         if let Some(status) = status {
-            AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
+            let resp = AttrResp::Status(status);
+            warn!("Read status: {:?}", resp);
+
+            resp.to_tlv(tw, TagType::Anonymous)?;
         }
 
         Ok(true)
@@ -172,6 +175,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         };
 
         if let Some(status) = status {
+            warn!("Write status: {:?}", status);
             status.to_tlv(tw, TagType::Anonymous)?;
         }
 

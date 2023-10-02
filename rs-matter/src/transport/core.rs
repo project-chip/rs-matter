@@ -694,7 +694,6 @@ impl<'a> Matter<'a> {
             };
 
             if send {
-                dest_tx.log("Sending packet");
                 self.notify_changed();
 
                 return Ok(true);

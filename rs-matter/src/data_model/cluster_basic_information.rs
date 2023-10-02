@@ -41,6 +41,7 @@ pub enum Attributes {
     SwVer(AttrType<u32>) = 9,
     SwVerString(AttrUtfType) = 0xa,
     SerialNo(AttrUtfType) = 0x0f,
+    UniqueId(AttrUtfType) = 0x12,
 }
 
 attribute_enum!(Attributes);
@@ -56,6 +57,7 @@ pub enum AttributesDiscriminants {
     SwVer = 9,
     SwVerString = 0xa,
     SerialNo = 0x0f,
+    UniqueId = 0x12,
 }
 
 #[derive(Default)]
@@ -70,6 +72,7 @@ pub struct BasicInfoConfig<'a> {
     pub device_name: &'a str,
     pub vendor_name: &'a str,
     pub product_name: &'a str,
+    pub unique_id: &'a str,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -128,6 +131,11 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::RV,
             Quality::FIXED,
         ),
+        Attribute::new(
+            AttributesDiscriminants::UniqueId as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
     ],
     commands: &[],
 };
@@ -166,6 +174,7 @@ impl<'a> BasicInfoCluster<'a> {
                     Attributes::SwVer(codec) => codec.encode(writer, self.cfg.sw_ver),
                     Attributes::SwVerString(codec) => codec.encode(writer, self.cfg.sw_ver_str),
                     Attributes::SerialNo(codec) => codec.encode(writer, self.cfg.serial_no),
+                    Attributes::UniqueId(codec) => codec.encode(writer, self.cfg.unique_id),
                 }
             }
         } else {

@@ -39,7 +39,7 @@ mod dev_att;
 #[cfg(feature = "std")]
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
-        .stack_size(160 * 1024)
+        .stack_size(180 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -74,6 +74,7 @@ fn run() -> Result<(), Error> {
         device_name: "OnOff Light",
         product_name: "Light123",
         vendor_name: "Vendor PQR",
+        unique_id: "aabbccdd",
     };
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
