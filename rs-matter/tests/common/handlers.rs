@@ -1,5 +1,5 @@
 use log::{info, warn};
-use rs_matter::{
+use matter_rs::{
     error::ErrorCode,
     interaction_model::{
         core::{IMStatusCode, OpCode},

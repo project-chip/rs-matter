@@ -16,8 +16,8 @@
  */
 
 use clap::{App, Arg};
-use rs_matter::cert;
-use rs_matter::tlv;
+use matter_rs::cert;
+use matter_rs::tlv;
 use simple_logger::SimpleLogger;
 use std::process;
 

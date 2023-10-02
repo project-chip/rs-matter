@@ -19,8 +19,7 @@ use core::cell::Cell;
 use core::convert::TryInto;
 use std::sync::{Arc, Mutex, Once};
 
-use num_derive::FromPrimitive;
-use rs_matter::{
+use matter_rs::{
     attribute_enum, command_enum,
     data_model::objects::{
         Access, AttrData, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute,
@@ -33,6 +32,7 @@ use rs_matter::{
     transport::exchange::Exchange,
     utils::rand::Rand,
 };
+use num_derive::FromPrimitive;
 use strum::{EnumDiscriminants, FromRepr};
 
 pub const ID: u32 = 0xABCD;

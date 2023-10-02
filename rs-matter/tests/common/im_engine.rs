@@ -20,7 +20,7 @@ use core::borrow::Borrow;
 use core::future::pending;
 use core::time::Duration;
 use embassy_futures::select::select3;
-use rs_matter::{
+use matter_rs::{
     acl::{AclEntry, AuthMode},
     data_model::{
         cluster_basic_information::{self, BasicInfoConfig},
@@ -174,10 +174,10 @@ impl<'a> Handler for ImEngineHandler<'a> {
 
     fn invoke(
         &self,
-        exchange: &rs_matter::transport::exchange::Exchange,
-        cmd: &rs_matter::data_model::objects::CmdDetails,
-        data: &rs_matter::tlv::TLVElement,
-        encoder: rs_matter::data_model::objects::CmdDataEncoder,
+        exchange: &matter_rs::transport::exchange::Exchange,
+        cmd: &matter_rs::data_model::objects::CmdDetails,
+        data: &matter_rs::tlv::TLVElement,
+        encoder: matter_rs::data_model::objects::CmdDataEncoder,
     ) -> Result<(), Error> {
         self.handler.invoke(exchange, cmd, data, encoder)
     }
@@ -209,16 +209,16 @@ impl<'a> ImEngine<'a> {
     /// Create the interaction model engine
     pub fn new(cat_ids: NocCatIds) -> Self {
         #[cfg(feature = "std")]
-        use rs_matter::utils::epoch::sys_epoch as epoch;
+        use matter_rs::utils::epoch::sys_epoch as epoch;
 
         #[cfg(not(feature = "std"))]
-        use rs_matter::utils::epoch::dummy_epoch as epoch;
+        use matter_rs::utils::epoch::dummy_epoch as epoch;
 
         #[cfg(feature = "std")]
-        use rs_matter::utils::rand::sys_rand as rand;
+        use matter_rs::utils::rand::sys_rand as rand;
 
         #[cfg(not(feature = "std"))]
-        use rs_matter::utils::rand::dummy_rand as rand;
+        use matter_rs::utils::rand::dummy_rand as rand;
 
         let matter = Matter::new(
             &BASIC_INFO,

@@ -21,7 +21,7 @@ use crate::{
     echo_req, echo_resp,
 };
 
-use rs_matter::{
+use matter_rs::{
     data_model::{cluster_on_off, objects::EncodeValue},
     interaction_model::{
         core::IMStatusCode,

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
+use matter_rs::{
     interaction_model::{messages::ib::AttrResp, messages::msg::ReportDataMsg},
     tlv::{TLVElement, TLVList, TLVWriter, TagType, ToTLV},
     utils::writebuf::WriteBuf,

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
+use matter_rs::{
     acl::{gen_noc_cat, AclEntry, AuthMode, Target},
     data_model::{
         objects::{EncodeValue, Privilege},

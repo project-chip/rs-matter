@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
+use matter_rs::{
     data_model::objects::EncodeValue,
     interaction_model::{
         core::IMStatusCode,

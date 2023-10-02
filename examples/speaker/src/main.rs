@@ -17,11 +17,11 @@
 
 // TODO
 // mod dev_att;
-// use rs_matter::core::{self, CommissioningData};
-// use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-// use rs_matter::data_model::cluster_media_playback::{Commands, MediaPlaybackCluster};
-// use rs_matter::data_model::device_types::DEV_TYPE_ON_SMART_SPEAKER;
-// use rs_matter::secure_channel::spake2p::VerifierData;
+// use matter_rs::core::{self, CommissioningData};
+// use matter_rs::data_model::cluster_basic_information::BasicInfoConfig;
+// use matter_rs::data_model::cluster_media_playback::{Commands, MediaPlaybackCluster};
+// use matter_rs::data_model::device_types::DEV_TYPE_ON_SMART_SPEAKER;
+// use matter_rs::secure_channel::spake2p::VerifierData;
 
 fn main() {
     //     env_logger::init();

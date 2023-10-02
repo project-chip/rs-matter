@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
+use matter_rs::{
     data_model::{
         cluster_basic_information as basic_info, cluster_on_off as onoff,
         objects::{EncodeValue, GlobalElements},

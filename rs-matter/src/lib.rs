@@ -25,13 +25,13 @@
 //! # Examples
 //! ```ignore
 //! /// TODO: Fix once new API has stabilized a bit
-//! use rs_matter::{Matter, CommissioningData};
-//! use rs_matter::data_model::device_types::device_type_add_on_off_light;
-//! use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-//! use rs_matter::secure_channel::spake2p::VerifierData;
+//! use matter_rs::{Matter, CommissioningData};
+//! use matter_rs::data_model::device_types::device_type_add_on_off_light;
+//! use matter_rs::data_model::cluster_basic_information::BasicInfoConfig;
+//! use matter_rs::secure_channel::spake2p::VerifierData;
 //!
-//! # use rs_matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
-//! # use rs_matter::error::Error;
+//! # use matter_rs::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
+//! # use matter_rs::error::Error;
 //! # pub struct DevAtt{}
 //! # impl DevAttDataFetcher for DevAtt{
 //! # fn get_devatt_data(&self, data_type: DataType, data: &mut [u8]) -> Result<usize, Error> { Ok(0) }

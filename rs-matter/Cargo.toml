@@ -10,6 +10,10 @@ keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
 
+[lib]
+name = "matter_rs"
+path = "src/lib.rs"
+
 [features]
 default = ["os", "mbedtls"]
 os = ["std", "backtrace", "env_logger", "nix", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
