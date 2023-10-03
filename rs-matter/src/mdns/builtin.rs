@@ -8,7 +8,9 @@ use log::info;
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::{Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use crate::transport::network::{
+    Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6,
+};
 use crate::transport::pipe::{Chunk, Pipe};
 use crate::utils::select::{EitherUnwrap, Notification};
 
@@ -217,40 +219,43 @@ impl<'a> MdnsService<'a> {
             .await;
 
             for addr in [
-                IpAddr::V4(IP_BROADCAST_ADDR),
-                IpAddr::V6(IPV6_BROADCAST_ADDR),
-            ] {
-                if self.interface.is_some() || addr == IpAddr::V4(IP_BROADCAST_ADDR) {
-                    loop {
-                        let sent = {
-                            let mut data = tx_pipe.data.lock().await;
+                Some(SocketAddr::V4(SocketAddrV4::new(IP_BROADCAST_ADDR, PORT))),
+                self.interface.map(|interface| {
+                    SocketAddr::V6(SocketAddrV6::new(IPV6_BROADCAST_ADDR, PORT, 0, interface))
+                }),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                loop {
+                    let sent = {
+                        let mut data = tx_pipe.data.lock().await;
 
-                            if data.chunk.is_none() {
-                                let len = self.host.broadcast(self, data.buf, 60)?;
+                        if data.chunk.is_none() {
+                            let len = self.host.broadcast(self, data.buf, 60)?;
 
-                                if len > 0 {
-                                    info!("Broadcasting mDNS entry to {}:{}", addr, PORT);
+                            if len > 0 {
+                                info!("Broadcasting mDNS entry to {addr}");
 
-                                    data.chunk = Some(Chunk {
-                                        start: 0,
-                                        end: len,
-                                        addr: Address::Udp(SocketAddr::new(addr, PORT)),
-                                    });
+                                data.chunk = Some(Chunk {
+                                    start: 0,
+                                    end: len,
+                                    addr: Address::Udp(addr),
+                                });
 
-                                    tx_pipe.data_supplied_notification.signal(());
-                                }
-
-                                true
-                            } else {
-                                false
+                                tx_pipe.data_supplied_notification.signal(());
                             }
-                        };
 
-                        if sent {
-                            break;
+                            true
                         } else {
-                            tx_pipe.data_consumed_notification.wait().await;
+                            false
                         }
+                    };
+
+                    if sent {
+                        break;
+                    } else {
+                        tx_pipe.data_consumed_notification.wait().await;
                     }
                 }
             }
