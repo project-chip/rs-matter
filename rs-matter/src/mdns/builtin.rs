@@ -8,8 +8,10 @@ use log::info;
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+#[cfg(any(feature = "std", feature = "embassy-net"))]
+use crate::transport::network::IpAddr;
 use crate::transport::network::{
-    Address, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6,
+    Address, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6,
 };
 use crate::transport::pipe::{Chunk, Pipe};
 use crate::utils::select::{EitherUnwrap, Notification};
