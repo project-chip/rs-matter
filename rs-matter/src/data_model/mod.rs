@@ -21,6 +21,7 @@ pub mod objects;
 
 pub mod cluster_basic_information;
 // TODO pub mod cluster_media_playback;
+pub mod cluster_level_control;
 pub mod cluster_on_off;
 pub mod cluster_template;
 pub mod root_endpoint;

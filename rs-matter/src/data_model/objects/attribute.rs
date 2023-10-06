@@ -43,6 +43,7 @@ bitflags! {
         const RF = Self::READ.bits | Self::FAB_SCOPED.bits;
         const RA = Self::READ.bits | Self::NEED_ADMIN.bits;
         const RWVA = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_ADMIN.bits;
+        const RWVO = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_OPERATE.bits;
         const RWFA = Self::READ.bits | Self::WRITE.bits | Self::FAB_SCOPED.bits | Self::NEED_ADMIN.bits;
         const RWVM = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits;
         const RWFVM = Self::READ.bits | Self::WRITE.bits | Self::FAB_SCOPED.bits |Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits;
@@ -81,6 +82,8 @@ bitflags! {
         const FIXED = 0x04;      // Short: F
         const NULLABLE = 0x08;   // Short: X
 
+        const SNX = Self::SCENE.bits | Self::PERSISTENT.bits | Self::NULLABLE.bits;
+        const XN = Self::PERSISTENT.bits | Self::NULLABLE.bits;
         const SN = Self::SCENE.bits | Self::PERSISTENT.bits;
         const S = Self::SCENE.bits;
         const N = Self::PERSISTENT.bits;

@@ -101,6 +101,13 @@ embedded-svc = { version = "0.25" }
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
 
+[[example]]
+name = "dimmable_light"
+path = "../examples/dimmable_light/src/main.rs"
+
+[profile.dev]
+opt-level = 0
+
 # [[example]]
 # name = "speaker"
 # path = "../examples/speaker/src/main.rs"
