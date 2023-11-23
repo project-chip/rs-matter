@@ -31,16 +31,16 @@ impl InputBase {
             error,
         };
 
-        if s.starts_with("0x") {
+        if let Some(suffix) = s.strip_prefix("0x") {
             // this is always hex
-            return Ok(u8::from_str_radix(&s[2..], 16).map_err(error_map)?);
+            return u8::from_str_radix(suffix, 16).map_err(error_map);
         }
 
-        Ok(match self {
+        match self {
             InputBase::Hex => u8::from_str_radix(s, 16),
-            InputBase::Dec => u8::from_str_radix(s, 10),
+            InputBase::Dec => s.parse::<u8>(),
         }
-        .map_err(error_map)?)
+        .map_err(error_map)
     }
 
     /// Parses a separated list of values.

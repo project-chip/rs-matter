@@ -64,7 +64,7 @@ fn main() {
         base = InputBase::Dec;
     }
 
-    let tlv_list = base.parse_list(&m.value_of("tlvs").unwrap(), ',');
+    let tlv_list = base.parse_list(m.value_of("tlvs").unwrap(), ',');
 
     //    println!("Decoding: {:x?}", tlv_list.as_slice());
     if m.is_present("cert") {
