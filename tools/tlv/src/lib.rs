@@ -58,15 +58,9 @@ impl InputBase {
     /// assert_eq!(InputBase::Dec.parse_list("1, 2, foo, 10, bar, 20", ','), vec![1, 2, 10, 20]);
     /// ```
     pub fn parse_list(self, list: &str, separator: char) -> Vec<u8> {
-        // lenient parsing
-        let parsed = list
+        list
             .split(separator)
-            .clone()
             .map(|b| self.try_parse(b.trim()))
-            .collect::<Vec<_>>();
-
-        parsed
-            .into_iter()
             .filter_map(|r| {
                 if let Err(ref err) = r {
                     eprintln!("NOTE: error parsing '{}': {:?}", err.input, err.error);
