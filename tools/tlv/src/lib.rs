@@ -65,18 +65,14 @@ impl InputBase {
             .map(|b| self.try_parse(b.trim()))
             .collect::<Vec<_>>();
 
-        for err in parsed
-            .iter()
-            .filter(|r| r.is_err())
-            .map(|r| r.clone().unwrap_err())
-        {
-            eprintln!("NOTE: error parsing '{}': {:?}", err.input, err.error);
-        }
-
         parsed
             .into_iter()
-            .filter(|r| r.is_ok())
-            .map(|r| r.unwrap())
+            .filter_map(|r| {
+                if let Err(ref err) = r {
+                  eprintln!("NOTE: error parsing '{}': {:?}", err.input, err.error);
+                }
+                r.ok()
+            })
             .collect()
     }
 }
