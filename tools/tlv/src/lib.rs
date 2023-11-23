@@ -69,7 +69,7 @@ impl InputBase {
             .into_iter()
             .filter_map(|r| {
                 if let Err(ref err) = r {
-                  eprintln!("NOTE: error parsing '{}': {:?}", err.input, err.error);
+                    eprintln!("NOTE: error parsing '{}': {:?}", err.input, err.error);
                 }
                 r.ok()
             })
