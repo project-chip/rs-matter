@@ -64,6 +64,7 @@ impl InputBase {
             .clone()
             .map(|b| self.try_parse(b.trim()))
             .collect::<Vec<_>>();
+
         for err in parsed
             .iter()
             .filter(|r| r.is_err())
@@ -73,9 +74,9 @@ impl InputBase {
         }
 
         parsed
-            .iter()
+            .into_iter()
             .filter(|r| r.is_ok())
-            .map(|r| *r.as_ref().unwrap())
+            .map(|r| r.unwrap())
             .collect()
     }
 }
