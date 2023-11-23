@@ -19,7 +19,8 @@ use clap::{App, Arg};
 use rs_matter::cert;
 use rs_matter::tlv;
 use simple_logger::SimpleLogger;
-use std::process;
+
+use parser::InputBase;
 
 fn main() {
     SimpleLogger::new()
@@ -29,17 +30,21 @@ fn main() {
         .init()
         .unwrap();
 
+    let mut base = InputBase::Hex;
+
     let m = App::new("tlv")
         .arg(
             Arg::with_name("hex")
                 .short("h")
                 .long("hex")
+                .group("base")
                 .help("The input is in Hexadecimal (Default)"),
         )
         .arg(
             Arg::with_name("dec")
                 .short("d")
                 .long("dec")
+                .group("base")
                 .help("The input is in Decimal"),
         )
         .arg(
@@ -55,48 +60,22 @@ fn main() {
         .arg(Arg::with_name("tlvs").help("List of TLVs").required(true))
         .get_matches();
 
-    // Assume hexadecimal by-default
-    let base = if m.is_present("hex") {
-        16
-    } else if m.is_present("dec") {
-        10
-    } else {
-        16
-    };
-
-    let list: String = m
-        .value_of("tlvs")
-        .unwrap()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    let list = list.split(',');
-    let mut tlv_list: [u8; 1024] = [0; 1024];
-    let mut index = 0;
-    for byte in list {
-        let byte = byte.strip_prefix("0x").unwrap_or(byte);
-        if let Ok(b) = u8::from_str_radix(byte, base) {
-            tlv_list[index] = b;
-            index += 1;
-        } else {
-            eprintln!("Skipping unknown byte: {}", byte);
-        }
-        if index >= 1024 {
-            eprintln!("Input too long");
-            process::exit(1);
-        }
+    if m.is_present("dec") {
+        base = InputBase::Dec;
     }
 
-    //    println!("Decoding: {:x?}", &tlv_list[..index]);
+    let tlv_list = base.parse_list(&m.value_of("tlvs").unwrap(), ',');
+
+    //    println!("Decoding: {:x?}", tlv_list.as_slice());
     if m.is_present("cert") {
-        let cert = cert::Cert::new(&tlv_list[..index]).unwrap();
+        let cert = cert::Cert::new(tlv_list.as_slice()).unwrap();
         println!("{}", cert);
     } else if m.is_present("as-asn1") {
         let mut asn1_cert = [0_u8; 1024];
-        let cert = cert::Cert::new(&tlv_list[..index]).unwrap();
+        let cert = cert::Cert::new(tlv_list.as_slice()).unwrap();
         let len = cert.as_asn1(&mut asn1_cert).unwrap();
         println!("{:02x?}", &asn1_cert[..len]);
     } else {
-        tlv::print_tlv_list(&tlv_list[..index]);
+        tlv::print_tlv_list(tlv_list.as_slice());
     }
 }

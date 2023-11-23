@@ -1,5 +1,5 @@
 [package]
-name = "tlv"
+name = "parser"
 version = "0.1.0"
 edition = "2021"
 authors = ["Kedar Sovani <kedars@gmail.com>", "Ivan Markov", "Project CHIP Authors"]
@@ -17,3 +17,7 @@ rs-matter = { path = "../../rs-matter" }
 log = {version = "0.4.14", features = ["max_level_trace", "release_max_level_warn"]}
 simple_logger = "1.16.0"
 clap = "2.34"
+
+[[bin]]
+name="tlv"
+path="src/main.rs"
