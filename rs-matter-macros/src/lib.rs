@@ -482,9 +482,7 @@ impl Parse for MatterIdlImportArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let path: syn::LitStr = input.parse()?;
 
-        Ok(MatterIdlImportArgs {
-            path: path.value()
-        })
+        Ok(MatterIdlImportArgs { path: path.value() })
     }
 }
 
@@ -496,10 +494,14 @@ pub fn matter_idl_import(item: TokenStream) -> TokenStream {
 
     let idl = matter_idl_parser::Idl::parse(idl_span.into()).unwrap();
 
-    let streams = idl.clusters.iter().map(|c| server_side_cluster_generate(&c));
+    let streams = idl
+        .clusters
+        .iter()
+        .map(|c| server_side_cluster_generate(&c));
 
     quote!(
         // IDL-generated code:
         #(#streams)*
-    ).into()
+    )
+    .into()
 }
