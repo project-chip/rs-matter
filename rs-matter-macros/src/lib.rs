@@ -494,10 +494,7 @@ pub fn matter_idl_import(item: TokenStream) -> TokenStream {
 
     let idl = matter_idl_parser::Idl::parse(idl_span.into()).unwrap();
 
-    let streams = idl
-        .clusters
-        .iter()
-        .map(server_side_cluster_generate);
+    let streams = idl.clusters.iter().map(server_side_cluster_generate);
 
     quote!(
         // IDL-generated code:
