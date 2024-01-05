@@ -497,7 +497,7 @@ pub fn matter_idl_import(item: TokenStream) -> TokenStream {
     let streams = idl
         .clusters
         .iter()
-        .map(|c| server_side_cluster_generate(&c));
+        .map(server_side_cluster_generate);
 
     quote!(
         // IDL-generated code:
