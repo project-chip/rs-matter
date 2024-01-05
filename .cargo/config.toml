@@ -1,2 +1,2 @@
 [env]
-RS_MATTER_IDL_DIR = { value="../idl", relative=true }
+RS_MATTER_IDL_DIR = { value="idl", relative=true }
