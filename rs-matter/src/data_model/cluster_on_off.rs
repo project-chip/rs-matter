@@ -28,8 +28,8 @@ use strum::{EnumDiscriminants, FromRepr};
 
 matter_idl_import!("rs-matter/src/data_model/on_off.matter");
 
-pub use OnOff::ID;
 pub use OnOff::Commands;
+pub use OnOff::ID;
 
 use OnOff::CommandsDiscriminants;
 
@@ -127,7 +127,9 @@ impl OnOffCluster {
                 cmd_enter!("Toggle");
                 self.set(!self.on.get());
             }
-            OnOff::Commands::OffWithEffect | OnOff::Commands::OnWithRecallGlobalScene | OnOff::Commands::OnWithTimedOff => todo!()
+            OnOff::Commands::OffWithEffect
+            | OnOff::Commands::OnWithRecallGlobalScene
+            | OnOff::Commands::OnWithTimedOff => todo!(),
         }
 
         self.data_ver.changed();
