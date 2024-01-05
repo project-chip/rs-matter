@@ -9,6 +9,7 @@ edition = "2021"
 quote = "1.0.33"
 matter-data-model={path = "../matter-data-model"}
 proc-macro2 = "1.0.70"
+convert_case = "0.6.0"
 
 [dev-dependencies]
 assert-tokenstreams-eq = "0.1.0"

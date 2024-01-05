@@ -1,9 +1,10 @@
+use convert_case::{Case, Casing};
 use matter_data_model::Cluster;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
-    let cluster_name = Ident::new(&cluster.id, Span::call_site());
+    let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
     let mut commands = Vec::new();
 
@@ -18,7 +19,7 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
     let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
 
     quote!(
-        mod #cluster_name {
+        mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
 
 
@@ -133,7 +134,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &server_side_cluster_generate(cluster),
             &quote!(
-                mod OnOff {
+                mod on_off {
                     pub const ID: u32 = 6;
 
                     #[derive(strum::FromRepr, strum::EnumDiscriminants)]
