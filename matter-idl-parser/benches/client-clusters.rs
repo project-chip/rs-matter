@@ -7,7 +7,7 @@ fn main() {
     divan::main();
 }
 
-// Define a `fibonacci` function and register it for benchmarking.
+// Benchmark parsing sample-clusters.matter
 #[divan::bench]
 fn parse_client_clusters() {
     if let Err(e) = Idl::parse(black_box(include_str!("../sample-clusters.matter").into())) {
