@@ -28,10 +28,10 @@ use strum::{EnumDiscriminants, FromRepr};
 
 matter_idl_import!("rs-matter/src/data_model/on_off.matter");
 
-pub use OnOff::Commands;
 pub use OnOff::ID;
 
-use OnOff::CommandsDiscriminants;
+pub use OnOff::Commands;
+pub use OnOff::CommandsDiscriminants;
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
