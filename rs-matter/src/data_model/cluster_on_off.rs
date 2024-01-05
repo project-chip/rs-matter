@@ -26,7 +26,7 @@ use log::info;
 use rs_matter_macros::matter_idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
-matter_idl_import!("rs-matter/src/data_model/on_off.matter");
+matter_idl_import!("on_off.matter");
 
 pub use OnOff::ID;
 

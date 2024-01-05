@@ -14,8 +14,8 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-
 use std::fs;
+use std::path::Path;
 
 use matter_data_model_codegen::server_side_cluster_generate;
 use proc_macro::TokenStream;
@@ -489,7 +489,15 @@ impl Parse for MatterIdlImportArgs {
 #[proc_macro]
 pub fn matter_idl_import(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as MatterIdlImportArgs);
-    let idl_text = fs::read_to_string(input.path).unwrap();
+
+    let joined = Path::new(env!("RS_MATTER_IDL_DIR")).join(input.path.clone());
+    let path = joined.as_path();
+
+    if !path.exists() {
+        panic!("{:?} does not exist", path);
+    }
+
+    let idl_text = fs::read_to_string(path).unwrap();
     let idl_span: &str = &idl_text;
 
     let idl = matter_idl_parser::Idl::parse(idl_span.into()).unwrap();
