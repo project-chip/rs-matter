@@ -15,9 +15,13 @@
  *    limitations under the License.
  */
 
+use std::fs;
+
+use matter_data_model_codegen::server_side_cluster_generate;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
+use syn::parse::Parse;
 use syn::Lit::{Int, Str};
 use syn::NestedMeta::{Lit, Meta};
 use syn::{parse_macro_input, DeriveInput, Lifetime};
@@ -467,4 +471,35 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
             ast.data
         )
     }
+}
+
+#[derive(Debug)]
+struct MatterIdlImportArgs {
+    path: String,
+}
+
+impl Parse for MatterIdlImportArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let path: syn::LitStr = input.parse()?;
+
+        Ok(MatterIdlImportArgs {
+            path: path.value()
+        })
+    }
+}
+
+#[proc_macro]
+pub fn matter_idl_import(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as MatterIdlImportArgs);
+    let idl_text = fs::read_to_string(input.path).unwrap();
+    let idl_span: &str = &idl_text;
+
+    let idl = matter_idl_parser::Idl::parse(idl_span.into()).unwrap();
+
+    let streams = idl.clusters.iter().map(|c| server_side_cluster_generate(&c));
+
+    quote!(
+        // IDL-generated code:
+        #(#streams)*
+    ).into()
 }

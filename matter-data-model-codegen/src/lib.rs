@@ -15,9 +15,15 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
         ));
     }
 
+    let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
+
     quote!(
         mod #cluster_name {
-            #[derive(FromRepr)]
+            pub const ID: u32 = #cluster_code;
+
+
+            #[derive(strum::FromRepr, strum::EnumDiscriminants)]
+            #[repr(u32)]
             pub enum Commands {
                 #(#commands),*
             }
@@ -128,7 +134,10 @@ mod tests {
             &server_side_cluster_generate(cluster),
             &quote!(
                 mod OnOff {
-                    #[derive(FromRepr)]
+                    pub const ID: u32 = 6;
+
+                    #[derive(strum::FromRepr, strum::EnumDiscriminants)]
+                    #[repr(u32)]
                     pub enum Commands {
                         Off = 0,
                         On = 1,
