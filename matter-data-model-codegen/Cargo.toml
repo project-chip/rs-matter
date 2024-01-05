@@ -1,0 +1,16 @@
+[package]
+name = "matter-data-model-codegen"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+quote = "1.0.33"
+matter-data-model={path = "../matter-data-model"}
+proc-macro2 = "1.0.70"
+
+[dev-dependencies]
+assert-tokenstreams-eq = "0.1.0"
+syn = {version="2.0.41", features = ["extra-traits"]}
+matter-idl-parser={path = "../matter-idl-parser"}
