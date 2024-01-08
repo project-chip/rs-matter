@@ -9,6 +9,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
+rust-version = "1.75"
 
 [features]
 default = ["os", "mbedtls"]
@@ -17,7 +18,6 @@ esp-idf = ["std", "rustcrypto", "esp-idf-sys"]
 std = ["alloc", "rand", "async-io", "esp-idf-sys?/std", "embassy-time/generic-queue-16"]
 backtrace = []
 alloc = []
-nightly = []
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]

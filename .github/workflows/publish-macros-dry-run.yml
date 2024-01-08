@@ -2,11 +2,20 @@ name: PublishMacrosDryRun
 
 on: workflow_dispatch
 
+env:
+  RUST_TOOLCHAIN: stable
+
 jobs:
   publish_macros_dry_run:
     name: PublishMacrosDryRun
     runs-on: ubuntu-latest
     steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy, rust-src
+
       - name: Checkout
         uses: actions/checkout@v3
 

@@ -68,11 +68,7 @@ impl<T> DataModel<T> {
         #[cfg(not(feature = "alloc"))]
         let interaction = &mut interaction;
 
-        #[cfg(feature = "nightly")]
         let metadata = self.0.lock().await;
-
-        #[cfg(not(feature = "nightly"))]
-        let metadata = self.0.lock();
 
         if interaction.start().await? {
             match interaction {

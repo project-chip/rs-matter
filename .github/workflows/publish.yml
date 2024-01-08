@@ -3,6 +3,7 @@ name: Publish
 on: workflow_dispatch
 
 env:
+  RUST_TOOLCHAIN: stable
   CRATE_NAME: rs-matter
 
 jobs:
@@ -10,6 +11,12 @@ jobs:
     name: Publish
     runs-on: ubuntu-latest
     steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy, rust-src
+
       - name: Checkout
         uses: actions/checkout@v3
 
