@@ -1,5 +1,5 @@
 use convert_case::{Case, Casing};
-use matter_data_model::Cluster;
+use rs_matter_data_model::Cluster;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
@@ -36,8 +36,8 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
 mod tests {
     use super::*;
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
-    use matter_data_model::Cluster;
-    use matter_idl_parser::Idl;
+    use rs_matter_data_model::Cluster;
+    use rs_matter_data_model::idl::Idl;
     use quote::quote;
 
     fn parse_idl(input: &str) -> Idl {

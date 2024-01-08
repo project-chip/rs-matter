@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use matter_idl_parser::Idl;
+use rs_matter_data_model::idl::Idl;
 use miette::GraphicalReportHandler;
 
 pub fn criterion_benchmark(c: &mut Criterion) {

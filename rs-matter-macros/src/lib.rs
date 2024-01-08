@@ -17,7 +17,7 @@
 use std::fs;
 use std::path::Path;
 
-use matter_data_model_codegen::server_side_cluster_generate;
+use rs_matter_macros_impl::server_side_cluster_generate;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
@@ -500,7 +500,7 @@ pub fn idl_import(item: TokenStream) -> TokenStream {
     let idl_text = fs::read_to_string(path).unwrap();
     let idl_span: &str = &idl_text;
 
-    let idl = matter_idl_parser::Idl::parse(idl_span.into()).unwrap();
+    let idl = rs_matter_data_model::idl::Idl::parse(idl_span.into()).unwrap();
 
     let streams = idl.clusters.iter().map(server_side_cluster_generate);
 

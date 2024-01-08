@@ -1,11 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-        "matter-data-model",
-        "matter-data-model-codegen",
-        "matter-idl-parser",
         "rs-matter",
+        "rs-matter-data-model",
         "rs-matter-macros",
+        "rs-matter-macros-impl",
 ]
 
 exclude = ["examples/*", "tools/tlv"]

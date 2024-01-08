@@ -17,7 +17,7 @@ use nom_supreme::ParserExt;
 use thiserror::Error;
 use tracing::warn;
 
-use matter_data_model::{
+use crate::{
     endpoint_composition::{
         AttributeHandlingType, AttributeInstantiation, ClusterInstantiation, DefaultAttributeValue,
         DeviceType, Endpoint,
@@ -97,8 +97,8 @@ where
 /// Examples:
 ///
 /// ```
-/// use matter_data_model::ApiMaturity;
-/// use matter_idl_parser::api_maturity;
+/// use rs_matter_data_model::ApiMaturity;
+/// use rs_matter_data_model::idl::api_maturity;
 ///
 /// assert_eq!(
 ///    api_maturity("123".into()),
@@ -131,7 +131,7 @@ pub fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
 /// Examples:
 ///
 /// ```
-/// use matter_idl_parser::hex_integer;
+/// use rs_matter_data_model::idl::hex_integer;
 ///
 /// let result = hex_integer("0x12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -153,7 +153,7 @@ pub fn hex_integer(span: Span) -> IResult<Span, u64, ParseError> {
 /// Examples:
 ///
 /// ```
-/// use matter_idl_parser::decimal_integer;
+/// use rs_matter_data_model::idl::decimal_integer;
 ///
 /// let result = decimal_integer("12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -174,7 +174,7 @@ pub fn decimal_integer(span: Span) -> IResult<Span, u64, ParseError> {
 /// Examples:
 ///
 /// ```
-/// use matter_idl_parser::positive_integer;
+/// use rs_matter_data_model::idl::positive_integer;
 ///
 /// let result = positive_integer("12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -261,7 +261,7 @@ pub fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError>
 /// Examples:
 ///
 /// ```
-/// use matter_idl_parser::{whitespace0, DocComment};
+/// use rs_matter_data_model::idl::{whitespace0, DocComment};
 ///
 /// let result = whitespace0(" /*comment*/\n12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), "12 abc");
@@ -313,7 +313,7 @@ pub fn whitespace0(span: Span) -> IResult<Span, Option<DocComment>, ParseError> 
 /// Examples:
 ///
 /// ```
-/// use matter_idl_parser::{whitespace1, DocComment};
+/// use rs_matter_data_model::idl::{whitespace1, DocComment};
 ///
 /// let result = whitespace1(" /*comment*/\n12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), "12 abc");
@@ -352,8 +352,8 @@ pub fn parse_id(span: Span) -> IResult<Span, &str, ParseError> {
 /// Examples:
 ///
 /// ```
-/// use matter_data_model::{ConstantEntry, ApiMaturity};
-/// use matter_idl_parser::constant_entry;
+/// use rs_matter_data_model::{ConstantEntry, ApiMaturity};
+/// use rs_matter_data_model::idl::constant_entry;
 ///
 /// let parsed = constant_entry("provisional kConstant = 0x123 ;".into()).expect("valid");
 /// assert_eq!(parsed.0.fragment().to_string(), "");

@@ -1,5 +1,5 @@
 use divan::black_box;
-use matter_idl_parser::Idl;
+use rs_matter_data_model::idl::Idl;
 use miette::GraphicalReportHandler;
 
 fn main() {

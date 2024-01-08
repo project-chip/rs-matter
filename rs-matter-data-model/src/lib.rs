@@ -1,3 +1,6 @@
+#[cfg(feature = "idl")]
+pub mod idl;
+
 pub mod endpoint_composition;
 
 /// How mature/usable a member of an API is

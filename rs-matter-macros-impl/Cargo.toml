@@ -1,5 +1,5 @@
 [package]
-name = "matter-data-model-codegen"
+name = "rs-matter-macros-impl"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,11 +7,10 @@ edition = "2021"
 
 [dependencies]
 quote = "1.0.33"
-matter-data-model={path = "../matter-data-model"}
+rs-matter-data-model={path = "../rs-matter-data-model", features = ["idl"]}
 proc-macro2 = "1.0.70"
 convert_case = "0.6.0"
 
 [dev-dependencies]
 assert-tokenstreams-eq = "0.1.0"
 syn = {version="2.0.41", features = ["extra-traits"]}
-matter-idl-parser={path = "../matter-idl-parser"}
