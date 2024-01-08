@@ -133,18 +133,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
             Ok(attr) => {
                 let encoder = AttrDataEncoder::new(attr, tw);
 
-                let result = {
-                    #[cfg(not(feature = "nightly"))]
-                    {
-                        handler.read(attr, encoder)
-                    }
-
-                    #[cfg(feature = "nightly")]
-                    {
-                        handler.read(attr, encoder).await
-                    }
-                };
-
+                let result = handler.read(attr, encoder).await;
                 match result {
                     Ok(()) => None,
                     Err(e) => {
@@ -173,18 +162,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
     ) -> Result<(), Error> {
         let status = match item {
             Ok((attr, data)) => {
-                let result = {
-                    #[cfg(not(feature = "nightly"))]
-                    {
-                        handler.write(attr, AttrData::new(attr.dataver, data))
-                    }
-
-                    #[cfg(feature = "nightly")]
-                    {
-                        handler.write(attr, AttrData::new(attr.dataver, data)).await
-                    }
-                };
-
+                let result = handler.write(attr, AttrData::new(attr.dataver, data)).await;
                 match result {
                     Ok(()) => attr.status(IMStatusCode::Success)?,
                     Err(error) => attr.status(error.into())?,
@@ -347,18 +325,7 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
                 let mut tracker = CmdDataTracker::new();
                 let encoder = CmdDataEncoder::new(cmd, &mut tracker, tw);
 
-                let result = {
-                    #[cfg(not(feature = "nightly"))]
-                    {
-                        handler.invoke(exchange, cmd, data, encoder)
-                    }
-
-                    #[cfg(feature = "nightly")]
-                    {
-                        handler.invoke(exchange, cmd, data, encoder).await
-                    }
-                };
-
+                let result = handler.invoke(exchange, cmd, data, encoder).await;
                 match result {
                     Ok(()) => cmd.success(&tracker),
                     Err(error) => {

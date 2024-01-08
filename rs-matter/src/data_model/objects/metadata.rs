@@ -17,7 +17,6 @@
 
 use crate::data_model::objects::Node;
 
-#[cfg(feature = "nightly")]
 pub use asynch::*;
 
 use super::HandlerCompat;
@@ -120,7 +119,6 @@ where
     }
 }
 
-#[cfg(feature = "nightly")]
 pub mod asynch {
     use crate::data_model::objects::{HandlerCompat, Node};
 

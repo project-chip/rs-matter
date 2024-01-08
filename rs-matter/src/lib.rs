@@ -70,11 +70,7 @@
 //!
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(stable_features)]
-#![allow(unknown_lints)]
-#![cfg_attr(feature = "nightly", feature(async_fn_in_trait))]
-#![cfg_attr(feature = "nightly", allow(async_fn_in_trait))]
-#![cfg_attr(feature = "nightly", feature(impl_trait_projections))]
+#![allow(async_fn_in_trait)]
 
 pub mod acl;
 pub mod cert;
