@@ -17,10 +17,10 @@
 use std::fs;
 use std::path::Path;
 
-use rs_matter_macros_impl::server_side_cluster_generate;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::{format_ident, quote};
+use rs_matter_macros_impl::server_side_cluster_generate;
 use syn::parse::Parse;
 use syn::Lit::{Int, Str};
 use syn::NestedMeta::{Lit, Meta};

@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
-use rs_matter_data_model::Cluster;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
+use rs_matter_data_model::Cluster;
 
 pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
     let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
@@ -36,9 +36,9 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
 mod tests {
     use super::*;
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
-    use rs_matter_data_model::Cluster;
-    use rs_matter_data_model::idl::Idl;
     use quote::quote;
+    use rs_matter_data_model::idl::Idl;
+    use rs_matter_data_model::Cluster;
 
     fn parse_idl(input: &str) -> Idl {
         Idl::parse(input.into()).expect("valid input")
