@@ -487,7 +487,7 @@ impl Parse for MatterIdlImportArgs {
 }
 
 #[proc_macro]
-pub fn matter_idl_import(item: TokenStream) -> TokenStream {
+pub fn idl_import(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as MatterIdlImportArgs);
 
     let joined = Path::new(env!("RS_MATTER_IDL_DIR")).join(input.path.clone());

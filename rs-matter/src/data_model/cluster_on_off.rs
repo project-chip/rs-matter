@@ -23,10 +23,10 @@ use crate::{
     transport::exchange::Exchange, utils::rand::Rand,
 };
 use log::info;
-use rs_matter_macros::matter_idl_import;
+use rs_matter_macros::idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
-matter_idl_import!("on_off.matter");
+idl_import!("on_off.matter");
 
 pub use on_off::ID;
 
