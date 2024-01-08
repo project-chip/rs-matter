@@ -1316,7 +1316,7 @@ mod tests {
         let idl = r.unwrap();
 
         assert_eq!(idl.clusters.len(), 1);
-        assert_eq!(idl.clusters.get(0).expect("cluster").id, "Identify")
+        assert_eq!(idl.clusters.first().expect("cluster").id, "Identify")
     }
 
     #[rstest]

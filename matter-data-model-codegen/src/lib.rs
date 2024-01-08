@@ -45,12 +45,7 @@ mod tests {
     }
 
     fn get_cluster_named<'a>(idl: &'a Idl, name: &str) -> Option<&'a Cluster> {
-        for cluster in idl.clusters.iter() {
-            if cluster.id == name {
-                return Some(cluster);
-            }
-        }
-        None
+        idl.clusters.iter().find(|&cluster| cluster.id == name)
     }
 
     #[test]
