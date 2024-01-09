@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 /*
  *
  *    Copyright (c) 2020-2022 Project CHIP Authors
@@ -18,7 +19,7 @@ use std::fs;
 use std::path::Path;
 
 use proc_macro::TokenStream;
-use proc_macro2::{Ident, Span};
+use proc_macro2::{Group, Ident, Punct, Span};
 use quote::{format_ident, quote};
 use rs_matter_macros_impl::server_side_cluster_generate;
 use syn::parse::Parse;
@@ -475,14 +476,82 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
 
 #[derive(Debug)]
 struct MatterIdlImportArgs {
+    // Path to the file to load
     path: String,
+
+    // What clusters to import. Non-empty list if
+    // a clusters argument was given
+    clusters: Option<HashSet<String>>,
 }
 
 impl Parse for MatterIdlImportArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Path is mandatory and MUST be a literal string
         let path: syn::LitStr = input.parse()?;
 
-        Ok(MatterIdlImportArgs { path: path.value() })
+        let clusters = if !input.is_empty() {
+            // second argument is "clusters = [....]"
+            //
+            // Token stream looks like:
+            //
+            // TokenStream [
+            //     Punct {
+            //         ch: ',',
+            //         spacing: Alone,
+            //         span: #0 bytes(224039..224040),
+            //     },
+            //     Ident {
+            //         ident: "clusters",
+            //         span: #0 bytes(224041..224049),
+            //     },
+            //     Punct {
+            //         ch: '=',
+            //         spacing: Alone,
+            //         span: #0 bytes(224050..224051),
+            //     },
+            //     Group {
+            //         delimiter: Bracket,
+            //         stream: TokenStream [
+            //             Literal {
+            //                 kind: Str,
+            //                 symbol: "OnOff",
+            //                 suffix: None,
+            //                 span: #0 bytes(224053..224060),
+            //             },
+            //         ],
+            //         span: #0 bytes(224052..224061),
+            //     },
+            //  ]
+
+            assert_eq!(input.parse::<Punct>()?.as_char(), ',');
+            assert_eq!(input.parse::<Ident>()?.to_string(), "clusters");
+            assert_eq!(input.parse::<Punct>()?.as_char(), '=');
+
+            Some(
+                input
+                    .parse::<Group>()?
+                    .stream()
+                    .into_iter()
+                    .map(|item| match item {
+                        proc_macro2::TokenTree::Literal(l) => {
+                            let repr = l.to_string();
+                            // Representation  includes quotes. Remove them
+                            // TODO: this does NOT support `r"..."` or similar, however
+                            //       those should generally not be needed
+                            repr[1..(repr.len() - 1)].to_owned()
+                        }
+                        _ => panic!("Expected a token"),
+                    })
+                    .collect::<HashSet<_>>(),
+            )
+        } else {
+            None
+        };
+
+        Ok(MatterIdlImportArgs {
+            path: path.value(),
+            clusters,
+        })
     }
 }
 
@@ -502,7 +571,14 @@ pub fn idl_import(item: TokenStream) -> TokenStream {
 
     let idl = rs_matter_data_model::idl::Idl::parse(idl_span.into()).unwrap();
 
-    let streams = idl.clusters.iter().map(server_side_cluster_generate);
+    let streams = idl
+        .clusters
+        .iter()
+        .filter(|c| match input.clusters {
+            Some(ref v) => v.contains(&c.id),
+            None => true,
+        })
+        .map(server_side_cluster_generate);
 
     quote!(
         // IDL-generated code:
