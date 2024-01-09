@@ -26,7 +26,7 @@ use log::info;
 use rs_matter_macros::idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
-idl_import!("on_off.matter", clusters = ["OnOff"]);
+idl_import!("controller-clusters.matter", clusters = ["OnOff"]);
 
 pub use on_off::ID;
 
