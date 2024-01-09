@@ -555,6 +555,16 @@ impl Parse for MatterIdlImportArgs {
     }
 }
 
+/// Imports a matter IDL and generates code for it
+/// 
+/// Files are assumed to be located inside `RS_MATTER_IDL_DIR` from the environment.
+/// Generally this means that `.cargo/config.toml` should include something like
+/// `RS_MATTER_IDL_DIR = { value="idl", relative=true }`
+/// 
+/// `idl_import!("file.matter")` imports the entire file.
+///
+/// `idl_import!("file.matter", clusters=["A", "B", "C"])` restricts the
+/// import to the given clusters
 #[proc_macro]
 pub fn idl_import(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as MatterIdlImportArgs);
