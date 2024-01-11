@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 /*
  *
  *    Copyright (c) 2020-2022 Project CHIP Authors
@@ -14,10 +15,14 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
+use std::fs;
+use std::path::Path;
 
 use proc_macro::TokenStream;
-use proc_macro2::{Ident, Span};
+use proc_macro2::{Group, Ident, Punct, Span};
 use quote::{format_ident, quote};
+use rs_matter_macros_impl::server_side_cluster_generate;
+use syn::parse::Parse;
 use syn::Lit::{Int, Str};
 use syn::NestedMeta::{Lit, Meta};
 use syn::{parse_macro_input, DeriveInput, Lifetime};
@@ -467,4 +472,133 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
             ast.data
         )
     }
+}
+
+#[derive(Debug)]
+struct MatterIdlImportArgs {
+    // Path to the file to load
+    path: String,
+
+    // What clusters to import. Non-empty list if
+    // a clusters argument was given
+    clusters: Option<HashSet<String>>,
+}
+
+impl Parse for MatterIdlImportArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        // Path is mandatory and MUST be a literal string
+        let path: syn::LitStr = input.parse()?;
+
+        let clusters = if !input.is_empty() {
+            // second argument is "clusters = [....]"
+            //
+            // Token stream looks like:
+            //
+            // TokenStream [
+            //     Punct {
+            //         ch: ',',
+            //         spacing: Alone,
+            //         span: #0 bytes(224039..224040),
+            //     },
+            //     Ident {
+            //         ident: "clusters",
+            //         span: #0 bytes(224041..224049),
+            //     },
+            //     Punct {
+            //         ch: '=',
+            //         spacing: Alone,
+            //         span: #0 bytes(224050..224051),
+            //     },
+            //     Group {
+            //         delimiter: Bracket,
+            //         stream: TokenStream [
+            //             Literal {
+            //                 kind: Str,
+            //                 symbol: "OnOff",
+            //                 suffix: None,
+            //                 span: #0 bytes(224053..224060),
+            //             },
+            //         ],
+            //         span: #0 bytes(224052..224061),
+            //     },
+            //  ]
+
+            assert_eq!(input.parse::<Punct>()?.as_char(), ',');
+            assert_eq!(input.parse::<Ident>()?.to_string(), "clusters");
+            assert_eq!(input.parse::<Punct>()?.as_char(), '=');
+
+            Some(
+                input
+                    .parse::<Group>()?
+                    .stream()
+                    .into_iter()
+                    .map(|item| match item {
+                        proc_macro2::TokenTree::Literal(l) => {
+                            let repr = l.to_string();
+                            // Representation  includes quotes. Remove them
+                            // TODO: this does NOT support `r"..."` or similar, however
+                            //       those should generally not be needed
+                            repr[1..(repr.len() - 1)].to_owned()
+                        }
+                        _ => panic!("Expected a token"),
+                    })
+                    .collect::<HashSet<_>>(),
+            )
+        } else {
+            None
+        };
+
+        if let Some(ref values) = clusters {
+            if values.is_empty() {
+                panic!("Input clusters MUST be non-empty. If you want no filtering, omit this argument.");
+            }
+        }
+
+        Ok(MatterIdlImportArgs {
+            path: path.value(),
+            clusters,
+        })
+    }
+}
+
+/// Imports a matter IDL and generates code for it
+///
+/// Files are assumed to be located inside `RS_MATTER_IDL_DIR` from the environment.
+/// Generally this means that `.cargo/config.toml` should include something like
+/// `RS_MATTER_IDL_DIR = { value="idl", relative=true }`
+///
+/// `idl_import!("file.matter")` imports the entire file.
+///
+/// `idl_import!("file.matter", clusters=["A", "B", "C"])` restricts the
+/// import to the given clusters
+#[proc_macro]
+pub fn idl_import(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as MatterIdlImportArgs);
+
+    let joined = Path::new(env!("RS_MATTER_IDL_DIR")).join(input.path.clone());
+    let path = joined.as_path();
+
+    if !path.exists() {
+        panic!("{:?} does not exist", path);
+    }
+
+    let idl_text = fs::read_to_string(path).unwrap();
+    let idl_span: &str = &idl_text;
+
+    let idl = rs_matter_data_model::idl::Idl::parse(idl_span.into()).unwrap();
+
+    let streams = idl
+        .clusters
+        .iter()
+        .filter(|c| match input.clusters {
+            Some(ref v) => v.contains(&c.id),
+            None => true,
+        })
+        .map(server_side_cluster_generate);
+
+    quote!(
+        // IDL-generated code:
+        #(#streams)*
+    )
+    .into()
 }

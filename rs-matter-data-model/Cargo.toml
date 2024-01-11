@@ -1,0 +1,43 @@
+[package]
+name = "rs-matter-data-model"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap.workspace=true
+tracing.workspace=true
+tracing-subscriber.workspace=true
+
+miette = { workspace = true, optional = true }
+nom = { workspace = true, optional = true }
+nom-greedyerror = { workspace = true, optional = true }
+nom-supreme = { workspace = true, optional = true }
+nom_locate = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+
+[features]
+default=["idl"]
+idl = [
+    "miette",
+    "nom",
+    "nom-greedyerror",
+    "nom-supreme",
+    "nom_locate",
+    "thiserror",
+]
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+divan = "0.1.4"
+rstest = "0.18.2"
+
+[[bench]]
+name = "client-clusters"
+harness = false
+
+[[bench]]
+name = "client-clusters-criterion"
+harness = false
