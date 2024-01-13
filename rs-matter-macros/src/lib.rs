@@ -15,13 +15,11 @@ use std::collections::HashSet;
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use std::fs;
-use std::path::Path;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Group, Ident, Punct, Span};
 use quote::{format_ident, quote};
-use rs_matter_macros_impl::server_side_cluster_generate;
+use rs_matter_macros_impl::{server_side_cluster_generate, CSA_STANDARD_CLUSTERS_IDL};
 use syn::parse::Parse;
 use syn::Lit::{Int, Str};
 use syn::NestedMeta::{Lit, Meta};
@@ -476,9 +474,6 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
 
 #[derive(Debug)]
 struct MatterIdlImportArgs {
-    // Path to the file to load
-    path: String,
-
     // What clusters to import. Non-empty list if
     // a clusters argument was given
     clusters: Option<HashSet<String>>,
@@ -486,20 +481,12 @@ struct MatterIdlImportArgs {
 
 impl Parse for MatterIdlImportArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        // Path is mandatory and MUST be a literal string
-        let path: syn::LitStr = input.parse()?;
-
         let clusters = if !input.is_empty() {
-            // second argument is "clusters = [....]"
+            // Argument is "clusters = [....]"
             //
             // Token stream looks like:
             //
             // TokenStream [
-            //     Punct {
-            //         ch: ',',
-            //         spacing: Alone,
-            //         span: #0 bytes(224039..224040),
-            //     },
             //     Ident {
             //         ident: "clusters",
             //         span: #0 bytes(224041..224049),
@@ -523,7 +510,6 @@ impl Parse for MatterIdlImportArgs {
             //     },
             //  ]
 
-            assert_eq!(input.parse::<Punct>()?.as_char(), ',');
             assert_eq!(input.parse::<Ident>()?.to_string(), "clusters");
             assert_eq!(input.parse::<Punct>()?.as_char(), '=');
 
@@ -554,10 +540,7 @@ impl Parse for MatterIdlImportArgs {
             }
         }
 
-        Ok(MatterIdlImportArgs {
-            path: path.value(),
-            clusters,
-        })
+        Ok(MatterIdlImportArgs { clusters })
     }
 }
 
@@ -575,17 +558,7 @@ impl Parse for MatterIdlImportArgs {
 pub fn idl_import(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as MatterIdlImportArgs);
 
-    let joined = Path::new(env!("RS_MATTER_IDL_DIR")).join(input.path.clone());
-    let path = joined.as_path();
-
-    if !path.exists() {
-        panic!("{:?} does not exist", path);
-    }
-
-    let idl_text = fs::read_to_string(path).unwrap();
-    let idl_span: &str = &idl_text;
-
-    let idl = rs_matter_data_model::idl::Idl::parse(idl_span.into()).unwrap();
+    let idl = rs_matter_data_model::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
 
     let streams = idl
         .clusters
