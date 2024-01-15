@@ -3,6 +3,8 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 use rs_matter_data_model::Cluster;
 
+pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-clusters.matter");
+
 pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
     let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
