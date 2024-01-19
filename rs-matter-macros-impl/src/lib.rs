@@ -18,8 +18,7 @@ pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-cluster
 /// assert_eq!(idl_id_to_constant_name("ThisIsATest"), "THIS_IS_A_TEST");
 /// ```
 pub fn idl_id_to_constant_name(s: &str) -> String {
-    let actual = s.strip_prefix('k').unwrap_or(s);
-    actual.to_case(Case::UpperSnake)
+    s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake)
 }
 
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
