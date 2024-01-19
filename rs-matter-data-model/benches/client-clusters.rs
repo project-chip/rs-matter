@@ -11,7 +11,7 @@ fn main() {
 #[divan::bench]
 fn parse_client_clusters() {
     if let Err(e) = Idl::parse(black_box(
-        include_str!("../../idl/controller-clusters.matter").into(),
+        include_str!("../../rs-matter-macros-impl/src/idl/controller-clusters.matter").into(),
     )) {
         let mut buf = String::new();
         GraphicalReportHandler::new()
