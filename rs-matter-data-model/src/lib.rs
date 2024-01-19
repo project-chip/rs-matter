@@ -3,6 +3,8 @@ pub mod idl;
 
 pub mod endpoint_composition;
 
+pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-clusters.matter");
+
 /// How mature/usable a member of an API is
 ///
 /// Most things should be stable, however while spec is developed
