@@ -3,8 +3,6 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 use rs_matter_data_model::{Bitmap, Cluster, Enum};
 
-pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-clusters.matter");
-
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
 /// constants based on rust guidelines
 ///
