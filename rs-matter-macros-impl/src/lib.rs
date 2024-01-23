@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
-use rs_matter_data_model::{Bitmap, Cluster, Enum};
+use rs_matter_data_model::{Bitmap, Cluster, DataType, Enum, Struct, StructField};
 
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
 /// constants based on rust guidelines
@@ -17,6 +17,21 @@ use rs_matter_data_model::{Bitmap, Cluster, Enum};
 /// ```
 pub fn idl_id_to_constant_name(s: &str) -> String {
     s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake)
+}
+
+/// Converts a idl identifier (like `kFoo`) into a name suitable for
+/// constants based on rust guidelines
+///
+/// Examples:
+///
+/// ```
+/// use rs_matter_macros_impl::idl_field_name_to_rs_name;
+///
+/// assert_eq!(idl_field_name_to_rs_name("test"), "test");
+/// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "another_test");
+/// ```
+pub fn idl_field_name_to_rs_name(s: &str) -> String {
+    s.to_case(Case::Snake)
 }
 
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
@@ -89,6 +104,146 @@ fn enum_definition(e: &Enum) -> TokenStream {
     )
 }
 
+fn field_type(f: &DataType) -> TokenStream {
+    if f.is_list {
+        // TODO: this needs implementation
+        panic!("Code generation of LIST structure field support not yet implemented.");
+    }
+
+    // NOTE: f.max_length not used
+
+    match f.name.as_str() {
+        "enum8" | "int8u" | "bitmap8" => quote!(u8),
+        "enum16" | "int16u" | "bitmap16" => quote!(u16),
+        "int32u" | "bitmap32" => quote!(u32),
+        "int64u" | "bitmap64" => quote!(u64),
+        "int8s" => quote!(i8),
+        "int16s" => quote!(i16),
+        "int32s" => quote!(i32),
+        "int64s" => quote!(i64),
+        "boolean" => quote!(bool),
+
+        // Spec section 7.19.2 - derived data types
+        "percent" => quote!(u8),
+        "percent100ths" => quote!(u16),
+        "epoch_us" => quote!(u64),
+        "epoch_s" => quote!(u32),
+        "utc" => quote!(u32), // deprecated in the spec
+        "posix_ms" => quote!(u64),
+        "systime_us" => quote!(u64),
+        "systime_ms" => quote!(u64),
+        "elapsed_s" => quote!(u32),
+        "temperature" => quote!(i16),
+        "group_id" => quote!(u16),
+        "endpoint_no" => quote!(u16),
+        "vendor_id" => quote!(u16),
+        "devtype_id" => quote!(u32),
+        "fabric_id" => quote!(u64),
+        "fabric_idx" => quote!(u8),
+        "cluster_id" => quote!(u32),
+        "attrib_id" => quote!(u32),
+        "field_id" => quote!(u32),
+        "event_id" => quote!(u32),
+        "command_id" => quote!(u32),
+        "action_id" => quote!(u8),
+        "trans_id" => quote!(u32),
+        "node_id" => quote!(u64),
+        "entry_idx" => quote!(u16),
+        "data_ver" => quote!(u32),
+        "event_no" => quote!(u64),
+        "namespace" => quote!(u8),
+        "tag" => quote!(u8),
+
+        // Several structs and unsupported bits.
+        // TODO: at least strings should be supported
+        //       strings should be UtfStr
+        //       octet_string should be OctetStr
+        //
+        // However if we use strings, we should propagate a lifetime ('a ?) to top level
+        "char_string" | "long_char_string" | "long_octet_string" | "octet_string" | "ipadr"
+        | "ipv4adr" | "ipv6adr" | "ipv6pre" | "hwadr" | "semtag" | "tod" | "date" => {
+            panic!("Unsupported field type {}", f.name)
+        }
+
+        // Assume anything else is some struct/enum/bitmap and report as-is
+        other => {
+            let ident = Ident::new(other, Span::call_site());
+            quote!(#ident)
+        }
+    }
+}
+
+fn struct_field_definition(f: &StructField) -> TokenStream {
+    if f.is_optional {
+        // TODO: this needs implementation
+        panic!("Code generation of OPTIONAL structure field support not yet implemented.");
+    }
+
+    if f.is_nullable {
+        // TODO: this needs implementation
+        panic!("Code generation of NULLABLE structure field support not yet implemented.");
+    }
+
+    // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
+    // fabric_sensitive seems to be specific to fabric_scoped structs
+
+    let doc_comment = match f.maturity {
+        rs_matter_data_model::ApiMaturity::Provisional => quote!(#[doc="provisional"]),
+        rs_matter_data_model::ApiMaturity::Internal => quote!(#[doc="internal"]),
+        rs_matter_data_model::ApiMaturity::Deprecated => quote!(#[doc="deprecated"]),
+        _ => quote!(),
+    };
+
+    let _code = Literal::u8_unsuffixed(f.field.code as u8);
+    let field_type = field_type(&f.field.data_type);
+    let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+
+    quote!(
+      #doc_comment
+      // #[tagval(#code)] - TODO: add this once we support to/from TLV
+      #name: #field_type
+    )
+}
+
+/// Creates the token stream corresponding to a structure
+/// definition.
+///
+/// Provides the raw `struct Foo { ... }` declaration.
+fn struct_definition(s: &Struct) -> TokenStream {
+    // NOTE: s.is_fabric_scoped not directly handled as the IDL
+    //       will have fabric_idx with ID 254 automatically added.
+
+    let name = Ident::new(&s.id, Span::call_site());
+
+    // TODO:
+    //  - add handling for array types (including no_std support), including:
+    //    string, octet_string, list (of various things like integers or structs or enums)
+    //  - add optional support
+    //  - add nullable support
+    //
+    // Complex example:
+    //
+    //    struct Complex {
+    //      octet_string<32> networkID = 0;
+    //      boolean connected = 1;
+    //      optional nullable octet_string<20> networkIdentifier = 2;
+    //      group_id groupList[] = 3;
+    //      nullable int8u capacity = 4;
+    //    }
+
+    // For now fields are assumed to be "simple" types as this allows passing on-off cluster
+    // at least
+
+    let fields = s.fields.iter().map(struct_field_definition);
+
+    quote!(
+        #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+        pub struct #name {
+           #(#fields),*
+        }
+    )
+}
+
 pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
     let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
@@ -106,6 +261,7 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
 
     let bitmap_declarations = cluster.bitmaps.iter().map(bitmap_definition);
     let enum_declarations = cluster.enums.iter().map(enum_definition);
+    let struct_declarations = cluster.structs.iter().map(struct_definition);
 
     quote!(
         mod #cluster_module_name {
@@ -114,6 +270,8 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
             #(#bitmap_declarations)*
 
             #(#enum_declarations)*
+
+            #(#struct_declarations)*
 
             #[derive(strum::FromRepr, strum::EnumDiscriminants)]
             #[repr(u32)]
@@ -138,6 +296,75 @@ mod tests {
 
     fn get_cluster_named<'a>(idl: &'a Idl, name: &str) -> Option<&'a Cluster> {
         idl.clusters.iter().find(|&cluster| cluster.id == name)
+    }
+
+    #[test]
+    fn struct_generation_works() {
+        let idl = parse_idl(
+            "
+              cluster TestForStructs = 1 {
+
+                // a somewhat complex struct
+                struct NetworkInfoStruct {
+                  boolean connected = 1;
+                }
+
+                // Some varying requests
+                request struct IdentifyRequest {
+                  int16u identifyTime = 0;
+                }
+
+                request struct SomeRequest {
+                  group_id group = 0;
+                }
+
+                // Some responses
+                response struct TestResponse = 0 {
+                  int8u capacity = 0;
+                }
+
+                response struct AnotherResponse = 1 {
+                  enum8 status = 0;
+                  group_id groupID = 12;
+                }
+              }
+            ",
+        );
+
+        let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
+
+        let defs: TokenStream = cluster.structs.iter().map(struct_definition).collect();
+
+        assert_tokenstreams_eq!(
+            &defs,
+            &quote!(
+                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                pub struct NetworkInfoStruct {
+                    connected: bool,
+                }
+
+                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                pub struct IdentifyRequest {
+                    identify_time: u16,
+                }
+
+                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                pub struct SomeRequest {
+                    group: u16,
+                }
+
+                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                pub struct TestResponse {
+                    capacity: u8,
+                }
+
+                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                pub struct AnotherResponse {
+                    status: u8,
+                    group_id: u16,
+                }
+            )
+        );
     }
 
     #[test]
@@ -265,6 +492,19 @@ mod tests {
                         Off = 0,
                         On = 1,
                         Toggle = 2,
+                    }
+
+                    #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                    pub struct OffWithEffectRequest {
+                        effect_identifier: EffectIdentifierEnum,
+                        effect_variant: u8,
+                    }
+
+                    #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                    pub struct OnWithTimedOffRequest {
+                        on_off_control: OnOffControlBitmap,
+                        on_time: u16,
+                        off_wait_time: u16,
                     }
 
                     #[derive(strum::FromRepr, strum::EnumDiscriminants)]

@@ -250,7 +250,7 @@ fn gen_totlv_for_enum(
 /// Additionally, structure members can use the tagval attribute to
 /// define a specific tag to be used
 /// For example:
-///  #[argval(22)]
+///  #[tagval(22)]
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
@@ -443,7 +443,7 @@ fn gen_fromtlv_for_enum(
 /// Additionally, structure members can use the tagval attribute to
 /// define a specific tag to be used
 /// For example:
-///  #[argval(22)]
+///  #[tagval(22)]
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
