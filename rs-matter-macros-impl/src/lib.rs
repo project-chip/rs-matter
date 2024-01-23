@@ -1,7 +1,93 @@
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
-use rs_matter_data_model::Cluster;
+use rs_matter_data_model::{Bitmap, Cluster, Enum};
+
+/// Converts a idl identifier (like `kFoo`) into a name suitable for
+/// constants based on rust guidelines
+///
+/// Examples:
+///
+/// ```
+/// use rs_matter_macros_impl::idl_id_to_constant_name;
+///
+/// assert_eq!(idl_id_to_constant_name("kAbc"), "ABC");
+/// assert_eq!(idl_id_to_constant_name("kAbcXyz"), "ABC_XYZ");
+/// assert_eq!(idl_id_to_constant_name("ThisIsATest"), "THIS_IS_A_TEST");
+/// ```
+pub fn idl_id_to_constant_name(s: &str) -> String {
+    s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake)
+}
+
+/// Converts a idl identifier (like `kFoo`) into a name suitable for
+/// enum names
+///
+/// Examples:
+///
+/// ```
+/// use rs_matter_macros_impl::idl_id_to_enum_name;
+///
+/// assert_eq!(idl_id_to_enum_name("kAbc"), "Abc");
+/// assert_eq!(idl_id_to_enum_name("kAbcXyz"), "AbcXyz");
+/// assert_eq!(idl_id_to_enum_name("ThisIsATest"), "ThisIsATest");
+/// ```
+pub fn idl_id_to_enum_name(s: &str) -> String {
+    s.strip_prefix('k').unwrap_or(s).into()
+}
+
+/// Creates the token stream corresponding to a bitmap definition.
+fn bitmap_definition(b: &Bitmap) -> TokenStream {
+    let base_type = match b.base_type.as_ref() {
+        "bitmap8" => quote!(u8),
+        "bitmap16" => quote!(u16),
+        "bitmap32" => quote!(u32),
+        "bitmap64" => quote!(u64),
+        other => panic!("Unknown bitmap base type {}", other),
+    };
+    let name = Ident::new(&b.id, Span::call_site());
+
+    let items = b.entries.iter().map(|c| {
+        let constant_name = Ident::new(&idl_id_to_constant_name(&c.id), Span::call_site());
+        let constant_value = Literal::i64_unsuffixed(c.code as i64);
+        quote!(
+          const #constant_name = #constant_value;
+        )
+    });
+
+    quote!(bitflags::bitflags! {
+      pub struct #name : #base_type {
+        #(#items)*
+      }
+    })
+}
+
+/// Creates the token stream corresponding to an enum definition.
+///
+/// Essentially `enum Foo { kValue.... = ...}`
+fn enum_definition(e: &Enum) -> TokenStream {
+    let base_type = match e.base_type.as_ref() {
+        "enum8" => quote!(u8),
+        "enum16" => quote!(u16),
+        other => panic!("Unknown enumeration base type {}", other),
+    };
+    let name = Ident::new(&e.id, Span::call_site());
+
+    let items = e.entries.iter().map(|c| {
+        let constant_name = Ident::new(&idl_id_to_enum_name(&c.id), Span::call_site());
+        let constant_value = Literal::i64_unsuffixed(c.code as i64);
+        quote!(
+          #constant_name = #constant_value
+        )
+    });
+
+    quote!(
+      #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+      #[repr(#base_type)]
+      pub enum #name {
+        #(#items),*
+      }
+    )
+}
 
 pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
     let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
@@ -18,10 +104,16 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
 
     let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
 
+    let bitmap_declarations = cluster.bitmaps.iter().map(bitmap_definition);
+    let enum_declarations = cluster.enums.iter().map(enum_definition);
+
     quote!(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
 
+            #(#bitmap_declarations)*
+
+            #(#enum_declarations)*
 
             #[derive(strum::FromRepr, strum::EnumDiscriminants)]
             #[repr(u32)]
@@ -131,6 +223,49 @@ mod tests {
             &quote!(
                 mod on_off {
                     pub const ID: u32 = 6;
+
+                    bitflags::bitflags! {
+                      pub struct Feature : u32 {
+                        const LIGHTING = 1;
+                        const DEAD_FRONT_BEHAVIOR = 2;
+                        const OFF_ONLY = 4;
+                      }
+                    }
+
+                    bitflags::bitflags! {
+                      pub struct OnOffControlBitmap : u8 {
+                        const ACCEPT_ONLY_WHEN_ON = 1;
+                      }
+                    }
+
+                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[repr(u8)]
+                    pub enum DelayedAllOffEffectVariantEnum {
+                        DelayedOffFastFade = 0,
+                        NoFade = 1,
+                        DelayedOffSlowFade = 2,
+                    }
+
+                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[repr(u8)]
+                    pub enum DyingLightEffectVariantEnum {
+                        DyingLightFadeOff = 0,
+                    }
+
+                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[repr(u8)]
+                    pub enum EffectIdentifierEnum {
+                        DelayedAllOff = 0,
+                        DyingLight = 1,
+                    }
+
+                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[repr(u8)]
+                    pub enum StartUpOnOffEnum {
+                        Off = 0,
+                        On = 1,
+                        Toggle = 2,
+                    }
 
                     #[derive(strum::FromRepr, strum::EnumDiscriminants)]
                     #[repr(u32)]
