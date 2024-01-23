@@ -41,6 +41,9 @@ jobs:
       - name: Build
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}}
 
+      - name: Benchmark
+        run: cargo bench --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}}
+
       - name: Test
         if: matrix.features == 'os'
         run: cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}}
