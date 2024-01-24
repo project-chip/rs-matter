@@ -26,7 +26,7 @@ use syn::Lit::{Int, Str};
 use syn::NestedMeta::{Lit, Meta};
 use syn::{parse_macro_input, DeriveInput, Lifetime};
 use syn::{
-    Meta::{List, NameValue},
+    Meta::{List, NameValue, Path},
     MetaList, MetaNameValue, Type,
 };
 
@@ -49,63 +49,91 @@ impl Default for TlvArgs {
 }
 
 fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
-    let mut tlvargs: TlvArgs = Default::default();
+    let meta = match ast.attrs.first() {
+        None => return TlvArgs::default(),
+        Some(value) => value.parse_meta().unwrap(),
+    };
 
-    if !ast.attrs.is_empty() {
-        if let List(MetaList {
+    let nested = match meta {
+        List(MetaList {
             path,
             paren_token: _,
             nested,
-        }) = ast.attrs[0].parse_meta().unwrap()
-        {
-            if path.is_ident("tlvargs") {
-                for a in nested {
-                    if let Meta(NameValue(MetaNameValue {
-                        path: key_path,
-                        eq_token: _,
-                        lit: key_val,
-                    })) = a
-                    {
-                        if key_path.is_ident("start") {
-                            if let Int(litint) = key_val {
-                                tlvargs.start = litint.base10_parse::<u8>().unwrap();
-                            }
-                        } else if key_path.is_ident("lifetime") {
-                            if let Str(litstr) = key_val {
-                                tlvargs.lifetime =
-                                    Lifetime::new(&litstr.value(), Span::call_site());
-                            }
-                        } else if key_path.is_ident("datatype") {
-                            if let Str(litstr) = key_val {
-                                tlvargs.datatype = litstr.value();
-                            }
-                        } else if key_path.is_ident("unordered") {
-                            tlvargs.unordered = true;
-                        }
-                    }
+        }) if path.is_ident("tlvargs") => nested,
+        _ => return TlvArgs::default(),
+    };
+
+    let mut tlvargs: TlvArgs = Default::default();
+    for a in nested {
+        let (key, value) = match a {
+            Meta(NameValue(MetaNameValue {
+                path,
+                eq_token: _,
+                lit,
+            })) if path.is_ident("start") => ("start", Some(lit)),
+            Meta(NameValue(MetaNameValue {
+                path,
+                eq_token: _,
+                lit,
+            })) if path.is_ident("lifetime") => ("lifetime", Some(lit)),
+            Meta(NameValue(MetaNameValue {
+                path,
+                eq_token: _,
+                lit,
+            })) if path.is_ident("datatype") => ("datatype", Some(lit)),
+            Meta(Path(syn::Path {
+                leading_colon: _,
+                segments,
+            })) if segments
+                .first()
+                .map(|p| p.ident == "unordered")
+                .unwrap_or(false) =>
+            {
+                ("unordered", None)
+            }
+            _ => panic!("Unknown entry for tlvargs: {:?}", a),
+        };
+
+        match key {
+            "start" => {
+                if let Int(litint) = value.unwrap() {
+                    tlvargs.start = litint.base10_parse::<u8>().unwrap()
                 }
             }
+            "lifetime" => {
+                if let Str(litstr) = value.unwrap() {
+                    tlvargs.lifetime = Lifetime::new(&litstr.value(), Span::call_site());
+                }
+            }
+            "datatype" => {
+                if let Str(litstr) = value.unwrap() {
+                    tlvargs.datatype = litstr.value();
+                }
+            }
+            "unordered" => tlvargs.unordered = true,
+            _ => unreachable!(),
         }
     }
     tlvargs
 }
 
 fn parse_tag_val(field: &syn::Field) -> Option<u8> {
-    if !field.attrs.is_empty() {
-        if let List(MetaList {
+    let meta = match field.attrs.first() {
+        None => return None,
+        Some(value) => value.parse_meta().unwrap(),
+    };
+
+    let nested = match meta {
+        List(MetaList {
             path,
             paren_token: _,
             nested,
-        }) = field.attrs[0].parse_meta().unwrap()
-        {
-            if path.is_ident("tagval") {
-                for a in nested {
-                    if let Lit(Int(litint)) = a {
-                        return Some(litint.base10_parse::<u8>().unwrap());
-                    }
-                }
-            }
-        }
+        }) if path.is_ident("tagval") => nested,
+        _ => return None,
+    };
+
+    if let Some(Lit(Int(litint))) = nested.into_iter().next() {
+        return Some(litint.base10_parse::<u8>().unwrap());
     }
     None
 }
