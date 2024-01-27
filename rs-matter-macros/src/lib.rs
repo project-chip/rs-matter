@@ -21,14 +21,9 @@ use proc_macro2::{Group, Ident, Punct, Span};
 use quote::{format_ident, quote};
 use rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL;
 use rs_matter_macros_impl::server_side_cluster_generate;
-use syn::parse::Parse;
-use syn::Lit::{Int, Str};
-use syn::NestedMeta::{Lit, Meta};
-use syn::{parse_macro_input, DeriveInput, Lifetime};
-use syn::{
-    Meta::{List, NameValue, Path},
-    MetaList, MetaNameValue, Type,
-};
+use syn::meta::ParseNestedMeta;
+use syn::parse::{Parse, ParseStream};
+use syn::{parse_macro_input, DeriveInput, Lifetime, LitInt, LitStr, Type};
 
 struct TlvArgs {
     start: u8,
@@ -48,94 +43,51 @@ impl Default for TlvArgs {
     }
 }
 
-fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
-    let meta = match ast.attrs.first() {
-        None => return TlvArgs::default(),
-        Some(value) => value.parse_meta().unwrap(),
-    };
-
-    let nested = match meta {
-        List(MetaList {
-            path,
-            paren_token: _,
-            nested,
-        }) if path.is_ident("tlvargs") => nested,
-        _ => return TlvArgs::default(),
-    };
-
-    let mut tlvargs: TlvArgs = Default::default();
-    for a in nested {
-        let (key, value) = match a {
-            Meta(NameValue(MetaNameValue {
-                path,
-                eq_token: _,
-                lit,
-            })) if path.is_ident("start") => ("start", Some(lit)),
-            Meta(NameValue(MetaNameValue {
-                path,
-                eq_token: _,
-                lit,
-            })) if path.is_ident("lifetime") => ("lifetime", Some(lit)),
-            Meta(NameValue(MetaNameValue {
-                path,
-                eq_token: _,
-                lit,
-            })) if path.is_ident("datatype") => ("datatype", Some(lit)),
-            Meta(Path(syn::Path {
-                leading_colon: _,
-                segments,
-            })) if segments
-                .first()
-                .map(|p| p.ident == "unordered")
-                .unwrap_or(false) =>
-            {
-                ("unordered", None)
-            }
-            _ => panic!("Unknown entry for tlvargs: {:?}", a),
-        };
-
-        match key {
-            "start" => {
-                if let Int(litint) = value.unwrap() {
-                    tlvargs.start = litint.base10_parse::<u8>().unwrap()
-                }
-            }
-            "lifetime" => {
-                if let Str(litstr) = value.unwrap() {
-                    tlvargs.lifetime = Lifetime::new(&litstr.value(), Span::call_site());
-                }
-            }
-            "datatype" => {
-                if let Str(litstr) = value.unwrap() {
-                    tlvargs.datatype = litstr.value();
-                }
-            }
-            "unordered" => tlvargs.unordered = true,
-            _ => unreachable!(),
+impl TlvArgs {
+    /// Update individual state based on data from nested meta information.
+    ///
+    /// Can be used to incrementally parse and update a TlvArgs structure.
+    fn parse(&mut self, meta: ParseNestedMeta) -> syn::Result<()> {
+        if meta.path.is_ident("start") {
+            self.start = meta.value()?.parse::<LitInt>()?.base10_parse()?;
+        } else if meta.path.is_ident("lifetime") {
+            self.lifetime =
+                Lifetime::new(&meta.value()?.parse::<LitStr>()?.value(), Span::call_site());
+        } else if meta.path.is_ident("datatype") {
+            self.datatype = meta.value()?.parse::<LitStr>()?.value();
+        } else if meta.path.is_ident("unordered") {
+            assert!(meta.input.is_empty());
+            self.unordered = true;
+        } else {
+            return Err(meta.error(format!("unsupported attribute: {:?}", meta.path)));
         }
+
+        Ok(())
     }
+}
+
+fn parse_tlvargs(ast: &DeriveInput) -> TlvArgs {
+    let mut tlvargs = TlvArgs::default();
+
+    for attr in ast.attrs.iter().filter(|a| a.path().is_ident("tlvargs")) {
+        attr.parse_nested_meta(|meta| tlvargs.parse(meta)).unwrap();
+    }
+
     tlvargs
 }
 
 fn parse_tag_val(field: &syn::Field) -> Option<u8> {
-    let meta = match field.attrs.first() {
-        None => return None,
-        Some(value) => value.parse_meta().unwrap(),
-    };
-
-    let nested = match meta {
-        List(MetaList {
-            path,
-            paren_token: _,
-            nested,
-        }) if path.is_ident("tagval") => nested,
-        _ => return None,
-    };
-
-    if let Some(Lit(Int(litint))) = nested.into_iter().next() {
-        return Some(litint.base10_parse::<u8>().unwrap());
-    }
-    None
+    field
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("tagval"))
+        .map(|attr| {
+            attr.parse_args_with(|parser: ParseStream| {
+                parser.parse::<LitInt>()?.base10_parse::<u8>()
+            })
+            .unwrap()
+        })
+        .next()
 }
 
 fn get_crate_name() -> String {
