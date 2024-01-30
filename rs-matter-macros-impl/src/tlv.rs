@@ -6,7 +6,7 @@ use syn::{DeriveInput, Lifetime, LitInt, LitStr, Type};
 
 #[derive(PartialEq, Debug)]
 struct TlvArgs {
-    crate_name: String,
+    rs_matter_crate: String,
     start: u8,
     datatype: String,
     unordered: bool,
@@ -17,7 +17,7 @@ impl Default for TlvArgs {
     fn default() -> Self {
         Self {
             start: 0,
-            crate_name: "".to_string(),
+            rs_matter_crate: "".to_string(),
             datatype: "struct".to_string(),
             unordered: false,
             lifetime: Lifetime::new("'_", Span::call_site()),
@@ -48,9 +48,9 @@ impl TlvArgs {
     }
 }
 
-fn parse_tlvargs(ast: &DeriveInput, crate_name: String) -> TlvArgs {
+fn parse_tlvargs(ast: &DeriveInput, rs_matter_crate: String) -> TlvArgs {
     let mut tlvargs = TlvArgs {
-        crate_name,
+        rs_matter_crate,
         ..Default::default()
     };
 
@@ -154,7 +154,7 @@ fn gen_totlv_for_enum(
         tag_start += 1;
     }
 
-    let krate = Ident::new(&tlvargs.crate_name, Span::call_site());
+    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
 
     quote! {
         impl #generics #krate::tlv::ToTLV for #enum_name #generics {
@@ -202,10 +202,10 @@ fn gen_totlv_for_enum(
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
-pub fn derive_totlv(ast: DeriveInput, crate_name: String) -> TokenStream {
+pub fn derive_totlv(ast: DeriveInput, rs_matter_crate: String) -> TokenStream {
     let name = &ast.ident;
 
-    let tlvargs = parse_tlvargs(&ast, crate_name);
+    let tlvargs = parse_tlvargs(&ast, rs_matter_crate);
     let generics = ast.generics;
 
     if let syn::Data::Struct(syn::DataStruct {
@@ -260,7 +260,7 @@ fn gen_fromtlv_for_struct(
         }
     }
 
-    let krate = Ident::new(&tlvargs.crate_name, Span::call_site());
+    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
 
     // Currently we don't use find_tag() because the tags come in sequential
     // order. If ever the tags start coming out of order, we can use find_tag()
@@ -338,7 +338,7 @@ fn gen_fromtlv_for_enum(
         tag_start += 1;
     }
 
-    let krate = Ident::new(&tlvargs.crate_name, Span::call_site());
+    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
 
     quote! {
            impl #generics #krate::tlv::FromTLV <#lifetime> for #enum_name #generics {
@@ -387,10 +387,10 @@ fn gen_fromtlv_for_enum(
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
-pub fn derive_fromtlv(ast: DeriveInput, crate_name: String) -> TokenStream {
+pub fn derive_fromtlv(ast: DeriveInput, rs_matter_crate: String) -> TokenStream {
     let name = &ast.ident;
 
-    let tlvargs = parse_tlvargs(&ast, crate_name);
+    let tlvargs = parse_tlvargs(&ast, rs_matter_crate);
 
     let generics = ast.generics;
 
@@ -426,7 +426,7 @@ mod tests {
         assert_eq!(
             parse_tlvargs(&ast, "test".to_string()),
             TlvArgs {
-                crate_name: "test".to_string(),
+                rs_matter_crate: "test".to_string(),
                 datatype: "list".to_string(),
                 ..Default::default()
             }
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(
             parse_tlvargs(&ast, "crate".to_string()),
             TlvArgs {
-                crate_name: "crate".to_string(),
+                rs_matter_crate: "crate".to_string(),
                 unordered: true,
                 ..Default::default()
             }
@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(
             parse_tlvargs(&ast, "crate".to_string()),
             TlvArgs {
-                crate_name: "crate".to_string(),
+                rs_matter_crate: "crate".to_string(),
                 start: 123,
                 ..Default::default()
             }
@@ -479,7 +479,7 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_totlv(ast, "crate_name".to_string()),
+            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
                 impl ToTLV for TestS {
                   fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
@@ -512,23 +512,23 @@ mod tests {
         .unwrap();
 
         assert_tokenstreams_eq!(
-            &derive_totlv(ast, "crate_name".to_string()),
+            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
-                impl crate_name::tlv::ToTLV for TestEnum {
+                impl rs_matter_maybe_renamed::tlv::ToTLV for TestEnum {
                     fn to_tlv(
                         &self,
-                        tw: &mut crate_name::tlv::TLVWriter,
-                        tag_type: crate_name::tlv::TagType,
-                    ) -> Result<(), crate_name::error::Error> {
+                        tw: &mut rs_matter_maybe_renamed::tlv::TLVWriter,
+                        tag_type: rs_matter_maybe_renamed::tlv::TagType,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
                         let anchor = tw.get_tail();
                         if let Err(err) = (|| {
                             tw.start_struct(tag_type)?;
                             match self {
                                 Self::ValueA(c) => {
-                                    c.to_tlv(tw, crate_name::tlv::TagType::Context(0u8))?;
+                                    c.to_tlv(tw, rs_matter_maybe_renamed::tlv::TagType::Context(0u8))?;
                                 }
                                 Self::ValueB(c) => {
-                                    c.to_tlv(tw, crate_name::tlv::TagType::Context(1u8))?;
+                                    c.to_tlv(tw, rs_matter_maybe_renamed::tlv::TagType::Context(1u8))?;
                                 }
                           }
                           tw.end_container()
