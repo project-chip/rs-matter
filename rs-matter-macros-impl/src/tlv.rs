@@ -104,15 +104,17 @@ fn gen_totlv_for_struct(
         }
     }
 
+    let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
+
     quote! {
-        impl #generics ToTLV for #struct_name #generics {
-            fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
+        impl #generics #krate::tlv::ToTLV for #struct_name #generics {
+            fn to_tlv(&self, tw: &mut #krate::tlv::TLVWriter, tag_type: #krate::tlv::TagType) -> Result<(), Error> {
                 let anchor = tw.get_tail();
 
                 if let Err(err) = (|| {
                     tw. #datatype (tag_type)?;
                     #(
-                        self.#idents.to_tlv(tw, TagType::Context(#tags))?;
+                        self.#idents.to_tlv(tw, #krate::tlv::TagType::Context(#tags))?;
                     )*
                     tw.end_container()
                 })() {
@@ -481,13 +483,19 @@ mod tests {
         assert_tokenstreams_eq!(
             &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
-                impl ToTLV for TestS {
-                  fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
+                impl rs_matter_maybe_renamed::tlv::ToTLV for TestS {
+                  fn to_tlv(
+                      &self,
+                      tw: &mut rs_matter_maybe_renamed::tlv::TLVWriter,
+                      tag_type: rs_matter_maybe_renamed::tlv::TagType
+                    ) -> Result<(), Error> {
                       let anchor = tw.get_tail();
                       if let Err(err) = (|| {
                           tw.start_struct(tag_type)?;
-                          self.field1.to_tlv(tw, TagType::Context(0u8))?;
-                          self.field2.to_tlv(tw, TagType::Context(1u8))?;
+                          self.field1
+                              .to_tlv(tw, rs_matter_maybe_renamed::tlv::TagType::Context(0u8))?;
+                          self.field2
+                              .to_tlv(tw, rs_matter_maybe_renamed::tlv::TagType::Context(1u8))?;
                           tw.end_container()
                       })() {
                           tw.rewind_to(anchor);

@@ -18,7 +18,7 @@
 use crate::{
     crypto::{self, SYMM_KEY_LEN_BYTES},
     error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
+    tlv::{FromTLV, ToTLV},
 };
 
 type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
