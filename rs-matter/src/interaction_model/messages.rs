@@ -18,7 +18,7 @@
 use crate::{
     data_model::objects::{ClusterId, EndptId},
     error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
+    tlv::{FromTLV, ToTLV},
 };
 
 // A generic path with endpoint, clusters, and a leaf
@@ -69,7 +69,7 @@ pub mod msg {
     use crate::{
         error::Error,
         interaction_model::core::IMStatusCode,
-        tlv::{FromTLV, TLVArray, TLVWriter, TagType, ToTLV},
+        tlv::{FromTLV, TLVArray, ToTLV},
     };
 
     use super::ib::{

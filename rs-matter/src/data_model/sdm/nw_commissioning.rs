@@ -24,7 +24,7 @@ use crate::{
         Cluster, Dataver, Handler, NonBlockingHandler, Quality, ATTRIBUTE_LIST, FEATURE_MAP,
     },
     error::Error,
-    tlv::{OctetStr, TLVWriter, TagType, ToTLV},
+    tlv::{OctetStr, TagType, ToTLV},
     utils::rand::Rand,
 };
 

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 use crate::error::Error;
-use crate::tlv::{TLVWriter, TagType, ToTLV};
+use crate::tlv::ToTLV;
 
 mod attribute;
 pub use attribute::*;
