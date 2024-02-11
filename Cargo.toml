@@ -9,11 +9,6 @@ members = [
 
 exclude = ["examples/*", "tools/tlv"]
 
-# For compatibility with ESP IDF
-[patch.crates-io]
-polling = { git = "https://github.com/esp-rs-compat/polling" }
-socket2 = { git = "https://github.com/esp-rs-compat/socket2" }
-
 [profile.release]
 opt-level = 3
 

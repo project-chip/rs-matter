@@ -57,13 +57,6 @@ where
     }
 }
 
-#[cfg(all(feature = "std", target_os = "macos"))]
-pub use astro::MdnsService;
-#[cfg(all(feature = "std", target_os = "macos"))]
-pub use astro::MdnsUdpBuffers;
-
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-pub use builtin::MdnsRunBuffers;
 #[cfg(not(all(feature = "std", target_os = "macos")))]
 pub use builtin::MdnsService;
 
@@ -153,7 +146,7 @@ impl ServiceMode {
     }
 
     fn get_discriminator_str(discriminator: u16) -> heapless::String<5> {
-        discriminator.into()
+        discriminator.try_into().unwrap()
     }
 
     fn get_vp(vid: u16, pid: u16) -> heapless::String<11> {

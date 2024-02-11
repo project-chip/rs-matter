@@ -18,29 +18,8 @@ $ cargo build
 ### Building and running the example (Linux, MacOS X)
 
 ```
-$ cargo run --example onoff_light
+$ cargo run --example onoff_light --features async-io
 ```
-
-### Building the example (Espressif's ESP-IDF)
-
-* Install all build prerequisites described [here](https://github.com/esp-rs/esp-idf-template#prerequisites)
-* Build with the following command line:
-```
-export MCU=esp32; export CARGO_TARGET_XTENSA_ESP32_ESPIDF_LINKER=ldproxy; export RUSTFLAGS="-C default-linker-libraries"; export WIFI_SSID=ssid;export WIFI_PASS=pass; cargo build --example onoff_light --no-default-features --features esp-idf --target xtensa-esp32-espidf -Zbuild-std=std,panic_abort
-```
-* If you are building for a different Espressif MCU, change the `MCU` variable, the `xtensa-esp32-espidf` target and the name of the `CARGO_TARGET_<esp-idf-target-uppercase>_LINKER` variable to match your MCU and its Rust target. Available Espressif MCUs and targets are:
-  * esp32 / xtensa-esp32-espidf
-  * esp32s2 / xtensa-esp32s2-espidf
-  * esp32s3 / xtensa-esp32s3-espidf
-  * esp32c3 / riscv32imc-esp-espidf
-  * esp32c5 / riscv32imc-esp-espidf
-  * esp32c6 / riscv32imac-esp-espidf
-* Put in `WIFI_SSID` / `WIFI_PASS` the SSID & password for your wireless router
-* Flash using the `espflash` utility described in the build prerequsites' link above
-
-### Building the example (ESP32-XX baremetal or RP2040)
-
-Coming soon!
 
 ## Test
 

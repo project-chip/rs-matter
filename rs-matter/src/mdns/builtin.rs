@@ -1,19 +1,16 @@
 use core::{cell::RefCell, pin::pin};
 
-use domain::base::name::FromStrError;
-use domain::base::{octets::ParseError, ShortBuf};
 use embassy_futures::select::select;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
-use log::info;
+use log::{info, warn};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-use crate::transport::network::IpAddr;
 use crate::transport::network::{
-    Address, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6,
+    Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpBuffers, UdpReceive, UdpSend,
 };
-use crate::transport::pipe::{Chunk, Pipe};
 use crate::utils::select::{EitherUnwrap, Notification};
 
 use super::{
@@ -21,29 +18,13 @@ use super::{
     Service, ServiceMode,
 };
 
-const IP_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
-const IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
+pub const MDNS_SOCKET_BIND_ADDR: SocketAddr =
+    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, 0));
 
-const PORT: u16 = 5353;
+pub const MDNS_IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
+pub const MDNS_IPV4_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-pub struct MdnsRunBuffers {
-    udp: crate::transport::udp::UdpBuffers,
-    tx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_TX_BUF_SIZE]>,
-    rx_buf: core::mem::MaybeUninit<[u8; crate::transport::packet::MAX_RX_BUF_SIZE]>,
-}
-
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-impl MdnsRunBuffers {
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self {
-            udp: crate::transport::udp::UdpBuffers::new(),
-            tx_buf: core::mem::MaybeUninit::uninit(),
-            rx_buf: core::mem::MaybeUninit::uninit(),
-        }
-    }
-}
+pub const MDNS_PORT: u16 = 5353;
 
 pub struct MdnsService<'a> {
     host: Host<'a>,
@@ -93,7 +74,7 @@ impl<'a> MdnsService<'a> {
 
         services.retain(|(name, _)| name != service);
         services
-            .push((service.into(), mode))
+            .push((service.try_into().unwrap(), mode))
             .map_err(|_| ErrorCode::NoSpace)?;
 
         self.notification.signal(());
@@ -124,95 +105,30 @@ impl<'a> MdnsService<'a> {
         Ok(())
     }
 
-    #[cfg(any(feature = "std", feature = "embassy-net"))]
-    pub async fn run<D>(
+    pub async fn run<S, R>(
         &self,
-        stack: &crate::transport::network::NetworkStack<D>,
-        buffers: &mut MdnsRunBuffers,
+        send: S,
+        recv: R,
+        udp_buffers: &mut UdpBuffers,
     ) -> Result<(), Error>
     where
-        D: crate::transport::network::NetworkStackDriver,
+        S: UdpSend,
+        R: UdpReceive,
     {
-        let mut udp = crate::transport::udp::UdpListener::new(
-            stack,
-            crate::transport::network::SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), PORT),
-            &mut buffers.udp,
-        )
-        .await?;
+        let (send_buf, recv_buf) = udp_buffers.split();
 
-        // V6 multicast does not work with smoltcp yet (see https://github.com/smoltcp-rs/smoltcp/pull/602)
-        #[cfg(not(feature = "embassy-net"))]
-        if let Some(interface) = self.interface {
-            udp.join_multicast_v6(IPV6_BROADCAST_ADDR, interface)
-                .await?;
-        }
+        let send = Mutex::<NoopRawMutex, _>::new((send, send_buf));
 
-        udp.join_multicast_v4(
-            IP_BROADCAST_ADDR,
-            crate::transport::network::Ipv4Addr::from(self.host.ip),
-        )
-        .await?;
-
-        let tx_pipe = Pipe::new(unsafe { buffers.tx_buf.assume_init_mut() });
-        let rx_pipe = Pipe::new(unsafe { buffers.rx_buf.assume_init_mut() });
-
-        let tx_pipe = &tx_pipe;
-        let rx_pipe = &rx_pipe;
-        let udp = &udp;
-
-        let mut tx = pin!(async move {
-            loop {
-                {
-                    let mut data = tx_pipe.data.lock().await;
-
-                    if let Some(chunk) = data.chunk {
-                        udp.send(chunk.addr.unwrap_udp(), &data.buf[chunk.start..chunk.end])
-                            .await?;
-                        data.chunk = None;
-                        tx_pipe.data_consumed_notification.signal(());
-                    }
-                }
-
-                tx_pipe.data_supplied_notification.wait().await;
-            }
-        });
-
-        let mut rx = pin!(async move {
-            loop {
-                {
-                    let mut data = rx_pipe.data.lock().await;
-
-                    if data.chunk.is_none() {
-                        let (len, addr) = udp.recv(data.buf).await?;
-
-                        data.chunk = Some(Chunk {
-                            start: 0,
-                            end: len,
-                            addr: Address::Udp(addr),
-                        });
-                        rx_pipe.data_supplied_notification.signal(());
-                    }
-                }
-
-                rx_pipe.data_consumed_notification.wait().await;
-            }
-        });
-
-        let mut run = pin!(async move { self.run_piped(tx_pipe, rx_pipe).await });
-
-        embassy_futures::select::select3(&mut tx, &mut rx, &mut run)
-            .await
-            .unwrap()
-    }
-
-    pub async fn run_piped(&self, tx_pipe: &Pipe<'_>, rx_pipe: &Pipe<'_>) -> Result<(), Error> {
-        let mut broadcast = pin!(self.broadcast(tx_pipe));
-        let mut respond = pin!(self.respond(rx_pipe, tx_pipe));
+        let mut broadcast = pin!(self.broadcast(&send));
+        let mut respond = pin!(self.respond(recv, recv_buf, &send));
 
         select(&mut broadcast, &mut respond).await.unwrap()
     }
 
-    async fn broadcast(&self, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
+    async fn broadcast<S>(&self, send: &Mutex<impl RawMutex, (S, &mut [u8])>) -> Result<(), Error>
+    where
+        S: UdpSend,
+    {
         loop {
             select(
                 self.notification.wait(),
@@ -220,105 +136,72 @@ impl<'a> MdnsService<'a> {
             )
             .await;
 
-            for addr in [
-                Some(SocketAddr::V4(SocketAddrV4::new(IP_BROADCAST_ADDR, PORT))),
-                self.interface.map(|interface| {
-                    SocketAddr::V6(SocketAddrV6::new(IPV6_BROADCAST_ADDR, PORT, 0, interface))
-                }),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                loop {
-                    let sent = {
-                        let mut data = tx_pipe.data.lock().await;
+            for addr in core::iter::once(SocketAddr::V4(SocketAddrV4::new(
+                MDNS_IPV4_BROADCAST_ADDR,
+                MDNS_PORT,
+            )))
+            .chain(
+                self.interface
+                    .map(|interface| {
+                        SocketAddr::V6(SocketAddrV6::new(
+                            MDNS_IPV6_BROADCAST_ADDR,
+                            MDNS_PORT,
+                            0,
+                            interface,
+                        ))
+                    })
+                    .into_iter(),
+            ) {
+                let mut guard = send.lock().await;
+                let (send, send_buf) = &mut *guard;
 
-                        if data.chunk.is_none() {
-                            let len = self.host.broadcast(self, data.buf, 60)?;
+                let len = self.host.broadcast(self, send_buf, 60)?;
 
-                            if len > 0 {
-                                info!("Broadcasting mDNS entry to {addr}");
-
-                                data.chunk = Some(Chunk {
-                                    start: 0,
-                                    end: len,
-                                    addr: Address::Udp(addr),
-                                });
-
-                                tx_pipe.data_supplied_notification.signal(());
-                            }
-
-                            true
-                        } else {
-                            false
-                        }
-                    };
-
-                    if sent {
-                        break;
-                    } else {
-                        tx_pipe.data_consumed_notification.wait().await;
-                    }
+                if len > 0 {
+                    info!("Broadcasting mDNS entry to {addr}");
+                    send.send_to(&send_buf[..len], addr).await?;
                 }
             }
         }
     }
 
-    async fn respond(&self, rx_pipe: &Pipe<'_>, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
+    async fn respond<S, R>(
+        &self,
+        mut recv: R,
+        recv_buf: &mut [u8],
+        send: &Mutex<impl RawMutex, (S, &mut [u8])>,
+    ) -> Result<(), Error>
+    where
+        S: UdpSend,
+        R: UdpReceive,
+    {
         loop {
-            {
-                let mut rx_data = rx_pipe.data.lock().await;
+            let (len, addr) = recv.recv_from(recv_buf).await?;
 
-                if let Some(rx_chunk) = rx_data.chunk {
-                    let data = &rx_data.buf[rx_chunk.start..rx_chunk.end];
+            let mut guard = send.lock().await;
+            let (send, send_buf) = &mut *guard;
 
-                    loop {
-                        let sent = {
-                            let mut tx_data = tx_pipe.data.lock().await;
-
-                            if tx_data.chunk.is_none() {
-                                let len = self.host.respond(self, data, tx_data.buf, 60)?;
-
-                                if len > 0 {
-                                    info!("Replying to mDNS query from {}", rx_chunk.addr);
-
-                                    tx_data.chunk = Some(Chunk {
-                                        start: 0,
-                                        end: len,
-                                        addr: rx_chunk.addr,
-                                    });
-
-                                    tx_pipe.data_supplied_notification.signal(());
-                                }
-
-                                true
-                            } else {
-                                false
-                            }
-                        };
-
-                        if sent {
-                            break;
-                        } else {
-                            tx_pipe.data_consumed_notification.wait().await;
-                        }
+            let len = match self.host.respond(self, &recv_buf[..len], send_buf, 60) {
+                Ok(len) => len,
+                Err(err) => match err.code() {
+                    ErrorCode::MdnsError => {
+                        warn!("Got invalid message from {addr}, skipping");
+                        continue;
                     }
+                    other => Err(other)?,
+                },
+            };
 
-                    // info!("Got mDNS query");
+            if len > 0 {
+                info!("Replying to mDNS query from {}", addr);
 
-                    rx_data.chunk = None;
-                    rx_pipe.data_consumed_notification.signal(());
-                }
+                send.send_to(&send_buf[..len], addr).await?;
             }
-
-            rx_pipe.data_supplied_notification.wait().await;
         }
     }
 }
 
 impl<'a> Services for MdnsService<'a> {
-    type Error = crate::error::Error;
-
     fn for_each<F>(&self, callback: F) -> Result<(), Error>
     where
         F: FnMut(&Service) -> Result<(), Error>,
@@ -334,23 +217,5 @@ impl<'a> super::Mdns for MdnsService<'a> {
 
     fn remove(&self, service: &str) -> Result<(), Error> {
         MdnsService::remove(self, service)
-    }
-}
-
-impl From<ShortBuf> for Error {
-    fn from(_e: ShortBuf) -> Self {
-        Self::new(ErrorCode::NoSpace)
-    }
-}
-
-impl From<ParseError> for Error {
-    fn from(_e: ParseError) -> Self {
-        Self::new(ErrorCode::MdnsError)
-    }
-}
-
-impl From<FromStrError> for Error {
-    fn from(_e: FromStrError) -> Self {
-        Self::new(ErrorCode::MdnsError)
     }
 }
