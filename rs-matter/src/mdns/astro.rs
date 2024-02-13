@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use crate::{
     data_model::cluster_basic_information::BasicInfoConfig,
     error::{Error, ErrorCode},
-    transport::pipe::Pipe,
 };
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
 use log::info;
