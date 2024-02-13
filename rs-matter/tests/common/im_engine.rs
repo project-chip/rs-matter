@@ -20,6 +20,10 @@ use core::borrow::Borrow;
 use core::future::pending;
 use core::time::Duration;
 use embassy_futures::select::select3;
+use embassy_sync::{
+    blocking_mutex::raw::{NoopRawMutex, RawMutex},
+    zerocopy_channel::{Channel, Receiver, Sender},
+};
 use rs_matter::{
     acl::{AclEntry, AuthMode},
     data_model::{
@@ -49,11 +53,8 @@ use rs_matter::{
     tlv::{TLVWriter, TagType, ToTLV},
     transport::{
         core::PacketBuffers,
+        network::{Address, Ipv4Addr, SocketAddr, SocketAddrV4, UdpBuffers, UdpReceive, UdpSend},
         packet::{Packet, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
-        pipe::Pipe,
-    },
-    transport::{
-        network::Address,
         session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
     utils::select::{EitherUnwrap, Notification},
@@ -267,19 +268,11 @@ impl<'a> ImEngine<'a> {
             .clone_session(&clone_data)
             .unwrap();
 
-        let mut tx_pipe_buf = [0; MAX_RX_BUF_SIZE];
-        let mut rx_pipe_buf = [0; MAX_TX_BUF_SIZE];
+        let mut send_channel_buf = [heapless::Vec::new(); 1];
+        let mut recv_channel_buf = [heapless::Vec::new(); 1];
 
-        let mut tx_buf = [0; MAX_RX_BUF_SIZE];
-        let mut rx_buf = [0; MAX_TX_BUF_SIZE];
-
-        let tx_pipe = Pipe::new(&mut tx_buf);
-        let rx_pipe = Pipe::new(&mut rx_buf);
-
-        let tx_pipe = &tx_pipe;
-        let rx_pipe = &rx_pipe;
-        let tx_pipe_buf = &mut tx_pipe_buf;
-        let rx_pipe_buf = &mut rx_pipe_buf;
+        let mut send_channel = Channel::<NoopRawMutex, _>::new(&mut send_channel_buf);
+        let mut recv_channel = Channel::<NoopRawMutex, _>::new(&mut recv_channel_buf);
 
         let handler = &handler;
 
@@ -297,12 +290,19 @@ impl<'a> ImEngine<'a> {
         let mut buffers = PacketBuffers::new();
         let buffers = &mut buffers;
 
+        let (send, mut send_dest) = send_channel.split();
+        let (mut recv_dest, recv) = recv_channel.split();
+
+        let mut udp_buffers = UdpBuffers::new();
+        let udp_buffers = &mut udp_buffers;
+
         embassy_futures::block_on(async move {
             select3(
-                self.matter.run_piped(
+                self.matter.run(
+                    UdpSender(send),
+                    UdpReceiver(recv),
+                    udp_buffers,
                     buffers,
-                    tx_pipe,
-                    rx_pipe,
                     CommissioningData {
                         // TODO: Hard-coded for now
                         verifier: VerifierData::new_with_pw(123456, *self.matter.borrow()),
@@ -313,7 +313,7 @@ impl<'a> ImEngine<'a> {
                 async move {
                     let mut acknowledge = false;
                     for ip in input {
-                        Self::send(ip, tx_pipe_buf, rx_pipe, msg_ctr, acknowledge).await?;
+                        Self::send(ip, &mut recv_dest, msg_ctr, acknowledge).await?;
                         resp_notif.wait().await;
 
                         if let Some(delay) = ip.delay {
@@ -335,9 +335,9 @@ impl<'a> ImEngine<'a> {
                     out.clear();
 
                     while out.len() < input.len() {
-                        let (len, _) = tx_pipe.recv(rx_pipe_buf).await;
+                        let vec = send_dest.receive().await;
 
-                        let mut rx = Packet::new_rx(&mut rx_pipe_buf[..len]);
+                        let mut rx = Packet::new_rx(vec);
 
                         rx.plain_hdr_decode()?;
                         rx.proto_decode(IM_ENGINE_REMOTE_PEER_ID, Some(&[0u8; 16]))?;
@@ -355,6 +355,8 @@ impl<'a> ImEngine<'a> {
 
                             resp_notif.signal(());
                         }
+
+                        send_dest.receive_done();
                     }
 
                     Ok(())
@@ -369,12 +371,16 @@ impl<'a> ImEngine<'a> {
 
     async fn send(
         input: &ImInput<'_>,
-        tx_buf: &mut [u8],
-        rx_pipe: &Pipe<'_>,
+        sender: &mut Sender<'_, impl RawMutex, heapless::Vec<u8, MAX_RX_BUF_SIZE>>,
         msg_ctr: u32,
         acknowledge: bool,
     ) -> Result<(), Error> {
-        let mut tx = Packet::new_tx(tx_buf);
+        let vec = sender.send().await;
+
+        vec.clear();
+        vec.extend(core::iter::repeat(0).take(MAX_RX_BUF_SIZE));
+
+        let mut tx = Packet::new_tx(vec);
 
         tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
         tx.set_proto_opcode(input.action as u8);
@@ -399,8 +405,52 @@ impl<'a> ImEngine<'a> {
             Some(&[0u8; 16]),
         )?;
 
-        rx_pipe.send(Address::default(), tx.as_slice()).await;
+        let start = tx.get_writebuf()?.get_start();
+        let end = tx.get_writebuf()?.get_tail();
+
+        if start > 0 {
+            for offset in 0..(end - start) {
+                vec[offset] = vec[start + offset];
+            }
+        }
+
+        vec.truncate(end - start);
+
+        sender.send_done();
 
         Ok(())
+    }
+}
+
+struct UdpSender<'a>(Sender<'a, NoopRawMutex, heapless::Vec<u8, MAX_TX_BUF_SIZE>>);
+
+impl<'a> UdpSend for UdpSender<'a> {
+    async fn send_to(&mut self, data: &[u8], _addr: SocketAddr) -> Result<(), Error> {
+        let vec = self.0.send().await;
+
+        vec.clear();
+        vec.extend_from_slice(data).unwrap();
+
+        self.0.send_done();
+
+        Ok(())
+    }
+}
+
+struct UdpReceiver<'a>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, MAX_RX_BUF_SIZE>>);
+
+impl<'a> UdpReceive for UdpReceiver<'a> {
+    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
+        let vec = self.0.receive().await;
+
+        buffer[..vec.len()].copy_from_slice(&vec);
+        let len = vec.len();
+
+        self.0.receive_done();
+
+        Ok((
+            len,
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        ))
     }
 }

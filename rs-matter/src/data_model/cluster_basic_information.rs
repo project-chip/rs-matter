@@ -140,7 +140,7 @@ pub struct BasicInfoCluster<'a> {
 
 impl<'a> BasicInfoCluster<'a> {
     pub fn new(cfg: &'a BasicInfoConfig<'a>, rand: Rand) -> Self {
-        let node_label = RefCell::new(String::from(""));
+        let node_label = RefCell::new("".try_into().unwrap());
         Self {
             data_ver: Dataver::new(rand),
             cfg,
@@ -178,11 +178,11 @@ impl<'a> BasicInfoCluster<'a> {
 
         match attr.attr_id.try_into()? {
             Attributes::NodeLabel(codec) => {
-                *self.node_label.borrow_mut() = String::from(
-                    codec
-                        .decode(data)
-                        .map_err(|_| Error::new(ErrorCode::InvalidAction))?,
-                );
+                *self.node_label.borrow_mut() = codec
+                    .decode(data)
+                    .map_err(|_| Error::new(ErrorCode::InvalidAction))?
+                    .try_into()
+                    .unwrap();
             }
             _ => return Err(Error::new(ErrorCode::InvalidAction)),
         }
