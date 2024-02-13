@@ -215,18 +215,92 @@ fn encode_extension_end(w: &mut dyn CertConsumer) -> Result<(), Error> {
     w.end_seq()
 }
 
-#[derive(FromTLV, ToTLV, Default, Debug, PartialEq)]
-#[tlvargs(lifetime = "'a", start = 1, datatype = "list", unordered)]
-struct Extensions<'a> {
-    basic_const: Option<BasicConstraints>,
-    key_usage: Option<u16>,
-    ext_key_usage: Option<TLVArray<'a, u8>>,
-    subj_key_id: Option<OctetStr<'a>>,
-    auth_key_id: Option<OctetStr<'a>>,
-    future_extensions: Option<OctetStr<'a>>,
-}
+const MAX_EXTENSION_ENTRIES: usize = 6;
+
+// The order in which the extensions arrive is important, as the signing
+// requires that the ASN1 notation retain the same order
+#[derive(Default, Debug, PartialEq)]
+struct Extensions<'a>(heapless::Vec<Extension<'a>, MAX_EXTENSION_ENTRIES>);
 
 impl<'a> Extensions<'a> {
+    fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
+        w.start_ctx("X509v3 extensions:", 3)?;
+        w.start_seq("")?;
+
+        for extension in &self.0 {
+            extension.encode(w)?;
+        }
+
+        w.end_seq()?;
+        w.end_ctx()?;
+
+        Ok(())
+    }
+}
+
+impl<'a> FromTLV<'a> for Extensions<'a> {
+    fn from_tlv(t: &TLVElement<'a>) -> Result<Self, Error> {
+        let tlv_iter = t
+            .confirm_list()?
+            .enter()
+            .ok_or_else(|| Error::new(ErrorCode::Invalid))?;
+
+        let mut extensions = heapless::Vec::new();
+
+        for item in tlv_iter {
+            let TagType::Context(tag) = item.get_tag() else {
+                return Err(ErrorCode::Invalid.into());
+            };
+
+            let extension = match tag {
+                1 => Extension::BasicConstraints(BasicConstraints::from_tlv(&item)?),
+                2 => Extension::KeyUsage(item.u16()?),
+                3 => Extension::ExtKeyUsage(TLVArray::from_tlv(&item)?),
+                4 => Extension::SubjectKeyId(OctetStr::from_tlv(&item)?),
+                5 => Extension::AuthorityKeyId(OctetStr::from_tlv(&item)?),
+                6 => Extension::FutureExtensions(OctetStr::from_tlv(&item)?),
+                _ => Err(ErrorCode::Invalid)?,
+            };
+
+            extensions
+                .push(extension)
+                .map_err(|_| Error::new(ErrorCode::NoSpace))?;
+        }
+
+        Ok(Self(extensions))
+    }
+}
+
+impl<'a> ToTLV for Extensions<'a> {
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        tw.start_list(tag)?;
+
+        for extension in &self.0 {
+            match extension {
+                Extension::BasicConstraints(t) => t.to_tlv(tw, TagType::Context(1))?,
+                Extension::KeyUsage(t) => tw.u16(TagType::Context(2), *t)?,
+                Extension::ExtKeyUsage(t) => t.to_tlv(tw, TagType::Context(3))?,
+                Extension::SubjectKeyId(t) => t.to_tlv(tw, TagType::Context(4))?,
+                Extension::AuthorityKeyId(t) => t.to_tlv(tw, TagType::Context(5))?,
+                Extension::FutureExtensions(t) => t.to_tlv(tw, TagType::Context(6))?,
+            }
+        }
+
+        tw.end_container()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Extension<'a> {
+    BasicConstraints(BasicConstraints),
+    KeyUsage(u16),
+    ExtKeyUsage(TLVArray<'a, u8>),
+    SubjectKeyId(OctetStr<'a>),
+    AuthorityKeyId(OctetStr<'a>),
+    FutureExtensions(OctetStr<'a>),
+}
+
+impl<'a> Extension<'a> {
     fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
         const OID_BASIC_CONSTRAINTS: [u8; 3] = [0x55, 0x1D, 0x13];
         const OID_KEY_USAGE: [u8; 3] = [0x55, 0x1D, 0x0F];
@@ -234,40 +308,44 @@ impl<'a> Extensions<'a> {
         const OID_SUBJ_KEY_IDENTIFIER: [u8; 3] = [0x55, 0x1D, 0x0E];
         const OID_AUTH_KEY_ID: [u8; 3] = [0x55, 0x1D, 0x23];
 
-        w.start_ctx("X509v3 extensions:", 3)?;
-        w.start_seq("")?;
-        if let Some(t) = &self.basic_const {
-            encode_extension_start("X509v3 Basic Constraints", true, &OID_BASIC_CONSTRAINTS, w)?;
-            t.encode(w)?;
-            encode_extension_end(w)?;
+        match self {
+            Extension::BasicConstraints(t) => {
+                encode_extension_start(
+                    "X509v3 Basic Constraints",
+                    true,
+                    &OID_BASIC_CONSTRAINTS,
+                    w,
+                )?;
+                t.encode(w)?;
+                encode_extension_end(w)?;
+            }
+            Extension::KeyUsage(t) => {
+                encode_extension_start("X509v3 Key Usage", true, &OID_KEY_USAGE, w)?;
+                encode_key_usage(*t, w)?;
+                encode_extension_end(w)?;
+            }
+            Extension::ExtKeyUsage(t) => {
+                encode_extension_start("X509v3 Extended Key Usage", true, &OID_EXT_KEY_USAGE, w)?;
+                encode_extended_key_usage(t.iter(), w)?;
+                encode_extension_end(w)?;
+            }
+            Extension::SubjectKeyId(t) => {
+                encode_extension_start("Subject Key ID", false, &OID_SUBJ_KEY_IDENTIFIER, w)?;
+                w.ostr("", t.0)?;
+                encode_extension_end(w)?;
+            }
+            Extension::AuthorityKeyId(t) => {
+                encode_extension_start("Auth Key ID", false, &OID_AUTH_KEY_ID, w)?;
+                w.start_seq("")?;
+                w.ctx("", 0, t.0)?;
+                w.end_seq()?;
+                encode_extension_end(w)?;
+            }
+            Extension::FutureExtensions(t) => {
+                error!("Future Extensions Not Yet Supported: {:x?}", t.0)
+            }
         }
-        if let Some(t) = self.key_usage {
-            encode_extension_start("X509v3 Key Usage", true, &OID_KEY_USAGE, w)?;
-            encode_key_usage(t, w)?;
-            encode_extension_end(w)?;
-        }
-        if let Some(t) = &self.ext_key_usage {
-            encode_extension_start("X509v3 Extended Key Usage", true, &OID_EXT_KEY_USAGE, w)?;
-            encode_extended_key_usage(t.iter(), w)?;
-            encode_extension_end(w)?;
-        }
-        if let Some(t) = &self.subj_key_id {
-            encode_extension_start("Subject Key ID", false, &OID_SUBJ_KEY_IDENTIFIER, w)?;
-            w.ostr("", t.0)?;
-            encode_extension_end(w)?;
-        }
-        if let Some(t) = &self.auth_key_id {
-            encode_extension_start("Auth Key ID", false, &OID_AUTH_KEY_ID, w)?;
-            w.start_seq("")?;
-            w.ctx("", 0, t.0)?;
-            w.end_seq()?;
-            encode_extension_end(w)?;
-        }
-        if let Some(t) = &self.future_extensions {
-            error!("Future Extensions Not Yet Supported: {:x?}", t.0);
-        }
-        w.end_seq()?;
-        w.end_ctx()?;
+
         Ok(())
     }
 }
@@ -590,24 +668,36 @@ impl<'a> Cert<'a> {
     }
 
     pub fn get_subject_key_id(&self) -> Result<&[u8], Error> {
-        if let Some(id) = self.extensions.subj_key_id.as_ref() {
-            Ok(id.0)
-        } else {
-            Err(ErrorCode::Invalid.into())
-        }
+        self.extensions
+            .0
+            .iter()
+            .find_map(|extension| {
+                if let Extension::SubjectKeyId(id) = extension {
+                    Some(id.0)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::from(ErrorCode::Invalid))
     }
 
     pub fn is_authority(&self, their: &Cert) -> Result<bool, Error> {
-        if let Some(our_auth_key) = &self.extensions.auth_key_id {
-            let their_subject = their.get_subject_key_id()?;
-            if our_auth_key.0 == their_subject {
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        } else {
-            Ok(false)
-        }
+        let their_subject = their.get_subject_key_id()?;
+
+        let authority = self
+            .extensions
+            .0
+            .iter()
+            .find_map(|extension| {
+                if let Extension::AuthorityKeyId(id) = extension {
+                    Some(id.0 == their_subject)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+
+        Ok(authority)
     }
 
     pub fn get_signature(&self) -> &[u8] {
@@ -878,6 +968,25 @@ mod tests {
             let cert2 = Cert::from_tlv(&root2).unwrap();
             assert_eq!(cert, cert2);
         }
+    }
+
+    #[test]
+    fn test_unordered_extensions() {
+        let mut buf = [0; 1000];
+
+        let cert = Cert::new(test_vectors::UNORDERED_EXTENSIONS_CHIP).unwrap();
+
+        let mut writer = WriteBuf::new(&mut buf);
+        let mut tw = TLVWriter::new(&mut writer);
+
+        cert.to_tlv(&mut tw, TagType::Anonymous).unwrap();
+        assert_eq!(
+            tw.get_buf().as_slice(),
+            test_vectors::UNORDERED_EXTENSIONS_CHIP
+        );
+
+        let asn1_len = cert.as_asn1(&mut buf).unwrap();
+        assert_eq!(&buf[..asn1_len], test_vectors::UNORDERED_EXTENSIONS_DER);
     }
 
     mod test_vectors {
@@ -1191,6 +1300,55 @@ mod tests {
             0xe5, 0x82, 0xc7, 0xb8, 0xda, 0x22, 0x31, 0x7b, 0x23, 0x5a, 0x2a, 0xe6, 0x76, 0x28,
             0xb6, 0xd4, 0xc7, 0x7b, 0x1c, 0x9c, 0x85, 0x71, 0x5f, 0xe6, 0xf6, 0x21, 0x50, 0x5c,
             0xa7, 0x7c, 0xc7, 0x1d, 0x9a, 0x18,
+        ];
+
+        pub const UNORDERED_EXTENSIONS_CHIP: &[u8] = &[
+            0x15, 0x30, 0x01, 0x10, 0x44, 0x9d, 0xeb, 0xca, 0x2e, 0x2e, 0x98, 0x42, 0xe0, 0x87,
+            0x6f, 0x8b, 0xfa, 0x23, 0xe4, 0x54, 0x24, 0x02, 0x01, 0x37, 0x03, 0x27, 0x14, 0xf6,
+            0x56, 0xb7, 0x85, 0xf4, 0xbf, 0x30, 0x00, 0x18, 0x26, 0x04, 0xe2, 0xdc, 0xbc, 0x2a,
+            0x26, 0x05, 0x72, 0xdb, 0xc2, 0x59, 0x37, 0x06, 0x27, 0x14, 0xf6, 0x56, 0xb7, 0x85,
+            0xf4, 0xbf, 0x30, 0x00, 0x18, 0x24, 0x07, 0x01, 0x24, 0x08, 0x01, 0x30, 0x09, 0x41,
+            0x04, 0xac, 0x73, 0x46, 0xeb, 0x93, 0xc3, 0x42, 0x58, 0xf1, 0x69, 0x63, 0x65, 0xa6,
+            0x9f, 0xbe, 0xcb, 0x33, 0xd4, 0x82, 0xd9, 0xdf, 0xc7, 0x3e, 0x94, 0x61, 0x58, 0x83,
+            0xba, 0x2e, 0x3a, 0xb2, 0xdd, 0x19, 0xcb, 0x8c, 0x12, 0x2e, 0x19, 0x0e, 0x90, 0x2c,
+            0xb8, 0xec, 0xb9, 0xaa, 0xea, 0x10, 0x00, 0xbb, 0x60, 0xeb, 0xe3, 0x92, 0xb9, 0x2c,
+            0x78, 0xbb, 0x41, 0xfd, 0x5c, 0xdc, 0xc3, 0x0f, 0x46, 0x37, 0x0a, 0x35, 0x01, 0x29,
+            0x01, 0x18, 0x30, 0x04, 0x14, 0x2b, 0x33, 0x55, 0x73, 0xc7, 0xc9, 0x12, 0x46, 0x59,
+            0xe8, 0xe5, 0xfc, 0x50, 0xc5, 0x68, 0x76, 0xfc, 0x93, 0xdc, 0x0b, 0x24, 0x02, 0x61,
+            0x30, 0x05, 0x14, 0x2b, 0x33, 0x55, 0x73, 0xc7, 0xc9, 0x12, 0x46, 0x59, 0xe8, 0xe5,
+            0xfc, 0x50, 0xc5, 0x68, 0x76, 0xfc, 0x93, 0xdc, 0x0b, 0x18, 0x30, 0x0b, 0x40, 0x48,
+            0x8a, 0x6d, 0xf0, 0xa5, 0x9c, 0x3d, 0xb5, 0x5a, 0x29, 0xeb, 0xf6, 0x9a, 0xba, 0x7a,
+            0xd2, 0x49, 0xb8, 0xcc, 0xe7, 0x33, 0xe3, 0xaa, 0x45, 0x99, 0x6e, 0x34, 0x3a, 0xe3,
+            0x23, 0x1d, 0x30, 0x94, 0x36, 0x77, 0x33, 0x50, 0x9a, 0x28, 0x9b, 0x25, 0x42, 0xba,
+            0xaf, 0x13, 0x50, 0xda, 0xe8, 0x43, 0xb4, 0xe1, 0x49, 0x8c, 0x61, 0x0d, 0xab, 0x24,
+            0xcd, 0xe2, 0x1c, 0xb2, 0x5a, 0x36, 0xd5, 0x18,
+        ];
+
+        pub const UNORDERED_EXTENSIONS_DER: &[u8] = &[
+            0x30, 0x82, 0x01, 0x4b, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x10, 0x44, 0x9d, 0xeb,
+            0xca, 0x2e, 0x2e, 0x98, 0x42, 0xe0, 0x87, 0x6f, 0x8b, 0xfa, 0x23, 0xe4, 0x54, 0x30,
+            0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x22, 0x31,
+            0x20, 0x30, 0x1e, 0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xa2, 0x7c, 0x01,
+            0x04, 0x0c, 0x10, 0x30, 0x30, 0x33, 0x30, 0x42, 0x46, 0x46, 0x34, 0x38, 0x35, 0x42,
+            0x37, 0x35, 0x36, 0x46, 0x36, 0x30, 0x1e, 0x17, 0x0d, 0x32, 0x32, 0x30, 0x39, 0x32,
+            0x30, 0x32, 0x30, 0x31, 0x39, 0x34, 0x36, 0x5a, 0x17, 0x0d, 0x34, 0x37, 0x30, 0x39,
+            0x32, 0x30, 0x32, 0x31, 0x31, 0x39, 0x34, 0x36, 0x5a, 0x30, 0x22, 0x31, 0x20, 0x30,
+            0x1e, 0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xa2, 0x7c, 0x01, 0x04, 0x0c,
+            0x10, 0x30, 0x30, 0x33, 0x30, 0x42, 0x46, 0x46, 0x34, 0x38, 0x35, 0x42, 0x37, 0x35,
+            0x36, 0x46, 0x36, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42,
+            0x00, 0x04, 0xac, 0x73, 0x46, 0xeb, 0x93, 0xc3, 0x42, 0x58, 0xf1, 0x69, 0x63, 0x65,
+            0xa6, 0x9f, 0xbe, 0xcb, 0x33, 0xd4, 0x82, 0xd9, 0xdf, 0xc7, 0x3e, 0x94, 0x61, 0x58,
+            0x83, 0xba, 0x2e, 0x3a, 0xb2, 0xdd, 0x19, 0xcb, 0x8c, 0x12, 0x2e, 0x19, 0x0e, 0x90,
+            0x2c, 0xb8, 0xec, 0xb9, 0xaa, 0xea, 0x10, 0x00, 0xbb, 0x60, 0xeb, 0xe3, 0x92, 0xb9,
+            0x2c, 0x78, 0xbb, 0x41, 0xfd, 0x5c, 0xdc, 0xc3, 0x0f, 0x46, 0xa3, 0x63, 0x30, 0x61,
+            0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d, 0x13, 0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03,
+            0x01, 0x01, 0xff, 0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14,
+            0x2b, 0x33, 0x55, 0x73, 0xc7, 0xc9, 0x12, 0x46, 0x59, 0xe8, 0xe5, 0xfc, 0x50, 0xc5,
+            0x68, 0x76, 0xfc, 0x93, 0xdc, 0x0b, 0x30, 0x0e, 0x06, 0x03, 0x55, 0x1d, 0x0f, 0x01,
+            0x01, 0xff, 0x04, 0x04, 0x03, 0x02, 0x01, 0x86, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d,
+            0x23, 0x04, 0x18, 0x30, 0x16, 0x80, 0x14, 0x2b, 0x33, 0x55, 0x73, 0xc7, 0xc9, 0x12,
+            0x46, 0x59, 0xe8, 0xe5, 0xfc, 0x50, 0xc5, 0x68, 0x76, 0xfc, 0x93, 0xdc, 0x0b,
         ];
     }
 }
