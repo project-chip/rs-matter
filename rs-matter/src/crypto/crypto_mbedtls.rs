@@ -77,9 +77,14 @@ impl KeyPair {
 
     pub fn new_from_components(_pub_key: &[u8], priv_key: &[u8]) -> Result<Self, Error> {
         // No rust-mbedtls API yet for creating keypair from both public and private key
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         let priv_key = Mpi::from_binary(priv_key)?;
         Ok(Self {
-            key: Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, priv_key)?,
+            key: Pk::private_from_ec_scalar_with_rng(
+                EcGroup::new(EcGroupId::SecP256R1)?,
+                priv_key,
+                &mut ctr_drbg,
+            )?,
         })
     }
 
@@ -93,9 +98,13 @@ impl KeyPair {
     }
 
     pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         let tmp_priv = self.key.ec_private()?;
-        let mut tmp_key =
-            Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_priv)?;
+        let mut tmp_key = Pk::private_from_ec_scalar_with_rng(
+            EcGroup::new(EcGroupId::SecP256R1)?,
+            tmp_priv,
+            &mut ctr_drbg,
+        )?;
 
         let mut builder = x509::csr::Builder::new();
         builder.key(&mut tmp_key);
@@ -139,9 +148,13 @@ impl KeyPair {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
 
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         let tmp_key = self.key.ec_private()?;
-        let mut tmp_key =
-            Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_key)?;
+        let mut tmp_key = Pk::private_from_ec_scalar_with_rng(
+            EcGroup::new(EcGroupId::SecP256R1)?,
+            tmp_key,
+            &mut ctr_drbg,
+        )?;
 
         let group = EcGroup::new(EcGroupId::SecP256R1)?;
         let other = EcPoint::from_binary(&group, peer_pub_key)?;
@@ -156,9 +169,13 @@ impl KeyPair {
     pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
         // mbedtls requires a 'mut' key. Instead of making a change in our Trait,
         // we just clone the key this way
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         let tmp_key = self.key.ec_private()?;
-        let mut tmp_key =
-            Pk::private_from_ec_components(EcGroup::new(EcGroupId::SecP256R1)?, tmp_key)?;
+        let mut tmp_key = Pk::private_from_ec_scalar_with_rng(
+            EcGroup::new(EcGroupId::SecP256R1)?,
+            tmp_key,
+            &mut ctr_drbg,
+        )?;
 
         // First get the SHA256 of the message
         let mut msg_hash = [0_u8; super::SHA256_HASH_LEN_BYTES];
