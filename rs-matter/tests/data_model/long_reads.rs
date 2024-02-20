@@ -207,15 +207,15 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             adm_comm::AttributesDiscriminants::AdminFabricIndex,
             dont_care.clone()
         ),
+    ];
+
+    let part2 = vec![
         attr_data!(
             0,
             60,
             adm_comm::AttributesDiscriminants::AdminVendorId,
             dont_care.clone()
         ),
-    ];
-
-    let part2 = vec![
         attr_data!(0, 62, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 62, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(

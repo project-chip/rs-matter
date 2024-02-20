@@ -21,7 +21,7 @@ use rs_matter::error::{Error, ErrorCode};
 pub struct HardCodedDevAtt {}
 
 impl HardCodedDevAtt {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {}
     }
 }

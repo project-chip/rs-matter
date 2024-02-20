@@ -20,10 +20,10 @@ use crate::{
     alloc,
     data_model::objects::Endpoint,
     interaction_model::{
-        core::IMStatusCode,
+        core::{IMStatusCode, ReportDataReq},
         messages::{
             ib::{AttrPath, AttrStatus, CmdStatus, DataVersionFilter},
-            msg::{InvReq, ReadReq, SubscribeReq, WriteReq},
+            msg::{InvReq, WriteReq},
             GenericPath,
         },
     },
@@ -67,7 +67,7 @@ pub struct Node<'a> {
 impl<'a> Node<'a> {
     pub fn read<'s, 'm>(
         &'s self,
-        req: &'m ReadReq,
+        req: &'m ReportDataReq,
         from: Option<GenericPath>,
         accessor: &'m Accessor<'m>,
     ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
@@ -75,31 +75,11 @@ impl<'a> Node<'a> {
         's: 'm,
     {
         self.read_attr_requests(
-            req.attr_requests
+            req.attr_requests()
                 .iter()
                 .flat_map(|attr_requests| attr_requests.iter()),
-            req.dataver_filters.as_ref(),
-            req.fabric_filtered,
-            accessor,
-            from,
-        )
-    }
-
-    pub fn subscribing_read<'s, 'm>(
-        &'s self,
-        req: &'m SubscribeReq,
-        from: Option<GenericPath>,
-        accessor: &'m Accessor<'m>,
-    ) -> impl Iterator<Item = Result<AttrDetails, AttrStatus>> + 'm
-    where
-        's: 'm,
-    {
-        self.read_attr_requests(
-            req.attr_requests
-                .iter()
-                .flat_map(|attr_requests| attr_requests.iter()),
-            req.dataver_filters.as_ref(),
-            req.fabric_filtered,
+            req.dataver_filters(),
+            req.fabric_filtered(),
             accessor,
             from,
         )

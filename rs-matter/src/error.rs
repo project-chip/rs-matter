@@ -60,6 +60,7 @@ pub enum ErrorCode {
     InvalidData,
     InvalidKeyLength,
     InvalidOpcode,
+    InvalidProto,
     InvalidPeerAddr,
     // Invalid Auth Key in the Matter Certificate
     InvalidAuthKey,

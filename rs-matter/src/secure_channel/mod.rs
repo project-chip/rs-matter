@@ -28,6 +28,7 @@ pub mod crypto_openssl;
 #[cfg(feature = "rustcrypto")]
 pub mod crypto_rustcrypto;
 
+pub mod busy;
 pub mod core;
 pub mod crypto;
 pub mod pake;

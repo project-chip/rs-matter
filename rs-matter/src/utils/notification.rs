@@ -15,17 +15,32 @@
  *    limitations under the License.
  */
 
-pub mod attributes;
-pub mod commands;
-pub mod echo_cluster;
-pub mod handlers;
-pub mod im_engine;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
-pub fn init_env_logger() {
-    #[cfg(all(feature = "std", not(target_os = "espidf")))]
-    {
-        let _ = env_logger::try_init_from_env(
-            env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-        );
+use super::signal::Signal;
+
+/// A notification primitive that allows for notifying a single waiter.
+pub struct Notification<M>(Signal<M, Option<()>>);
+
+impl<M> Notification<M>
+where
+    M: RawMutex,
+{
+    /// Create a new `Notification`.
+    pub const fn new() -> Self {
+        Self(Signal::new(None))
+    }
+
+    /// Notify the waiter.
+    pub fn notify(&self) {
+        self.0.modify(|state| {
+            *state = Some(());
+            (true, ())
+        });
+    }
+
+    /// Wait for the notification.
+    pub async fn wait(&self) {
+        self.0.wait(|state| state.take()).await;
     }
 }
