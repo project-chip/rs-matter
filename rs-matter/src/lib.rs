@@ -85,6 +85,7 @@ pub mod interaction_model;
 pub mod mdns;
 pub mod pairing;
 pub mod persist;
+pub mod respond;
 pub mod secure_channel;
 pub mod tlv;
 pub mod transport;

@@ -25,4 +25,5 @@ pub mod cluster_on_off;
 pub mod cluster_template;
 pub mod root_endpoint;
 pub mod sdm;
+pub mod subscriptions;
 pub mod system_model;

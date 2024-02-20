@@ -297,6 +297,18 @@ mod asynch {
     use super::{ChainedHandler, EmptyHandler, Handler, HandlerCompat, NonBlockingHandler};
 
     pub trait AsyncHandler {
+        fn read_awaits(&self, _attr: &AttrDetails) -> bool {
+            true
+        }
+
+        fn write_awaits(&self, _attr: &AttrDetails) -> bool {
+            true
+        }
+
+        fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
+            true
+        }
+
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,
@@ -326,6 +338,18 @@ mod asynch {
     where
         T: AsyncHandler,
     {
+        fn read_awaits(&self, attr: &AttrDetails) -> bool {
+            (**self).read_awaits(attr)
+        }
+
+        fn write_awaits(&self, attr: &AttrDetails) -> bool {
+            (**self).write_awaits(attr)
+        }
+
+        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
+            (**self).invoke_awaits(cmd)
+        }
+
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,
@@ -357,6 +381,18 @@ mod asynch {
     where
         T: AsyncHandler,
     {
+        fn read_awaits(&self, attr: &AttrDetails) -> bool {
+            (**self).read_awaits(attr)
+        }
+
+        fn write_awaits(&self, attr: &AttrDetails) -> bool {
+            (**self).write_awaits(attr)
+        }
+
+        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
+            (**self).invoke_awaits(cmd)
+        }
+
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,
@@ -388,6 +424,18 @@ mod asynch {
     where
         H: AsyncHandler,
     {
+        fn read_awaits(&self, attr: &AttrDetails) -> bool {
+            self.1.read_awaits(attr)
+        }
+
+        fn write_awaits(&self, attr: &AttrDetails) -> bool {
+            self.1.write_awaits(attr)
+        }
+
+        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
+            self.1.invoke_awaits(cmd)
+        }
+
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,
@@ -419,6 +467,18 @@ mod asynch {
     where
         T: NonBlockingHandler,
     {
+        fn read_awaits(&self, _attr: &AttrDetails) -> bool {
+            false
+        }
+
+        fn write_awaits(&self, _attr: &AttrDetails) -> bool {
+            false
+        }
+
+        fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
+            false
+        }
+
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,
@@ -447,6 +507,18 @@ mod asynch {
     }
 
     impl AsyncHandler for EmptyHandler {
+        fn read_awaits(&self, _attr: &AttrDetails) -> bool {
+            false
+        }
+
+        fn write_awaits(&self, _attr: &AttrDetails) -> bool {
+            false
+        }
+
+        fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
+            false
+        }
+
         async fn read<'a>(
             &'a self,
             _attr: &'a AttrDetails<'_>,
@@ -461,6 +533,32 @@ mod asynch {
         H: AsyncHandler,
         T: AsyncHandler,
     {
+        fn read_awaits(&self, attr: &AttrDetails) -> bool {
+            if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id
+            {
+                self.handler.read_awaits(attr)
+            } else {
+                self.next.read_awaits(attr)
+            }
+        }
+
+        fn write_awaits(&self, attr: &AttrDetails) -> bool {
+            if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id
+            {
+                self.handler.write_awaits(attr)
+            } else {
+                self.next.write_awaits(attr)
+            }
+        }
+
+        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
+            if self.handler_endpoint == cmd.endpoint_id && self.handler_cluster == cmd.cluster_id {
+                self.handler.invoke_awaits(cmd)
+            } else {
+                self.next.invoke_awaits(cmd)
+            }
+        }
+
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,

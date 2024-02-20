@@ -15,11 +15,15 @@
  *    limitations under the License.
  */
 
-use super::common::*;
-use crate::{error::Error, transport::packet::Packet};
+use num_derive::FromPrimitive;
+
+use crate::{
+    error::{Error, ErrorCode},
+    utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
+};
 
 #[allow(dead_code)]
-#[derive(Debug, Copy, Clone)]
+#[derive(FromPrimitive, PartialEq, Eq, Debug, Copy, Clone)]
 pub enum GeneralCode {
     Success = 0,
     Failure = 1,
@@ -40,23 +44,32 @@ pub enum GeneralCode {
     DataLoss = 16,
 }
 
-pub fn create_status_report(
-    proto_tx: &mut Packet,
-    general_code: GeneralCode,
-    proto_id: u32,
-    proto_code: u16,
-    proto_data: Option<&[u8]>,
-) -> Result<(), Error> {
-    proto_tx.reset();
-    proto_tx.set_proto_id(PROTO_ID_SECURE_CHANNEL);
-    proto_tx.set_proto_opcode(OpCode::StatusReport as u8);
-    let wb = proto_tx.get_writebuf()?;
-    wb.le_u16(general_code as u16)?;
-    wb.le_u32(proto_id)?;
-    wb.le_u16(proto_code)?;
-    if let Some(s) = proto_data {
-        wb.copy_from_slice(s)?;
+/// Represents a Status Report message, as per "Appendix D: Status Report Messages" of the Matter Spec.
+#[derive(Debug, Clone)]
+pub struct StatusReport<'a> {
+    pub general_code: GeneralCode,
+    pub proto_id: u32,
+    pub proto_code: u16,
+    pub proto_data: &'a [u8],
+}
+
+impl<'a> StatusReport<'a> {
+    pub fn read(pb: &'a mut ParseBuf) -> Result<Self, Error> {
+        Ok(Self {
+            general_code: num::FromPrimitive::from_u16(pb.le_u16()?)
+                .ok_or(ErrorCode::InvalidOpcode)?,
+            proto_id: pb.le_u32()?,
+            proto_code: pb.le_u16()?,
+            proto_data: pb.as_slice(),
+        })
     }
 
-    Ok(())
+    pub fn write(&self, wb: &mut WriteBuf) -> Result<(), Error> {
+        wb.le_u16(self.general_code as u16)?;
+        wb.le_u32(self.proto_id)?;
+        wb.le_u16(self.proto_code)?;
+        wb.copy_from_slice(self.proto_data)?;
+
+        Ok(())
+    }
 }

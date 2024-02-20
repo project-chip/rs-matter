@@ -17,7 +17,7 @@
 
 use core::{borrow::Borrow, cell::RefCell};
 
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::{
     acl::AclMgr,
@@ -27,15 +27,14 @@ use crate::{
     },
     error::*,
     fabric::FabricMgr,
-    mdns::{Mdns, MdnsImpl, MdnsService},
+    mdns::{Mdns, MdnsService},
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
     transport::{
-        exchange::{ExchangeCtx, MAX_EXCHANGES},
-        packet::{MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
-        session::SessionMgr,
+        core::{PacketBufferExternalAccess, TransportMgr},
+        network::{NetworkReceive, NetworkSend},
     },
-    utils::{buf::BufferAccessImpl, epoch::Epoch, rand::Rand, select::Notification},
+    utils::{buf::BufferAccess, epoch::Epoch, notification::Notification, rand::Rand},
 };
 
 /* The Matter Port */
@@ -55,20 +54,13 @@ pub struct Matter<'a> {
     pub acl_mgr: RefCell<AclMgr>, // Public for tests
     pub(crate) pase_mgr: RefCell<PaseMgr>,
     pub(crate) failsafe: RefCell<FailSafe>,
-    persist_notification: Notification,
-    pub(crate) send_notification: Notification,
-    pub(crate) mdns: MdnsImpl<'a>,
-    pub(crate) tx_buf: BufferAccessImpl<MAX_RX_BUF_SIZE>,
-    pub(crate) rx_buf: BufferAccessImpl<MAX_TX_BUF_SIZE>,
+    pub transport_mgr: TransportMgr<'a>, // Public for tests
+    persist_notification: Notification<NoopRawMutex>,
     pub(crate) epoch: Epoch,
     pub(crate) rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_att: &'a dyn DevAttDataFetcher,
     pub(crate) port: u16,
-    pub(crate) exchanges: RefCell<heapless::Vec<ExchangeCtx, MAX_EXCHANGES>>,
-    pub(crate) ephemeral: RefCell<Option<ExchangeCtx>>,
-    pub(crate) ephemeral_mutex: Mutex<NoopRawMutex, ()>,
-    pub session_mgr: RefCell<SessionMgr>, // Public for tests
 }
 
 impl<'a> Matter<'a> {
@@ -106,21 +98,18 @@ impl<'a> Matter<'a> {
             acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
+            transport_mgr: TransportMgr::new(mdns.new_impl(dev_det, port), epoch, rand),
             persist_notification: Notification::new(),
-            send_notification: Notification::new(),
-            mdns: mdns.new_impl(dev_det, port),
-            rx_buf: BufferAccessImpl::new(),
-            tx_buf: BufferAccessImpl::new(),
             epoch,
             rand,
             dev_det,
             dev_att,
             port,
-            exchanges: RefCell::new(heapless::Vec::new()),
-            ephemeral: RefCell::new(None),
-            ephemeral_mutex: Mutex::new(()),
-            session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
         }
+    }
+
+    pub fn initialize_transport_buffers(&self) -> Result<(), Error> {
+        self.transport_mgr.initialize_buffers()
     }
 
     pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
@@ -136,7 +125,9 @@ impl<'a> Matter<'a> {
     }
 
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr.borrow_mut().load(data, &self.mdns)
+        self.fabric_mgr
+            .borrow_mut()
+            .load(data, &self.transport_mgr.mdns)
     }
 
     pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
@@ -155,7 +146,7 @@ impl<'a> Matter<'a> {
         self.acl_mgr.borrow().is_changed() || self.fabric_mgr.borrow().is_changed()
     }
 
-    pub fn start_comissioning(
+    fn start_comissioning(
         &self,
         dev_comm: CommissioningData,
         buf: &mut [u8],
@@ -172,7 +163,7 @@ impl<'a> Matter<'a> {
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,
                 dev_comm.discriminator,
-                &self.mdns,
+                &self.transport_mgr.mdns,
             )?;
 
             Ok(true)
@@ -181,9 +172,53 @@ impl<'a> Matter<'a> {
         }
     }
 
+    pub fn reset(&self) {
+        self.transport_mgr.reset();
+    }
+
+    pub async fn run<S, R>(
+        &self,
+        send: S,
+        recv: R,
+        dev_comm: Option<CommissioningData>,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        if let Some(dev_comm) = dev_comm {
+            let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
+            let mut buf = buf_access.get().await.ok_or(ErrorCode::NoSpace)?;
+
+            self.start_comissioning(dev_comm, &mut buf)?;
+        }
+
+        self.transport_mgr.run(send, recv).await
+    }
+
+    #[cfg(not(all(
+        feature = "std",
+        any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+    )))]
+    pub async fn run_builtin_mdns<S, R>(
+        &self,
+        send: S,
+        recv: R,
+        host: crate::mdns::Host<'_>,
+        interface: Option<u32>,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        self.transport_mgr
+            .run_builtin_mdns(send, recv, host, interface)
+            .await
+    }
+
     pub fn notify_changed(&self) {
         if self.is_changed() {
-            self.persist_notification.signal(());
+            self.persist_notification.notify();
         }
     }
 
@@ -230,7 +265,7 @@ impl<'a> Borrow<dyn DevAttDataFetcher + 'a> for Matter<'a> {
 
 impl<'a> Borrow<dyn Mdns + 'a> for Matter<'a> {
     fn borrow(&self) -> &(dyn Mdns + 'a) {
-        &self.mdns
+        &self.transport_mgr.mdns
     }
 }
 
