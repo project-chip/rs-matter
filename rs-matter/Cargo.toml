@@ -9,57 +9,48 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
+rust-version = "1.75"
 
 [features]
 default = ["os", "mbedtls"]
-os = ["std", "backtrace", "env_logger", "nix", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
-esp-idf = ["std", "rustcrypto", "esp-idf-sys"]
-std = ["alloc", "rand", "async-io", "esp-idf-sys?/std", "embassy-time/generic-queue-16"]
+os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std", "embassy-time/generic-queue"]
+std = ["alloc", "rand"]
 backtrace = []
 alloc = []
-nightly = []
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
-embassy-net = ["dep:embassy-net", "dep:embassy-net-driver", "smoltcp"]
-zeroconf = ["dep:zeroconf"]
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
-bitflags = { version =  "1.3", default-features = false }
-byteorder = { version = "1.4.3", default-features = false }
-heapless = "0.7.16"
+bitflags = { version =  "1.3", default-features = false } # TODO: Update to 2.x
+byteorder = { version = "1.5", default-features = false }
+heapless = "0.8"
+heapless07 = { package = "heapless", version = "0.7" } # Necessary for domain 0.9
 num = { version = "0.4", default-features = false }
-num-derive = "0.3.3"
-num-traits = { version = "0.2.15", default-features = false }
-strum = { version = "0.24", features = ["derive"], default-features = false }
-log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_debug"] }
-no-std-net = "0.6"
-subtle = { version = "2.4.1", default-features = false }
-safemem = { version = "0.3.3", default-features = false }
-owo-colors = "3"
+num-derive = "0.4"
+num-traits = { version = "0.2", default-features = false }
+strum = { version = "0.26", features = ["derive"], default-features = false }
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_debug"] }
+no-std-net = "0.6" # To be replaced with core::net once Rust 1.77 is out
+subtle = { version = "2.5", default-features = false }
+safemem = { version = "0.3", default-features = false }
+owo-colors = "4"
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1"
-embassy-time = "0.1.1"
-embassy-sync = "0.2"
-critical-section = "1.1.1"
-domain = { version = "0.7.2", default_features = false, features = ["heapless"] }
+embassy-time = "0.3"
+embassy-sync = "0.5"
+critical-section = "1.1"
+domain = { version = "0.9", default-features = false, features = ["heapless"] }
+octseq = { version = "0.3", default-features = false }
 portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
 
-# embassy-net dependencies
-embassy-net = { version = "0.1", features = ["igmp", "proto-ipv6", "udp"], optional = true }
-embassy-net-driver = { version = "0.1", optional = true }
-smoltcp = { version = "0.10", default-features = false, optional = true }
-
-# STD-only dependencies
-rand = { version = "0.8.5", optional = true }
-async-io = { version = "=1.12", optional = true } # =1.12 for compatibility with ESP IDF
-
 # crypto
-openssl = { version = "0.10.55", optional = true }
-foreign-types = { version = "0.3.2", optional = true }
+openssl = { version = "0.10", optional = true }
+foreign-types = { version = "0.3", optional = true }
+mbedtls = { version = "0.12", optional = true, features = ["x509"] }
 
 # rust-crypto
 sha2 = { version = "0.10", default-features = false, optional = true }
@@ -68,11 +59,15 @@ pbkdf2 = { version = "0.12", optional = true }
 hkdf = { version = "0.12", optional = true }
 aes = { version = "0.8", optional = true }
 ccm = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
-p256 = { version = "0.13.0", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
-elliptic-curve = { version = "0.13.2", optional = true }
-crypto-bigint = { version = "0.4", default-features = false, optional = true }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
+elliptic-curve = { version = "0.13", optional = true }
+crypto-bigint = { version = "0.5", default-features = false, optional = true }
 rand_core = { version = "0.6", default-features = false, optional = true }
-x509-cert = { version = "0.2.0", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
+x509-cert = { version = "0.2", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
+
+# STD
+rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }
+async-io = { version = "2", optional = true, default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = { version = "0.3" }
@@ -80,26 +75,15 @@ astro-dnssd = { version = "0.3" }
 [target.'cfg(target_os = "linux")'.dependencies]
 zeroconf = { version = "0.12", optional = true }
 
-[target.'cfg(not(target_os = "espidf"))'.dependencies]
-mbedtls = { version = "0.9", optional = true }
-env_logger = { version = "0.10.0", optional = true }
-nix = { version = "0.26", features = ["net"], optional = true }
-
-[target.'cfg(target_os = "espidf")'.dependencies]
-esp-idf-sys = { version = "0.33", optional = true, default-features = false, features = ["native"] }
-
-[build-dependencies]
-embuild = "0.31.2"
-
-[target.'cfg(target_os = "espidf")'.dev-dependencies]
-esp-idf-sys = { version = "0.33", default-features = false, features = ["binstart"] }
-esp-idf-hal = { version = "0.41", features = ["embassy-sync", "critical-section"] }
-esp-idf-svc = { version = "0.46", features = ["embassy-time-driver"] }
-embedded-svc = { version = "0.25" }
+[dev-dependencies]
+env_logger = "0.11"
+nix = { version = "0.27", features = ["net"] }
+futures-lite = "1"
 
 [[example]]
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
+required-features = ["std", "async-io"]
 
 [[example]]
 name = "dimmable_light"
@@ -111,3 +95,4 @@ opt-level = 0
 # [[example]]
 # name = "speaker"
 # path = "../examples/speaker/src/main.rs"
+# required-features = ["std", "async-io"]

@@ -106,7 +106,7 @@ impl<'data> QrSetupPayload<'data> {
         };
 
         if !dev_det.serial_no.is_empty() {
-            result.add_serial_number(SerialNumber::String(dev_det.serial_no.into()));
+            result.add_serial_number(SerialNumber::String(dev_det.serial_no.try_into().unwrap()));
         }
 
         result
@@ -764,7 +764,7 @@ mod tests {
         qr_code_data
             .add_optional_vendor_data(
                 OPTIONAL_DEFAULT_STRING_TAG,
-                QRCodeInfoType::String(OPTIONAL_DEFAULT_STRING_VALUE.into()),
+                QRCodeInfoType::String(OPTIONAL_DEFAULT_STRING_VALUE.try_into().unwrap()),
             )
             .expect("Failed to add optional data");
 

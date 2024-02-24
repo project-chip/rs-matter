@@ -16,6 +16,7 @@
  */
 
 use crypto_bigint::Encoding;
+use crypto_bigint::NonZero;
 use crypto_bigint::U384;
 use elliptic_curve::ops::*;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
@@ -86,11 +87,11 @@ impl CryptoSpake2 {
         ];
         let mut expanded = [0u8; 384 / 8];
         expanded[16..].copy_from_slice(&operand);
-        let big_operand = U384::from_be_slice(&expanded);
+        let big_operand = NonZero::new(U384::from_be_slice(&expanded)).unwrap();
         let mut expanded = [0u8; 384 / 8];
         expanded[8..].copy_from_slice(w0s);
         let big_w0 = U384::from_be_slice(&expanded);
-        let w0_res = big_w0.reduce(&big_operand).unwrap();
+        let w0_res = big_w0.rem(&big_operand);
         let mut w0_out = [0u8; 32];
         w0_out.copy_from_slice(&w0_res.to_be_bytes()[16..]);
 
@@ -115,11 +116,11 @@ impl CryptoSpake2 {
         ];
         let mut expanded = [0u8; 384 / 8];
         expanded[16..].copy_from_slice(&operand);
-        let big_operand = U384::from_be_slice(&expanded);
+        let big_operand = NonZero::new(U384::from_be_slice(&expanded)).unwrap();
         let mut expanded = [0u8; 384 / 8];
         expanded[8..].copy_from_slice(w1s);
         let big_w1 = U384::from_be_slice(&expanded);
-        let w1_res = big_w1.reduce(&big_operand).unwrap();
+        let w1_res = big_w1.rem(&big_operand);
         let mut w1_out = [0u8; 32];
         w1_out.copy_from_slice(&w1_res.to_be_bytes()[16..]);
 

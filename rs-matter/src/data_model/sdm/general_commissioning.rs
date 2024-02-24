@@ -20,7 +20,7 @@ use core::convert::TryInto;
 
 use crate::data_model::objects::*;
 use crate::data_model::sdm::failsafe::FailSafe;
-use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
+use crate::tlv::{FromTLV, TLVElement, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
 use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};

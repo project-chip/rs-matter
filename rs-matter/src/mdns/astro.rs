@@ -4,23 +4,11 @@ use std::collections::HashMap;
 use crate::{
     data_model::cluster_basic_information::BasicInfoConfig,
     error::{Error, ErrorCode},
-    transport::pipe::Pipe,
 };
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
 use log::info;
 
-use super::{MdnsRunBuffers, ServiceMode};
-
-/// Only for API-compatibility with builtin::MdnsRunner
-pub struct MdnsUdpBuffers(());
-
-/// Only for API-compatibility with builtin::MdnsRunner
-impl MdnsUdpBuffers {
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self(())
-    }
-}
+use super::ServiceMode;
 
 pub struct MdnsService<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
@@ -29,7 +17,7 @@ pub struct MdnsService<'a> {
 }
 
 impl<'a> MdnsService<'a> {
-    /// This constructor takes extra parameters for API-compatibility with builtin::MdnsRunner
+    /// This constructor takes extra parameters for API-compatibility with builtin::MdnsService
     pub fn new(
         _id: u16,
         _hostname: &str,
@@ -88,27 +76,6 @@ impl<'a> MdnsService<'a> {
         }
 
         Ok(())
-    }
-
-    /// Only for API-compatibility with builtin::MdnsRunner
-    pub async fn run_piped(
-        &mut self,
-        _tx_pipe: &Pipe<'_>,
-        _rx_pipe: &Pipe<'_>,
-    ) -> Result<(), Error> {
-        core::future::pending::<Result<(), Error>>().await
-    }
-
-    /// Only for API-compatibility with builtin::MdnsRunner
-    pub async fn run<D>(
-        &self,
-        _stack: &crate::transport::network::NetworkStack<D>,
-        _buffers: &mut MdnsRunBuffers,
-    ) -> Result<(), Error>
-    where
-        D: crate::transport::network::NetworkStackDriver,
-    {
-        core::future::pending::<Result<(), Error>>().await
     }
 }
 

@@ -23,17 +23,9 @@ use crate::{
 
 use super::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails};
 
-#[cfg(feature = "nightly")]
 pub use asynch::*;
 
-#[cfg(not(feature = "nightly"))]
-pub trait DataModelHandler: super::Metadata + Handler {}
-#[cfg(not(feature = "nightly"))]
-impl<T> DataModelHandler for T where T: super::Metadata + Handler {}
-
-#[cfg(feature = "nightly")]
 pub trait DataModelHandler: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
-#[cfg(feature = "nightly")]
 impl<T> DataModelHandler for T where T: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
 
 pub trait ChangeNotifier<T> {
@@ -294,7 +286,6 @@ macro_rules! handler_chain_type {
     };
 }
 
-#[cfg(feature = "nightly")]
 mod asynch {
     use crate::{
         data_model::objects::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails},

@@ -36,7 +36,6 @@ pub enum ErrorCode {
     Crypto,
     TLSStack,
     MdnsError,
-    Network,
     NoCommand,
     NoEndpoint,
     NoExchange,

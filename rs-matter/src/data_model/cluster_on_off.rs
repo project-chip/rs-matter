@@ -23,9 +23,15 @@ use crate::{
     transport::exchange::Exchange, utils::rand::Rand,
 };
 use log::info;
+use rs_matter_macros::idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
-pub const ID: u32 = 0x0006;
+idl_import!(clusters = ["OnOff"]);
+
+pub use on_off::ID;
+
+pub use on_off::Commands;
+pub use on_off::CommandsDiscriminants;
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
@@ -34,15 +40,6 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
-
-#[derive(FromRepr, EnumDiscriminants)]
-#[repr(u32)]
-pub enum Commands {
-    Off = 0x0,
-    On = 0x01,
-    Toggle = 0x02,
-}
-
 command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -130,6 +127,9 @@ impl OnOffCluster {
                 cmd_enter!("Toggle");
                 self.set(!self.on.get());
             }
+            Commands::OffWithEffect
+            | Commands::OnWithRecallGlobalScene
+            | Commands::OnWithTimedOff => todo!(),
         }
 
         self.data_ver.changed();

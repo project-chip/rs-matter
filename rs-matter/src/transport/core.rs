@@ -29,7 +29,6 @@ use crate::interaction_model::core::IMStatusCode;
 use crate::secure_channel::common::SCStatusCodes;
 use crate::secure_channel::status_report::{create_status_report, GeneralCode};
 use crate::utils::select::Notification;
-use crate::CommissioningData;
 use crate::{
     alloc,
     data_model::{core::DataModel, objects::DataModelHandler},
@@ -41,17 +40,17 @@ use crate::{
     },
     transport::packet::Packet,
     utils::select::EitherUnwrap,
-    Matter,
+    CommissioningData, Matter, MATTER_PORT,
 };
 
-use super::exchange::SessionId;
 use super::{
     exchange::{
-        Exchange, ExchangeCtr, ExchangeCtx, ExchangeId, ExchangeState, Role, MAX_EXCHANGES,
+        Exchange, ExchangeCtr, ExchangeCtx, ExchangeId, ExchangeState, Role, SessionId,
+        MAX_EXCHANGES,
     },
     mrp::ReliableMessage,
+    network::{Address, Ipv6Addr, SocketAddr, SocketAddrV6, UdpBuffers, UdpReceive, UdpSend},
     packet::{MAX_RX_BUF_SIZE, MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
-    pipe::{Chunk, Pipe},
 };
 
 #[derive(Debug)]
@@ -73,30 +72,12 @@ impl From<u8> for OpCodeDescriptor {
     }
 }
 
+pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
+    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, 0));
+
 type TxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
 type RxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
 type SxBuf = MaybeUninit<[u8; MAX_RX_STATUS_BUF_SIZE]>;
-
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-pub struct RunBuffers {
-    udp_bufs: crate::transport::udp::UdpBuffers,
-    run_bufs: PacketBuffers,
-    tx_buf: TxBuf,
-    rx_buf: RxBuf,
-}
-
-#[cfg(any(feature = "std", feature = "embassy-net"))]
-impl RunBuffers {
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self {
-            udp_bufs: crate::transport::udp::UdpBuffers::new(),
-            run_bufs: PacketBuffers::new(),
-            tx_buf: core::mem::MaybeUninit::uninit(),
-            rx_buf: core::mem::MaybeUninit::uninit(),
-        }
-    }
-}
 
 pub struct PacketBuffers {
     tx: [TxBuf; MAX_EXCHANGES],
@@ -124,123 +105,50 @@ impl PacketBuffers {
 }
 
 impl<'a> Matter<'a> {
-    #[cfg(any(feature = "std", feature = "embassy-net"))]
-    pub async fn run<D, H>(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run<H, S, R>(
         &self,
-        stack: &crate::transport::network::NetworkStack<D>,
-        buffers: &mut RunBuffers,
-        dev_comm: CommissioningData,
-        handler: &H,
-    ) -> Result<(), Error>
-    where
-        D: crate::transport::network::NetworkStackDriver,
-        H: DataModelHandler,
-    {
-        let udp = crate::transport::udp::UdpListener::new(
-            stack,
-            crate::transport::network::SocketAddr::new(
-                crate::transport::network::IpAddr::V6(
-                    crate::transport::network::Ipv6Addr::UNSPECIFIED,
-                ),
-                self.port,
-            ),
-            &mut buffers.udp_bufs,
-        )
-        .await?;
-
-        let tx_pipe = Pipe::new(unsafe { buffers.tx_buf.assume_init_mut() });
-        let rx_pipe = Pipe::new(unsafe { buffers.rx_buf.assume_init_mut() });
-
-        let tx_pipe = &tx_pipe;
-        let rx_pipe = &rx_pipe;
-        let udp = &udp;
-        let run_bufs = &mut buffers.run_bufs;
-
-        let mut tx = pin!(async move {
-            loop {
-                {
-                    let mut data = tx_pipe.data.lock().await;
-
-                    if let Some(chunk) = data.chunk {
-                        udp.send(chunk.addr.unwrap_udp(), &data.buf[chunk.start..chunk.end])
-                            .await?;
-                        data.chunk = None;
-                        tx_pipe.data_consumed_notification.signal(());
-                    }
-                }
-
-                tx_pipe.data_supplied_notification.wait().await;
-            }
-        });
-
-        let mut rx = pin!(async move {
-            loop {
-                {
-                    let mut data = rx_pipe.data.lock().await;
-
-                    if data.chunk.is_none() {
-                        let (len, addr) = udp.recv(data.buf).await?;
-
-                        data.chunk = Some(Chunk {
-                            start: 0,
-                            end: len,
-                            addr: crate::transport::network::Address::Udp(addr),
-                        });
-                        rx_pipe.data_supplied_notification.signal(());
-                    }
-                }
-
-                rx_pipe.data_consumed_notification.wait().await;
-            }
-        });
-
-        let mut run = pin!(async move {
-            self.run_piped(run_bufs, tx_pipe, rx_pipe, dev_comm, handler)
-                .await
-        });
-
-        embassy_futures::select::select3(&mut tx, &mut rx, &mut run)
-            .await
-            .unwrap()
-    }
-
-    pub async fn run_piped<H>(
-        &self,
+        send: S,
+        recv: R,
+        udp_buffers: &mut UdpBuffers,
         buffers: &mut PacketBuffers,
-        tx_pipe: &Pipe<'_>,
-        rx_pipe: &Pipe<'_>,
         dev_comm: CommissioningData,
         handler: &H,
     ) -> Result<(), Error>
     where
         H: DataModelHandler,
+        S: UdpSend,
+        R: UdpReceive,
     {
         info!("Running Matter transport");
 
-        let buf = unsafe { buffers.rx[0].assume_init_mut() };
+        let (send_buf, recv_buf) = udp_buffers.split();
 
-        if self.start_comissioning(dev_comm, buf)? {
+        if self.start_comissioning(dev_comm, recv_buf)? {
             info!("Comissioning started");
         }
 
         let construction_notification = Notification::new();
 
-        let mut rx = pin!(self.handle_rx(buffers, rx_pipe, &construction_notification, handler));
-        let mut tx = pin!(self.handle_tx(tx_pipe));
+        let mut rx =
+            pin!(self.handle_rx(recv, recv_buf, buffers, &construction_notification, handler));
+        let mut tx = pin!(self.handle_tx(send, send_buf));
 
         select(&mut rx, &mut tx).await.unwrap()
     }
 
     #[inline(always)]
-    async fn handle_rx<H>(
+    async fn handle_rx<H, R>(
         &self,
+        recv: R,
+        recv_buf: &mut [u8],
         buffers: &mut PacketBuffers,
-        rx_pipe: &Pipe<'_>,
         construction_notification: &Notification,
         handler: &H,
     ) -> Result<(), Error>
     where
         H: DataModelHandler,
+        R: UdpReceive,
     {
         info!("Creating queue for {} exchanges", 1);
 
@@ -271,7 +179,8 @@ impl<'a> Matter<'a> {
         }
 
         let mut rx = pin!(self.handle_rx_multiplex(
-            rx_pipe,
+            recv,
+            recv_buf,
             unsafe { buffers.sx[MAX_EXCHANGES].assume_init_mut() },
             construction_notification,
             &channel,
@@ -291,29 +200,26 @@ impl<'a> Matter<'a> {
     }
 
     #[inline(always)]
-    pub async fn handle_tx(&self, tx_pipe: &Pipe<'_>) -> Result<(), Error> {
+    pub async fn handle_tx<S>(&self, mut send: S, send_buf: &mut [u8]) -> Result<(), Error>
+    where
+        S: UdpSend,
+    {
         loop {
             loop {
                 {
-                    let mut data = tx_pipe.data.lock().await;
+                    let mut tx = alloc!(Packet::new_tx(send_buf));
 
-                    if data.chunk.is_none() {
-                        let mut tx = alloc!(Packet::new_tx(data.buf));
+                    if self.pull_tx(&mut tx)? {
+                        let addr = tx.peer.unwrap_udp();
 
-                        if self.pull_tx(&mut tx)? {
-                            data.chunk = Some(Chunk {
-                                start: tx.get_writebuf()?.get_start(),
-                                end: tx.get_writebuf()?.get_tail(),
-                                addr: tx.peer,
-                            });
-                            tx_pipe.data_supplied_notification.signal(());
-                        } else {
-                            break;
-                        }
+                        let start = tx.get_writebuf()?.get_start();
+                        let end = tx.get_writebuf()?.get_tail();
+
+                        send.send_to(&send_buf[start..end], addr).await?;
+                    } else {
+                        break;
                     }
                 }
-
-                tx_pipe.data_consumed_notification.wait().await;
             }
 
             self.wait_tx().await?;
@@ -321,14 +227,16 @@ impl<'a> Matter<'a> {
     }
 
     #[inline(always)]
-    pub async fn handle_rx_multiplex<'t, 'e, const N: usize>(
+    pub async fn handle_rx_multiplex<'t, 'e, const N: usize, R>(
         &'t self,
-        rx_pipe: &Pipe<'_>,
+        mut receiver: R,
+        recv_buf: &mut [u8],
         sts_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
         construction_notification: &'e Notification,
         channel: &Channel<NoopRawMutex, ExchangeCtr<'e>, N>,
     ) -> Result<(), Error>
     where
+        R: UdpReceive,
         't: 'e,
     {
         let mut sts_tx = alloc!(Packet::new_tx(sts_buf));
@@ -336,36 +244,27 @@ impl<'a> Matter<'a> {
         loop {
             info!("Transport: waiting for incoming packets");
 
+            let (len, remote) = receiver.recv_from(recv_buf).await?;
+
+            let mut rx = alloc!(Packet::new_rx(&mut recv_buf[..len]));
+            rx.peer = Address::Udp(remote);
+
+            if let Some(exchange_ctr) = self
+                .process_rx(construction_notification, &mut rx, &mut sts_tx)
+                .await?
             {
-                let mut data = rx_pipe.data.lock().await;
+                let exchange_id = exchange_ctr.id().clone();
 
-                if let Some(chunk) = data.chunk {
-                    let mut rx = alloc!(Packet::new_rx(&mut data.buf[chunk.start..chunk.end]));
-                    rx.peer = chunk.addr;
+                info!("Transport: got new exchange: {:?}", exchange_id);
 
-                    if let Some(exchange_ctr) = self
-                        .process_rx(construction_notification, &mut rx, &mut sts_tx)
-                        .await?
-                    {
-                        let exchange_id = exchange_ctr.id().clone();
+                channel.send(exchange_ctr).await;
+                info!("Transport: exchange sent");
 
-                        info!("Transport: got new exchange: {:?}", exchange_id);
+                self.wait_construction(construction_notification, &rx, &exchange_id)
+                    .await?;
 
-                        channel.send(exchange_ctr).await;
-                        info!("Transport: exchange sent");
-
-                        self.wait_construction(construction_notification, &rx, &exchange_id)
-                            .await?;
-
-                        info!("Transport: exchange started");
-                    }
-
-                    data.chunk = None;
-                    rx_pipe.data_consumed_notification.signal(());
-                }
+                info!("Transport: exchange started");
             }
-
-            rx_pipe.data_supplied_notification.wait().await
         }
 
         #[allow(unreachable_code)]
@@ -386,7 +285,7 @@ impl<'a> Matter<'a> {
         H: DataModelHandler,
     {
         loop {
-            let exchange_ctr: ExchangeCtr<'_> = channel.recv().await;
+            let exchange_ctr: ExchangeCtr<'_> = channel.receive().await;
 
             info!(
                 "Handler {}: Got exchange {:?}",

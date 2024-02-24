@@ -108,7 +108,7 @@ impl Fabric {
             icac,
             noc,
             ipk,
-            label: label.into(),
+            label: label.try_into().unwrap(),
             mdns_service_name,
         })
     }
@@ -331,7 +331,7 @@ impl FabricMgr {
 
         let index = (index - 1) as usize;
         if let Some(fabric) = &mut self.fabrics[index] {
-            fabric.label = label.into();
+            fabric.label = label.try_into().unwrap();
             self.changed = true;
         }
         Ok(())

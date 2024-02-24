@@ -125,12 +125,16 @@ impl CryptoSpake2 {
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     pub fn set_L_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error> {
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
         self.set_w1_from_w1s(w1s)?;
         // TODO: rust-mbedtls doesn't yet accept the DRBG parameter
-        self.L = self.group.generator()?.mul(&mut self.group, &self.w1)?;
+        self.L = self
+            .group
+            .generator()?
+            .mul_with_rng(&mut self.group, &self.w1, &mut ctr_drbg)?;
         Ok(())
     }
 
@@ -143,7 +147,7 @@ impl CryptoSpake2 {
         //   - pB = Y
 
         // A private key on this curve is a random number between 0 to p
-        let mut ctr_drbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
         self.xy = Pk::generate_ec(&mut ctr_drbg, EcGroupId::SecP256R1)?.ec_private()?;
 
         let P = self.group.generator()?;
@@ -270,6 +274,8 @@ impl CryptoSpake2 {
         order: &Mpi,
         group: &mut EcGroup,
     ) -> Result<(EcPoint, EcPoint), Error> {
+        let mut ctr_drbg: CtrDrbg = CtrDrbg::new(Arc::new(OsEntropy::new()), None)?;
+
         // As per the RFC, the operation here is:
         //   Z = h*y*(X - w0*M)
         //   V = h*y*L
@@ -288,7 +294,7 @@ impl CryptoSpake2 {
         let Z = EcPoint::muladd(group, X, y, &inverted_M, &tmp)?;
         // Cofactor for P256 is 1, so that is a No-Op
 
-        let V = L.mul(group, y)?;
+        let V = L.mul_with_rng(group, y, &mut ctr_drbg)?;
         Ok((Z, V))
     }
 
@@ -344,16 +350,9 @@ mod tests {
             c.set_w0(&t.w0).unwrap();
             c.set_w1(&t.w1).unwrap();
             let Y = EcPoint::from_binary(&c.group, &t.Y).unwrap();
-            let (Z, V) = CryptoSpake2::get_ZV_as_prover(
-                &c.w0,
-                &c.w1,
-                &mut c.N,
-                &Y,
-                &x,
-                &c.order,
-                &mut c.group,
-            )
-            .unwrap();
+            let (Z, V) =
+                CryptoSpake2::get_ZV_as_prover(&c.w0, &c.w1, &c.N, &Y, &x, &c.order, &mut c.group)
+                    .unwrap();
 
             assert_eq!(t.Z, Z.to_binary(&c.group, false).unwrap().as_slice());
             assert_eq!(t.V, V.to_binary(&c.group, false).unwrap().as_slice());
@@ -369,16 +368,9 @@ mod tests {
             c.set_w0(&t.w0).unwrap();
             let X = EcPoint::from_binary(&c.group, &t.X).unwrap();
             let L = EcPoint::from_binary(&c.group, &t.L).unwrap();
-            let (Z, V) = CryptoSpake2::get_ZV_as_verifier(
-                &c.w0,
-                &L,
-                &mut c.M,
-                &X,
-                &y,
-                &c.order,
-                &mut c.group,
-            )
-            .unwrap();
+            let (Z, V) =
+                CryptoSpake2::get_ZV_as_verifier(&c.w0, &L, &c.M, &X, &y, &c.order, &mut c.group)
+                    .unwrap();
 
             assert_eq!(t.Z, Z.to_binary(&c.group, false).unwrap().as_slice());
             assert_eq!(t.V, V.to_binary(&c.group, false).unwrap().as_slice());
