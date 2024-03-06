@@ -29,7 +29,8 @@ use num_derive::FromPrimitive;
 pub use self::asn1_writer::ASN1Writer;
 use self::printer::CertPrinter;
 
-pub const MAX_CERT_TLV_LEN: usize = 1024; // TODO
+// As per section 6.1.3 "Certificate Sizes" of the Matter 1.1 spec
+pub const MAX_CERT_TLV_LEN: usize = 400;
 
 // As per https://datatracker.ietf.org/doc/html/rfc5280
 
