@@ -120,6 +120,19 @@ pub fn encode(bytes: &[u8]) -> impl Iterator<Item = char> + '_ {
         )
 }
 
+pub fn encode_bits(bits: u32, bits_count: u8) -> impl Iterator<Item = char> {
+    assert!(bits_count <= 24);
+
+    let repeat = match bits_count / 8 {
+        3 => 5,
+        2 => 4,
+        1 => 2,
+        _ => unreachable!(),
+    };
+
+    encode_base38(bits, repeat)
+}
+
 fn encode_base38(mut value: u32, repeat: usize) -> impl Iterator<Item = char> {
     (0..repeat).map(move |_| {
         let remainder = value % RADIX;
