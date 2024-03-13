@@ -85,7 +85,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[
         Commands::OpenCommWindow as _,
         // Commands::OpenBasicCommWindow as _,
-        // Commands::RevokeComm as _,
+        Commands::RevokeComm as _,
     ],
 };
 
@@ -140,6 +140,7 @@ impl<'a> AdminCommCluster<'a> {
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
             Commands::OpenCommWindow => self.handle_command_opencomm_win(data)?,
+            Commands::RevokeComm => self.handle_command_revokecomm_win(data)?,
             _ => Err(ErrorCode::CommandNotFound)?,
         }
 
@@ -155,6 +156,15 @@ impl<'a> AdminCommCluster<'a> {
         self.pase_mgr
             .borrow_mut()
             .enable_pase_session(verifier, req.discriminator, self.mdns)?;
+
+        Ok(())
+    }
+
+    fn handle_command_revokecomm_win(&self, _data: &TLVElement) -> Result<(), Error> {
+        cmd_enter!("Revoke Commissioning Window");
+        self.pase_mgr.borrow_mut().disable_pase_session(self.mdns)?;
+
+        // TODO: Send status code if no commissioning window is open
 
         Ok(())
     }
