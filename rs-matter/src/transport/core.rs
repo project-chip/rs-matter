@@ -26,8 +26,10 @@ use embassy_time::{Duration, Timer};
 use log::{error, info, warn};
 
 use crate::interaction_model::core::IMStatusCode;
+use crate::mdns::Mdns;
 use crate::secure_channel::common::SCStatusCodes;
 use crate::secure_channel::status_report::{create_status_report, GeneralCode};
+use crate::utils::buf::BufferAccess;
 use crate::utils::select::Notification;
 use crate::{
     alloc,
@@ -49,7 +51,7 @@ use super::{
         MAX_EXCHANGES,
     },
     mrp::ReliableMessage,
-    network::{Address, Ipv6Addr, SocketAddr, SocketAddrV6, UdpBuffers, UdpReceive, UdpSend},
+    network::{Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6},
     packet::{MAX_RX_BUF_SIZE, MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
 };
 
@@ -105,34 +107,61 @@ impl PacketBuffers {
 }
 
 impl<'a> Matter<'a> {
+    #[cfg(not(all(
+        feature = "std",
+        any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+    )))]
+    pub async fn run_builtin_mdns<S, R>(
+        &self,
+        send: S,
+        recv: R,
+        host: crate::mdns::Host<'_>,
+        interface: Option<u32>,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        use crate::mdns::MdnsImpl;
+
+        info!("Running Matter built-in mDNS service");
+
+        if let MdnsImpl::Builtin(mdns) = &self.mdns {
+            mdns.run(send, recv, &self.tx_buf, &self.rx_buf, host, interface)
+                .await
+        } else {
+            Err(ErrorCode::MdnsError.into())
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn run<H, S, R>(
         &self,
         send: S,
         recv: R,
-        udp_buffers: &mut UdpBuffers,
         buffers: &mut PacketBuffers,
         dev_comm: CommissioningData,
         handler: &H,
     ) -> Result<(), Error>
     where
         H: DataModelHandler,
-        S: UdpSend,
-        R: UdpReceive,
+        S: NetworkSend,
+        R: NetworkReceive,
     {
         info!("Running Matter transport");
 
-        let (send_buf, recv_buf) = udp_buffers.split();
+        {
+            let mut recv_buf = self.rx_buf.get().await;
 
-        if self.start_comissioning(dev_comm, recv_buf)? {
-            info!("Comissioning started");
+            if self.start_comissioning(dev_comm, &mut recv_buf)? {
+                info!("Comissioning started");
+            }
         }
 
         let construction_notification = Notification::new();
 
-        let mut rx =
-            pin!(self.handle_rx(recv, recv_buf, buffers, &construction_notification, handler));
-        let mut tx = pin!(self.handle_tx(send, send_buf));
+        let mut rx = pin!(self.handle_rx(recv, buffers, &construction_notification, handler));
+        let mut tx = pin!(self.handle_tx(send));
 
         select(&mut rx, &mut tx).await.unwrap()
     }
@@ -141,14 +170,13 @@ impl<'a> Matter<'a> {
     async fn handle_rx<H, R>(
         &self,
         recv: R,
-        recv_buf: &mut [u8],
         buffers: &mut PacketBuffers,
         construction_notification: &Notification,
         handler: &H,
     ) -> Result<(), Error>
     where
         H: DataModelHandler,
-        R: UdpReceive,
+        R: NetworkReceive,
     {
         info!("Creating queue for {} exchanges", 1);
 
@@ -180,7 +208,6 @@ impl<'a> Matter<'a> {
 
         let mut rx = pin!(self.handle_rx_multiplex(
             recv,
-            recv_buf,
             unsafe { buffers.sx[MAX_EXCHANGES].assume_init_mut() },
             construction_notification,
             &channel,
@@ -200,17 +227,19 @@ impl<'a> Matter<'a> {
     }
 
     #[inline(always)]
-    pub async fn handle_tx<S>(&self, mut send: S, send_buf: &mut [u8]) -> Result<(), Error>
+    pub async fn handle_tx<S>(&self, mut send: S) -> Result<(), Error>
     where
-        S: UdpSend,
+        S: NetworkSend,
     {
         loop {
             loop {
                 {
-                    let mut tx = alloc!(Packet::new_tx(send_buf));
+                    let mut send_buf = self.tx_buf.get().await;
+
+                    let mut tx = alloc!(Packet::new_tx(&mut send_buf));
 
                     if self.pull_tx(&mut tx)? {
-                        let addr = tx.peer.unwrap_udp();
+                        let addr = tx.peer;
 
                         let start = tx.get_writebuf()?.get_start();
                         let end = tx.get_writebuf()?.get_tail();
@@ -230,13 +259,12 @@ impl<'a> Matter<'a> {
     pub async fn handle_rx_multiplex<'t, 'e, const N: usize, R>(
         &'t self,
         mut receiver: R,
-        recv_buf: &mut [u8],
         sts_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
         construction_notification: &'e Notification,
         channel: &Channel<NoopRawMutex, ExchangeCtr<'e>, N>,
     ) -> Result<(), Error>
     where
-        R: UdpReceive,
+        R: NetworkReceive,
         't: 'e,
     {
         let mut sts_tx = alloc!(Packet::new_tx(sts_buf));
@@ -244,26 +272,32 @@ impl<'a> Matter<'a> {
         loop {
             info!("Transport: waiting for incoming packets");
 
-            let (len, remote) = receiver.recv_from(recv_buf).await?;
+            receiver.wait_available().await?;
 
-            let mut rx = alloc!(Packet::new_rx(&mut recv_buf[..len]));
-            rx.peer = Address::Udp(remote);
-
-            if let Some(exchange_ctr) = self
-                .process_rx(construction_notification, &mut rx, &mut sts_tx)
-                .await?
             {
-                let exchange_id = exchange_ctr.id().clone();
+                let mut recv_buf = self.rx_buf.get().await;
 
-                info!("Transport: got new exchange: {:?}", exchange_id);
+                let (len, remote) = receiver.recv_from(&mut recv_buf).await?;
 
-                channel.send(exchange_ctr).await;
-                info!("Transport: exchange sent");
+                let mut rx = alloc!(Packet::new_rx(&mut recv_buf[..len]));
+                rx.peer = remote;
 
-                self.wait_construction(construction_notification, &rx, &exchange_id)
-                    .await?;
+                if let Some(exchange_ctr) = self
+                    .process_rx(construction_notification, &mut rx, &mut sts_tx)
+                    .await?
+                {
+                    let exchange_id = exchange_ctr.id().clone();
 
-                info!("Transport: exchange started");
+                    info!("Transport: got new exchange: {:?}", exchange_id);
+
+                    channel.send(exchange_ctr).await;
+                    info!("Transport: exchange sent");
+
+                    self.wait_construction(construction_notification, &rx, &exchange_id)
+                        .await?;
+
+                    info!("Transport: exchange started");
+                }
             }
         }
 
@@ -327,7 +361,7 @@ impl<'a> Matter<'a> {
 
         match rx.get_proto_id() {
             PROTO_ID_SECURE_CHANNEL => {
-                let sc = SecureChannel::new(self);
+                let sc = SecureChannel::new();
 
                 sc.handle(&mut exchange, &mut rx, &mut tx).await?;
 
@@ -354,6 +388,7 @@ impl<'a> Matter<'a> {
     pub fn reset_transport(&self) {
         self.exchanges.borrow_mut().clear();
         self.session_mgr.borrow_mut().reset();
+        self.mdns.reset();
     }
 
     pub async fn process_rx<'r>(

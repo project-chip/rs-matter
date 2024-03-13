@@ -306,7 +306,7 @@ pub struct SessionMgr {
 
 impl SessionMgr {
     #[inline(always)]
-    pub fn new(epoch: Epoch, rand: Rand) -> Self {
+    pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
             sessions: heapless::Vec::new(),
             next_sess_id: 1,

@@ -20,14 +20,34 @@ use core::fmt::Write;
 use crate::{data_model::cluster_basic_information::BasicInfoConfig, error::Error};
 
 #[cfg(all(feature = "std", target_os = "macos"))]
-pub mod astro;
-pub mod builtin;
-pub mod proto;
+#[path = "mdns/astro.rs"]
+mod builtin;
+#[cfg(not(all(
+    feature = "std",
+    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+)))]
+mod builtin;
 #[cfg(all(feature = "std", feature = "zeroconf", target_os = "linux"))]
-pub mod zeroconf;
+#[path = "mdns/zeroconf.rs"]
+mod builtin;
 
+#[cfg(not(all(
+    feature = "std",
+    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+)))]
+pub use builtin::{
+    Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT, MDNS_SOCKET_BIND_ADDR,
+};
+
+/// A trait representing an mDNS implementation capable of registering and de-registering Matter-specific services
 pub trait Mdns {
+    /// Remove all Matter-specific services registered in the responder
+    fn reset(&self);
+
+    /// Register a new service; if it is already registered, it will be updated
     fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error>;
+
+    /// Remove a service; if service with that name is not registered, it will be ignored
     fn remove(&self, service: &str) -> Result<(), Error>;
 }
 
@@ -35,6 +55,10 @@ impl<T> Mdns for &mut T
 where
     T: Mdns,
 {
+    fn reset(&self) {
+        (**self).reset();
+    }
+
     fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
         (**self).add(service, mode)
     }
@@ -48,6 +72,10 @@ impl<T> Mdns for &T
 where
     T: Mdns,
 {
+    fn reset(&self) {
+        (**self).reset();
+    }
+
     fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
         (**self).add(service, mode)
     }
@@ -57,22 +85,73 @@ where
     }
 }
 
-#[cfg(not(all(feature = "std", target_os = "macos")))]
-pub use builtin::MdnsService;
+/// Models the mDNS implementation to be used by the Matter stack
+pub enum MdnsService<'a> {
+    /// Don't use any mDNS implementation. Useful for unit and integration tests
+    Disabled,
+    /// Use the built-in mDNS implementation, which is based on:
+    /// - Bonjour on macOS
+    /// - Avahi on Linux (if feature `zeroconf` is enabled)
+    /// - Our own pure-Rust implementation, in all other cases
+    Builtin,
+    /// Use an mDNS implementation provided by the user
+    Provided(&'a dyn Mdns),
+}
 
-pub struct DummyMdns;
-
-impl Mdns for DummyMdns {
-    fn add(&self, _service: &str, _mode: ServiceMode) -> Result<(), Error> {
-        Ok(())
-    }
-
-    fn remove(&self, _service: &str) -> Result<(), Error> {
-        Ok(())
+impl<'a> MdnsService<'a> {
+    pub(crate) const fn new_impl(
+        &self,
+        dev_det: &'a BasicInfoConfig<'a>,
+        matter_port: u16,
+    ) -> MdnsImpl<'a> {
+        match self {
+            Self::Disabled => MdnsImpl::Disabled,
+            Self::Builtin => MdnsImpl::Builtin(builtin::MdnsImpl::new(dev_det, matter_port)),
+            Self::Provided(mdns) => MdnsImpl::Provided(*mdns),
+        }
     }
 }
 
-pub type Service<'a> = proto::Service<'a>;
+pub(crate) enum MdnsImpl<'a> {
+    Disabled,
+    Builtin(builtin::MdnsImpl<'a>),
+    Provided(&'a dyn Mdns),
+}
+
+impl<'a> Mdns for MdnsImpl<'a> {
+    fn reset(&self) {
+        match self {
+            Self::Disabled => {}
+            Self::Builtin(mdns) => mdns.reset(),
+            Self::Provided(mdns) => mdns.reset(),
+        }
+    }
+
+    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
+        match self {
+            Self::Disabled => Ok(()),
+            Self::Builtin(mdns) => mdns.add(service, mode),
+            Self::Provided(mdns) => mdns.add(service, mode),
+        }
+    }
+
+    fn remove(&self, service: &str) -> Result<(), Error> {
+        match self {
+            Self::Disabled => Ok(()),
+            Self::Builtin(mdns) => mdns.remove(service),
+            Self::Provided(mdns) => mdns.remove(service),
+        }
+    }
+}
+
+pub struct Service<'a> {
+    pub name: &'a str,
+    pub service: &'a str,
+    pub protocol: &'a str,
+    pub port: u16,
+    pub service_subtypes: &'a [&'a str],
+    pub txt_kvs: &'a [(&'a str, &'a str)],
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ServiceMode {

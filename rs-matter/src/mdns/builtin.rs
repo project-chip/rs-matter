@@ -9,14 +9,22 @@ use log::{info, warn};
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{
-    Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpBuffers, UdpReceive, UdpSend,
+    Address, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
+    SocketAddrV6,
 };
-use crate::utils::select::{EitherUnwrap, Notification};
+use crate::utils::{
+    buf::BufferAccess,
+    select::{EitherUnwrap, Notification},
+};
 
-use super::{
-    proto::{Host, Services},
-    Service, ServiceMode,
-};
+use super::{Service, ServiceMode};
+
+use self::proto::Services;
+
+pub use proto::Host;
+
+#[path = "proto.rs"]
+mod proto;
 
 pub const MDNS_SOCKET_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, 0));
@@ -26,47 +34,26 @@ pub const MDNS_IPV4_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 
 pub const MDNS_PORT: u16 = 5353;
 
-pub struct MdnsService<'a> {
-    host: Host<'a>,
-    #[allow(unused)]
-    interface: Option<u32>,
+pub struct MdnsImpl<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
     services: RefCell<heapless::Vec<(heapless::String<40>, ServiceMode), 4>>,
     notification: Notification,
 }
 
-impl<'a> MdnsService<'a> {
+impl<'a> MdnsImpl<'a> {
     #[inline(always)]
-    pub const fn new(
-        id: u16,
-        hostname: &'a str,
-        ip: [u8; 4],
-        ipv6: Option<([u8; 16], u32)>,
-        dev_det: &'a BasicInfoConfig<'a>,
-        matter_port: u16,
-    ) -> Self {
+    pub const fn new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
         Self {
-            host: Host {
-                id,
-                hostname,
-                ip,
-                ipv6: if let Some((ipv6, _)) = ipv6 {
-                    Some(ipv6)
-                } else {
-                    None
-                },
-            },
-            interface: if let Some((_, interface)) = ipv6 {
-                Some(interface)
-            } else {
-                None
-            },
             dev_det,
             matter_port,
             services: RefCell::new(heapless::Vec::new()),
             notification: Notification::new(),
         }
+    }
+
+    pub fn reset(&self) {
+        self.services.borrow_mut().clear();
     }
 
     pub fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
@@ -87,6 +74,8 @@ impl<'a> MdnsService<'a> {
 
         services.retain(|(name, _)| name != service);
 
+        self.notification.signal(());
+
         Ok(())
     }
 
@@ -105,29 +94,39 @@ impl<'a> MdnsService<'a> {
         Ok(())
     }
 
-    pub async fn run<S, R>(
+    pub async fn run<S, R, SB, RB>(
         &self,
         send: S,
         recv: R,
-        udp_buffers: &mut UdpBuffers,
+        tx_buf: SB,
+        rx_buf: RB,
+        host: Host<'_>,
+        interface: Option<u32>,
     ) -> Result<(), Error>
     where
-        S: UdpSend,
-        R: UdpReceive,
+        S: NetworkSend,
+        R: NetworkReceive,
+        SB: BufferAccess,
+        RB: BufferAccess,
     {
-        let (send_buf, recv_buf) = udp_buffers.split();
+        let send = Mutex::<NoopRawMutex, _>::new(send);
 
-        let send = Mutex::<NoopRawMutex, _>::new((send, send_buf));
-
-        let mut broadcast = pin!(self.broadcast(&send));
-        let mut respond = pin!(self.respond(recv, recv_buf, &send));
+        let mut broadcast = pin!(self.broadcast(&send, &tx_buf, &host, interface));
+        let mut respond = pin!(self.respond(&send, recv, &tx_buf, &rx_buf, &host, interface));
 
         select(&mut broadcast, &mut respond).await.unwrap()
     }
 
-    async fn broadcast<S>(&self, send: &Mutex<impl RawMutex, (S, &mut [u8])>) -> Result<(), Error>
+    async fn broadcast<S, B>(
+        &self,
+        send: &Mutex<impl RawMutex, S>,
+        buffer: B,
+        host: &Host<'_>,
+        interface: Option<u32>,
+    ) -> Result<(), Error>
     where
-        S: UdpSend,
+        S: NetworkSend,
+        B: BufferAccess,
     {
         loop {
             select(
@@ -141,7 +140,7 @@ impl<'a> MdnsService<'a> {
                 MDNS_PORT,
             )))
             .chain(
-                self.interface
+                interface
                     .map(|interface| {
                         SocketAddr::V6(SocketAddrV6::new(
                             MDNS_IPV6_BROADCAST_ADDR,
@@ -152,70 +151,70 @@ impl<'a> MdnsService<'a> {
                     })
                     .into_iter(),
             ) {
-                let mut guard = send.lock().await;
-                let (send, send_buf) = &mut *guard;
+                let mut buf = buffer.get().await;
+                let mut send = send.lock().await;
 
-                let len = self.host.broadcast(self, send_buf, 60)?;
+                let len = host.broadcast(self, &mut buf, 60)?;
 
                 if len > 0 {
                     info!("Broadcasting mDNS entry to {addr}");
-                    send.send_to(&send_buf[..len], addr).await?;
+                    send.send_to(&buf[..len], Address::Udp(addr)).await?;
                 }
             }
         }
     }
 
-    async fn respond<S, R>(
+    async fn respond<S, R, SB, RB>(
         &self,
+        send: &Mutex<impl RawMutex, S>,
         mut recv: R,
-        recv_buf: &mut [u8],
-        send: &Mutex<impl RawMutex, (S, &mut [u8])>,
+        tx_buf: SB,
+        rx_buf: RB,
+        host: &Host<'_>,
+        _interface: Option<u32>,
     ) -> Result<(), Error>
     where
-        S: UdpSend,
-        R: UdpReceive,
+        S: NetworkSend,
+        R: NetworkReceive,
+        SB: BufferAccess,
+        RB: BufferAccess,
     {
         loop {
-            let (len, addr) = recv.recv_from(recv_buf).await?;
+            recv.wait_available().await?;
 
-            let mut guard = send.lock().await;
-            let (send, send_buf) = &mut *guard;
+            {
+                let mut rx = rx_buf.get().await;
+                let (len, addr) = recv.recv_from(&mut rx).await?;
 
-            let len = match self.host.respond(self, &recv_buf[..len], send_buf, 60) {
-                Ok(len) => len,
-                Err(err) => match err.code() {
-                    ErrorCode::MdnsError => {
-                        warn!("Got invalid message from {addr}, skipping");
-                        continue;
-                    }
-                    other => Err(other)?,
-                },
-            };
+                let mut tx = tx_buf.get().await;
+                let mut send = send.lock().await;
 
-            if len > 0 {
-                info!("Replying to mDNS query from {}", addr);
+                let len = match host.respond(self, &rx[..len], &mut tx, 60) {
+                    Ok(len) => len,
+                    Err(err) => match err.code() {
+                        ErrorCode::MdnsError => {
+                            warn!("Got invalid message from {addr}, skipping");
+                            continue;
+                        }
+                        other => Err(other)?,
+                    },
+                };
 
-                send.send_to(&send_buf[..len], addr).await?;
+                if len > 0 {
+                    info!("Replying to mDNS query from {}", addr);
+
+                    send.send_to(&tx[..len], addr).await?;
+                }
             }
         }
     }
 }
 
-impl<'a> Services for MdnsService<'a> {
+impl<'a> Services for MdnsImpl<'a> {
     fn for_each<F>(&self, callback: F) -> Result<(), Error>
     where
         F: FnMut(&Service) -> Result<(), Error>,
     {
-        MdnsService::for_each(self, callback)
-    }
-}
-
-impl<'a> super::Mdns for MdnsService<'a> {
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        MdnsService::add(self, service, mode)
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        MdnsService::remove(self, service)
+        MdnsImpl::for_each(self, callback)
     }
 }

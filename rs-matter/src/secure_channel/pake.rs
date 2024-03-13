@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use core::{cell::RefCell, fmt::Write, time::Duration};
+use core::{fmt::Write, time::Duration};
 
 use super::{
     common::{SCStatusCodes, PROTO_ID_SECURE_CHANNEL},
@@ -50,7 +50,7 @@ pub struct PaseMgr {
 
 impl PaseMgr {
     #[inline(always)]
-    pub fn new(epoch: Epoch, rand: Rand) -> Self {
+    pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
             session: None,
             timeout: None,
@@ -89,14 +89,18 @@ impl PaseMgr {
         Ok(())
     }
 
-    pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<(), Error> {
-        if let Some(session) = self.session.as_ref() {
+    pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<bool, Error> {
+        let disabled = if let Some(session) = self.session.as_ref() {
             mdns.remove(&session.mdns_service_name)?;
-        }
+
+            true
+        } else {
+            false
+        };
 
         self.session = None;
 
-        Ok(())
+        Ok(disabled)
     }
 }
 
@@ -127,14 +131,12 @@ impl Timeout {
     }
 }
 
-pub struct Pake<'a> {
-    pase: &'a RefCell<PaseMgr>,
-}
+pub struct Pake(());
 
-impl<'a> Pake<'a> {
-    pub const fn new(pase: &'a RefCell<PaseMgr>) -> Self {
+impl Pake {
+    pub const fn new() -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
-        Self { pase }
+        Self(())
     }
 
     pub async fn handle(
@@ -142,7 +144,6 @@ impl<'a> Pake<'a> {
         exchange: &mut Exchange<'_>,
         rx: &mut Packet<'_>,
         tx: &mut Packet<'_>,
-        mdns: &dyn Mdns,
     ) -> Result<(), Error> {
         let mut spake2p = alloc!(Spake2P::new());
 
@@ -150,8 +151,7 @@ impl<'a> Pake<'a> {
             .await?;
         self.handle_pasepake1(exchange, rx, tx, &mut spake2p)
             .await?;
-        self.handle_pasepake3(exchange, rx, tx, mdns, &mut spake2p)
-            .await
+        self.handle_pasepake3(exchange, rx, tx, &mut spake2p).await
     }
 
     #[allow(non_snake_case)]
@@ -160,7 +160,6 @@ impl<'a> Pake<'a> {
         exchange: &mut Exchange<'_>,
         rx: &Packet<'_>,
         tx: &mut Packet<'_>,
-        mdns: &dyn Mdns,
         spake2p: &mut Spake2P,
     ) -> Result<(), Error> {
         rx.check_proto_opcode(OpCode::PASEPake3 as _)?;
@@ -201,8 +200,14 @@ impl<'a> Pake<'a> {
 
         let status = match result {
             Ok(clone_data) => {
+                let mdns = &exchange.matter.mdns;
+
                 exchange.clone_session(tx, &clone_data).await?;
-                self.pase.borrow_mut().disable_pase_session(mdns)?;
+                exchange
+                    .matter
+                    .pase_mgr
+                    .borrow_mut()
+                    .disable_pase_session(mdns)?;
 
                 SCStatusCodes::SessionEstablishmentSuccess
             }
@@ -224,7 +229,7 @@ impl<'a> Pake<'a> {
         self.update_timeout(exchange, tx, false).await?;
 
         {
-            let pase = self.pase.borrow();
+            let pase = exchange.matter.pase_mgr.borrow();
             let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
 
             let pA = extract_pasepake_1_or_3_params(rx.as_slice())?;
@@ -260,7 +265,7 @@ impl<'a> Pake<'a> {
         self.update_timeout(exchange, tx, true).await?;
 
         {
-            let pase = self.pase.borrow();
+            let pase = exchange.matter.pase_mgr.borrow();
             let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
 
             let root = tlv::get_root_node(rx.as_slice())?;
@@ -271,7 +276,7 @@ impl<'a> Pake<'a> {
             }
 
             let mut our_random: [u8; 32] = [0; 32];
-            (self.pase.borrow().rand)(&mut our_random);
+            (exchange.matter.rand)(&mut our_random);
 
             let local_sessid = exchange.get_next_sess_id();
             let spake2p_data: u32 = ((local_sessid as u32) << 16) | a.initiator_ssid as u32;
@@ -313,7 +318,7 @@ impl<'a> Pake<'a> {
         self.check_session(exchange, tx).await?;
 
         let status = {
-            let mut pase = self.pase.borrow_mut();
+            let mut pase = exchange.matter.pase_mgr.borrow_mut();
 
             if pase
                 .timeout
@@ -342,7 +347,7 @@ impl<'a> Pake<'a> {
         if let Some(status) = status {
             complete_with_status(exchange, tx, status, None).await
         } else {
-            let mut pase = self.pase.borrow_mut();
+            let mut pase = exchange.matter.pase_mgr.borrow_mut();
 
             pase.timeout = Some(Timeout::new(exchange, pase.epoch));
 
@@ -355,12 +360,18 @@ impl<'a> Pake<'a> {
         exchange: &mut Exchange<'_>,
         tx: &mut Packet<'_>,
     ) -> Result<(), Error> {
-        if self.pase.borrow().session.is_none() {
+        if exchange.matter.pase_mgr.borrow().session.is_none() {
             error!("PASE not enabled");
             complete_with_status(exchange, tx, SCStatusCodes::InvalidParameter, None).await
         } else {
             Ok(())
         }
+    }
+}
+
+impl Default for Pake {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

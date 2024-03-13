@@ -31,14 +31,10 @@ use rs_matter::data_model::objects::*;
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
-use rs_matter::mdns::builtin::{
-    MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
-};
 use rs_matter::mdns::MdnsService;
 use rs_matter::persist::Psm;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::transport::core::{PacketBuffers, MATTER_SOCKET_BIND_ADDR};
-use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr, UdpBuffers};
 use rs_matter::utils::select::EitherUnwrap;
 use rs_matter::MATTER_PORT;
 
@@ -66,10 +62,8 @@ fn run() -> Result<(), Error> {
     );
 
     info!(
-        "Matter memory: mDNS={}, Matter={}, UdpBuffers={}, PacketBuffers={}",
-        core::mem::size_of::<MdnsService>(),
+        "Matter memory: Matter={}, PacketBuffers={}",
         core::mem::size_of::<Matter>(),
-        core::mem::size_of::<UdpBuffers>(),
         core::mem::size_of::<PacketBuffers>(),
     );
 
@@ -85,8 +79,6 @@ fn run() -> Result<(), Error> {
         vendor_name: "Vendor PQR",
     };
 
-    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
-
     let dev_att = dev_att::HardCodedDevAtt::new();
 
     // NOTE:
@@ -94,22 +86,11 @@ fn run() -> Result<(), Error> {
     let epoch = rs_matter::utils::epoch::sys_epoch;
     let rand = rs_matter::utils::rand::sys_rand;
 
-    let mdns = MdnsService::new(
-        0,
-        "rs-matter-demo",
-        ipv4_addr.octets(),
-        Some((ipv6_addr.octets(), interface)),
-        &dev_det,
-        MATTER_PORT,
-    );
-
-    info!("mDNS initialized");
-
     let matter = Matter::new(
         // vid/pid should match those in the DAC
         &dev_det,
         &dev_att,
-        &mdns,
+        MdnsService::Builtin,
         epoch,
         rand,
         MATTER_PORT,
@@ -120,30 +101,14 @@ fn run() -> Result<(), Error> {
     let handler = HandlerCompat(handler(&matter));
 
     // NOTE:
-    // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind + multicast join for your custom UDP stack
-    // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
-    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
-    socket
-        .get_ref()
-        .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)?;
-    socket
-        .get_ref()
-        .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
-
-    let mut udp_buffers = UdpBuffers::new();
-    let mut mdns_runner = pin!(mdns.run(&socket, &socket, &mut udp_buffers));
-
-    // NOTE:
     // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind for your custom UDP stack
     // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
-    let mut udp_buffers = UdpBuffers::new();
     let mut packet_buffers = PacketBuffers::new();
-    let runner = pin!(matter.run(
+    let mut runner = pin!(matter.run(
         &socket,
         &socket,
-        &mut udp_buffers,
         &mut packet_buffers,
         CommissioningData {
             // TODO: Hard-coded for now
@@ -153,7 +118,7 @@ fn run() -> Result<(), Error> {
         &handler,
     ));
 
-    let mut runner = pin!(runner);
+    let mut mdns_runner = pin!(run_mdns(&matter));
 
     // NOTE:
     // Replace with your own persister for e.g. `no_std` environments
@@ -198,53 +163,99 @@ fn handler<'a>(matter: &'a Matter<'a>) -> impl Metadata + NonBlockingHandler + '
     )
 }
 
-// NOTE:
-// Replace with your own network initialization for e.g. `no_std` environments
-#[inline(never)]
-fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
-    use log::error;
-    use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
-    use rs_matter::error::ErrorCode;
+#[cfg(all(
+    feature = "std",
+    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+))]
+async fn run_mdns(_matter: &Matter<'_>) -> Result<(), Error> {
+    // Nothing to run
+    core::future::pending().await
+}
 
-    let interfaces = || {
-        nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {
-            ia.flags
-                .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
-                && !ia
-                    .flags
-                    .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
-        })
+#[cfg(not(all(
+    feature = "std",
+    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+)))]
+async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
+    use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
+
+    // NOTE:
+    // Replace with your own network initialization for e.g. `no_std` environments
+    fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
+        use log::error;
+        use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
+        use rs_matter::error::ErrorCode;
+        let interfaces = || {
+            nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {
+                ia.flags
+                    .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
+                    && !ia
+                        .flags
+                        .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
+            })
+        };
+
+        // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
+        // Most likely, this is the interface we need
+        // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
+        let (iname, ip, ipv6) = interfaces()
+            .filter_map(|ia| {
+                ia.address
+                    .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
+                    .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
+                    .map(|ipv6| (ia.interface_name, ipv6))
+            })
+            .filter_map(|(iname, ipv6)| {
+                interfaces()
+                    .filter(|ia2| ia2.interface_name == iname)
+                    .find_map(|ia2| {
+                        ia2.address
+                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
+                            .map(|ip: std::net::Ipv4Addr| (iname.clone(), ip, ipv6))
+                    })
+            })
+            .next()
+            .ok_or_else(|| {
+                error!("Cannot find network interface suitable for mDNS broadcasting");
+                ErrorCode::StdIoError
+            })?;
+
+        info!(
+            "Will use network interface {} with {}/{} for mDNS",
+            iname, ip, ipv6
+        );
+
+        Ok((ip.octets().into(), ipv6.octets().into(), 0 as _))
+    }
+
+    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
+
+    use rs_matter::mdns::{
+        Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
     };
 
-    // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
-    // Most likely, this is the interface we need
-    // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
-    let (iname, ip, ipv6) = interfaces()
-        .filter_map(|ia| {
-            ia.address
-                .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
-                .map(|ipv6| (ia.interface_name, ipv6))
-        })
-        .filter_map(|(iname, ipv6)| {
-            interfaces()
-                .filter(|ia2| ia2.interface_name == iname)
-                .find_map(|ia2| {
-                    ia2.address
-                        .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
-                        .map(|ip: std::net::Ipv4Addr| (iname.clone(), ip, ipv6))
-                })
-        })
-        .next()
-        .ok_or_else(|| {
-            error!("Cannot find network interface suitable for mDNS broadcasting");
-            ErrorCode::StdIoError
-        })?;
+    // NOTE:
+    // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind + multicast join for your custom UDP stack
+    // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
+    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
+    socket
+        .get_ref()
+        .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)?;
+    socket
+        .get_ref()
+        .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
 
-    info!(
-        "Will use network interface {} with {}/{} for mDNS",
-        iname, ip, ipv6
-    );
-
-    Ok((ip.octets().into(), ipv6.octets().into(), 0 as _))
+    matter
+        .run_builtin_mdns(
+            &socket,
+            &socket,
+            Host {
+                id: 0,
+                hostname: "rs-matter-demo",
+                ip: ipv4_addr.octets(),
+                ipv6: Some(ipv6_addr.octets()),
+            },
+            Some(interface),
+        )
+        .await
 }

@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
-
 use log::{error, trace};
 
 use crate::{
@@ -24,7 +22,7 @@ use crate::{
     cert::Cert,
     crypto::{self, KeyPair, Sha256},
     error::{Error, ErrorCode},
-    fabric::{Fabric, FabricMgr},
+    fabric::Fabric,
     secure_channel::common::{self, OpCode, PROTO_ID_SECURE_CHANNEL},
     secure_channel::common::{complete_with_status, SCStatusCodes},
     tlv::{get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType},
@@ -63,15 +61,12 @@ impl CaseSession {
     }
 }
 
-pub struct Case<'a> {
-    fabric_mgr: &'a RefCell<FabricMgr>,
-    rand: Rand,
-}
+pub struct Case(());
 
-impl<'a> Case<'a> {
+impl Case {
     #[inline(always)]
-    pub fn new(fabric_mgr: &'a RefCell<FabricMgr>, rand: Rand) -> Self {
-        Self { fabric_mgr, rand }
+    pub const fn new() -> Self {
+        Self(())
     }
 
     pub async fn handle(
@@ -97,7 +92,7 @@ impl<'a> Case<'a> {
         rx.check_proto_opcode(OpCode::CASESigma3 as _)?;
 
         let result = {
-            let fabric_mgr = self.fabric_mgr.borrow();
+            let fabric_mgr = exchange.matter.fabric_mgr.borrow();
 
             let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
             if let Some(fabric) = fabric {
@@ -187,7 +182,8 @@ impl<'a> Case<'a> {
         let root = get_root_node_struct(rx_buf)?;
         let r = Sigma1Req::from_tlv(&root)?;
 
-        let local_fabric_idx = self
+        let local_fabric_idx = exchange
+            .matter
             .fabric_mgr
             .borrow_mut()
             .match_dest_id(r.initiator_random.0, r.dest_id.0);
@@ -220,7 +216,7 @@ impl<'a> Case<'a> {
         );
 
         // Create an ephemeral Key Pair
-        let key_pair = KeyPair::new(self.rand)?;
+        let key_pair = KeyPair::new(exchange.matter.rand)?;
         let _ = key_pair.get_public_key(&mut case_session.our_pub_key)?;
 
         // Derive the Shared Secret
@@ -232,7 +228,7 @@ impl<'a> Case<'a> {
         //        println!("Derived secret: {:x?} len: {}", secret, len);
 
         let mut our_random: [u8; 32] = [0; 32];
-        (self.rand)(&mut our_random);
+        (exchange.matter.rand)(&mut our_random);
 
         // Derive the Encrypted Part
         const MAX_ENCRYPTED_SIZE: usize = 800;
@@ -241,7 +237,7 @@ impl<'a> Case<'a> {
         let mut signature = alloc!([0u8; crypto::EC_SIGNATURE_LEN_BYTES]);
 
         let fabric_found = {
-            let fabric_mgr = self.fabric_mgr.borrow();
+            let fabric_mgr = exchange.matter.fabric_mgr.borrow();
 
             let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
             if let Some(fabric) = fabric {
@@ -267,7 +263,7 @@ impl<'a> Case<'a> {
 
                 let encrypted_len = Case::get_sigma2_encryption(
                     fabric,
-                    self.rand,
+                    exchange.matter.rand,
                     &our_random,
                     case_session,
                     signature,

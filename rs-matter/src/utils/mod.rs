@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+pub mod buf;
 pub mod epoch;
 pub mod parsebuf;
 pub mod rand;

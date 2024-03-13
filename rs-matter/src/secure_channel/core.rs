@@ -15,64 +15,25 @@
  *    limitations under the License.
  */
 
-use core::borrow::Borrow;
-use core::cell::RefCell;
-
 use log::error;
 
 use crate::{
     error::*,
-    fabric::FabricMgr,
-    mdns::Mdns,
     secure_channel::{common::*, pake::Pake},
     transport::{exchange::Exchange, packet::Packet},
-    utils::{epoch::Epoch, rand::Rand},
 };
 
-use super::{case::Case, pake::PaseMgr};
+use super::case::Case;
 
 /* Handle messages related to the Secure Channel
  */
 
-pub struct SecureChannel<'a> {
-    pase: &'a RefCell<PaseMgr>,
-    fabric: &'a RefCell<FabricMgr>,
-    mdns: &'a dyn Mdns,
-    rand: Rand,
-}
+pub struct SecureChannel(());
 
-impl<'a> SecureChannel<'a> {
+impl SecureChannel {
     #[inline(always)]
-    pub fn new<
-        T: Borrow<RefCell<FabricMgr>>
-            + Borrow<RefCell<PaseMgr>>
-            + Borrow<dyn Mdns + 'a>
-            + Borrow<Epoch>
-            + Borrow<Rand>,
-    >(
-        matter: &'a T,
-    ) -> Self {
-        Self::wrap(
-            matter.borrow(),
-            matter.borrow(),
-            matter.borrow(),
-            *matter.borrow(),
-        )
-    }
-
-    #[inline(always)]
-    pub fn wrap(
-        pase: &'a RefCell<PaseMgr>,
-        fabric: &'a RefCell<FabricMgr>,
-        mdns: &'a dyn Mdns,
-        rand: Rand,
-    ) -> Self {
-        Self {
-            fabric,
-            pase,
-            mdns,
-            rand,
-        }
+    pub const fn new() -> Self {
+        Self(())
     }
 
     pub async fn handle(
@@ -82,20 +43,18 @@ impl<'a> SecureChannel<'a> {
         tx: &mut Packet<'_>,
     ) -> Result<(), Error> {
         match rx.get_proto_opcode()? {
-            OpCode::PBKDFParamRequest => {
-                Pake::new(self.pase)
-                    .handle(exchange, rx, tx, self.mdns)
-                    .await
-            }
-            OpCode::CASESigma1 => {
-                Case::new(self.fabric, self.rand)
-                    .handle(exchange, rx, tx)
-                    .await
-            }
+            OpCode::PBKDFParamRequest => Pake::new().handle(exchange, rx, tx).await,
+            OpCode::CASESigma1 => Case::new().handle(exchange, rx, tx).await,
             proto_opcode => {
                 error!("OpCode not handled: {:?}", proto_opcode);
                 Err(ErrorCode::InvalidOpcode.into())
             }
         }
+    }
+}
+
+impl Default for SecureChannel {
+    fn default() -> Self {
+        Self::new()
     }
 }
