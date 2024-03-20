@@ -1,46 +1,41 @@
 use core::cell::RefCell;
-use std::collections::HashMap;
+
+use std::collections::BTreeMap;
+
+use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
+
+use log::info;
 
 use crate::{
     data_model::cluster_basic_information::BasicInfoConfig,
     error::{Error, ErrorCode},
 };
-use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
-use log::info;
 
 use super::ServiceMode;
 
-pub struct MdnsService<'a> {
+pub struct MdnsImpl<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
-    services: RefCell<HashMap<String, RegisteredDnsService>>,
+    services: RefCell<BTreeMap<String, RegisteredDnsService>>,
 }
 
-impl<'a> MdnsService<'a> {
-    /// This constructor takes extra parameters for API-compatibility with builtin::MdnsService
-    pub fn new(
-        _id: u16,
-        _hostname: &str,
-        _ip: [u8; 4],
-        _ipv6: Option<([u8; 16], u32)>,
-        dev_det: &'a BasicInfoConfig<'a>,
-        matter_port: u16,
-    ) -> Self {
-        Self::native_new(dev_det, matter_port)
-    }
-
-    pub fn native_new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
+impl<'a> MdnsImpl<'a> {
+    pub const fn new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
         Self {
             dev_det,
             matter_port,
-            services: RefCell::new(HashMap::new()),
+            services: RefCell::new(BTreeMap::new()),
         }
     }
 
-    pub fn add(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
-        info!("Registering mDNS service {}/{:?}", name, mode);
+    pub fn reset(&self) {
+        self.services.borrow_mut().clear();
+    }
 
+    pub fn add(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         let _ = self.remove(name);
+
+        info!("Registering mDNS service {}/{:?}", name, mode);
 
         mode.service(self.dev_det, self.matter_port, name, |service| {
             let composite_service_type = if !service.service_subtypes.is_empty() {
@@ -76,15 +71,5 @@ impl<'a> MdnsService<'a> {
         }
 
         Ok(())
-    }
-}
-
-impl<'a> super::Mdns for MdnsService<'a> {
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        MdnsService::add(self, service, mode)
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        MdnsService::remove(self, service)
     }
 }

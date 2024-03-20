@@ -1,46 +1,52 @@
 use core::cell::RefCell;
-use std::collections::HashMap;
+
+use std::collections::BTreeMap;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
-use super::{MdnsRunBuffers, ServiceMode};
+use log::error;
+
+use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
+
 use crate::{
     data_model::cluster_basic_information::BasicInfoConfig,
     error::{Error, ErrorCode},
-    transport::pipe::Pipe,
 };
-use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 
-pub struct MdnsService<'a> {
-    dev_det: &'a BasicInfoConfig<'a>,
-    matter_port: u16,
-    services: RefCell<HashMap<String, SyncSender<()>>>,
+use super::ServiceMode;
+
+struct MdnsEntry(SyncSender<()>);
+
+impl Drop for MdnsEntry {
+    fn drop(&mut self) {
+        if let Err(e) = self.0.send(()) {
+            error!("Deregistering mDNS entry failed: {e}");
+        }
+    }
 }
 
-impl<'a> MdnsService<'a> {
-    /// This constructor takes extra parameters for API-compatibility with builtin::MdnsService
-    pub fn new(
-        _id: u16,
-        _hostname: &str,
-        _ip: [u8; 4],
-        _ipv6: Option<([u8; 16], u32)>,
-        dev_det: &'a BasicInfoConfig<'a>,
-        matter_port: u16,
-    ) -> Self {
-        Self::native_new(dev_det, matter_port)
-    }
+pub struct MdnsImpl<'a> {
+    dev_det: &'a BasicInfoConfig<'a>,
+    matter_port: u16,
+    services: RefCell<BTreeMap<String, MdnsEntry>>,
+}
 
-    pub fn native_new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
+impl<'a> MdnsImpl<'a> {
+    pub const fn new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
         Self {
             dev_det,
             matter_port,
-            services: RefCell::new(HashMap::new()),
+            services: RefCell::new(BTreeMap::new()),
         }
     }
 
-    pub fn add(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
-        log::info!("Registering mDNS service {}/{:?}", name, mode);
+    pub fn reset(&self) {
+        self.services.borrow_mut().clear();
+    }
 
+    pub fn add(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         let _ = self.remove(name);
+
+        log::info!("Registering mDNS service {}/{:?}", name, mode);
 
         mode.service(self.dev_det, self.matter_port, name, |service| {
             let service_name = service.service.strip_prefix('_').unwrap_or(service.service);
@@ -52,7 +58,7 @@ impl<'a> MdnsService<'a> {
             let service_type = if !service.service_subtypes.is_empty() {
                 let subtypes = service
                     .service_subtypes
-                    .into_iter()
+                    .iter()
                     .map(|subtype| subtype.strip_prefix('_').unwrap_or(*subtype))
                     .collect();
 
@@ -115,30 +121,19 @@ impl<'a> MdnsService<'a> {
                 }
             });
 
-            self.services.borrow_mut().insert(name.to_owned(), sender);
+            self.services
+                .borrow_mut()
+                .insert(name.to_owned(), MdnsEntry(sender));
 
             Ok(())
         })
     }
 
     pub fn remove(&self, name: &str) -> Result<(), Error> {
-        if let Some(cancellation_notice) = self.services.borrow_mut().remove(name) {
+        if self.services.borrow_mut().remove(name).is_some() {
             log::info!("Deregistering mDNS service {}", name);
-            cancellation_notice
-                .send(())
-                .map_err(|_| ErrorCode::MdnsError)?;
         }
 
         Ok(())
-    }
-}
-
-impl<'a> super::Mdns for MdnsService<'a> {
-    fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        MdnsService::add(self, service, mode)
-    }
-
-    fn remove(&self, service: &str) -> Result<(), Error> {
-        MdnsService::remove(self, service)
     }
 }

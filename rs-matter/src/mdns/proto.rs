@@ -18,6 +18,8 @@ use octseq::Truncate;
 
 use crate::error::{Error, ErrorCode};
 
+use super::Service;
+
 impl From<ShortBuf> for Error {
     fn from(_: ShortBuf) -> Self {
         Self::new(ErrorCode::NoSpace)
@@ -333,15 +335,6 @@ impl<'a> Host<'a> {
 
         Dname::<heapless07::Vec<u8, 64>>::from_chars(host_fqdn.chars())
     }
-}
-
-pub struct Service<'a> {
-    pub name: &'a str,
-    pub service: &'a str,
-    pub protocol: &'a str,
-    pub port: u16,
-    pub service_subtypes: &'a [&'a str],
-    pub txt_kvs: &'a [(&'a str, &'a str)],
 }
 
 impl<'a> Service<'a> {

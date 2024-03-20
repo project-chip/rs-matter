@@ -27,14 +27,15 @@ use crate::{
     },
     error::*,
     fabric::FabricMgr,
-    mdns::Mdns,
+    mdns::{Mdns, MdnsImpl, MdnsService},
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
     transport::{
         exchange::{ExchangeCtx, MAX_EXCHANGES},
+        packet::{MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
         session::SessionMgr,
     },
-    utils::{epoch::Epoch, rand::Rand, select::Notification},
+    utils::{buf::BufferAccessImpl, epoch::Epoch, rand::Rand, select::Notification},
 };
 
 /* The Matter Port */
@@ -50,13 +51,15 @@ pub struct CommissioningData {
 
 /// The primary Matter Object
 pub struct Matter<'a> {
-    fabric_mgr: RefCell<FabricMgr>,
+    pub(crate) fabric_mgr: RefCell<FabricMgr>,
     pub acl_mgr: RefCell<AclMgr>, // Public for tests
-    pase_mgr: RefCell<PaseMgr>,
-    failsafe: RefCell<FailSafe>,
+    pub(crate) pase_mgr: RefCell<PaseMgr>,
+    pub(crate) failsafe: RefCell<FailSafe>,
     persist_notification: Notification,
     pub(crate) send_notification: Notification,
-    mdns: &'a dyn Mdns,
+    pub(crate) mdns: MdnsImpl<'a>,
+    pub(crate) tx_buf: BufferAccessImpl<MAX_RX_BUF_SIZE>,
+    pub(crate) rx_buf: BufferAccessImpl<MAX_TX_BUF_SIZE>,
     pub(crate) epoch: Epoch,
     pub(crate) rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
@@ -71,10 +74,10 @@ pub struct Matter<'a> {
 impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
     #[inline(always)]
-    pub fn new_default(
+    pub const fn new_default(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: &'a dyn Mdns,
+        mdns: MdnsService<'a>,
         port: u16,
     ) -> Self {
         use crate::utils::epoch::sys_epoch;
@@ -90,10 +93,10 @@ impl<'a> Matter<'a> {
     /// requires a set of device attestation certificates and keys. It is the responsibility of
     /// this object to return the device attestation details when queried upon.
     #[inline(always)]
-    pub fn new(
+    pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: &'a dyn Mdns,
+        mdns: MdnsService<'a>,
         epoch: Epoch,
         rand: Rand,
         port: u16,
@@ -105,7 +108,9 @@ impl<'a> Matter<'a> {
             failsafe: RefCell::new(FailSafe::new()),
             persist_notification: Notification::new(),
             send_notification: Notification::new(),
-            mdns,
+            mdns: mdns.new_impl(dev_det, port),
+            rx_buf: BufferAccessImpl::new(),
+            tx_buf: BufferAccessImpl::new(),
             epoch,
             rand,
             dev_det,
@@ -131,7 +136,7 @@ impl<'a> Matter<'a> {
     }
 
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr.borrow_mut().load(data, self.mdns)
+        self.fabric_mgr.borrow_mut().load(data, &self.mdns)
     }
 
     pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
@@ -167,7 +172,7 @@ impl<'a> Matter<'a> {
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,
                 dev_comm.discriminator,
-                self.mdns,
+                &self.mdns,
             )?;
 
             Ok(true)
@@ -225,7 +230,7 @@ impl<'a> Borrow<dyn DevAttDataFetcher + 'a> for Matter<'a> {
 
 impl<'a> Borrow<dyn Mdns + 'a> for Matter<'a> {
     fn borrow(&self) -> &(dyn Mdns + 'a) {
-        self.mdns
+        &self.mdns
     }
 }
 

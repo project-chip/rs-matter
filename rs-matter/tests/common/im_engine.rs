@@ -48,12 +48,12 @@ use rs_matter::{
     error::{Error, ErrorCode},
     handler_chain_type,
     interaction_model::core::{OpCode, PROTO_ID_INTERACTION_MODEL},
-    mdns::DummyMdns,
+    mdns::MdnsService,
     secure_channel::{self, common::PROTO_ID_SECURE_CHANNEL, spake2p::VerifierData},
     tlv::{TLVWriter, TagType, ToTLV},
     transport::{
         core::PacketBuffers,
-        network::{Address, Ipv4Addr, SocketAddr, SocketAddrV4, UdpBuffers, UdpReceive, UdpSend},
+        network::{Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4},
         packet::{Packet, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
         session::{CaseDetails, CloneData, NocCatIds, SessionMode},
     },
@@ -194,8 +194,6 @@ impl<'a> Metadata for ImEngineHandler<'a> {
     }
 }
 
-static mut DNS: DummyMdns = DummyMdns;
-
 /// An Interaction Model Engine to facilitate easy testing
 pub struct ImEngine<'a> {
     pub matter: Matter<'a>,
@@ -224,7 +222,7 @@ impl<'a> ImEngine<'a> {
         let matter = Matter::new(
             &BASIC_INFO,
             &DummyDevAtt,
-            unsafe { &mut DNS },
+            MdnsService::Disabled,
             epoch,
             rand,
             MATTER_PORT,
@@ -293,15 +291,11 @@ impl<'a> ImEngine<'a> {
         let (send, mut send_dest) = send_channel.split();
         let (mut recv_dest, recv) = recv_channel.split();
 
-        let mut udp_buffers = UdpBuffers::new();
-        let udp_buffers = &mut udp_buffers;
-
         embassy_futures::block_on(async move {
             select3(
                 self.matter.run(
-                    UdpSender(send),
-                    UdpReceiver(recv),
-                    udp_buffers,
+                    NetworkSender(send),
+                    NetworkReceiver(recv),
                     buffers,
                     CommissioningData {
                         // TODO: Hard-coded for now
@@ -422,10 +416,10 @@ impl<'a> ImEngine<'a> {
     }
 }
 
-struct UdpSender<'a>(Sender<'a, NoopRawMutex, heapless::Vec<u8, MAX_TX_BUF_SIZE>>);
+struct NetworkSender<'a>(Sender<'a, NoopRawMutex, heapless::Vec<u8, MAX_TX_BUF_SIZE>>);
 
-impl<'a> UdpSend for UdpSender<'a> {
-    async fn send_to(&mut self, data: &[u8], _addr: SocketAddr) -> Result<(), Error> {
+impl<'a> NetworkSend for NetworkSender<'a> {
+    async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
         let vec = self.0.send().await;
 
         vec.clear();
@@ -437,10 +431,16 @@ impl<'a> UdpSend for UdpSender<'a> {
     }
 }
 
-struct UdpReceiver<'a>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, MAX_RX_BUF_SIZE>>);
+struct NetworkReceiver<'a>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, MAX_RX_BUF_SIZE>>);
 
-impl<'a> UdpReceive for UdpReceiver<'a> {
-    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
+impl<'a> NetworkReceive for NetworkReceiver<'a> {
+    async fn wait_available(&mut self) -> Result<(), Error> {
+        self.0.receive().await;
+
+        Ok(())
+    }
+
+    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
         let vec = self.0.receive().await;
 
         buffer[..vec.len()].copy_from_slice(&vec);
@@ -450,7 +450,7 @@ impl<'a> UdpReceive for UdpReceiver<'a> {
 
         Ok((
             len,
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+            Address::Udp(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))),
         ))
     }
 }
