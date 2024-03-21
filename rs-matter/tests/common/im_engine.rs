@@ -443,7 +443,7 @@ impl<'a> NetworkReceive for NetworkReceiver<'a> {
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
         let vec = self.0.receive().await;
 
-        buffer[..vec.len()].copy_from_slice(&vec);
+        buffer[..vec.len()].copy_from_slice(vec);
         let len = vec.len();
 
         self.0.receive_done();

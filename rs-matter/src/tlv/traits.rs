@@ -258,7 +258,7 @@ impl<T: ToTLV> ToTLV for Option<T> {
 /// The value may be null or a valid value
 /// Note: Null is different from Option. If the value is optional, include Option<> too. For
 /// example, Option<Nullable<T>>
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug, Hash, Eq)]
 pub enum Nullable<T> {
     Null,
     NotNull(T),
