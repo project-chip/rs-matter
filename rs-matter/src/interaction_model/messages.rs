@@ -67,7 +67,6 @@ impl GenericPath {
 pub mod msg {
 
     use crate::{
-        error::Error,
         interaction_model::core::IMStatusCode,
         tlv::{FromTLV, TLVArray, ToTLV},
     };
