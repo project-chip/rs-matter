@@ -488,7 +488,7 @@ impl<'a> ToTLV for TLVElement<'a> {
 #[cfg(test)]
 mod tests {
     use super::{FromTLV, OctetStr, TLVWriter, TagType, ToTLV};
-    use crate::{error::Error, tlv::TLVList, utils::writebuf::WriteBuf};
+    use crate::{tlv::TLVList, utils::writebuf::WriteBuf};
     use rs_matter_macros::{FromTLV, ToTLV};
 
     #[derive(ToTLV)]
