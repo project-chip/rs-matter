@@ -122,7 +122,7 @@ fn gen_totlv_for_struct(
 
     quote! {
         impl #generics #krate::tlv::ToTLV for #struct_name #generics {
-            fn to_tlv(&self, tw: &mut #krate::tlv::TLVWriter, tag_type: #krate::tlv::TagType) -> Result<(), Error> {
+            fn to_tlv(&self, tw: &mut #krate::tlv::TLVWriter, tag_type: #krate::tlv::TagType) -> Result<(), #krate::error::Error> {
                 let anchor = tw.get_tail();
 
                 if let Err(err) = (|| {
@@ -449,7 +449,7 @@ fn gen_fromtlv_for_enum(
            impl #generics #krate::tlv::FromTLV <#lifetime> for #enum_name #generics {
                fn from_tlv(t: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
                    let mut t_iter = t.confirm_struct()?.enter().ok_or_else(|| #krate::error::Error::new(#krate::error::ErrorCode::Invalid))?;
-                   let mut item = t_iter.next().ok_or_else(|| Error::new(#krate::error::ErrorCode::Invalid))?;
+                   let mut item = t_iter.next().ok_or_else(|| #krate::error::Error::new(#krate::error::ErrorCode::Invalid))?;
                    if let TagType::Context(tag) = item.get_tag() {
                        match tag {
                            #(
@@ -591,7 +591,7 @@ mod tests {
                       &self,
                       tw: &mut rs_matter_maybe_renamed::tlv::TLVWriter,
                       tag_type: rs_matter_maybe_renamed::tlv::TagType
-                    ) -> Result<(), Error> {
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
                       let anchor = tw.get_tail();
                       if let Err(err) = (|| {
                           tw.start_struct(tag_type)?;
