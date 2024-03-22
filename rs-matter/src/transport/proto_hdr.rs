@@ -26,7 +26,8 @@ use crate::{crypto, error::*};
 use log::{info, trace};
 
 bitflags! {
-    #[derive(Default)]
+    #[repr(transparent)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct ExchFlags: u8 {
         const VENDOR = 0x10;
         const SECEX = 0x08;

@@ -16,8 +16,10 @@
 
 #[cfg(test)]
 mod tlv_encoding_tests {
+    use bitflags::bitflags;
+    use rs_matter::bitflags_tlv;
     use rs_matter::error::Error;
-    use rs_matter::tlv::{get_root_node, FromTLV, TLVWriter, TagType, ToTLV};
+    use rs_matter::tlv::{get_root_node, FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
     use rs_matter::utils::writebuf::WriteBuf;
 
     #[derive(PartialEq, Debug, ToTLV, FromTLV)]
@@ -105,5 +107,36 @@ mod tlv_encoding_tests {
             "Decoding of TLV"
         );
         assert_eq!(b, with_enum);
+    }
+
+    #[test]
+    fn test_bitflags() {
+        bitflags! {
+            #[repr(transparent)]
+            #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+            struct SampleBitmap : u16 {
+                const A = 0x0010;
+                const B = 0x0200;
+                const C = 0x4000;
+            }
+        };
+
+        bitflags_tlv!(SampleBitmap, u16);
+
+        #[derive(Debug, PartialEq, ToTLV, FromTLV)]
+        struct StructWithBitmap {
+            number: u32,
+            data: SampleBitmap,
+        }
+
+        let a = StructWithBitmap {
+            number: 112233,
+            data: SampleBitmap::A | SampleBitmap::C,
+        };
+
+        let encoded = asserted_ok!(encode_to_tlv(&a), "Encoding to TLV");
+        let b = asserted_ok!(decode_from_tlv(&encoded), "Decode from tlv");
+
+        assert_eq!(a, b);
     }
 }

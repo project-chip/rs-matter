@@ -485,6 +485,30 @@ impl<'a> ToTLV for TLVElement<'a> {
     }
 }
 
+/// Implements to/from TLV for the given enumeration that was
+/// created using `bitflags!`
+///
+/// NOTE:
+///   - bitflgs are generally unrestricted. The provided implementations
+///     do NOT attempt to validate flags for validity and the entire
+///     range of flags will be marshalled (including unknown flags)
+#[macro_export]
+macro_rules! bitflags_tlv {
+    ($enum_name:ident, $type:ident) => {
+        impl FromTLV<'_> for $enum_name {
+            fn from_tlv(t: &TLVElement) -> Result<Self, Error> {
+                Ok(Self::from_bits_retain(t.$type()?))
+            }
+        }
+
+        impl ToTLV for $enum_name {
+            fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+                tw.$type(tag, self.bits())
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FromTLV, OctetStr, TLVWriter, TagType, ToTLV};

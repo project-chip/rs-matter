@@ -23,7 +23,7 @@ rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
-bitflags = { version =  "1.3", default-features = false } # TODO: Update to 2.x
+bitflags = { version =  "2.5", default-features = false } # TODO: Update to 2.x
 byteorder = { version = "1.5", default-features = false }
 heapless = "0.8"
 heapless07 = { package = "heapless", version = "0.7" } # Necessary for domain 0.9

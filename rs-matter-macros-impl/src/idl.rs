@@ -86,11 +86,16 @@ fn bitmap_definition(b: &Bitmap) -> TokenStream {
         )
     });
 
-    quote!(bitflags::bitflags! {
-      pub struct #name : #base_type {
-        #(#items)*
-      }
-    })
+    quote!(
+       bitflags::bitflags! {
+         #[repr(transparent)]
+         #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+         pub struct #name : #base_type {
+           #(#items)*
+         }
+       }
+       bitflags_tlv!(#name, #base_type);
+    )
 }
 
 /// Creates the token stream corresponding to an enum definition.
@@ -287,9 +292,15 @@ pub fn server_side_cluster_generate(
         .iter()
         .map(|s| struct_definition(s, context));
 
+    let krate = context.rs_matter_crate.clone();
+
     quote!(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
+
+            use #krate::tlv::{TLVElement, ToTLV, FromTLV, TLVWriter, TagType};
+            use #krate::error::Error;
+            use #krate::bitflags_tlv;
 
             #(#bitmap_declarations)*
 
@@ -487,19 +498,29 @@ mod tests {
                 mod on_off {
                     pub const ID: u32 = 6;
 
+                    use rs_matter_crate::bitflags_tlv;
+                    use rs_matter_crate::error::Error;
+                    use rs_matter_crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
+
                     bitflags::bitflags! {
+                      #[repr(transparent)]
+                      #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
                       pub struct Feature : u32 {
                         const LIGHTING = 1;
                         const DEAD_FRONT_BEHAVIOR = 2;
                         const OFF_ONLY = 4;
                       }
                     }
+                    bitflags_tlv!(Feature, u32);
 
                     bitflags::bitflags! {
+                      #[repr(transparent)]
+                      #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
                       pub struct OnOffControlBitmap : u8 {
                         const ACCEPT_ONLY_WHEN_ON = 1;
                       }
                     }
+                    bitflags_tlv!(OnOffControlBitmap, u8);
 
                     #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                     #[repr(u8)]
