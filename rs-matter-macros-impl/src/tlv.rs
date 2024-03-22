@@ -1,4 +1,6 @@
-use proc_macro2::{Ident, Span, TokenStream};
+use std::collections::HashSet;
+
+use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::meta::ParseNestedMeta;
 use syn::parse::ParseStream;
@@ -61,9 +63,21 @@ fn parse_tlvargs(ast: &DeriveInput, rs_matter_crate: String) -> TlvArgs {
     tlvargs
 }
 
-fn parse_tag_val(field: &syn::Field) -> Option<u8> {
-    field
-        .attrs
+fn parse_enum_val(attrs: &[syn::Attribute]) -> Option<u16> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("enumval"))
+        .map(|attr| {
+            attr.parse_args_with(|parser: ParseStream| {
+                parser.parse::<LitInt>()?.base10_parse::<u16>()
+            })
+            .unwrap()
+        })
+        .next()
+}
+
+fn parse_tag_val(attrs: &[syn::Attribute]) -> Option<u8> {
+    attrs
         .iter()
         .filter(|attr| attr.path().is_ident("tagval"))
         .map(|attr| {
@@ -96,7 +110,7 @@ fn gen_totlv_for_struct(
         //        keys.push(quote! { #literal_key_str });
         idents.push(&field.ident);
         //        types.push(type_name.to_token_stream());
-        if let Some(a) = parse_tag_val(field) {
+        if let Some(a) = parse_tag_val(&field.attrs) {
             tags.push(a);
         } else {
             tags.push(tag_start);
@@ -135,47 +149,133 @@ fn gen_totlv_for_enum(
     tlvargs: &TlvArgs,
     generics: &syn::Generics,
 ) -> TokenStream {
-    let mut tag_start = tlvargs.start;
+    // Enum values are allowed to be enum16 in the spec,
+    // so we need to support "tags" up to u16 for those cases
+    let mut tag_start = tlvargs.start as u16;
 
     let mut variant_names = Vec::new();
-    let mut types = Vec::new();
     let mut tags = Vec::new();
+
+    #[derive(PartialEq, Eq, Hash)]
+    enum FieldTypes {
+        Named,
+        Unnamed,
+        Unit,
+    }
+
+    let variant_types = data_enum
+        .variants
+        .iter()
+        .map(|v| match v.fields {
+            syn::Fields::Unnamed(_) => FieldTypes::Unnamed,
+            syn::Fields::Named(_) => FieldTypes::Named,
+            syn::Fields::Unit => FieldTypes::Unit,
+        })
+        .collect::<HashSet<_>>();
+
+    if variant_types.contains(&FieldTypes::Named) {
+        panic!("Named items in enums not supported.");
+    }
+
+    if variant_types.contains(&FieldTypes::Unnamed) && variant_types.contains(&FieldTypes::Unit) {
+        // You should have enum Foo {A,B,C} OR Foo{A(X), B(Y), ...}
+        // Combining them does not work
+        panic!("Enum contains both unit and unnamed fields. This is not supported.");
+    }
 
     for v in data_enum.variants.iter() {
         variant_names.push(&v.ident);
-        if let syn::Fields::Unnamed(fields) = &v.fields {
-            if let Type::Path(path) = &fields.unnamed[0].ty {
-                types.push(&path.path.segments[0].ident);
-            } else {
-                panic!("Path not found {:?}", v.fields);
-            }
+        if let Some(a) = parse_enum_val(&v.attrs) {
+            tags.push(a);
         } else {
-            panic!("Unnamed field not found {:?}", v.fields);
+            tags.push(tag_start);
+            tag_start += 1;
         }
-        tags.push(tag_start);
-        tag_start += 1;
     }
 
     let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
 
-    quote! {
-        impl #generics #krate::tlv::ToTLV for #enum_name #generics {
-            fn to_tlv(&self, tw: &mut #krate::tlv::TLVWriter, tag_type: #krate::tlv::TagType) -> Result<(), #krate::error::Error> {
-                let anchor = tw.get_tail();
+    if variant_types.contains(&FieldTypes::Unit) {
+        // Ideally we would also be able to figure out the writing type using "repr" data
+        // however for now we require a "datatype" to be valid
+        let (write_func, tags) = match tlvargs.datatype.as_str() {
+            "struct" | "u8" => {
+                if tags.iter().any(|v| *v > 0xFF) {
+                    panic!(
+                        "Enum discriminator value larger that 0xFF for {:?}",
+                        enum_name
+                    )
+                }
+                (
+                    Ident::new("u8", Span::call_site()),
+                    tags.into_iter()
+                        .map(|v| Literal::u8_suffixed(v as u8))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            "u16" => (
+                Ident::new("u16", Span::call_site()),
+                tags.into_iter()
+                    .map(Literal::u16_suffixed)
+                    .collect::<Vec<_>>(),
+            ),
+            _ => panic!(
+                "Invalid data type {:?} for enum {:?}",
+                tlvargs.datatype, enum_name
+            ),
+        };
 
-                if let Err(err) = (|| {
-                    tw.start_struct(tag_type)?;
-                    match self {
-                        #(
-                            Self::#variant_names(c) => { c.to_tlv(tw, #krate::tlv::TagType::Context(#tags))?; },
-                        )*
+        quote! {
+            impl #generics #krate::tlv::ToTLV for #enum_name #generics {
+                fn to_tlv(&self, tw: &mut #krate::tlv::TLVWriter, tag_type: #krate::tlv::TagType) -> Result<(), #krate::error::Error> {
+                    let anchor = tw.get_tail();
+
+                    if let Err(err) = (|| {
+                        match self {
+                            #( Self::#variant_names => tw.#write_func(tag_type, #tags)?, )*
+                        }
+                    })() {
+                        tw.rewind_to(anchor);
+                        Err(err)
+                    } else {
+                        Ok(())
                     }
-                    tw.end_container()
-                })() {
-                    tw.rewind_to(anchor);
-                    Err(err)
-                } else {
-                    Ok(())
+                }
+            }
+        }
+    } else {
+        // tags MUST be context-tags (up to u8 range)
+        if tags.iter().any(|v| *v > 0xFF) {
+            panic!(
+                "Enum discriminator value larger that 0xFF for {:?}",
+                enum_name
+            )
+        }
+
+        let tags = tags
+            .into_iter()
+            .map(|v| Literal::u8_suffixed(v as u8))
+            .collect::<Vec<_>>();
+
+        quote! {
+            impl #generics #krate::tlv::ToTLV for #enum_name #generics {
+                fn to_tlv(&self, tw: &mut #krate::tlv::TLVWriter, tag_type: #krate::tlv::TagType) -> Result<(), #krate::error::Error> {
+                    let anchor = tw.get_tail();
+
+                    if let Err(err) = (|| {
+                        tw.start_struct(tag_type)?;
+                        match self {
+                            #(
+                                Self::#variant_names(c) => { c.to_tlv(tw, #krate::tlv::TagType::Context(#tags))?; },
+                            )*
+                        }
+                        tw.end_container()
+                    })() {
+                        tw.rewind_to(anchor);
+                        Err(err)
+                    } else {
+                        Ok(())
+                    }
                 }
             }
         }
@@ -204,6 +304,9 @@ fn gen_totlv_for_enum(
 ///  name: u8,
 /// In the above case, the 'name' attribute will be encoded/decoded with
 /// the tag 22
+///
+/// Enumeration values can use `enumval` attribute to specify what numeric
+/// value a specific element corresponds to.
 pub fn derive_totlv(ast: DeriveInput, rs_matter_crate: String) -> TokenStream {
     let name = &ast.ident;
 
@@ -243,7 +346,7 @@ fn gen_fromtlv_for_struct(
 
     for field in fields.named.iter() {
         let type_name = &field.ty;
-        if let Some(a) = parse_tag_val(field) {
+        if let Some(a) = parse_tag_val(&field.attrs) {
             // TODO: The current limitation with this is that a hard-coded integer
             // value has to be mentioned in the tagval attribute. This is because
             // our tags vector is for integers, and pushing an 'identifier' on it
@@ -540,6 +643,87 @@ mod tests {
                                 }
                           }
                           tw.end_container()
+                      })() {
+                          tw.rewind_to(anchor);
+                          Err(err)
+                      } else {
+                          Ok(())
+                      }
+                    }
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn test_to_tlv_for_unit_defaults() {
+        let ast: DeriveInput = syn::parse2(quote!(
+            enum TestEnum {
+                ValueA,
+                ValueB,
+            }
+        ))
+        .unwrap();
+
+        assert_tokenstreams_eq!(
+            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &quote!(
+                impl rs_matter_maybe_renamed::tlv::ToTLV for TestEnum {
+                    fn to_tlv(
+                        &self,
+                        tw: &mut rs_matter_maybe_renamed::tlv::TLVWriter,
+                        tag_type: rs_matter_maybe_renamed::tlv::TagType,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                        let anchor = tw.get_tail();
+                        if let Err(err) = (|| {
+                            match self {
+                                Self::ValueA => tw.u8(tag_type, 0u8)?,
+                                Self::ValueB => tw.u8(tag_type, 1u8)?,
+                            }
+                      })() {
+                          tw.rewind_to(anchor);
+                          Err(err)
+                      } else {
+                          Ok(())
+                      }
+                    }
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn test_to_tlv_for_unit_enum() {
+        let ast: DeriveInput = syn::parse2(quote!(
+            #[tlvargs(datatype = "u16")]
+            enum TestEnum {
+                ValueA,
+                ValueB,
+                #[enumval(100)]
+                ValueC,
+                #[enumval(0x1234)]
+                ValueD,
+            }
+        ))
+        .unwrap();
+
+        assert_tokenstreams_eq!(
+            &derive_totlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &quote!(
+                impl rs_matter_maybe_renamed::tlv::ToTLV for TestEnum {
+                    fn to_tlv(
+                        &self,
+                        tw: &mut rs_matter_maybe_renamed::tlv::TLVWriter,
+                        tag_type: rs_matter_maybe_renamed::tlv::TagType,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                        let anchor = tw.get_tail();
+                        if let Err(err) = (|| {
+                            match self {
+                                Self::ValueA => tw.u16(tag_type, 0u16)?,
+                                Self::ValueB => tw.u16(tag_type, 1u16)?,
+                                Self::ValueC => tw.u16(tag_type, 100u16)?,
+                                Self::ValueD => tw.u16(tag_type, 4660u16)?,
+                            }
                       })() {
                           tw.rewind_to(anchor);
                           Err(err)
