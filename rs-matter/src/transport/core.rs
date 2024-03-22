@@ -55,25 +55,6 @@ use super::{
     packet::{MAX_RX_BUF_SIZE, MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
 };
 
-#[derive(Debug)]
-enum OpCodeDescriptor {
-    SecureChannel(OpCode),
-    InteractionModel(crate::interaction_model::core::OpCode),
-    Unknown(u8),
-}
-
-impl From<u8> for OpCodeDescriptor {
-    fn from(value: u8) -> Self {
-        if let Some(opcode) = num::FromPrimitive::from_u8(value) {
-            Self::SecureChannel(opcode)
-        } else if let Some(opcode) = num::FromPrimitive::from_u8(value) {
-            Self::InteractionModel(opcode)
-        } else {
-            Self::Unknown(value)
-        }
-    }
-}
-
 pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, 0));
 

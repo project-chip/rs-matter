@@ -27,8 +27,13 @@ use crate::{
 };
 use chrono::{DateTime, NaiveDate};
 use num_derive::FromPrimitive;
+use rs_matter_macros::idl_import;
 
-pub const ID: u32 = 0x0506;
+idl_import!(clusters = ["MediaPlayback"]);
+
+pub use media_playback::Commands;
+pub use media_playback::ID;
+
 #[derive(FromPrimitive)]
 pub enum Attributes {
     CurrentState = 0x0,
@@ -78,23 +83,6 @@ impl CommandStatus {
             CommandStatus::SeekOutOfRange => 5,
         }
     }
-}
-
-#[derive(FromPrimitive, PartialEq)]
-pub enum Commands {
-    Play = 0x0,
-    Pause = 0x1,
-    Stop = 0x2,
-    StartOver = 0x3,
-    Previous = 0x4,
-    Next = 0x5,
-    Rewind = 0x6,
-    FastForward = 0x7,
-    SkipForward = 0x8,
-    SkipBackward = 0x9,
-    // Response is from us to server
-    PlaybackResponse = 0xa,
-    Seek = 0x0b,
 }
 
 struct PlaybackPosition {

@@ -21,7 +21,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Group, Ident, Punct};
 use quote::quote;
 use rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL;
-use rs_matter_macros_impl::idl::server_side_cluster_generate;
+use rs_matter_macros_impl::idl::{server_side_cluster_generate, IdlGenerateContext};
 use syn::{parse::Parse, parse_macro_input, DeriveInput};
 
 fn get_crate_name() -> String {
@@ -50,6 +50,9 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
 
 #[derive(Debug)]
 struct MatterIdlImportArgs {
+    // Crate name to refer to for `rs-matter`
+    rs_matter_crate: String,
+
     // What clusters to import. Non-empty list if
     // a clusters argument was given
     clusters: Option<HashSet<String>>,
@@ -116,7 +119,10 @@ impl Parse for MatterIdlImportArgs {
             }
         }
 
-        Ok(MatterIdlImportArgs { clusters })
+        Ok(MatterIdlImportArgs {
+            rs_matter_crate: get_crate_name(),
+            clusters,
+        })
     }
 }
 
@@ -131,6 +137,7 @@ pub fn idl_import(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as MatterIdlImportArgs);
 
     let idl = rs_matter_data_model::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
+    let context = IdlGenerateContext::new(input.rs_matter_crate);
 
     let streams = idl
         .clusters
@@ -139,7 +146,7 @@ pub fn idl_import(item: TokenStream) -> TokenStream {
             Some(ref v) => v.contains(&c.id),
             None => true,
         })
-        .map(server_side_cluster_generate);
+        .map(|cluster| server_side_cluster_generate(cluster, &context));
 
     quote!(
         // IDL-generated code:

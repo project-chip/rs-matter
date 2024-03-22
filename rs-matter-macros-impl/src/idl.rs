@@ -3,6 +3,23 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 use rs_matter_data_model::{Bitmap, Cluster, DataType, Enum, Struct, StructField};
 
+/// Some context data for IDL generation
+///
+/// Data that is necessary to be able to code generate various bits.
+/// In particular, matter_rs types (e.g. TLV or traits) are needed,
+/// hence the crate name is provided
+pub struct IdlGenerateContext {
+    rs_matter_crate: Ident,
+}
+
+impl IdlGenerateContext {
+    pub fn new(rs_matter_crate: impl AsRef<str>) -> Self {
+        Self {
+            rs_matter_crate: Ident::new(rs_matter_crate.as_ref(), Span::call_site()),
+        }
+    }
+}
+
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
 /// constants based on rust guidelines
 ///
@@ -173,17 +190,7 @@ fn field_type(f: &DataType) -> TokenStream {
     }
 }
 
-fn struct_field_definition(f: &StructField) -> TokenStream {
-    if f.is_optional {
-        // TODO: this needs implementation
-        panic!("Code generation of OPTIONAL structure field support not yet implemented.");
-    }
-
-    if f.is_nullable {
-        // TODO: this needs implementation
-        panic!("Code generation of NULLABLE structure field support not yet implemented.");
-    }
-
+fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
 
@@ -197,6 +204,19 @@ fn struct_field_definition(f: &StructField) -> TokenStream {
     let _code = Literal::u8_unsuffixed(f.field.code as u8);
     let field_type = field_type(&f.field.data_type);
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+    let rs_matter_crate = context.rs_matter_crate.clone();
+
+    let field_type = if f.is_nullable {
+        quote!(#rs_matter_crate::tlv::Nullable<#field_type>)
+    } else {
+        field_type
+    };
+
+    let field_type = if f.is_optional {
+        quote!(Option<#field_type>)
+    } else {
+        field_type
+    };
 
     quote!(
       #doc_comment
@@ -209,7 +229,7 @@ fn struct_field_definition(f: &StructField) -> TokenStream {
 /// definition.
 ///
 /// Provides the raw `struct Foo { ... }` declaration.
-fn struct_definition(s: &Struct) -> TokenStream {
+fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
 
@@ -218,8 +238,6 @@ fn struct_definition(s: &Struct) -> TokenStream {
     // TODO:
     //  - add handling for array types (including no_std support), including:
     //    string, octet_string, list (of various things like integers or structs or enums)
-    //  - add optional support
-    //  - add nullable support
     //
     // Complex example:
     //
@@ -234,7 +252,7 @@ fn struct_definition(s: &Struct) -> TokenStream {
     // For now fields are assumed to be "simple" types as this allows passing on-off cluster
     // at least
 
-    let fields = s.fields.iter().map(struct_field_definition);
+    let fields = s.fields.iter().map(|f| struct_field_definition(f, context));
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -244,7 +262,10 @@ fn struct_definition(s: &Struct) -> TokenStream {
     )
 }
 
-pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
+pub fn server_side_cluster_generate(
+    cluster: &Cluster,
+    context: &IdlGenerateContext,
+) -> TokenStream {
     let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
     let mut commands = Vec::new();
@@ -261,7 +282,10 @@ pub fn server_side_cluster_generate(cluster: &Cluster) -> TokenStream {
 
     let bitmap_declarations = cluster.bitmaps.iter().map(bitmap_definition);
     let enum_declarations = cluster.enums.iter().map(enum_definition);
-    let struct_declarations = cluster.structs.iter().map(struct_definition);
+    let struct_declarations = cluster
+        .structs
+        .iter()
+        .map(|s| struct_definition(s, context));
 
     quote!(
         mod #cluster_module_name {
@@ -307,6 +331,9 @@ mod tests {
                 // a somewhat complex struct
                 struct NetworkInfoStruct {
                   boolean connected = 1;
+                  optional int8u test_optional = 2;
+                  nullable int16u test_nullable = 3;
+                  optional nullable int32u test_both = 4;
                 }
 
                 // Some varying requests
@@ -332,8 +359,13 @@ mod tests {
         );
 
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
+        let context = IdlGenerateContext::new("rs_matter_crate");
 
-        let defs: TokenStream = cluster.structs.iter().map(struct_definition).collect();
+        let defs: TokenStream = cluster
+            .structs
+            .iter()
+            .map(|c| struct_definition(c, &context))
+            .collect();
 
         assert_tokenstreams_eq!(
             &defs,
@@ -341,6 +373,9 @@ mod tests {
                 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
                 pub struct NetworkInfoStruct {
                     connected: bool,
+                    test_optional: Option<u8>,
+                    test_nullable: rs_matter_crate::tlv::Nullable<u16>,
+                    test_both: Option<rs_matter_crate::tlv::Nullable<u32>>,
                 }
 
                 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -444,9 +479,10 @@ mod tests {
         ",
         );
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
+        let context = IdlGenerateContext::new("rs_matter_crate");
 
         assert_tokenstreams_eq!(
-            &server_side_cluster_generate(cluster),
+            &server_side_cluster_generate(cluster, &context),
             &quote!(
                 mod on_off {
                     pub const ID: u32 = 6;
