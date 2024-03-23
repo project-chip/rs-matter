@@ -23,7 +23,8 @@ use bitflags::bitflags;
 use core::fmt::{self, Debug};
 
 bitflags! {
-    #[derive(Default)]
+    #[repr(transparent)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Access: u16 {
         // These must match the bits in the Privilege object :-|
         const NEED_VIEW = 0x00001;
@@ -37,15 +38,15 @@ bitflags! {
         const FAB_SENSITIVE = 0x0080;
         const TIMED_ONLY = 0x0100;
 
-        const READ_PRIVILEGE_MASK = Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits | Self::NEED_OPERATE.bits | Self::NEED_ADMIN.bits;
-        const WRITE_PRIVILEGE_MASK = Self::NEED_MANAGE.bits | Self::NEED_OPERATE.bits | Self::NEED_ADMIN.bits;
-        const RV = Self::READ.bits | Self::NEED_VIEW.bits;
-        const RF = Self::READ.bits | Self::FAB_SCOPED.bits;
-        const RA = Self::READ.bits | Self::NEED_ADMIN.bits;
-        const RWVA = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_ADMIN.bits;
-        const RWFA = Self::READ.bits | Self::WRITE.bits | Self::FAB_SCOPED.bits | Self::NEED_ADMIN.bits;
-        const RWVM = Self::READ.bits | Self::WRITE.bits | Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits;
-        const RWFVM = Self::READ.bits | Self::WRITE.bits | Self::FAB_SCOPED.bits |Self::NEED_VIEW.bits | Self::NEED_MANAGE.bits;
+        const READ_PRIVILEGE_MASK = Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits() | Self::NEED_OPERATE.bits() | Self::NEED_ADMIN.bits();
+        const WRITE_PRIVILEGE_MASK = Self::NEED_MANAGE.bits() | Self::NEED_OPERATE.bits() | Self::NEED_ADMIN.bits();
+        const RV = Self::READ.bits() | Self::NEED_VIEW.bits();
+        const RF = Self::READ.bits() | Self::FAB_SCOPED.bits();
+        const RA = Self::READ.bits() | Self::NEED_ADMIN.bits();
+        const RWVA = Self::READ.bits() | Self::WRITE.bits() | Self::NEED_VIEW.bits() | Self::NEED_ADMIN.bits();
+        const RWFA = Self::READ.bits() | Self::WRITE.bits() | Self::FAB_SCOPED.bits() | Self::NEED_ADMIN.bits();
+        const RWVM = Self::READ.bits() | Self::WRITE.bits() | Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits();
+        const RWFVM = Self::READ.bits() | Self::WRITE.bits() | Self::FAB_SCOPED.bits() |Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits();
     }
 }
 
@@ -73,7 +74,8 @@ impl Access {
 }
 
 bitflags! {
-    #[derive(Default)]
+    #[repr(transparent)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Quality: u8 {
         const NONE = 0x00;
         const SCENE = 0x01;      // Short: S
@@ -81,11 +83,11 @@ bitflags! {
         const FIXED = 0x04;      // Short: F
         const NULLABLE = 0x08;   // Short: X
 
-        const SN = Self::SCENE.bits | Self::PERSISTENT.bits;
-        const S = Self::SCENE.bits;
-        const N = Self::PERSISTENT.bits;
-        const F = Self::FIXED.bits;
-        const X = Self::NULLABLE.bits;
+        const SN = Self::SCENE.bits() | Self::PERSISTENT.bits();
+        const S = Self::SCENE.bits();
+        const N = Self::PERSISTENT.bits();
+        const F = Self::FIXED.bits();
+        const X = Self::NULLABLE.bits();
     }
 }
 

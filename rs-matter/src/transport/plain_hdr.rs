@@ -29,7 +29,8 @@ pub enum SessionType {
 }
 
 bitflags! {
-    #[derive(Default)]
+    #[repr(transparent)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct MsgFlags: u8 {
         const DSIZ_UNICAST_NODEID = 0x01;
         const DSIZ_GROUPCAST_NODEID = 0x02;

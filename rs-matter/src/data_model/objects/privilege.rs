@@ -24,17 +24,18 @@ use log::error;
 use bitflags::bitflags;
 
 bitflags! {
-    #[derive(Default)]
+    #[repr(transparent)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Privilege: u8 {
         const V = 0x01;
         const O = 0x02;
         const M = 0x04;
         const A = 0x08;
 
-        const VIEW = Self::V.bits;
-        const OPERATE = Self::V.bits | Self::O.bits;
-        const MANAGE = Self::V.bits | Self::O.bits | Self::M.bits;
-        const ADMIN = Self::V.bits | Self::O.bits| Self::M.bits| Self::A.bits;
+        const VIEW = Self::V.bits();
+        const OPERATE = Self::V.bits() | Self::O.bits();
+        const MANAGE = Self::V.bits() | Self::O.bits() | Self::M.bits();
+        const ADMIN = Self::V.bits() | Self::O.bits() | Self::M.bits() | Self::A.bits();
     }
 }
 
