@@ -36,13 +36,13 @@ fn get_crate_name() -> String {
     }
 }
 
-#[proc_macro_derive(ToTLV, attributes(tlvargs, tagval))]
+#[proc_macro_derive(ToTLV, attributes(tlvargs, tagval, enumval))]
 pub fn derive_totlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
     rs_matter_macros_impl::tlv::derive_totlv(ast, get_crate_name()).into()
 }
 
-#[proc_macro_derive(FromTLV, attributes(tlvargs, tagval))]
+#[proc_macro_derive(FromTLV, attributes(tlvargs, tagval, enumval))]
 pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
     rs_matter_macros_impl::tlv::derive_fromtlv(ast, get_crate_name()).into()

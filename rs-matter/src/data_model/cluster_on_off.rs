@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use core::{cell::Cell, convert::TryInto};
+use core::cell::Cell;
 
 use super::objects::*;
 use crate::{

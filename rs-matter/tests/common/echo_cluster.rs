@@ -16,7 +16,6 @@
  */
 
 use core::cell::Cell;
-use core::convert::TryInto;
 use std::sync::{Arc, Mutex, Once};
 
 use num_derive::FromPrimitive;

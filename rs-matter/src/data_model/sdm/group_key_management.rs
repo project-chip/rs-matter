@@ -14,12 +14,8 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-
-use core::convert::TryInto;
-
 use crate::{
     attribute_enum, cmd_enter, command_enum,
-    data_model::objects::AttrType,
     data_model::objects::*,
     error::{Error, ErrorCode},
     tlv::TLVElement,

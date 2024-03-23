@@ -16,7 +16,6 @@
  */
 
 use core::cell::RefCell;
-use core::convert::TryInto;
 
 use crate::data_model::objects::*;
 use crate::mdns::Mdns;

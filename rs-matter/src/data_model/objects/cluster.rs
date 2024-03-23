@@ -33,10 +33,7 @@ use crate::{
     // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
     tlv::{Nullable, TLVWriter, TagType},
 };
-use core::{
-    convert::TryInto,
-    fmt::{self, Debug},
-};
+use core::fmt::{self, Debug};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
 #[repr(u16)]
