@@ -368,7 +368,16 @@ fn gen_fromtlv_for_struct(
         idents.push(&field.ident);
 
         if let Type::Path(path) = type_name {
-            types.push(&path.path.segments[0].ident);
+            // When paths are like `matter_rs::tlv::Nullable<u32>`
+            // this ignores the arguments and just does:
+            // `matter_rs::tlv::Nullable`
+            let idents = path
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.clone())
+                .collect::<Vec<_>>();
+            types.push(quote!(#(#idents)::*));
         } else {
             panic!("Don't know what to do {:?}", type_name);
         }
@@ -682,6 +691,71 @@ mod tests {
                       }
                   }
               }
+            )
+        );
+    }
+
+    #[test]
+    fn test_from_tlv_for_struct() {
+        let ast: DeriveInput = syn::parse2(quote!(
+            struct TestS {
+                field1: u8,
+                field2: u32,
+                field_opt: Option<u32>,
+                field_null: rs_matter_maybe_renamed::tlv::Nullable<u32>,
+            }
+        ))
+        .unwrap();
+
+        assert_tokenstreams_eq!(
+            &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
+            &quote!(
+                impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestS {
+                   fn from_tlv(
+                       t: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                   ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                       let mut t_iter = t.confirm_struct()?.enter().ok_or_else(|| {
+                           rs_matter_maybe_renamed::error::Error::new(
+                               rs_matter_maybe_renamed::error::ErrorCode::Invalid,
+                           )
+                       })?;
+                       let mut item = t_iter.next();
+                       let field1 = if Some(true) == item.as_ref().map(|x| x.check_ctx_tag(0u8)) {
+                           let backup = item;
+                           item = t_iter.next();
+                           u8::from_tlv(&backup.unwrap())
+                       } else {
+                           u8::tlv_not_found()
+                       }?;
+                       let field2 = if Some(true) == item.as_ref().map(|x| x.check_ctx_tag(1u8)) {
+                           let backup = item;
+                           item = t_iter.next();
+                           u32::from_tlv(&backup.unwrap())
+                       } else {
+                           u32::tlv_not_found()
+                       }?;
+                       let field_opt = if Some(true) == item.as_ref().map(|x| x.check_ctx_tag(2u8)) {
+                           let backup = item;
+                           item = t_iter.next();
+                           Option::from_tlv(&backup.unwrap())
+                       } else {
+                           Option::tlv_not_found()
+                       }?;
+                       let field_null = if Some(true) == item.as_ref().map(|x| x.check_ctx_tag(3u8)) {
+                           let backup = item;
+                           item = t_iter.next();
+                           rs_matter_maybe_renamed::tlv::Nullable::from_tlv(&backup.unwrap())
+                       } else {
+                           rs_matter_maybe_renamed::tlv::Nullable::tlv_not_found()
+                       }?;
+                       Ok(Self {
+                           field1,
+                           field2,
+                           field_opt,
+                           field_null,
+                       })
+                   }
+               }
             )
         );
     }
