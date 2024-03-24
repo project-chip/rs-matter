@@ -25,7 +25,7 @@ use crate::{
     utils::epoch::Epoch,
 };
 use log::error;
-use num::{self, FromPrimitive};
+use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
 use super::messages::msg::{

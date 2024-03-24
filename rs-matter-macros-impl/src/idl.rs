@@ -68,7 +68,7 @@ pub fn idl_id_to_enum_name(s: &str) -> String {
 }
 
 /// Creates the token stream corresponding to a bitmap definition.
-fn bitmap_definition(b: &Bitmap) -> TokenStream {
+fn bitmap_definition(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
     let base_type = match b.base_type.as_ref() {
         "bitmap8" => quote!(u8),
         "bitmap16" => quote!(u16),
@@ -85,6 +85,7 @@ fn bitmap_definition(b: &Bitmap) -> TokenStream {
           const #constant_name = #constant_value;
         )
     });
+    let krate = context.rs_matter_crate.clone();
 
     quote!(
        bitflags::bitflags! {
@@ -94,14 +95,14 @@ fn bitmap_definition(b: &Bitmap) -> TokenStream {
            #(#items)*
          }
        }
-       bitflags_tlv!(#name, #base_type);
+       #krate::bitflags_tlv!(#name, #base_type);
     )
 }
 
 /// Creates the token stream corresponding to an enum definition.
 ///
 /// Essentially `enum Foo { kValue.... = ...}`
-fn enum_definition(e: &Enum) -> TokenStream {
+fn enum_definition(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
     let base_type = match e.base_type.as_ref() {
         "enum8" => quote!(u8),
         "enum16" => quote!(u16),
@@ -113,12 +114,14 @@ fn enum_definition(e: &Enum) -> TokenStream {
         let constant_name = Ident::new(&idl_id_to_enum_name(&c.id), Span::call_site());
         let constant_value = Literal::i64_unsuffixed(c.code as i64);
         quote!(
+          #[enumval(#constant_value)]
           #constant_name = #constant_value
         )
     });
+    let krate = context.rs_matter_crate.clone();
 
     quote!(
-      #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+      #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
       #[repr(#base_type)]
       pub enum #name {
         #(#items),*
@@ -209,10 +212,10 @@ fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> Tok
     let _code = Literal::u8_unsuffixed(f.field.code as u8);
     let field_type = field_type(&f.field.data_type);
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
-    let rs_matter_crate = context.rs_matter_crate.clone();
+    let krate = context.rs_matter_crate.clone();
 
     let field_type = if f.is_nullable {
-        quote!(#rs_matter_crate::tlv::Nullable<#field_type>)
+        quote!(#krate::tlv::Nullable<#field_type>)
     } else {
         field_type
     };
@@ -260,7 +263,7 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
     let fields = s.fields.iter().map(|f| struct_field_definition(f, context));
 
     quote!(
-        #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+        #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
         pub struct #name {
            #(#fields),*
         }
@@ -285,8 +288,11 @@ pub fn server_side_cluster_generate(
 
     let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
 
-    let bitmap_declarations = cluster.bitmaps.iter().map(bitmap_definition);
-    let enum_declarations = cluster.enums.iter().map(enum_definition);
+    let bitmap_declarations = cluster
+        .bitmaps
+        .iter()
+        .map(|c| bitmap_definition(c, context));
+    let enum_declarations = cluster.enums.iter().map(|c| enum_definition(c, context));
     let struct_declarations = cluster
         .structs
         .iter()
@@ -298,9 +304,9 @@ pub fn server_side_cluster_generate(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
 
-            use #krate::tlv::{TLVElement, ToTLV, FromTLV, TLVWriter, TagType};
+            // USE declarations because bitflags_tlv! macro has no crate context
             use #krate::error::Error;
-            use #krate::bitflags_tlv;
+            use #krate::tlv::{TLVElement, ToTLV, FromTLV, TLVWriter, TagType};
 
             #(#bitmap_declarations)*
 
@@ -381,7 +387,7 @@ mod tests {
         assert_tokenstreams_eq!(
             &defs,
             &quote!(
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                 pub struct NetworkInfoStruct {
                     connected: bool,
                     test_optional: Option<u8>,
@@ -389,22 +395,22 @@ mod tests {
                     test_both: Option<rs_matter_crate::tlv::Nullable<u32>>,
                 }
 
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                 pub struct IdentifyRequest {
                     identify_time: u16,
                 }
 
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                 pub struct SomeRequest {
                     group: u16,
                 }
 
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                 pub struct TestResponse {
                     capacity: u8,
                 }
 
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                 pub struct AnotherResponse {
                     status: u8,
                     group_id: u16,
@@ -498,7 +504,6 @@ mod tests {
                 mod on_off {
                     pub const ID: u32 = 6;
 
-                    use rs_matter_crate::bitflags_tlv;
                     use rs_matter_crate::error::Error;
                     use rs_matter_crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
 
@@ -511,7 +516,7 @@ mod tests {
                         const OFF_ONLY = 4;
                       }
                     }
-                    bitflags_tlv!(Feature, u32);
+                    rs_matter_crate::bitflags_tlv!(Feature, u32);
 
                     bitflags::bitflags! {
                       #[repr(transparent)]
@@ -520,44 +525,89 @@ mod tests {
                         const ACCEPT_ONLY_WHEN_ON = 1;
                       }
                     }
-                    bitflags_tlv!(OnOffControlBitmap, u8);
+                    rs_matter_crate::bitflags_tlv!(OnOffControlBitmap, u8);
 
-                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[derive(
+                        Debug,
+                        PartialEq,
+                        Eq,
+                        Copy,
+                        Clone,
+                        Hash,
+                        rs_matter_crate::tlv::FromTLV,
+                        rs_matter_crate::tlv::ToTLV,
+                    )]
                     #[repr(u8)]
                     pub enum DelayedAllOffEffectVariantEnum {
+                        #[enumval(0)]
                         DelayedOffFastFade = 0,
+                        #[enumval(1)]
                         NoFade = 1,
+                        #[enumval(2)]
                         DelayedOffSlowFade = 2,
                     }
 
-                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[derive(
+                        Debug,
+                        PartialEq,
+                        Eq,
+                        Copy,
+                        Clone,
+                        Hash,
+                        rs_matter_crate::tlv::FromTLV,
+                        rs_matter_crate::tlv::ToTLV,
+                    )]
                     #[repr(u8)]
                     pub enum DyingLightEffectVariantEnum {
+                        #[enumval(0)]
                         DyingLightFadeOff = 0,
                     }
 
-                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[derive(
+                        Debug,
+                        PartialEq,
+                        Eq,
+                        Copy,
+                        Clone,
+                        Hash,
+                        rs_matter_crate::tlv::FromTLV,
+                        rs_matter_crate::tlv::ToTLV,
+                    )]
                     #[repr(u8)]
                     pub enum EffectIdentifierEnum {
+                        #[enumval(0)]
                         DelayedAllOff = 0,
+                        #[enumval(1)]
                         DyingLight = 1,
                     }
 
-                    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+                    #[derive(
+                        Debug,
+                        PartialEq,
+                        Eq,
+                        Copy,
+                        Clone,
+                        Hash,
+                        rs_matter_crate::tlv::FromTLV,
+                        rs_matter_crate::tlv::ToTLV,
+                    )]
                     #[repr(u8)]
                     pub enum StartUpOnOffEnum {
+                        #[enumval(0)]
                         Off = 0,
+                        #[enumval(1)]
                         On = 1,
+                        #[enumval(2)]
                         Toggle = 2,
                     }
 
-                    #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                    #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                     pub struct OffWithEffectRequest {
                         effect_identifier: EffectIdentifierEnum,
                         effect_variant: u8,
                     }
 
-                    #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+                    #[derive(Debug, PartialEq, Eq, Clone, Hash, ToTLV)]
                     pub struct OnWithTimedOffRequest {
                         on_off_control: OnOffControlBitmap,
                         on_time: u16,

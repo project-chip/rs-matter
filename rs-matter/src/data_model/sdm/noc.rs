@@ -16,7 +16,6 @@
  */
 
 use core::cell::RefCell;
-use core::convert::TryInto;
 
 use crate::acl::{AclEntry, AclMgr, AuthMode};
 use crate::cert::{Cert, MAX_CERT_TLV_LEN};

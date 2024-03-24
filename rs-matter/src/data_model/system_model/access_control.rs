@@ -16,7 +16,6 @@
  */
 
 use core::cell::RefCell;
-use core::convert::TryInto;
 
 use strum::{EnumDiscriminants, FromRepr};
 

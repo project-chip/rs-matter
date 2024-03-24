@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use core::convert::TryInto;
-
 use strum::FromRepr;
 
 use crate::attribute_enum;
