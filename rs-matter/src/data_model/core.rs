@@ -163,6 +163,17 @@ where
 
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
+                // TODO: We are unconditionally using `suppress_resp = true` here.
+                // However, the spec is a bit unclear when `suppress_resp = true` is allowed.
+                //
+                // At one place, it says this is a decision of the caller (i.e. what we do)
+                // At another place, it says it is a decision of the caller, but _only_ if the
+                // sets of attributes and events to be reported are both empty.
+                //
+                // I've also noticed the other peer (Google Controller) to reply with a status code
+                // (that we don't expect due to `suppress_resp = true`) in the case of malformed response...
+                //
+                // Resolve this discrepancy in future.
                 // Self::recv_status(exchange).await?;
 
                 return Ok(());
