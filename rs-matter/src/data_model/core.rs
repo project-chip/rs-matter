@@ -420,11 +420,11 @@ where
 
     pub async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
+            // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
             let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
             let mut notification = pin!(self.subscriptions.notification.wait());
 
-            let result = select(&mut notification, &mut timeout).await;
-            let _changed = matches!(result, Either::First(_));
+            select(&mut notification, &mut timeout).await;
 
             let now = Instant::now();
 
