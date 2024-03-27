@@ -28,10 +28,14 @@ pub use asynch::*;
 pub trait DataModelHandler: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
 impl<T> DataModelHandler for T where T: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
 
+// TODO: Re-assess once once proper cluster change notifications are implemented.
 pub trait ChangeNotifier<T> {
     fn consume_change(&mut self) -> Option<T>;
 }
 
+/// A version of the `AsyncHandler` trait that never awaits any operation.
+///
+/// Prefer this trait when implementing handlers that are known to be non-blocking.
 pub trait Handler {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error>;
 
@@ -96,6 +100,7 @@ where
     }
 }
 
+// TODO: Re-assess the need for this trait.
 pub trait NonBlockingHandler: Handler {}
 
 impl<T> NonBlockingHandler for &T where T: NonBlockingHandler {}
@@ -127,9 +132,19 @@ where
 
 impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
 
+/// A handler that always fails with attribute / command not found.
+///
+/// Useful when chaining multiple handlers together as the end of the chain.
 pub struct EmptyHandler;
 
 impl EmptyHandler {
+    /// Chain the empty handler with another handler thus providing an "end of handler chain"
+    /// fallback that errors out.
+    ///
+    /// The returned chained handler works as follows:
+    /// - It will call the provided `handler` instance if the endpoint and cluster
+    /// of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    /// - Otherwise, the empty handler would be invoked, causing the operation to error out.
     pub const fn chain<H>(
         self,
         handler_endpoint: u16,
@@ -159,6 +174,7 @@ impl ChangeNotifier<(u16, u32)> for EmptyHandler {
     }
 }
 
+/// A handler that chains two handlers together in a composite handler.
 pub struct ChainedHandler<H, T> {
     pub handler_endpoint: u16,
     pub handler_cluster: u32,
@@ -167,6 +183,12 @@ pub struct ChainedHandler<H, T> {
 }
 
 impl<H, T> ChainedHandler<H, T> {
+    /// Chain itself with another handler.
+    ///
+    /// The returned chained handler works as follows:
+    /// - It will call the provided `handler` instance if the endpoint and cluster
+    /// of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    /// - Otherwise, it will call the `self` handler
     pub const fn chain<H2>(
         self,
         handler_endpoint: u16,
@@ -241,6 +263,8 @@ where
 
 /// Wrap your `NonBlockingHandler` or `AsyncHandler` implementation in this struct
 /// to get your code compilable with and without the `nightly` feature
+///
+/// TODO: Re-assess the need for this struct now that we no longer use a nightly compiler.
 pub struct HandlerCompat<T>(pub T);
 
 impl<T> Handler for HandlerCompat<T>
@@ -268,6 +292,24 @@ where
 
 impl<T> NonBlockingHandler for HandlerCompat<T> where T: NonBlockingHandler {}
 
+/// A helper macro that makes it easier to specify the full type of a `ChainedHandler` instantiation,
+/// which can be quite annoying in the case of long chains of handlers.
+///
+/// Use with type aliases:
+/// ```rust
+/// pub type RootEndpointHandler<'a> = handler_chain_type!(
+///     DescriptorCluster<'static>,
+///     BasicInfoCluster<'a>,
+///     GenCommCluster<'a>,
+///     NwCommCluster,
+///     AdminCommCluster<'a>,
+///     NocCluster<'a>,
+///     AccessControlCluster<'a>,
+///     GenDiagCluster,
+///     EthNwDiagCluster,
+///     GrpKeyMgmtCluster
+/// );
+/// ```
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! handler_chain_type {
@@ -296,25 +338,65 @@ mod asynch {
 
     use super::{ChainedHandler, EmptyHandler, Handler, HandlerCompat, NonBlockingHandler};
 
+    /// A handler for processing a single IM operation:
+    /// read an attribute, write an attribute, or invoke a command.
+    ///
+    /// Handlers are typically implemented by user-defined clusters, but there is no 1:1 correspondence between
+    /// a handler and a cluster, as a single handler can handle multiple clusters and even multiple endpoints.
+    ///
+    /// Moreover, the `DataModel` implementation expects a single `AsyncHandler` instance, so the expectation
+    /// is that the user will compose multiple handlers into a single `AsyncHandler` instance, using `ChainedHandler`
+    /// or other means.
     pub trait AsyncHandler {
+        /// Provides information whether the handler will internally await while reading
+        /// the current value of the provided attribute.
+        ///
+        /// Handlers which report `false` via this method provide an opportunity
+        /// for the Data Model processing to use less memory by not storing the incoming request
+        /// in an inbtermediate buffer.
+        ///
+        /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
+        /// await while reading any attribute.
         fn read_awaits(&self, _attr: &AttrDetails) -> bool {
             true
         }
 
+        /// Provides information whether the handler will internally await while updating
+        /// the value of the provided attribute.
+        ///
+        /// Handlers which report `false` via this method provide an opportunity
+        /// for the Data Model processing to use less memory by not storing the incoming request
+        /// in an inbtermediate buffer.
+        ///
+        /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
+        /// await while writing any attribute.
         fn write_awaits(&self, _attr: &AttrDetails) -> bool {
             true
         }
 
+        /// Provides information whether the handler will internally await while invoking
+        /// the provided command.
+        ///
+        /// Handlers which report `false` via this method provide an opportunity
+        /// for the Data Model processing to use less memory by not storing the incoming request
+        /// in an inbtermediate buffer.
+        ///
+        /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
+        /// await while invoking any command.
         fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
             true
         }
 
+        /// Reads from the requested attribute and encodes the result using the provided encoder.
         async fn read<'a>(
             &'a self,
             attr: &'a AttrDetails<'_>,
             encoder: AttrDataEncoder<'a, '_, '_>,
         ) -> Result<(), Error>;
 
+        /// Writes into the requested attribute using the provided data.
+        ///
+        /// The default implementation errors out with `ErrorCode::AttributeNotFound`.
         async fn write<'a>(
             &'a self,
             _attr: &'a AttrDetails<'_>,
@@ -323,6 +405,9 @@ mod asynch {
             Err(ErrorCode::AttributeNotFound.into())
         }
 
+        /// Invokes the requested command with the provided data and encodes the result using the provided encoder.
+        ///
+        /// The default implementation errors out with `ErrorCode::CommandNotFound`.
         async fn invoke<'a>(
             &'a self,
             _exchange: &'a Exchange<'_>,
