@@ -146,12 +146,16 @@ where
 
         let accessor = exchange.accessor()?;
 
+        // Will the clusters that are to be invoked await?
         let awaits = metadata.node().read(&req, None, &accessor).any(|item| {
             item.map(|attr| self.handler.read_awaits(&attr))
                 .unwrap_or(false)
         });
 
         if !awaits {
+            // No, they won't. Answer the request by directly using the RX packet
+            // of the transport layer, as the operation won't await.
+
             let node = metadata.node();
             let mut attrs = node.read(&req, None, &accessor).peekable();
 
@@ -179,6 +183,11 @@ where
                 return Ok(());
             }
         }
+
+        // The clusters will await.
+        // Allocate a separate RX buffer then and copy the RX packet into this buffer,
+        // so as not to hold on to the transport layer (single) RX packet for too long
+        // and block send / receive for everybody
 
         let Some(rx) = self.rx_buffer(exchange).await? else {
             return Ok(());
@@ -233,6 +242,7 @@ where
 
         let req = WriteReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
+        // Will the clusters that are to be invoked await?
         let awaits = metadata
             .node()
             .write(&req, &exchange.accessor()?)
@@ -242,6 +252,11 @@ where
             });
 
         let more_chunks = if awaits {
+            // Yes, they will
+            // Allocate a separate RX buffer then and copy the RX packet into this buffer,
+            // so as not to hold on to the transport layer (single) RX packet for too long
+            // and block send / receive for everybody
+
             let Some(rx) = self.rx_buffer(exchange).await? else {
                 return Ok(false);
             };
@@ -256,6 +271,9 @@ where
             )
             .await?
         } else {
+            // No, they won't. Answer the request by directly using the RX packet
+            // of the transport layer, as the operation won't await.
+
             req.respond(
                 &self.handler,
                 &exchange.accessor()?,
@@ -294,6 +312,7 @@ where
 
         let req = InvReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
 
+        // Will the clusters that are to be invoked await?
         let awaits = metadata
             .node()
             .invoke(&req, &exchange.accessor()?)
@@ -303,6 +322,11 @@ where
             });
 
         if awaits {
+            // Yes, they will
+            // Allocate a separate RX buffer then and copy the RX packet into this buffer,
+            // so as not to hold on to the transport layer (single) RX packet for too long
+            // and block send / receive for everybody
+
             let Some(rx) = self.rx_buffer(exchange).await? else {
                 return Ok(());
             };
@@ -312,6 +336,9 @@ where
             req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
                 .await?;
         } else {
+            // No, they won't. Answer the request by directly using the RX packet
+            // of the transport layer, as the operation won't await.
+
             req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
                 .await?;
         }
