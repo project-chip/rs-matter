@@ -73,7 +73,7 @@ const CRYPTO_GROUP_SIZE_BYTES: usize = 32;
 const CRYPTO_W_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + 8;
 const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
 
-const MAX_SALT_SIZE_BYTES: usize = 32;
+pub const MAX_SALT_SIZE_BYTES: usize = 32;
 const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
 
 fn crypto_spake2_new() -> Result<CryptoSpake2, Error> {
@@ -150,13 +150,15 @@ impl Spake2P {
         self.app_data
     }
 
-    pub fn set_context(&mut self, buf1: &[u8], buf2: &[u8]) -> Result<(), Error> {
+    pub fn set_context(&mut self) -> Result<(), Error> {
         let mut context = Sha256::new()?;
         context.update(&SPAKE2P_CONTEXT_PREFIX)?;
-        context.update(buf1)?;
-        context.update(buf2)?;
         self.context = Some(context);
         Ok(())
+    }
+
+    pub fn update_context(&mut self, buf: &[u8]) -> Result<(), Error> {
+        self.context.as_mut().unwrap().update(buf)
     }
 
     #[inline(always)]

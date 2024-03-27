@@ -56,6 +56,10 @@ impl<'a> ParseBuf<'a> {
         self.left = left;
     }
 
+    pub fn slice_range(&self) -> (usize, usize) {
+        (self.read_off, self.read_off + self.left)
+    }
+
     // Return the data that is valid as a slice
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[self.read_off..(self.read_off + self.left)]

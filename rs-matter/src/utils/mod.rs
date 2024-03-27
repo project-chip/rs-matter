@@ -17,7 +17,10 @@
 
 pub mod buf;
 pub mod epoch;
+pub mod ifmutex;
+pub mod notification;
 pub mod parsebuf;
 pub mod rand;
 pub mod select;
+pub mod signal;
 pub mod writebuf;

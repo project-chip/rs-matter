@@ -125,7 +125,7 @@ pub mod msg {
         }
     }
 
-    #[derive(FromTLV, ToTLV)]
+    #[derive(FromTLV, ToTLV, Debug)]
     pub struct TimedReq {
         pub timeout: u16,
     }
@@ -141,7 +141,7 @@ pub mod msg {
         InvokeRequests = 2,
     }
 
-    #[derive(FromTLV, ToTLV)]
+    #[derive(FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct InvReq<'a> {
         pub suppress_response: Option<bool>,
@@ -191,9 +191,9 @@ pub mod msg {
     #[tlvargs(lifetime = "'a")]
     pub struct WriteReq<'a> {
         pub supress_response: Option<bool>,
-        timed_request: Option<bool>,
+        pub timed_request: Option<bool>,
         pub write_requests: TLVArray<'a, AttrData<'a>>,
-        more_chunked: Option<bool>,
+        pub more_chunked: Option<bool>,
     }
 
     impl<'a> WriteReq<'a> {
