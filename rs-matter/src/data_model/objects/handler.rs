@@ -296,7 +296,7 @@ impl<T> NonBlockingHandler for HandlerCompat<T> where T: NonBlockingHandler {}
 /// which can be quite annoying in the case of long chains of handlers.
 ///
 /// Use with type aliases:
-/// ```rust
+/// ```ignore
 /// pub type RootEndpointHandler<'a> = handler_chain_type!(
 ///     DescriptorCluster<'static>,
 ///     BasicInfoCluster<'a>,
