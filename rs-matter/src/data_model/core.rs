@@ -20,7 +20,7 @@ use core::iter::Peekable;
 use core::pin::pin;
 use core::time::Duration;
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::select;
 use embassy_time::{Instant, Timer};
 use log::{debug, error, info, warn};
 
@@ -630,6 +630,11 @@ where
                 Ok(false)
             }
         } else {
+            warn!(
+                "Got opcode {opcode:02x}, while expecting status code {:02x}",
+                OpCode::StatusResponse as u8
+            );
+
             Err(ErrorCode::Invalid.into())
         }
     }
