@@ -375,44 +375,44 @@ where
         let max_int_secs = core::cmp::max(req.max_int_ceil, 40); // Say we need at least 4 secs for potential latencies
         let min_int_secs = req.min_int_floor;
 
-        if let Some(id) = self.subscriptions.add(node_id, min_int_secs, max_int_secs) {
-            let subscribed = Cell::new(false);
+        let Some(id) = self.subscriptions.add(node_id, min_int_secs, max_int_secs) else {
+            return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
+        };
 
-            let _guard = scopeguard::guard((), |_| {
-                if !subscribed.get() {
-                    self.subscriptions.remove(None, Some(id));
-                }
-            });
+        let subscribed = Cell::new(false);
 
-            let primed = self
-                .report_data(id, node_id, &rx, &mut tx, exchange)
+        let _guard = scopeguard::guard((), |_| {
+            if !subscribed.get() {
+                self.subscriptions.remove(None, Some(id));
+            }
+        });
+
+        let primed = self
+            .report_data(id, node_id, &rx, &mut tx, exchange)
+            .await?;
+
+        if primed {
+            exchange
+                .send_with(|_, wb| {
+                    SubscribeResp::write(wb, id, max_int_secs)?;
+                    Ok(Some(OpCode::SubscribeResponse.into()))
+                })
                 .await?;
 
-            if primed {
-                exchange
-                    .send_with(|_, wb| {
-                        SubscribeResp::write(wb, id, max_int_secs)?;
-                        Ok(Some(OpCode::SubscribeResponse.into()))
-                    })
-                    .await?;
+            info!("Subscription {node_id:x}::{id} created");
 
-                info!("Subscription {node_id:x}::{id} created");
+            if self.subscriptions.update(id, node_id) {
+                let _ = self
+                    .subscriptions_buffers
+                    .borrow_mut()
+                    .push(SubscriptionBuffer {
+                        node_id,
+                        id,
+                        buffer: rx,
+                    });
 
-                if self.subscriptions.update(id, node_id) {
-                    let _ = self
-                        .subscriptions_buffers
-                        .borrow_mut()
-                        .push(SubscriptionBuffer {
-                            node_id,
-                            id,
-                            buffer: rx,
-                        });
-
-                    subscribed.set(true);
-                }
+                subscribed.set(true);
             }
-        } else {
-            Self::send_status(exchange, IMStatusCode::ResourceExhausted).await?;
         }
 
         Ok(())
