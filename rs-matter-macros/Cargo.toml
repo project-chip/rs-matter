@@ -22,7 +22,7 @@ proc-macro = true
 syn = { version = "2.0.48", features = ["extra-traits", "parsing"] }
 quote = "1"
 proc-macro2 = "1"
-proc-macro-crate = "3.0.0"
+proc-macro-crate = "3.1.0"
 
-rs-matter-data-model = { path = "../rs-matter-data-model", features=["idl"] }
+rs-matter-data-model = { path = "../rs-matter-data-model", features = ["idl"] }
 rs-matter-macros-impl = { path = "../rs-matter-macros-impl" }
