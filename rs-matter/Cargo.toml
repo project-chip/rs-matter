@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.75"
+rust-version = "1.77"
 
 [features]
 default = ["os", "mbedtls"]
@@ -32,7 +32,6 @@ num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
 strum = { version = "0.26", features = ["derive"], default-features = false }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_debug"] }
-no-std-net = "0.6" # To be replaced with core::net once Rust 1.77 is out
 subtle = { version = "2.5", default-features = false }
 safemem = { version = "0.3", default-features = false }
 owo-colors = "4"
