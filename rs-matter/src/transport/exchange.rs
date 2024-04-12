@@ -775,19 +775,17 @@ impl<'a> Exchange<'a> {
     ///
     /// If there is no pending RX message, the method will wait indefinitely until one appears.
     ///
-    /// If there is already a pending RX message, which was also fetched using `Exchange::recv_fetch` and this
+    /// If there is already a pending RX message, which was already fetched using `Exchange::recv_fetch` and that
     /// message is not cleared yet using `Exchange::rx_done` or via some of the `Exchange::send*` methods,
-    /// the method will return an error.
+    /// the method will return that message.
     ///
     /// Note that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     #[inline(always)]
     pub async fn recv(&mut self) -> Result<RxMessage<'_>, Error> {
-        if self.rx.is_none() {
-            self.id.recv(self.matter).await
-        } else {
-            Err(ErrorCode::InvalidState.into())
-        }
+        self.recv_fetch().await?;
+
+        self.rx.take().ok_or(ErrorCode::InvalidState.into())
     }
 
     /// Get access to the pending RX message on this exchange, and consume it
@@ -799,9 +797,9 @@ impl<'a> Exchange<'a> {
     ///
     /// If there is no pending RX message, the method will wait indefinitely until one appears.
     ///
-    /// If there is already a pending RX message, which was also fetched using `Exchange::recv_fetch` and this
+    /// If there is already a pending RX message, which was already fetched using `Exchange::recv_fetch` and that
     /// message is not cleared yet using `Exchange::rx_done` or via some of the `Exchange::send*` methods,
-    /// the method will return an error.
+    /// the method will return that message.
     ///
     /// Note that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
@@ -815,27 +813,27 @@ impl<'a> Exchange<'a> {
         Ok(rx.meta())
     }
 
-    /// Get access to the pending RX message on this exchange, and store it inside the `Exchange` instance, so that
-    /// it is available immediately to consumers by using `Exchange::rx`.
+    /// Return the pending RX message on this exchange, but before that also store it inside the `Exchange` instance, so that
+    /// it is available immediately to consumers by using `Exchange::rx`, or to subsequent calls to `Exchange::recv_fetch` and
+    /// `Exchange::recv`.
     ///
     /// If there is no pending RX message, the method will wait indefinitely until one appears.
     ///
-    /// If there is already a pending RX message, which was fetched using `Exchange::recv_fetch` and this
-    /// message is not cleared yet using `Exchange::rx_done` or via some of the `Exchange::send*` methods,
-    /// the method will return an error.
+    /// If there is already a pending RX message, which was already fetched using an earlier call to `Exchange::recv_fetch`
+    /// and that message is not cleared yet using `Exchange::rx_done`, `Exchange::recv` or via some of the `Exchange::send*` methods,
+    /// the method will return that message.
     ///
     /// Note that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     #[inline(always)]
-    pub async fn recv_fetch(&mut self) -> Result<(), Error> {
+    pub async fn recv_fetch(&mut self) -> Result<&RxMessage<'a>, Error> {
         if self.rx.is_none() {
             let rx = self.id.recv(self.matter).await?;
 
             self.rx = Some(rx);
-            Ok(())
-        } else {
-            Err(ErrorCode::InvalidState.into())
         }
+
+        self.rx()
     }
 
     #[inline(always)]
