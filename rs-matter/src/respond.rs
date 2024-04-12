@@ -25,8 +25,9 @@ use log::{error, info};
 use crate::data_model::core::{DataModel, IMBuffer};
 use crate::data_model::objects::DataModelHandler;
 use crate::data_model::subscriptions::Subscriptions;
-use crate::error::{Error, ErrorCode};
+use crate::error::Error;
 use crate::interaction_model::busy::BusyInteractionModel;
+use crate::interaction_model::core::PROTO_ID_INTERACTION_MODEL;
 use crate::secure_channel::busy::BusySecureChannel;
 use crate::secure_channel::core::SecureChannel;
 use crate::transport::exchange::Exchange;
@@ -37,14 +38,6 @@ use crate::Matter;
 /// A trait modeling a generic handler for an exchange.
 pub trait ExchangeHandler {
     async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error>;
-
-    fn compose<T>(self, other: T) -> CompositeExchangeHandler<Self, T>
-    where
-        T: ExchangeHandler,
-        Self: Sized,
-    {
-        CompositeExchangeHandler(self, other)
-    }
 }
 
 impl<T> ExchangeHandler for &T
@@ -56,20 +49,53 @@ where
     }
 }
 
-/// A struct for composing two exchange handlers into a single one, where each handler is handling one specific protocol (i.e. SC vs IM).
-pub struct CompositeExchangeHandler<F, S>(pub F, pub S);
+/// A struct for chaining two exchange handlers into a single one,
+/// where each handler is handling one specific protocol (i.e. SC vs IM) in a sequential fashion.
+/// I.e. if the first exchange handler refuses to handle the exchange, the second one is tried.
+pub struct ChainedExchangeHandler<H, T> {
+    pub handler_proto: u16,
+    pub handler: H,
+    pub next: T,
+}
 
-impl<F, S> ExchangeHandler for CompositeExchangeHandler<F, S>
+impl<H, T> ChainedExchangeHandler<H, T> {
+    /// Construct a chained handler that works as follows:
+    /// - It will call the provided `handler` instance if the protocol ID of the incoming message does match the supplied `handler_proto` value.
+    /// - Otherwise, it will call the `next` handler
+    pub const fn new(handler_proto: u16, handler: H, next: T) -> Self {
+        Self {
+            handler_proto,
+            handler,
+            next,
+        }
+    }
+
+    /// Chain itself with another exchange handler.
+    ///
+    /// The returned chained handler works as follows:
+    /// - It will call the provided `handler` instance if the protocol ID of the incoming message does match the supplied `handler_proto` value.
+    /// - Otherwise, it will call the `self` handler
+    pub const fn chain<H2>(
+        self,
+        handler_proto: u16,
+        handler: H2,
+    ) -> ChainedExchangeHandler<H2, Self> {
+        ChainedExchangeHandler::new(handler_proto, handler, self)
+    }
+}
+
+impl<H, T> ExchangeHandler for ChainedExchangeHandler<H, T>
 where
-    F: ExchangeHandler,
-    S: ExchangeHandler,
+    H: ExchangeHandler,
+    T: ExchangeHandler,
 {
     async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let result = self.0.handle(exchange).await;
+        let rx = exchange.recv_fetch().await?;
 
-        match result {
-            Err(e) if e.code() == ErrorCode::InvalidProto => self.1.handle(exchange).await,
-            other => other,
+        if rx.meta().proto_id == self.handler_proto {
+            self.handler.handle(exchange).await
+        } else {
+            self.next.handle(exchange).await
         }
     }
 }
@@ -179,7 +205,7 @@ where
 }
 
 impl<'a, const N: usize, B, T>
-    Responder<'a, CompositeExchangeHandler<DataModel<'a, N, B, T>, SecureChannel>>
+    Responder<'a, ChainedExchangeHandler<DataModel<'a, N, B, T>, SecureChannel>>
 where
     B: BufferAccess<IMBuffer>,
 {
@@ -197,7 +223,8 @@ where
     {
         Self::new(
             "Responder",
-            CompositeExchangeHandler(
+            ChainedExchangeHandler::new(
+                PROTO_ID_INTERACTION_MODEL,
                 DataModel::new(buffers, subscriptions, dm_handler),
                 SecureChannel::new(),
             ),
@@ -207,7 +234,7 @@ where
     }
 }
 
-impl<'a> Responder<'a, CompositeExchangeHandler<BusyInteractionModel, BusySecureChannel>> {
+impl<'a> Responder<'a, ChainedExchangeHandler<BusyInteractionModel, BusySecureChannel>> {
     /// Creates a simple "busy" responder, which is answering all exchanges with a simple "I'm busy, try again later" handling.
     /// The resonder is using the `rs-matter`-provided `ExchangeHandler` instances (`BusySecureChannel` and `BusyInteractionModel`)
     /// capable of answering with "busy" messages the SC and IM protocols, respectively.
@@ -218,7 +245,11 @@ impl<'a> Responder<'a, CompositeExchangeHandler<BusyInteractionModel, BusySecure
     pub const fn new_busy(matter: &'a Matter<'a>) -> Self {
         Self::new(
             "Busy Responder",
-            CompositeExchangeHandler(BusyInteractionModel::new(), BusySecureChannel::new()),
+            ChainedExchangeHandler::new(
+                PROTO_ID_INTERACTION_MODEL,
+                BusyInteractionModel::new(),
+                BusySecureChannel::new(),
+            ),
             matter,
             200,
         )
@@ -230,9 +261,8 @@ pub struct DefaultResponder<'a, const N: usize, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
-    responder: Responder<'a, CompositeExchangeHandler<DataModel<'a, N, B, T>, SecureChannel>>,
-    busy_responder:
-        Responder<'a, CompositeExchangeHandler<BusyInteractionModel, BusySecureChannel>>,
+    responder: Responder<'a, ChainedExchangeHandler<DataModel<'a, N, B, T>, SecureChannel>>,
+    busy_responder: Responder<'a, ChainedExchangeHandler<BusyInteractionModel, BusySecureChannel>>,
 }
 
 impl<'a, const N: usize, B, T> DefaultResponder<'a, N, B, T>
@@ -261,7 +291,7 @@ where
         let mut sub = pin!(self
             .responder
             .handler()
-            .0
+            .handler
             .process_subscriptions(self.responder.matter));
 
         select3(&mut actual, &mut busy, &mut sub).coalesce().await

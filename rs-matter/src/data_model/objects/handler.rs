@@ -183,6 +183,19 @@ pub struct ChainedHandler<H, T> {
 }
 
 impl<H, T> ChainedHandler<H, T> {
+    /// Construct a chained handler that works as follows:
+    /// - It will call the provided `handler` instance if the endpoint and cluster
+    /// of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    /// - Otherwise, it will call the `next` handler
+    pub const fn new(handler_endpoint: u16, handler_cluster: u32, handler: H, next: T) -> Self {
+        Self {
+            handler_endpoint,
+            handler_cluster,
+            handler,
+            next,
+        }
+    }
+
     /// Chain itself with another handler.
     ///
     /// The returned chained handler works as follows:
@@ -195,12 +208,7 @@ impl<H, T> ChainedHandler<H, T> {
         handler_cluster: u32,
         handler: H2,
     ) -> ChainedHandler<H2, Self> {
-        ChainedHandler {
-            handler_endpoint,
-            handler_cluster,
-            handler,
-            next: self,
-        }
+        ChainedHandler::new(handler_endpoint, handler_cluster, handler, self)
     }
 }
 
