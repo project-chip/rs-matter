@@ -17,10 +17,7 @@
 
 use core::fmt::{Debug, Display};
 
-#[cfg(not(feature = "std"))]
 pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-#[cfg(feature = "std")]
-pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use crate::error::Error;
 
