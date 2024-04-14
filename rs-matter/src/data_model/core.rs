@@ -76,6 +76,13 @@ where
     T: DataModelHandler,
 {
     /// Create the handler.
+    ///
+    /// The parameters are as follows:
+    /// * `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
+    /// * `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
+    /// number of subscriptions that can be managed by this handler.
+    /// * `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
+    /// clusters of the data model.
     #[inline(always)]
     pub const fn new(buffers: &'a B, subscriptions: &'a Subscriptions<N>, handler: T) -> Self {
         Self {
@@ -206,7 +213,7 @@ where
 
             exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
-            if more_chunks && !Self::recv_status(exchange).await? {
+            if more_chunks && !Self::recv_status_success(exchange).await? {
                 break;
             }
 
@@ -401,7 +408,7 @@ where
 
             info!("Subscription {node_id:x}::{id} created");
 
-            if self.subscriptions.update(id, node_id) {
+            if self.subscriptions.mark_reported(id) {
                 let _ = self
                     .subscriptions_buffers
                     .borrow_mut()
@@ -477,7 +484,7 @@ where
 
                         exchange.acknowledge().await?;
 
-                        if primed && self.subscriptions.update(id, node_id) {
+                        if primed && self.subscriptions.mark_reported(id) {
                             let _ =
                                 self.subscriptions_buffers
                                     .borrow_mut()
@@ -566,7 +573,7 @@ where
 
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
-                if !Self::recv_status(exchange).await? {
+                if !Self::recv_status_success(exchange).await? {
                     info!("Subscription {node_id:x}::{id} removed during reporting");
                     return Ok(false);
                 }
@@ -587,6 +594,9 @@ where
             let rx = exchange.rx()?;
 
             buffer.clear();
+
+            // Safe to unwrap, as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, i.e. it cannot be overflown
+            // by the payload of the received exchange.
             buffer.extend_from_slice(rx.payload()).unwrap();
 
             exchange.rx_done()?;
@@ -609,33 +619,33 @@ where
         }
     }
 
-    async fn recv_status(exchange: &mut Exchange<'_>) -> Result<bool, Error> {
+    async fn recv_status_success(exchange: &mut Exchange<'_>) -> Result<bool, Error> {
         let rx = exchange.recv().await?;
         let opcode = rx.meta().proto_opcode;
 
-        if opcode == OpCode::StatusResponse as u8 {
-            let resp = StatusResp::from_tlv(&get_root_node_struct(rx.payload())?)?;
-
-            if resp.status == IMStatusCode::Success {
-                Ok(true)
-            } else {
-                warn!(
-                    "Got status response {:?}, aborting interaction",
-                    resp.status
-                );
-
-                drop(rx);
-                exchange.acknowledge().await?;
-
-                Ok(false)
-            }
-        } else {
+        if opcode != OpCode::StatusResponse as u8 {
             warn!(
                 "Got opcode {opcode:02x}, while expecting status code {:02x}",
                 OpCode::StatusResponse as u8
             );
 
-            Err(ErrorCode::Invalid.into())
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        let resp = StatusResp::from_tlv(&get_root_node_struct(rx.payload())?)?;
+
+        if resp.status == IMStatusCode::Success {
+            Ok(true)
+        } else {
+            warn!(
+                "Got status response {:?}, aborting interaction",
+                resp.status
+            );
+
+            drop(rx);
+            exchange.acknowledge().await?;
+
+            Ok(false)
         }
     }
 

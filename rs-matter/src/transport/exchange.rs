@@ -838,11 +838,7 @@ impl<'a> Exchange<'a> {
 
     #[inline(always)]
     pub fn rx(&self) -> Result<&RxMessage<'a>, Error> {
-        if let Some(rx) = &self.rx {
-            Ok(rx)
-        } else {
-            Err(ErrorCode::InvalidState.into())
-        }
+        self.rx.as_ref().ok_or(ErrorCode::InvalidState.into())
     }
 
     #[inline(always)]

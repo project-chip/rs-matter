@@ -361,7 +361,7 @@ mod asynch {
         ///
         /// Handlers which report `false` via this method provide an opportunity
         /// for the Data Model processing to use less memory by not storing the incoming request
-        /// in an inbtermediate buffer.
+        /// in an intermediate buffer.
         ///
         /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
         /// await while reading any attribute.
@@ -374,7 +374,7 @@ mod asynch {
         ///
         /// Handlers which report `false` via this method provide an opportunity
         /// for the Data Model processing to use less memory by not storing the incoming request
-        /// in an inbtermediate buffer.
+        /// in an intermediate buffer.
         ///
         /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
         /// await while writing any attribute.
@@ -387,7 +387,7 @@ mod asynch {
         ///
         /// Handlers which report `false` via this method provide an opportunity
         /// for the Data Model processing to use less memory by not storing the incoming request
-        /// in an inbtermediate buffer.
+        /// in an intermediate buffer.
         ///
         /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
         /// await while invoking any command.

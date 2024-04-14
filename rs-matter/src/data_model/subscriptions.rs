@@ -27,7 +27,9 @@ use crate::utils::notification::Notification;
 struct Subscription {
     node_id: u64,
     id: u32,
+    // We use u16 instead of embassy::Duration to save some storage
     min_int_secs: u16,
+    // Ditto
     max_int_secs: u16,
     reported_at: Instant,
     changed: bool,
@@ -47,7 +49,7 @@ impl Subscription {
 /// A utility for tracking subscriptions accepted by the data model.
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
-/// Additional subscriptions are rejected by the data model with a "respource exhausted" IM status message.
+/// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
 pub struct Subscriptions<const N: usize> {
     next_subscription_id: AtomicU32,
     subscriptions: RefCell<heapless::Vec<Subscription, N>>,
@@ -80,27 +82,28 @@ impl<const N: usize> Subscriptions<N> {
     pub(crate) fn add(&self, node_id: u64, min_int_secs: u16, max_int_secs: u16) -> Option<u32> {
         let id = self.next_subscription_id.fetch_add(1, Ordering::SeqCst);
 
-        let subscription = Subscription {
-            node_id,
-            id,
-            min_int_secs,
-            max_int_secs,
-            reported_at: Instant::MAX,
-            changed: false,
-        };
-
-        let mut subscriptions = self.subscriptions.borrow_mut();
-
-        subscriptions.push(subscription).ok()?;
-
-        Some(id)
+        self.subscriptions
+            .borrow_mut()
+            .push(Subscription {
+                node_id,
+                id,
+                min_int_secs,
+                max_int_secs,
+                reported_at: Instant::MAX,
+                changed: false,
+            })
+            .map(|_| id)
+            .ok()
     }
 
-    pub(crate) fn update(&self, id: u32, node_id: u64) -> bool {
+    /// Mark the subscription with the given ID as reported.
+    ///
+    /// Will return `false` if the subscription with the given ID does no longer exist, as it might be
+    /// removed by a concurrent transaction while being reported on.
+    pub(crate) fn mark_reported(&self, id: u32) -> bool {
         let mut subscriptions = self.subscriptions.borrow_mut();
 
         if let Some(sub) = subscriptions.iter_mut().find(|sub| sub.id == id) {
-            sub.node_id = node_id;
             sub.reported_at = Instant::now();
             sub.changed = false;
 
