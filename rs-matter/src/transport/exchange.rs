@@ -775,10 +775,6 @@ impl<'a> Exchange<'a> {
     ///
     /// If there is no pending RX message, the method will wait indefinitely until one appears.
     ///
-    /// If there is already a pending RX message, which was already fetched using `Exchange::recv_fetch` and that
-    /// message is not cleared yet using `Exchange::rx_done` or via some of the `Exchange::send*` methods,
-    /// the method will return that message.
-    ///
     /// Note that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     #[inline(always)]
@@ -813,15 +809,19 @@ impl<'a> Exchange<'a> {
         Ok(rx.meta())
     }
 
-    /// Return the pending RX message on this exchange, but before that also store it inside the `Exchange` instance, so that
-    /// it is available immediately to consumers by using `Exchange::rx`, or to subsequent calls to `Exchange::recv_fetch` and
-    /// `Exchange::recv`.
+    /// Return a _reference_ to the pending RX message on this exchange.
     ///
     /// If there is no pending RX message, the method will wait indefinitely until one appears.
     ///
-    /// If there is already a pending RX message, which was already fetched using an earlier call to `Exchange::recv_fetch`
-    /// and that message is not cleared yet using `Exchange::rx_done`, `Exchange::recv` or via some of the `Exchange::send*` methods,
-    /// the method will return that message.
+    /// Unlike `recv` which returns the actual message object which - when dropped - allows the transport to
+    /// fetch the _next_ RX message for this or other exchanges, `recv_fetch` keeps the received message around,
+    /// which is convenient when the message needs to be examined / processed by multiple layers of application code.
+    ///
+    /// Note however that this does not come for free - keeping the RX message around means that the transport cannot receive
+    /// _other_ RX messages which blocks the whole transport layer, as the transport layer uses a single RX message buffer.
+    ///
+    /// Therefore, calling `recv_fetch` should be done with care and the message should be marked as processed (and thus dropped) -
+    /// via `rx_done` as soon as possible, ideally without `await`-ing between `recv_fetch` and `rx_done`
     ///
     /// Note that if the uderlying session or exchange tracked by the Matter stack is dropped
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
@@ -836,11 +836,21 @@ impl<'a> Exchange<'a> {
         self.rx()
     }
 
+    /// Returns the RX message which was already fetched using a previous call to `recv_fetch`.
+    /// If there is no fetched RX message, the method will fail with `ErrorCode::InvalidState`.
+    ///
+    /// This method only exists as a slight optimization for the cases where the user is sure, that there is
+    /// an RX message already fetched with `recv_fetch`, as - unlike `recv_fetch` - this method does not `await` and hence
+    /// variables used after calling `rx` do not have to be stored in the generated future.
+    ///
+    /// But in general and putting optimizations aside, it is always safe to replace calls to `rx` with calls to `recv_fetch`.
     #[inline(always)]
     pub fn rx(&self) -> Result<&RxMessage<'a>, Error> {
         self.rx.as_ref().ok_or(ErrorCode::InvalidState.into())
     }
 
+    /// Clears the RX message which was already fetched using a previous call to `recv_fetch`.
+    /// If there is no fetched RX message, the method will do nothing.
     #[inline(always)]
     pub fn rx_done(&mut self) -> Result<(), Error> {
         self.rx = None;

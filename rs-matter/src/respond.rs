@@ -153,9 +153,7 @@ where
             core::mem::size_of_val(&handlers)
         );
 
-        for index in 0..N {
-            let handler_id = (index as u8) + 2;
-
+        for handler_id in 0..N {
             handlers
                 .push(self.handle(handler_id))
                 .map_err(|_| ())

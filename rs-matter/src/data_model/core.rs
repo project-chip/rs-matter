@@ -588,9 +588,7 @@ where
     }
 
     async fn rx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
-        let buffer = self.tx_buffer(exchange).await?;
-
-        if let Some(mut buffer) = buffer {
+        if let Some(mut buffer) = self.buffer(exchange).await? {
             let rx = exchange.rx()?;
 
             buffer.clear();
@@ -608,9 +606,20 @@ where
     }
 
     async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
-        if let Some(mut buffer) = self.buffers.get().await {
+        if let Some(mut buffer) = self.buffer(exchange).await? {
+            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
             buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE).unwrap();
 
+            Ok(Some(buffer))
+        } else {
+            Self::send_status(exchange, IMStatusCode::Busy).await?;
+
+            Ok(None)
+        }
+    }
+
+    async fn buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
+        if let Some(buffer) = self.buffers.get().await {
             Ok(Some(buffer))
         } else {
             Self::send_status(exchange, IMStatusCode::Busy).await?;
