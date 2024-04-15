@@ -39,14 +39,10 @@ impl RxCtrState {
         self.ctr_bitmap |= 1 << bit_number;
     }
 
-    /// Receive a message and update Rx State accordingly
-    /// Returns a bool indicating whether the message updated the internal counter (true)
-    /// or whether the counter was not updated because the message was a duplicate (false)
-    /// Update the Rx State for a received message.
-    /// Returns a bool indicating whether the state was updated (true)
-    /// or not (false).
+    /// Receive a message and update RX state accordingly
     ///
-    /// State would not be updated if the message is a duplicate
+    /// The method will return `false` if the message is detected to be duplicate, and therefore,
+    /// the RX state had not been updated.
     pub fn post_recv(&mut self, msg_ctr: u32, is_encrypted: bool) -> bool {
         let idiff = (msg_ctr as i32) - (self.max_ctr as i32);
         let udiff = idiff.unsigned_abs();
