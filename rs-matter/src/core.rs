@@ -228,8 +228,8 @@ impl<'a> Matter<'a> {
         }
     }
 
-    /// A hook for user persistence code to wait for potential change in ACLs and/or Fabrics.
-    /// Once this future resolves, user code is supposed to call inspect ACLs and Fabrics for changes, and
+    /// A hook for user persistence code to wait for potential changes in ACLs and/or Fabrics.
+    /// Once this future resolves, user code is supposed to inspect ACLs and Fabrics for changes, and
     /// if there are changes, persist them.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
