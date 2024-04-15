@@ -41,6 +41,8 @@ use super::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 pub struct BusySecureChannel(());
 
 impl BusySecureChannel {
+    const BUSY_RETRY_DELAY_MS: u16 = 500;
+
     #[inline(always)]
     pub const fn new() -> Self {
         Self(())
@@ -55,7 +57,13 @@ impl BusySecureChannel {
         match meta.opcode()? {
             OpCode::PBKDFParamRequest | OpCode::CASESigma1 => {
                 exchange
-                    .send_with(|_, wb| sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01]))
+                    .send_with(|_, wb| {
+                        sc_write(
+                            wb,
+                            SCStatusCodes::Busy,
+                            &u16::to_le_bytes(Self::BUSY_RETRY_DELAY_MS),
+                        )
+                    })
                     .await
             }
             proto_opcode => {

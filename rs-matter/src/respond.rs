@@ -157,7 +157,7 @@ where
             handlers
                 .push(self.handle(handler_id))
                 .map_err(|_| ())
-                .unwrap();
+                .unwrap(); // Cannot fail because the vector has size N
         }
 
         select_slice(&mut handlers).await.0
@@ -166,6 +166,7 @@ where
     #[inline(always)]
     async fn handle(&self, handler_id: impl Display) -> Result<(), Error> {
         loop {
+            // Ignore the error as it had been logged already
             let _ = self.respond_once(&handler_id).await;
         }
     }
