@@ -158,33 +158,32 @@ impl<'m> TransportMgr<'m> {
             .with_locked(&self.rx, |packet| {
                 let mut session_mgr = self.session_mgr.borrow_mut();
 
-                if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
-                    if let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) {
-                        let matches = {
-                            let exch = session.exchanges[exch_index].as_ref().unwrap();
+                let session = session_mgr.get_for_rx(&packet.peer, &packet.header.plain)?;
 
-                            matches!(exch.role, Role::Responder(ResponderState::AcceptPending))
-                                && f(session, exch, packet)
-                        };
+                let exch_index = session.get_exch_for_rx(&packet.header.proto)?;
 
-                        if matches {
-                            let exch = session.exchanges[exch_index].as_mut().unwrap();
+                let matches = {
+                    let exch = session.exchanges[exch_index].as_ref().unwrap();
 
-                            exch.role = Role::Responder(ResponderState::Owned);
+                    matches!(exch.role, Role::Responder(ResponderState::AcceptPending))
+                        && f(session, exch, packet)
+                };
 
-                            let id = ExchangeId::new(session.id, exch_index);
-
-                            info!("Exchange {id}: Accepted");
-
-                            let exchange =
-                                Exchange::new(ExchangeId::new(session.id, exch_index), matter);
-
-                            return Some(exchange);
-                        }
-                    }
+                if !matches {
+                    return None;
                 }
 
-                None
+                let exch = session.exchanges[exch_index].as_mut().unwrap();
+
+                exch.role = Role::Responder(ResponderState::Owned);
+
+                let id = ExchangeId::new(session.id, exch_index);
+
+                info!("Exchange {id}: Accepted");
+
+                let exchange = Exchange::new(id, matter);
+
+                Some(exchange)
             })
             .await;
 
@@ -533,61 +532,71 @@ impl<'m> TransportMgr<'m> {
     }
 
     fn handle_accept_timeout_rx_packet<const N: usize>(&self, packet: &mut Packet<N>) -> bool {
-        if !packet.buf.is_empty() {
-            let mut session_mgr = self.session_mgr.borrow_mut();
-            let epoch = session_mgr.epoch;
-            if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
-                if let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) {
-                    let exchange = session.exchanges[exch_index].as_mut().unwrap();
-
-                    if matches!(
-                        exchange.role,
-                        Role::Responder(ResponderState::AcceptPending)
-                    ) && exchange.mrp.has_rx_timed_out(ACCEPT_TIMEOUT_MS, epoch)
-                    {
-                        warn!("\n----- {packet}\n => Accept timeout, marking exchange as dropped");
-
-                        exchange.role = Role::Responder(ResponderState::Dropped);
-                        packet.buf.clear();
-                        self.dropped.notify();
-
-                        return true;
-                    }
-                }
-            }
+        if packet.buf.is_empty() {
+            return false;
         }
 
-        false
+        let mut session_mgr = self.session_mgr.borrow_mut();
+        let epoch = session_mgr.epoch;
+
+        let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
+            return false;
+        };
+
+        let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
+            return false;
+        };
+
+        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+
+        if !matches!(
+            exchange.role,
+            Role::Responder(ResponderState::AcceptPending)
+        ) || !exchange.mrp.has_rx_timed_out(ACCEPT_TIMEOUT_MS, epoch)
+        {
+            return false;
+        }
+
+        warn!("\n----- {packet}\n => Accept timeout, marking exchange as dropped");
+
+        exchange.role = Role::Responder(ResponderState::Dropped);
+        packet.buf.clear();
+        self.dropped.notify();
+
+        true
     }
 
     fn handle_orphaned_rx_packet<const N: usize>(&self, packet: &mut Packet<N>) -> bool {
-        if !packet.buf.is_empty() {
-            let mut session_mgr = self.session_mgr.borrow_mut();
-            if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
-                if let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) {
-                    let exchange = session.exchanges[exch_index].as_mut().unwrap();
+        if packet.buf.is_empty() {
+            return false;
+        }
 
-                    if exchange.role.is_dropped_state() {
-                        warn!(
-                            "\n----- {packet}\n => Owned by orphaned dropped {}, dropping packet",
-                            ExchangeId::new(session.id, exch_index)
-                        );
+        let mut session_mgr = self.session_mgr.borrow_mut();
 
-                        packet.buf.clear();
-                        return true;
-                    }
-                } else {
-                    warn!("\n----- {packet}\n => No exchange, dropping");
+        let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
+            warn!("\n----- {packet}\n => No session, dropping");
 
-                    packet.buf.clear();
-                    return true;
-                }
-            } else {
-                warn!("\n----- {packet}\n => No session, dropping");
+            packet.buf.clear();
+            return true;
+        };
 
-                packet.buf.clear();
-                return true;
-            }
+        let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
+            warn!("\n----- {packet}\n => No exchange, dropping");
+
+            packet.buf.clear();
+            return true;
+        };
+
+        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+
+        if exchange.role.is_dropped_state() {
+            warn!(
+                "\n----- {packet}\n => Owned by orphaned dropped {}, dropping packet",
+                ExchangeId::new(session.id, exch_index)
+            );
+
+            packet.buf.clear();
+            return true;
         }
 
         false
@@ -610,35 +619,37 @@ impl<'m> TransportMgr<'m> {
                     .map(|(sess, exch_index)| (sess.id, exch_index, false))
             });
 
-        if let Some((session_id, exch_index, close_session)) = exch {
-            let exchange_id = ExchangeId::new(session_id, exch_index);
+        let Some((session_id, exch_index, close_session)) = exch else {
+            return Ok(exch.is_none());
+        };
 
-            if close_session {
-                // Found a dropped exchange which has an incomplete (re)transmission
-                // Close the whole session
+        let exchange_id = ExchangeId::new(session_id, exch_index);
 
-                error!(
-                    "Dropped exchange {exchange_id}: Closing session because the exchange cannot be closed cleanly"
-                );
+        if close_session {
+            // Found a dropped exchange which has an incomplete (re)transmission
+            // Close the whole session
 
-                self.encode_evict_session(packet, &mut session_mgr, session_id)?;
-            } else {
-                // Found a dropped exchange which has no outstanding (re)transmission
-                // Send a standalone ACK if necessary and then close it
+            error!(
+                "Dropped exchange {exchange_id}: Closing session because the exchange cannot be closed cleanly"
+            );
 
-                let epoch = session_mgr.epoch;
-                let session = session_mgr.get(session_id).unwrap();
-                let exchange = session.exchanges[exch_index].as_mut().unwrap();
+            self.encode_evict_session(packet, &mut session_mgr, session_id)?;
+        } else {
+            // Found a dropped exchange which has no outstanding (re)transmission
+            // Send a standalone ACK if necessary and then close it
 
-                if exchange.mrp.is_ack_pending() {
-                    self.encode_packet(packet, Some(session), Some(exch_index), epoch, |_| {
-                        Ok(Some(OpCode::MRPStandAloneAck.into()))
-                    })?;
-                }
+            let epoch = session_mgr.epoch;
+            let session = session_mgr.get(session_id).unwrap();
+            let exchange = session.exchanges[exch_index].as_mut().unwrap();
 
-                session.exchanges[exch_index] = None;
-                warn!("Dropped exchange {exchange_id}: Closed");
+            if exchange.mrp.is_ack_pending() {
+                self.encode_packet(packet, Some(session), Some(exch_index), epoch, |_| {
+                    Ok(Some(OpCode::MRPStandAloneAck.into()))
+                })?;
             }
+
+            session.exchanges[exch_index] = None;
+            warn!("Dropped exchange {exchange_id}: Closed");
         }
 
         Ok(exch.is_none())
@@ -712,70 +723,71 @@ impl<'m> TransportMgr<'m> {
         let mut wb = WriteBuf::new(&mut packet.buf);
         wb.reserve(PacketHdr::HDR_RESERVE)?;
 
-        if let Some(meta) = payload_writer(&mut wb)? {
-            meta.set_into(&mut packet.header.proto);
+        let Some(meta) = payload_writer(&mut wb)? else {
+            packet.buf.clear();
+            return Ok(());
+        };
 
-            let retransmission = if let Some(session) = &mut session {
-                packet.header.plain = Default::default();
+        meta.set_into(&mut packet.header.proto);
 
-                let (peer, retransmission) =
-                    session.pre_send(exchange_index, &mut packet.header, epoch)?;
+        let retransmission = if let Some(session) = &mut session {
+            packet.header.plain = Default::default();
 
-                packet.peer = peer;
+            let (peer, retransmission) =
+                session.pre_send(exchange_index, &mut packet.header, epoch)?;
 
-                retransmission
-            } else {
-                if packet.header.plain.is_encrypted()
-                    || packet.header.plain.get_src_nodeid().is_none()
-                    || packet.header.proto.is_reliable()
-                {
-                    // We can encode packets without a session only when they are unencrypted and do not need a retransmission
-                    Err(ErrorCode::NoSession)?;
-                }
+            packet.peer = peer;
 
-                let src_nodeid = packet.header.plain.get_src_nodeid();
-
-                packet.header.plain = Default::default();
-
-                packet.header.plain.sess_id = 0;
-                packet.header.plain.ctr = 1;
-                packet.header.plain.set_src_nodeid(None);
-                packet.header.plain.set_dst_unicast_nodeid(src_nodeid);
-
-                packet.header.proto.unset_initiator();
-                packet.header.proto.adjust_reliability(false, &packet.peer);
-
-                false
-            };
-
-            info!(
-                "\n<<<<< {}\n => {} (system)",
-                Packet::<0>::display(&packet.peer, &packet.header),
-                if retransmission {
-                    "Re-sending"
-                } else {
-                    "Sending"
-                }
-            );
-
-            debug!(
-                "{}",
-                Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
-            );
-
-            if let Some(session) = session {
-                session.encode(&packet.header, &mut wb)?;
-            } else {
-                packet.header.encode(&mut wb, 0, None)?;
+            retransmission
+        } else {
+            if packet.header.plain.is_encrypted()
+                || packet.header.plain.get_src_nodeid().is_none()
+                || packet.header.proto.is_reliable()
+            {
+                // We can encode packets without a session only when they are unencrypted and do not need a retransmission
+                Err(ErrorCode::NoSession)?;
             }
 
-            let range = (wb.get_start(), wb.get_tail());
+            let src_nodeid = packet.header.plain.get_src_nodeid();
 
-            packet.payload_start = range.0;
-            packet.buf.truncate(range.1);
+            packet.header.plain = Default::default();
+
+            packet.header.plain.sess_id = 0;
+            packet.header.plain.ctr = 1;
+            packet.header.plain.set_src_nodeid(None);
+            packet.header.plain.set_dst_unicast_nodeid(src_nodeid);
+
+            packet.header.proto.unset_initiator();
+            packet.header.proto.adjust_reliability(false, &packet.peer);
+
+            false
+        };
+
+        info!(
+            "\n<<<<< {}\n => {} (system)",
+            Packet::<0>::display(&packet.peer, &packet.header),
+            if retransmission {
+                "Re-sending"
+            } else {
+                "Sending"
+            }
+        );
+
+        debug!(
+            "{}",
+            Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
+        );
+
+        if let Some(session) = session {
+            session.encode(&packet.header, &mut wb)?;
         } else {
-            packet.buf.clear();
+            packet.header.encode(&mut wb, 0, None)?;
         }
+
+        let range = (wb.get_start(), wb.get_tail());
+
+        packet.payload_start = range.0;
+        packet.buf.truncate(range.1);
 
         Ok(())
     }
