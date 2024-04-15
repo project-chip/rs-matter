@@ -216,12 +216,23 @@ impl<'a> Matter<'a> {
             .await
     }
 
+    /// Notify that the ACLs or Fabrics _might_ have changed
+    /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs or Fabrics.
+    ///
+    /// The default IM and SC handlers (`DataModel` and `SecureChannel`) do call this method after processing the messages.
+    ///
+    /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub fn notify_changed(&self) {
         if self.is_changed() {
             self.persist_notification.notify();
         }
     }
 
+    /// A hook for user persistence code to wait for potential change in ACLs and/or Fabrics.
+    /// Once this future resolves, user code is supposed to call inspect ACLs and Fabrics for changes, and
+    /// if there are changes, persist them.
+    ///
+    /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub async fn wait_changed(&self) {
         self.persist_notification.wait().await
     }
