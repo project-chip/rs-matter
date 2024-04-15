@@ -1099,7 +1099,7 @@ impl<'a, const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'a, N
     }
 }
 
-// Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8` buffer.
+// Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8]` buffer.
 pub struct ExternalPacketBuffer<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>);
 
 impl<'a, const N: usize> Deref for ExternalPacketBuffer<'a, N> {

@@ -79,6 +79,9 @@ where
     {
         self.state
             .wait(|locked| {
+                // Safety: it is safe to access the unsafe cell data, because:
+                // - nobody holds the long term (async) lock on the mutex right now (`locked == false`)
+                // - we have gained the blocking short-term mutex lock
                 if !*locked && f(unsafe { &*self.inner.get() }) {
                     *locked = true;
 
@@ -102,6 +105,9 @@ where
             .state
             .wait(|locked| {
                 if !*locked {
+                    // Safety: it is safe to access the unsafe cell data, because:
+                    // - nobody holds the long term (async) lock on the mutex right now (`locked == false`)
+                    // - we have gained the blocking short-term mutex lock
                     if let Some(result) = f(unsafe { &mut *self.inner.get() }) {
                         *locked = true;
                         return Some(result);
@@ -112,6 +118,7 @@ where
             })
             .await;
 
+        // Construct and immediately drop the guard to unlock the mutex
         let _ = IfMutexGuard { mutex: self };
 
         result
@@ -133,6 +140,9 @@ where
             if *locked {
                 (false, Err(TryLockError))
             } else if f(unsafe { &*self.inner.get() }) {
+                // Safety: it is safe to access the unsafe cell data, because:
+                // - nobody holds the long term (async) lock on the mutex right now (`locked == false`)
+                // - we have gained the blocking short-term mutex lock
                 *locked = true;
                 (false, Ok(()))
             } else {

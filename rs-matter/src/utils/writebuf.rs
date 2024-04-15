@@ -28,8 +28,6 @@ pub struct WriteBuf<'a> {
 
 impl<'a> WriteBuf<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
-        let _buf_size = buf.len();
-
         Self::new_with(buf, 0, 0)
     }
 

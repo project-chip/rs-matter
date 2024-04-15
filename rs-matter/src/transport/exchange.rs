@@ -54,6 +54,10 @@ pub struct ExchangeId(u32);
 
 impl ExchangeId {
     pub(crate) fn new(session_id: u32, exchange_index: usize) -> Self {
+        if session_id > 0x0fff_ffff {
+            panic!("Session ID out of range");
+        }
+
         if exchange_index >= 16 {
             panic!("Exchange index out of range");
         }
