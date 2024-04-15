@@ -116,10 +116,7 @@ impl<const N: usize> Subscriptions<N> {
     pub(crate) fn remove(&self, node_id: Option<u64>, id: Option<u32>) {
         let mut subscriptions = self.subscriptions.borrow_mut();
         while let Some(index) = subscriptions.iter().position(|sub| {
-            node_id
-                .map(|node_id| node_id == sub.node_id)
-                .unwrap_or(true)
-                && id.map(|id| id == sub.id).unwrap_or(true)
+            sub.node_id == node_id.unwrap_or(sub.node_id) && sub.id == id.unwrap_or(sub.id)
         }) {
             subscriptions.swap_remove(index);
         }
@@ -132,14 +129,16 @@ impl<const N: usize> Subscriptions<N> {
             .find_map(|sub| sub.is_expired(now).then_some((sub.node_id, sub.id)))
     }
 
-    pub(crate) fn fetch_report_due(&self, now: Instant) -> Option<(u64, u32)> {
-        let mut subscriptions = self.subscriptions.borrow_mut();
-
-        if let Some(sub) = subscriptions.iter_mut().find(|sub| sub.report_due(now)) {
-            sub.reported_at = now;
-            Some((sub.node_id, sub.id))
-        } else {
-            None
-        }
+    /// Note that this method has a side effect:
+    /// it updates the `reported_at` field of the subscription that is returned.
+    pub(crate) fn find_report_due(&self, now: Instant) -> Option<(u64, u32)> {
+        self.subscriptions
+            .borrow_mut()
+            .iter_mut()
+            .find(|sub| sub.report_due(now))
+            .map(|sub| {
+                sub.reported_at = now;
+                (sub.node_id, sub.id)
+            })
     }
 }

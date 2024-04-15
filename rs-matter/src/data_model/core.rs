@@ -447,7 +447,7 @@ where
             }
 
             loop {
-                let sub = self.subscriptions.fetch_report_due(now);
+                let sub = self.subscriptions.find_report_due(now);
 
                 if let Some((node_id, id)) = sub {
                     info!("About to report data for subscription {node_id:x}::{id}");
