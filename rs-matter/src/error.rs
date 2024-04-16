@@ -195,14 +195,6 @@ impl From<mbedtls::Error> for Error {
     }
 }
 
-#[cfg(target_os = "espidf")]
-impl From<esp_idf_sys::EspError> for Error {
-    fn from(e: esp_idf_sys::EspError) -> Self {
-        ::log::error!("Error in ESP: {}", e);
-        Self::new(ErrorCode::TLSStack) // TODO: Not a good mapping
-    }
-}
-
 #[cfg(feature = "rustcrypto")]
 impl From<ccm::aead::Error> for Error {
     fn from(_e: ccm::aead::Error) -> Self {
