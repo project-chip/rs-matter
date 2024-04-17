@@ -20,6 +20,11 @@ use crate::error::{Error, ErrorCode};
 
 use super::Service;
 
+/// Internet DNS class with the "Cache Flush" bit set.
+fn dns_class_with_flush(dns_class: Class) -> Class {
+    Class::Int(u16::from(dns_class) | 0x8000)
+}
+
 impl From<ShortBuf> for Error {
     fn from(_: ShortBuf) -> Self {
         Self::new(ErrorCode::NoSpace)
@@ -304,7 +309,7 @@ impl<'a> Host<'a> {
     ) -> Result<(), PushError> {
         answer.push((
             Self::host_fqdn(self.hostname, false).unwrap(),
-            Class::In,
+            dns_class_with_flush(Class::In),
             ttl_sec,
             A::from_octets(self.ip[0], self.ip[1], self.ip[2], self.ip[3]),
         ))
@@ -318,7 +323,7 @@ impl<'a> Host<'a> {
         if let Some(ip) = &self.ipv6 {
             answer.push((
                 Self::host_fqdn(self.hostname, false).unwrap(),
-                Class::In,
+                dns_class_with_flush(Class::In),
                 ttl_sec,
                 Aaaa::new((*ip).into()),
             ))
@@ -346,7 +351,7 @@ impl<'a> Service<'a> {
     ) -> Result<(), PushError> {
         answer.push((
             self.service_fqdn(false).unwrap(),
-            Class::In,
+            dns_class_with_flush(Class::In),
             ttl_sec,
             Srv::new(0, 0, self.port, Host::host_fqdn(hostname, false).unwrap()),
         ))
@@ -359,14 +364,14 @@ impl<'a> Service<'a> {
     ) -> Result<(), PushError> {
         answer.push((
             Self::dns_sd_fqdn(false).unwrap(),
-            Class::In,
+            dns_class_with_flush(Class::In),
             ttl_sec,
             Ptr::new(self.service_type_fqdn(false).unwrap()),
         ))?;
 
         answer.push((
             self.service_type_fqdn(false).unwrap(),
-            Class::In,
+            dns_class_with_flush(Class::In),
             ttl_sec,
             Ptr::new(self.service_fqdn(false).unwrap()),
         ))
@@ -392,14 +397,14 @@ impl<'a> Service<'a> {
     ) -> Result<(), PushError> {
         answer.push((
             Self::dns_sd_fqdn(false).unwrap(),
-            Class::In,
-            ttl_sec,
+            dns_class_with_flush(Class::In),
+            dns_class_with_flush(ttl_sec),
             Ptr::new(self.service_subtype_fqdn(service_subtype, false).unwrap()),
         ))?;
 
         answer.push((
             self.service_subtype_fqdn(service_subtype, false).unwrap(),
-            Class::In,
+            dns_class_with_flush(Class::In),
             ttl_sec,
             Ptr::new(self.service_fqdn(false).unwrap()),
         ))
@@ -425,7 +430,12 @@ impl<'a> Service<'a> {
 
         let txt = Txt::from_octets(&mut octets).unwrap();
 
-        answer.push((self.service_fqdn(false).unwrap(), Class::In, ttl_sec, txt))
+        answer.push((
+            self.service_fqdn(false).unwrap(),
+            dns_class_with_flush(Class::In),
+            ttl_sec,
+            txt,
+        ))
     }
 
     fn service_fqdn(&self, suffix: bool) -> Result<impl ToDname, FromStrError> {
