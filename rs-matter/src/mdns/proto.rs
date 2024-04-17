@@ -398,7 +398,7 @@ impl<'a> Service<'a> {
         answer.push((
             Self::dns_sd_fqdn(false).unwrap(),
             dns_class_with_flush(Class::In),
-            dns_class_with_flush(ttl_sec),
+            ttl_sec,
             Ptr::new(self.service_subtype_fqdn(service_subtype, false).unwrap()),
         ))?;
 
