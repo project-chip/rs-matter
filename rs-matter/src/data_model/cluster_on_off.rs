@@ -61,16 +61,18 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     ],
 };
 
-pub struct OnOffCluster {
+pub struct OnOffCluster<'a> {
     data_ver: Dataver,
     on: Cell<bool>,
+    callback: Option<&'a dyn Fn(bool)>,
 }
 
-impl OnOffCluster {
-    pub fn new(rand: Rand) -> Self {
+impl<'a> OnOffCluster<'a> {
+    pub fn new(rand: Rand, callback: Option<&'a dyn Fn(bool)>) -> Self {
         Self {
             data_ver: Dataver::new(rand),
             on: Cell::new(false),
+            callback,
         }
     }
 
@@ -78,6 +80,9 @@ impl OnOffCluster {
         if self.on.get() != on {
             self.on.set(on);
             self.data_ver.changed();
+            if let Some(callback) = self.callback {
+                callback(on);
+            }
         }
     }
 
@@ -138,7 +143,7 @@ impl OnOffCluster {
     }
 }
 
-impl Handler for OnOffCluster {
+impl<'a> Handler for OnOffCluster<'a> {
     fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
         OnOffCluster::read(self, attr, encoder)
     }
@@ -159,9 +164,9 @@ impl Handler for OnOffCluster {
 }
 
 // TODO: Might be removed once the `on` member is externalized
-impl NonBlockingHandler for OnOffCluster {}
+impl<'a> NonBlockingHandler for OnOffCluster<'a> {}
 
-impl ChangeNotifier<()> for OnOffCluster {
+impl<'a> ChangeNotifier<()> for OnOffCluster<'a> {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }

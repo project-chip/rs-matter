@@ -158,7 +158,7 @@ fn handler<'a>(matter: &'a Matter<'a>) -> impl Metadata + NonBlockingHandler + '
             .chain(
                 1,
                 cluster_on_off::ID,
-                cluster_on_off::OnOffCluster::new(*matter.borrow()),
+                cluster_on_off::OnOffCluster::new(*matter.borrow(), None),
             ),
     )
 }

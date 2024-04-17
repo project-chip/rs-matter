@@ -141,7 +141,7 @@ pub struct ImOutput {
 }
 
 pub struct ImEngineHandler<'a> {
-    handler: handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster<'static>, EchoCluster | RootEndpointHandler<'a>),
+    handler: handler_chain_type!(OnOffCluster<'a>, EchoCluster, DescriptorCluster<'static>, EchoCluster | RootEndpointHandler<'a>),
 }
 
 impl<'a> ImEngineHandler<'a> {
@@ -150,7 +150,7 @@ impl<'a> ImEngineHandler<'a> {
             .chain(0, echo_cluster::ID, EchoCluster::new(2, *matter.borrow()))
             .chain(1, descriptor::ID, DescriptorCluster::new(*matter.borrow()))
             .chain(1, echo_cluster::ID, EchoCluster::new(3, *matter.borrow()))
-            .chain(1, cluster_on_off::ID, OnOffCluster::new(*matter.borrow()));
+            .chain(1, cluster_on_off::ID, OnOffCluster::new(*matter.borrow(), None));
 
         Self { handler }
     }
