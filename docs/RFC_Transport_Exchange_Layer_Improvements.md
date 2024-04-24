@@ -19,7 +19,7 @@ When comparing with the "Layered Architecture" diagram in the Matter spec, by "u
 
 ## Intro
 
-Back in 2023Q2, the new exchange concept - represented by the [`Exchange` struct]() was introduced to `rs-matter`.
+Back in 2023Q2, the new exchange concept - represented by the [`Exchange` struct](https://github.com/project-chip/rs-matter/blob/main/rs-matter/src/transport/exchange.rs#L248) was introduced to `rs-matter`.
 
 Unlike the C++ Matter SDK and the previous `rs-matter` transport code, the `Exchange` struct API allows for a straightforward, sequential looking sequence of sending and receiving messages with the other peer. No callbacks complexity, no explicit and error-prone state machines' management. I.e.
 
@@ -108,13 +108,13 @@ The exchange layer deciding on behalf of the upper layers is basically the curre
 #### Receiving Details
 
 * The transport layer is concurrently and asynchronously trying to get a `&mut` ref to its own RX buffer, but only when the RX buffer is _already emptied or empty_. If the RX buffer is full with a previous packet for _some_ exchange, the transport layer waits until the corresponding `Exchange` instance consumes the content of the RX buffer and signals back that the RX buffer is empty again.
-* At the same time, all active `Exchange` instances which are `await`-ing inside their `Exchange::rx` method, are concurrently and asynchronously trying to lock the `async` mutex protecting the RX buffer singleton. An `Exchange` instance will succeed doing so _only when the RX buffer is full_. Moreover, only when the RX buffer is full with data designated for _that concrete concrete Exchange_ which is trying to get hold of the RX buffer.
-* `Exchange::rx().await` returns an `async` Mutex Guard in disguise. The user (e.g. the upper layer) can read freely the data in the buffer protected by this guard, including `await`-ing the HAL while operating on that data. However, the transport layer will _not_ be receiving other packets at that time (as there is a single RX buffer), potentially causing UDP packets from other peers to be dropped and re-transmitted if the OS packet queue is full. So the buffer returned from `Exchange::rx` should not be held for too long and if so (i.e. the "network bridge" case), the upper IM/Secure Channel layer shold pull the data in an interim buffer and drop the `async` Mutex guard it got via `Exchange::rx` thus singnalling the RX packet singleton as empty.
+* At the same time, all active `Exchange` instances which are `await`-ing inside their `Exchange::recv` method, are concurrently and asynchronously trying to lock the `async` mutex protecting the RX buffer singleton. An `Exchange` instance will succeed doing so _only when the RX buffer is full_. Moreover, only when the RX buffer is full with data designated for _that concrete concrete Exchange_ which is trying to get hold of the RX buffer.
+* `Exchange::recv().await` returns an `async` Mutex Guard in disguise. The user (e.g. the upper layer) can read freely the data in the buffer protected by this guard, including `await`-ing the HAL while operating on that data. However, the transport layer will _not_ be receiving other packets at that time (as there is a single RX buffer), potentially causing UDP packets from other peers to be dropped and re-transmitted if the OS packet queue is full. So the buffer returned from `Exchange::recv` should not be held for too long and if so (i.e. the "network bridge" case), the upper IM/Secure Channel layer shold pull the data in an interim buffer and drop the `async` Mutex guard it got via `Exchange::recv` thus singnalling the RX packet singleton as empty.
 
 #### Sending Details
 * The transport layer is concurrently and asynchronously trying to get a `&mut` ref to its own TX buffer, _but only when the TX buffer is full_. If the TX buffer is not full, this means no exchange has prepared data for sending. When the transport layer gets access to the (already full) TX buffer, it copies the data in there over UDP (or other protocols in future), then marks the buffer as empty and signals/wakes all exchanges potentially `await`-ing on the TX buffer, that it is releasing the `async` lock on it.
-* At the same time, all active `Exchange` instances which are inside their `Exchange::tx` methods, are concurrently and asynchronously trying to lock the `async` mutex protecting the TX buffer singleton. An `Exchange` instance will succeed doing so _only when the TX buffer is empty_, and only one exchange instance would succeed doing so, and the others would continue to wait.
-* `Exchange::tx().await` returns an `async` Mutex Guard in disguise as well. The user can write freely into the buffer protected by this guard, including `await`-ing the HAL while operating on that data. However, if it is slow in doing that, it would delay all other exchanges willing to send at that time. Since the transport layer is automatically sending ACKs for re-transmitted packets this is not the end of the world, but if an exchange is delayed too much, it might cause this or other peers to eventually time out the whole exchange. Therefore, the buffer returned from `Exchange::tx` should not be held for too long and if so (i.e. the "network bridge" case), the upper IM/Secure Channel layer shold first prepare the data to be sent in its own buffer, and only then try to lock the common TX buffer when the data is ready to be sent.
+* At the same time, all active `Exchange` instances which are inside their `Exchange::init_send` methods, are concurrently and asynchronously trying to lock the `async` mutex protecting the TX buffer singleton. An `Exchange` instance will succeed doing so _only when the TX buffer is empty_, and only one exchange instance would succeed doing so, and the others would continue to wait.
+* `Exchange::init_send().await` returns an `async` Mutex Guard in disguise as well. The user can write freely into the buffer protected by this guard, including `await`-ing the HAL while operating on that data. However, if it is slow in doing that, it would delay all other exchanges willing to send at that time. Since the transport layer is automatically sending ACKs for re-transmitted packets this is not the end of the world, but if an exchange is delayed too much, it might cause this or other peers to eventually time out the whole exchange. Therefore, the buffer returned from `Exchange::init_send` should not be held for too long and if so (i.e. the "network bridge" case), the upper IM/Secure Channel layer shold first prepare the data to be sent in its own buffer, and only then try to lock the common TX buffer when the data is ready to be sent.
 
 #### Deadlock Avoidance
 
@@ -166,11 +166,166 @@ While this sounds like a lot of lift and shift, the new public `Exchange` API pr
 * `Exchange::send(payload: &[u8], meta: MessageMeta)`
   * The "old style" API where the message payload is prepared in a separate buffer, and then handed to the exchange layer for sending (and re-sending)
 
+Here are a few examples from the actual `DataModel` IM layer, as to how packet retransmission looks like from the POV of layers above the transport one:
+
+#### Example 1: Handling an IM "Timed" request
+
+A "Timed" request might precede a "Write" or "Invoke" request. It only contains a "timeout" scalar `u32` value. As such, its processing and the (re)transmission of a response which is just a status response can be done without any intermediate buffers.
+
+
+Here's how the "Timed" request-response interaction is coded:
+```rust=
+async fn timed(&self, exchange: &mut Exchange<'_>) -> Result<Duration, Error> {
+    // Get access to the transport layer RX packet and convert it to a TimedReq struct
+    let req = TimedReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+    debug!("IM: Timed request: {:?}", req);
+
+    // Extract the timeout value. In a way, we _do_ use a buffer between the
+    // above RX operation and the below TX operation. The buffer is `timeout_instant`.
+    let timeout_instant = req.timeout_instant(exchange.matter().epoch);
+
+    // Send (with re-transmission) a status response
+    Self::send_status(exchange, IMStatusCode::Success).await?;
+
+    Ok(timeout_instant)
+}
+```
+
+As for `send_status`:
+```rust=
+async fn send_status(exchange: &mut Exchange<'_>, status: IMStatusCode) -> Result<(), Error> {
+    exchange
+        .send_with(|_, wb| {
+            StatusResp::write(wb, status)?;
+
+            Ok(Some(OpCode::StatusResponse.into()))
+        })
+        .await
+}
+```
+
+Do note how `exchange.send_with` takes a (`FnMut`) closure. What this means is that once we call `send_with` and thus call the transport layer, we should be prepared our closure to be called multiple times, due to packet retransmissions, and until the transport layer receives an ACK for the packet we are transmitting. So our closure should be idempotent and generate the same payload every time it is called. Since the response is a simple status message, this is not a problem in this case.
+
+#### Example 2: Answering an IM `Invoke` request:
+
+Here's how the "Invoke" request-response interaction is coded:
+```rust=
+async fn invoke(
+        &self,
+        exchange: &mut Exchange<'_>,
+        timeout_instant: Option<Duration>,
+    ) -> Result<(), Error> {
+    let req = InvReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+    debug!("IM: Invoke request: {:?}", req);
+
+    // (Handling timeouts is skipped for brevity)
+
+    // To easily handle idempotent re-transmissions, we
+    // simply allocate a TX buffer here and prepare the response inside it
+    let Some(mut tx) = self.tx_buffer(exchange).await? else {
+        return Ok(());
+    };
+
+    let mut wb = WriteBuf::new(&mut tx);
+
+    let metadata = self.handler.lock().await;
+
+    // Get the request shape by parsing the RX payload as TLV
+    let req = InvReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+
+    // Will the clusters that are to be invoked await?
+    let awaits = metadata
+        .node()
+        .invoke(&req, &exchange.accessor()?)
+        .any(|item| {
+            item.map(|(cmd, _)| self.handler.invoke_awaits(&cmd))
+                .unwrap_or(false)
+        });
+
+    if awaits {
+        // Yes, they will
+        // Allocate a separate RX buffer then and copy the RX packet 
+        // into this buffer, so as not to hold on to the transport layer
+        // (single) RX packet for too long and block send / receive 
+        // for everybody
+        let Some(rx) = self.rx_buffer(exchange).await? else {
+            // Allocating an RX buffer failed. 
+            // However, `rx_buffer` already had sent a status response 
+            // "Busy" to the remote peer. We can therefore simply unroll 
+            // our stack by returning.
+            return Ok(());
+        };
+
+        // Re-parse the incoming request
+        let req = InvReq::from_tlv(&get_root_node_struct(&rx)?)?;
+
+        // Call the clusters and at the same time populate our TX
+        // buffer
+        req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+            .await?;
+    } else {
+        // No, they won't. Answer the invoke requests by directly using
+        // the RX packet of the transport layer, as the operation won't await
+        // Same as per above, call the clusters and at the same time
+        // populate our TX buffer
+        req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+            .await?;
+    }
+
+    // Now that the clusters are invoked and we have their response in `wb`,
+    // call the transport (exchange) layer to send the response
+    // 
+    // Note that `exchange.send` will NOT complete until it receives an
+    // ACK for the message it sends. Therefore, it might transmit our
+    // `wb.as_slice()` payload multiple times, with multiple messages
+    // But we don't care about that. Thanks to `async`, this re-transmission
+    // loop is hidden from us. All that we need to provide is the message
+    // payload in an idempotent way (as a `&[u8]` slice in this case 
+    // that can be read from multiple times), so that the transport layer
+    // can do its re-transmission logic.
+    exchange.send(OpCode::InvokeResponse, wb.as_slice()).await?;
+
+    Ok(())
+}
+```
+
+`self.tx_buffer(exchange)` and `self.rx_buffer(exchange)` are also interesting, as these are `async` calls, and in fact, allocating an intermediate TX or RX buffers can fail. Here's the TX buffer allocation:
+```rust=
+async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
+    if let Some(mut buffer) = self.buffers.get().await {
+        // Getting a TX buffer (potentially after some time!) succeeded
+        // Size it and return it.
+        // 
+        // NOTE: How much (and even if) allocating a buffer can await
+        // for a free buffer is up to the `BufferAccess` implementation,
+        // but it should be in the order of a few milliseconds, as 
+        // while awaiting here we are potentially blocking the single
+        // RX/TX buffers of the transport layer.
+        //
+        // The default `BufferAccess` impl does not await.
+        buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE).unwrap();
+
+        Ok(Some(buffer))
+    } else {
+        // Getting a TX buffer failed.
+        // 
+        // Before returning, call `send_status` (the method we looked at
+        // during the examination of the "Timed" req handling)
+        // to return to the client a status code that we are "Busy" 
+        // (i.e. it should retry later, when we might have buffers)
+        Self::send_status(exchange, IMStatusCode::Busy).await?;
+
+        // Return `None` so that the upper function can unroll its stack
+        Ok(None)
+    }
+}
+```
+
 ## Issue 4: Responding to exchanges is "locked" and hard-coded inside the transport layer implementation
 
 Method `Matter::run` currently is not only running the exchanges' transport logic (as in dispatching RX packets to `Exchange` objects and sending their TX packets). It is also managing the lifecycle of all "responder" exchanges and keeps them locked in a cage.
 
-Worse, the _concrete_ IM and SC implementations of the upper layers [are hard-coded](https://github.com/project-chip/rs-matter/blob/main/rs-matter/src/transport/core.rs#L364).
+Worse, the _concrete_ IM and SC implementations of the upper layers [are hard-coded](https://github.com/project-chip/rs-matter/blob/main/rs-matter/src/transport/core.rs#L352).
 
 ### Solution
 
@@ -189,9 +344,9 @@ Instead of a callback/handler API, the base-level "responder" exchange API for t
 
 Sure, and for this we still have "cage" callback-style utilities built on top of the above base-level API, thanks to the new `async-fn-in-trait` functionality in Rust:
 
-* [`Responder::run`](), which takes a `&matter` reference and organizes a pool of "handler" futures to concurrently call `Exchange::accept(&matter)` and then apply on each accepted exchange a user-provided `ExchangeHandler` trait callback 
-  * `DataModel` and `SecureChannel` are retrofitted to implement the single-method `ExchangeHandler::handle(&mut Exchange)` API and are this "exchange handlers"
-* [`DefaultResponder`](), which internally uses `Responder` from above with an `ExchangeHandler` instance which is a composition of the default `DataModel` and `SecureChannel` protocol handlers
+* [`Responder::run`](https://github.com/ivmarkov/rs-matter/blob/next/rs-matter/src/respond.rs#L120), which takes a `&matter` reference and organizes a pool of "handler" futures to concurrently call `Exchange::accept(&matter)` and then apply on each accepted exchange a user-provided `ExchangeHandler` trait callback 
+  * `DataModel` and `SecureChannel` are retrofitted to implement the single-method `ExchangeHandler::handle(&mut Exchange)` API and are thus "exchange handlers"
+* [`DefaultResponder`](https://github.com/ivmarkov/rs-matter/blob/next/rs-matter/src/respond.rs#L229), which internally uses `Responder` from above with an `ExchangeHandler` instance which is a composition of the default `DataModel` and `SecureChannel` protocol handlers
 
 The key difference between this new and the old arrangment being that `Responder` and `DefaultResponder` - just like `DataModel` and `SecureChannel` are **not** part of the main `Matter` instance and as such are replaceable with equivalents by the user.
 
@@ -342,7 +497,7 @@ The underlying transport implementation below the `Exchange` API currently imple
 * For each active exchange, the user owns an RX packet/buffer. How and where this packet is allocated is not a concern of the Exchange API.
 * The user operates on this buffer freely (as in mainly reading from it of course)
 * When the user wants to receive, the user calls `Exchange::recv(&mut rx).await` or `Exchange::exchange(&mut tx, &mut rx).await`, supplying a *mutable reference* to the RX buffer.
-* [The code for the above implementation uses `unsafe` to avoid lifetime-related compiler errors](), as the above pattern is un-expressible with the existing Rust lifetime rules. This is really important: should we've NOT used `unsafe`, this pattern would've been impossible to implement, and the problem would've not been here in the first place!
+* [The code for the above implementation uses `unsafe` to avoid lifetime-related compiler errors](https://github.com/project-chip/rs-matter/blob/main/rs-matter/src/transport/core.rs#L424), as the above pattern is un-expressible with the existing Rust lifetime rules. This is really important: should we've NOT used `unsafe`, this pattern would've been impossible to implement, and the problem would've not been here in the first place!
 * This mutable RX reference - together with a `*mut` ref to the `async` Notification primitive owned by the concrete `Exchange` instance is recorded in an internal central singleton structure (the Matter transport impl), and when a packet for that particular exchange arrives, it is copied into the recorded RX buffer *mutable reference*, and then the corresponding `Exchange` object is awoken from `await`-ing, by `signal`-ing the recorded `*mut` ref of the `Notification` structure.
 
 ... and that's the crux of the issue - that the mutable RX reference and the mutable Notification object reference "are recorded", i.e. they are kept around **accross** await points! 
@@ -366,10 +521,10 @@ Imagine that the HAL layer is actually _not_ requiring `await`s. I would say thi
 * Ditto for reading the current state of the window blinds - we are supposed to report the current opening/closing _progress_ (as in e.g. "50% opened")
 * Ditto for complex clusters like the multimedia ones
 
-Does that mean that we should retire our `async` [`AsyncHandler` Data Model trait]() and only support [the non-`async` `Handler` one]()? 
+Does that mean that we should retire our `async` [`AsyncHandler` Data Model trait](https://github.com/project-chip/rs-matter/blob/main/rs-matter/src/data_model/objects/handler.rs#L299) and only support [the non-`async` `Handler` one](https://github.com/project-chip/rs-matter/blob/main/rs-matter/src/data_model/objects/handler.rs#L35)? 
 No because we might have a HAL that is really much easier to express with `await`-ing. Imagine a Matter bridge device that communicates with the non-Matter devices it is bridging over the network. It is very attractice and simple to have the possibility of e.g. an `async` `AsyncHandler::invoke` on-off cluster implementation, that - while inside the `invoke` method - opens an HTTP REST request to the remove device, sends the request using `async` IO and awaits the `200 OK` response using `async` IO. Contrast this with a complex caching logic where you need to notify an interim layer that it needs to - at some point - send an HTTP request; and then we would be reporting back "the light went on" even if - in fact - it *didn't*, due to the device being temporarily offline or whatever. (Not that some Matter controllers don't operate like that anyway! :) )
 
-So in conclusion, I think we have to preserve the current asynchronous `AsyncHandler` contract, as it is a superset of what the user might actually need. If we (ever) implement an intelligent buffer management scheme in the Interaction Model, we might introduce a new method in the `AsyncHandler` trait: `AsyncHandler::awaits(&self) -> bool`. This way the user would be able to indicate if their cluster(s) are really needing asynchrony - and if not - the Interaction Layer might use this information to skip on using extra buffers for sending. For one, all clusters in Endpoint 0 are purely computational (just like the whole Secure Channel impl), so they do not really need an extra TX buffer. Or even an extra RX buffer, for that matter.
+So in conclusion, I think we have to preserve the current asynchronous `AsyncHandler` contract, as it is a superset of what the user might actually need. If we ~~(ever)~~ (UPDATE: I did) implement an intelligent buffer management scheme in the Interaction Model, we might introduce a new set of methods in the `AsyncHandler` trait: `AsyncHandler::xxx_awaits(&self) -> bool`. This way the user would be able to indicate if their cluster(s) are really needing asynchrony - and if not - the Interaction Layer might use this information to skip on using extra buffers for sending. For one, all clusters in Endpoint 0 are purely computational (just like the whole Secure Channel impl), so they do not really need an extra TX buffer. Or even an extra RX buffer, for that matter.
 
 ## Appendix C: High level summary of code changes
 
