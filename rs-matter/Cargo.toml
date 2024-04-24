@@ -67,22 +67,32 @@ x509-cert = { version = "0.2", default-features = false, features = ["pem"], opt
 # STD
 rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }
 async-io = { version = "2", optional = true, default-features = false }
+async-compat = { version = "0.2", optional = true, default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = { version = "0.3" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zeroconf = { version = "0.12", optional = true }
+bluer = { version = "0.17", features = ["bluetoothd"] }
+tokio = { version = "1" }
+tokio-stream = { version = "0.1" }
 
 [dev-dependencies]
 env_logger = "0.11"
 nix = { version = "0.27", features = ["net"] }
 futures-lite = "1"
+async-channel = "2"
 
 [[example]]
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
 required-features = ["std", "async-io"]
+
+[[example]]
+name = "onoff_light_bt"
+path = "../examples/onoff_light_bt/src/main.rs"
+required-features = ["std", "async-io", "async-compat"]
 
 # [[example]]
 # name = "speaker"

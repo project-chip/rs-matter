@@ -80,6 +80,7 @@ pub struct TransportMgr<'m> {
     pub(crate) session_removed: Notification<NoopRawMutex>,
     pub session_mgr: RefCell<SessionMgr>, // For testing
     pub(crate) mdns: MdnsImpl<'m>,
+    #[allow(dead_code)]
     rand: Rand,
 }
 
