@@ -17,16 +17,26 @@
 
 use core::fmt::{Debug, Display};
 
-#[cfg(not(feature = "std"))]
 pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-#[cfg(feature = "std")]
-pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use crate::error::Error;
+
+// Maximum UDP RX packet size per Matter spec
+pub const MAX_RX_PACKET_SIZE: usize = 1583;
+
+// Maximum UDP TX packet size per Matter spec
+pub const MAX_TX_PACKET_SIZE: usize = 1280 - 40/*IPV6 header size*/ - 8/*UDP header size*/;
+
+// Maximum TCP RX packet size per Matter spec
+pub const MAX_RX_LARGE_PACKET_SIZE: usize = 1024 * 1024;
+
+// Maximum TCP TX packet size per Matter spec
+pub const MAX_TX_LARGE_PACKET_SIZE: usize = MAX_RX_LARGE_PACKET_SIZE;
 
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub enum Address {
     Udp(SocketAddr),
+    Tcp(SocketAddr),
 }
 
 impl Address {
@@ -35,14 +45,20 @@ impl Address {
     }
 
     pub fn is_reliable(&self) -> bool {
-        match self {
-            Self::Udp(_) => false,
-        }
+        matches!(self, Self::Tcp(_))
     }
 
     pub fn unwrap_udp(self) -> SocketAddr {
         match self {
             Self::Udp(addr) => addr,
+            other => panic!("Expected UDP address, got {:?}", other),
+        }
+    }
+
+    pub fn unwrap_tcp(self) -> SocketAddr {
+        match self {
+            Self::Tcp(addr) => addr,
+            other => panic!("Expected TCP address, got {:?}", other),
         }
     }
 }
@@ -57,6 +73,7 @@ impl Display for Address {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Address::Udp(addr) => write!(f, "UDP {}", addr),
+            Address::Tcp(addr) => write!(f, "TCP {}", addr),
         }
     }
 }
@@ -65,6 +82,7 @@ impl Debug for Address {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Address::Udp(addr) => writeln!(f, "{}", addr),
+            Address::Tcp(addr) => writeln!(f, "{}", addr),
         }
     }
 }

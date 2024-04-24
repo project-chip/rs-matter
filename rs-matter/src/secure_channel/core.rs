@@ -18,12 +18,17 @@
 use log::error;
 
 use crate::{
+    alloc,
     error::*,
+    respond::ExchangeHandler,
     secure_channel::{common::*, pake::Pake},
-    transport::{exchange::Exchange, packet::Packet},
+    transport::exchange::Exchange,
 };
 
-use super::case::Case;
+use super::{
+    case::{Case, CaseSession},
+    spake2p::Spake2P,
+};
 
 /* Handle messages related to the Secure Channel
  */
@@ -36,17 +41,27 @@ impl SecureChannel {
         Self(())
     }
 
-    pub async fn handle(
-        &self,
-        exchange: &mut Exchange<'_>,
-        rx: &mut Packet<'_>,
-        tx: &mut Packet<'_>,
-    ) -> Result<(), Error> {
-        match rx.get_proto_opcode()? {
-            OpCode::PBKDFParamRequest => Pake::new().handle(exchange, rx, tx).await,
-            OpCode::CASESigma1 => Case::new().handle(exchange, rx, tx).await,
-            proto_opcode => {
-                error!("OpCode not handled: {:?}", proto_opcode);
+    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+        if exchange.rx().is_err() {
+            exchange.recv_fetch().await?;
+        }
+
+        let meta = exchange.rx()?.meta();
+        if meta.proto_id != PROTO_ID_SECURE_CHANNEL {
+            Err(ErrorCode::InvalidProto)?;
+        }
+
+        match meta.opcode()? {
+            OpCode::PBKDFParamRequest => {
+                let mut spake2p = alloc!(Spake2P::new());
+                Pake::new().handle(exchange, &mut spake2p).await
+            }
+            OpCode::CASESigma1 => {
+                let mut case_session = alloc!(CaseSession::new());
+                Case::new().handle(exchange, &mut case_session).await
+            }
+            opcode => {
+                error!("Invalid opcode: {:?}", opcode);
                 Err(ErrorCode::InvalidOpcode.into())
             }
         }
@@ -56,5 +71,11 @@ impl SecureChannel {
 impl Default for SecureChannel {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ExchangeHandler for SecureChannel {
+    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+        SecureChannel::handle(self, exchange).await
     }
 }

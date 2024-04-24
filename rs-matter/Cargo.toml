@@ -20,6 +20,7 @@ alloc = []
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
+large-buffers = [] # TCP support
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
@@ -45,6 +46,7 @@ domain = { version = "0.9", default-features = false, features = ["heapless"] }
 octseq = { version = "0.3", default-features = false }
 portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
+scopeguard = "1"
 
 # crypto
 openssl = { version = "0.10", optional = true }

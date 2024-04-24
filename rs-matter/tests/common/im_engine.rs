@@ -17,18 +17,22 @@
 
 use crate::common::echo_cluster;
 use core::borrow::Borrow;
-use core::future::pending;
-use core::time::Duration;
-use embassy_futures::select::select3;
+
+use embassy_futures::{block_on, join::join, select::select3};
+
 use embassy_sync::{
-    blocking_mutex::raw::{NoopRawMutex, RawMutex},
+    blocking_mutex::raw::NoopRawMutex,
     zerocopy_channel::{Channel, Receiver, Sender},
 };
+
+use embassy_time::{Duration, Timer};
+
 use rs_matter::{
     acl::{AclEntry, AuthMode},
     data_model::{
         cluster_basic_information::{self, BasicInfoConfig},
         cluster_on_off::{self, OnOffCluster},
+        core::{DataModel, IMBuffer},
         device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE},
         objects::{
             AttrData, AttrDataEncoder, AttrDetails, Endpoint, Handler, HandlerCompat, Metadata,
@@ -40,6 +44,7 @@ use rs_matter::{
             dev_att::{DataType, DevAttDataFetcher},
             general_commissioning, noc, nw_commissioning,
         },
+        subscriptions::Subscriptions,
         system_model::{
             access_control,
             descriptor::{self, DescriptorCluster},
@@ -49,16 +54,18 @@ use rs_matter::{
     handler_chain_type,
     interaction_model::core::{OpCode, PROTO_ID_INTERACTION_MODEL},
     mdns::MdnsService,
-    secure_channel::{self, common::PROTO_ID_SECURE_CHANNEL, spake2p::VerifierData},
+    respond::Responder,
     tlv::{TLVWriter, TagType, ToTLV},
     transport::{
-        core::PacketBuffers,
-        network::{Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4},
-        packet::{Packet, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
-        session::{CaseDetails, CloneData, NocCatIds, SessionMode},
+        exchange::{Exchange, MessageMeta, MAX_EXCHANGE_TX_BUF_SIZE},
+        network::{
+            Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
+            MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
+        },
+        session::{CaseDetails, NocCatIds, ReservedSession, SessionMode},
     },
-    utils::select::{EitherUnwrap, Notification},
-    CommissioningData, Matter, MATTER_PORT,
+    utils::{buf::PooledBuffers, select::Coalesce},
+    Matter, MATTER_PORT,
 };
 
 use super::echo_cluster::EchoCluster;
@@ -137,7 +144,7 @@ impl<'a> ImInput<'a> {
 
 pub struct ImOutput {
     pub action: OpCode,
-    pub data: heapless::Vec<u8, MAX_TX_BUF_SIZE>,
+    pub data: heapless::Vec<u8, MAX_EXCHANGE_TX_BUF_SIZE>,
 }
 
 pub struct ImEngineHandler<'a> {
@@ -207,6 +214,24 @@ impl<'a> ImEngine<'a> {
 
     /// Create the interaction model engine
     pub fn new(cat_ids: NocCatIds) -> Self {
+        Self {
+            matter: Self::new_matter(),
+            cat_ids,
+        }
+    }
+
+    pub fn add_default_acl(&self) {
+        // Only allow the standard peer node id of the IM Engine
+        let mut default_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+        default_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
+        self.matter.acl_mgr.borrow_mut().add(default_acl).unwrap();
+    }
+
+    pub fn handler(&self) -> ImEngineHandler<'_> {
+        ImEngineHandler::new(&self.matter)
+    }
+
+    fn new_matter() -> Matter<'static> {
         #[cfg(feature = "std")]
         use rs_matter::utils::epoch::sys_epoch as epoch;
 
@@ -228,18 +253,31 @@ impl<'a> ImEngine<'a> {
             MATTER_PORT,
         );
 
-        Self { matter, cat_ids }
+        matter.initialize_transport_buffers().unwrap();
+
+        matter
     }
 
-    pub fn add_default_acl(&self) {
-        // Only allow the standard peer node id of the IM Engine
-        let mut default_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
-        default_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
-        self.matter.acl_mgr.borrow_mut().add(default_acl).unwrap();
-    }
+    fn init_matter(matter: &Matter, local_nodeid: u64, remote_nodeid: u64, cat_ids: &NocCatIds) {
+        matter.transport_mgr.reset();
 
-    pub fn handler(&self) -> ImEngineHandler<'_> {
-        ImEngineHandler::new(&self.matter)
+        let mut session = ReservedSession::reserve_now(matter).unwrap();
+
+        session
+            .update(
+                local_nodeid,
+                remote_nodeid,
+                1,
+                1,
+                ADDR,
+                SessionMode::Case(CaseDetails::new(1, cat_ids)),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        session.complete();
     }
 
     pub fn process<const N: usize>(
@@ -248,177 +286,109 @@ impl<'a> ImEngine<'a> {
         input: &[&ImInput],
         out: &mut heapless::Vec<ImOutput, N>,
     ) -> Result<(), Error> {
-        self.matter.reset_transport();
+        out.clear();
 
-        let clone_data = CloneData::new(
+        Self::init_matter(
+            &self.matter,
             IM_ENGINE_REMOTE_PEER_ID,
             IM_ENGINE_PEER_ID,
-            1,
-            1,
-            Address::default(),
-            SessionMode::Case(CaseDetails::new(1, &self.cat_ids)),
+            &self.cat_ids,
         );
 
-        let sess_idx = self
-            .matter
-            .session_mgr
-            .borrow_mut()
-            .clone_session(&clone_data)
-            .unwrap();
+        let matter_client = Self::new_matter();
+        Self::init_matter(
+            &matter_client,
+            IM_ENGINE_PEER_ID,
+            IM_ENGINE_REMOTE_PEER_ID,
+            &self.cat_ids,
+        );
 
-        let mut send_channel_buf = [heapless::Vec::new(); 1];
-        let mut recv_channel_buf = [heapless::Vec::new(); 1];
+        let mut buf1 = [heapless::Vec::new(); 1];
+        let mut buf2 = [heapless::Vec::new(); 1];
 
-        let mut send_channel = Channel::<NoopRawMutex, _>::new(&mut send_channel_buf);
-        let mut recv_channel = Channel::<NoopRawMutex, _>::new(&mut recv_channel_buf);
+        let mut pipe1 = NetworkPipe::<MAX_RX_PACKET_SIZE>::new(&mut buf1);
+        let mut pipe2 = NetworkPipe::<MAX_TX_PACKET_SIZE>::new(&mut buf2);
 
-        let handler = &handler;
+        let (send_remote, recv_local) = pipe1.split();
+        let (send_local, recv_remote) = pipe2.split();
 
-        let mut msg_ctr = self
-            .matter
-            .session_mgr
-            .borrow_mut()
-            .mut_by_index(sess_idx)
-            .unwrap()
-            .get_msg_ctr();
+        let matter_client = &matter_client;
 
-        let resp_notif = Notification::new();
-        let resp_notif = &resp_notif;
+        let buffers = PooledBuffers::<10, NoopRawMutex, IMBuffer>::new(0);
 
-        let mut buffers = PacketBuffers::new();
-        let buffers = &mut buffers;
+        let subscriptions = Subscriptions::<1>::new();
 
-        let (send, mut send_dest) = send_channel.split();
-        let (mut recv_dest, recv) = recv_channel.split();
+        let responder = Responder::new(
+            "Default",
+            DataModel::new(&buffers, &subscriptions, HandlerCompat(handler)),
+            &self.matter,
+            0,
+        );
 
-        embassy_futures::block_on(async move {
+        block_on(
             select3(
-                self.matter.run(
-                    NetworkSender(send),
-                    NetworkReceiver(recv),
-                    buffers,
-                    CommissioningData {
-                        // TODO: Hard-coded for now
-                        verifier: VerifierData::new_with_pw(123456, *self.matter.borrow()),
-                        discriminator: 250,
-                    },
-                    &HandlerCompat(handler),
+                matter_client
+                    .transport_mgr
+                    .run(NetworkSendImpl(send_local), NetworkReceiveImpl(recv_local)),
+                self.matter.transport_mgr.run(
+                    NetworkSendImpl(send_remote),
+                    NetworkReceiveImpl(recv_remote),
                 ),
-                async move {
-                    let mut acknowledge = false;
+                join(responder.respond_once("0"), async move {
+                    let mut exchange =
+                        Exchange::initiate(matter_client, IM_ENGINE_REMOTE_PEER_ID, true).await?;
+
                     for ip in input {
-                        Self::send(ip, &mut recv_dest, msg_ctr, acknowledge).await?;
-                        resp_notif.wait().await;
+                        exchange
+                            .send_with(|_, wb| {
+                                ip.data
+                                    .to_tlv(&mut TLVWriter::new(wb), TagType::Anonymous)?;
 
-                        if let Some(delay) = ip.delay {
-                            if delay > 0 {
-                                #[cfg(feature = "std")]
-                                std::thread::sleep(Duration::from_millis(delay as _));
-                            }
-                        }
+                                Ok(Some(MessageMeta {
+                                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                                    proto_opcode: ip.action as _,
+                                    reliable: true,
+                                }))
+                            })
+                            .await?;
 
-                        msg_ctr += 2;
-                        acknowledge = true;
-                    }
-
-                    pending::<()>().await;
-
-                    Ok(())
-                },
-                async move {
-                    out.clear();
-
-                    while out.len() < input.len() {
-                        let vec = send_dest.receive().await;
-
-                        let mut rx = Packet::new_rx(vec);
-
-                        rx.plain_hdr_decode()?;
-                        rx.proto_decode(IM_ENGINE_REMOTE_PEER_ID, Some(&[0u8; 16]))?;
-
-                        if rx.get_proto_id() != PROTO_ID_SECURE_CHANNEL
-                            || rx.get_proto_opcode::<secure_channel::common::OpCode>()?
-                                != secure_channel::common::OpCode::MRPStandAloneAck
                         {
+                            // In a separate block so that the RX message is dropped before we start waiting
+
+                            let rx = exchange.recv().await?;
+
                             out.push(ImOutput {
-                                action: rx.get_proto_opcode()?,
-                                data: heapless::Vec::from_slice(rx.as_slice())
+                                action: rx.meta().opcode()?,
+                                data: heapless::Vec::from_slice(rx.payload())
                                     .map_err(|_| ErrorCode::NoSpace)?,
                             })
                             .map_err(|_| ErrorCode::NoSpace)?;
-
-                            resp_notif.signal(());
                         }
 
-                        send_dest.receive_done();
+                        let delay = ip.delay.unwrap_or(0);
+                        if delay > 0 {
+                            Timer::after(Duration::from_millis(delay as _)).await;
+                        }
                     }
 
+                    exchange.acknowledge().await?;
+
                     Ok(())
-                },
+                })
+                .coalesce(),
             )
-            .await
-            .unwrap()
-        })?;
-
-        Ok(())
-    }
-
-    async fn send(
-        input: &ImInput<'_>,
-        sender: &mut Sender<'_, impl RawMutex, heapless::Vec<u8, MAX_RX_BUF_SIZE>>,
-        msg_ctr: u32,
-        acknowledge: bool,
-    ) -> Result<(), Error> {
-        let vec = sender.send().await;
-
-        vec.clear();
-        vec.extend(core::iter::repeat(0).take(MAX_RX_BUF_SIZE));
-
-        let mut tx = Packet::new_tx(vec);
-
-        tx.set_proto_id(PROTO_ID_INTERACTION_MODEL);
-        tx.set_proto_opcode(input.action as u8);
-
-        let mut tw = TLVWriter::new(tx.get_writebuf()?);
-
-        input.data.to_tlv(&mut tw, TagType::Anonymous)?;
-
-        tx.plain.ctr = msg_ctr + 1;
-        tx.plain.sess_id = 1;
-        tx.proto.set_initiator();
-
-        if acknowledge {
-            tx.proto.set_ack(msg_ctr - 1);
-        }
-
-        tx.proto_encode(
-            Address::default(),
-            Some(IM_ENGINE_REMOTE_PEER_ID),
-            IM_ENGINE_PEER_ID,
-            false,
-            Some(&[0u8; 16]),
-        )?;
-
-        let start = tx.get_writebuf()?.get_start();
-        let end = tx.get_writebuf()?.get_tail();
-
-        if start > 0 {
-            for offset in 0..(end - start) {
-                vec[offset] = vec[start + offset];
-            }
-        }
-
-        vec.truncate(end - start);
-
-        sender.send_done();
-
-        Ok(())
+            .coalesce(),
+        )
     }
 }
 
-struct NetworkSender<'a>(Sender<'a, NoopRawMutex, heapless::Vec<u8, MAX_TX_BUF_SIZE>>);
+const ADDR: Address = Address::Udp(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
 
-impl<'a> NetworkSend for NetworkSender<'a> {
+type NetworkPipe<'a, const N: usize> = Channel<'a, NoopRawMutex, heapless::Vec<u8, N>>;
+struct NetworkReceiveImpl<'a, const N: usize>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, N>>);
+struct NetworkSendImpl<'a, const N: usize>(Sender<'a, NoopRawMutex, heapless::Vec<u8, N>>);
+
+impl<'a, const N: usize> NetworkSend for NetworkSendImpl<'a, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
         let vec = self.0.send().await;
 
@@ -431,9 +401,7 @@ impl<'a> NetworkSend for NetworkSender<'a> {
     }
 }
 
-struct NetworkReceiver<'a>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, MAX_RX_BUF_SIZE>>);
-
-impl<'a> NetworkReceive for NetworkReceiver<'a> {
+impl<'a, const N: usize> NetworkReceive for NetworkReceiveImpl<'a, N> {
     async fn wait_available(&mut self) -> Result<(), Error> {
         self.0.receive().await;
 
@@ -448,9 +416,6 @@ impl<'a> NetworkReceive for NetworkReceiver<'a> {
 
         self.0.receive_done();
 
-        Ok((
-            len,
-            Address::Udp(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))),
-        ))
+        Ok((len, ADDR))
     }
 }

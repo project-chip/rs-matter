@@ -74,6 +74,10 @@ impl OnOffCluster {
         }
     }
 
+    pub fn get(&self) -> bool {
+        self.on.get()
+    }
+
     pub fn set(&self, on: bool) {
         if self.on.get() != on {
             self.on.set(on);

@@ -12,10 +12,7 @@ use crate::transport::network::{
     Address, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
     SocketAddrV6,
 };
-use crate::utils::{
-    buf::BufferAccess,
-    select::{EitherUnwrap, Notification},
-};
+use crate::utils::{buf::BufferAccess, notification::Notification, select::Coalesce};
 
 use super::{Service, ServiceMode};
 
@@ -38,7 +35,7 @@ pub struct MdnsImpl<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
     services: RefCell<heapless::Vec<(heapless::String<40>, ServiceMode), 4>>,
-    notification: Notification,
+    notification: Notification<NoopRawMutex>,
 }
 
 impl<'a> MdnsImpl<'a> {
@@ -64,7 +61,7 @@ impl<'a> MdnsImpl<'a> {
             .push((service.try_into().unwrap(), mode))
             .map_err(|_| ErrorCode::NoSpace)?;
 
-        self.notification.signal(());
+        self.notification.notify();
 
         Ok(())
     }
@@ -74,7 +71,7 @@ impl<'a> MdnsImpl<'a> {
 
         services.retain(|(name, _)| name != service);
 
-        self.notification.signal(());
+        self.notification.notify();
 
         Ok(())
     }
@@ -106,15 +103,15 @@ impl<'a> MdnsImpl<'a> {
     where
         S: NetworkSend,
         R: NetworkReceive,
-        SB: BufferAccess,
-        RB: BufferAccess,
+        SB: BufferAccess<[u8]>,
+        RB: BufferAccess<[u8]>,
     {
         let send = Mutex::<NoopRawMutex, _>::new(send);
 
         let mut broadcast = pin!(self.broadcast(&send, &tx_buf, &host, interface));
         let mut respond = pin!(self.respond(&send, recv, &tx_buf, &rx_buf, &host, interface));
 
-        select(&mut broadcast, &mut respond).await.unwrap()
+        select(&mut broadcast, &mut respond).coalesce().await
     }
 
     async fn broadcast<S, B>(
@@ -126,14 +123,13 @@ impl<'a> MdnsImpl<'a> {
     ) -> Result<(), Error>
     where
         S: NetworkSend,
-        B: BufferAccess,
+        B: BufferAccess<[u8]>,
     {
         loop {
-            select(
-                self.notification.wait(),
-                Timer::after(Duration::from_secs(30)),
-            )
-            .await;
+            let mut notification = pin!(self.notification.wait());
+            let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
+
+            select(&mut notification, &mut timeout).await;
 
             for addr in core::iter::once(SocketAddr::V4(SocketAddrV4::new(
                 MDNS_IPV4_BROADCAST_ADDR,
@@ -151,7 +147,7 @@ impl<'a> MdnsImpl<'a> {
                     })
                     .into_iter(),
             ) {
-                let mut buf = buffer.get().await;
+                let mut buf = buffer.get().await.ok_or(ErrorCode::NoSpace)?;
                 let mut send = send.lock().await;
 
                 let len = host.broadcast(self, &mut buf, 60)?;
@@ -176,17 +172,17 @@ impl<'a> MdnsImpl<'a> {
     where
         S: NetworkSend,
         R: NetworkReceive,
-        SB: BufferAccess,
-        RB: BufferAccess,
+        SB: BufferAccess<[u8]>,
+        RB: BufferAccess<[u8]>,
     {
         loop {
             recv.wait_available().await?;
 
             {
-                let mut rx = rx_buf.get().await;
+                let mut rx = rx_buf.get().await.ok_or(ErrorCode::NoSpace)?;
                 let (len, addr) = recv.recv_from(&mut rx).await?;
 
-                let mut tx = tx_buf.get().await;
+                let mut tx = tx_buf.get().await.ok_or(ErrorCode::NoSpace)?;
                 let mut send = send.lock().await;
 
                 let len = match host.respond(self, &rx[..len], &mut tx, 60) {
