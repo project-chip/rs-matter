@@ -22,6 +22,15 @@ use super::signal::Signal;
 /// A notification primitive that allows for notifying a single waiter.
 pub struct Notification<M>(Signal<M, Option<()>>);
 
+impl<M> Default for Notification<M>
+where
+    M: RawMutex,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<M> Notification<M>
 where
     M: RawMutex,

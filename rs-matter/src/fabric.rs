@@ -190,6 +190,12 @@ pub struct FabricMgr {
     changed: bool,
 }
 
+impl Default for FabricMgr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FabricMgr {
     #[inline(always)]
     pub const fn new() -> Self {

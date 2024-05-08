@@ -41,6 +41,12 @@ use super::{
 /// not accepted in time by the actual Interaction Model responder, due to all its handlers being occupied with work.
 pub struct BusyInteractionModel(());
 
+impl Default for BusyInteractionModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BusyInteractionModel {
     #[inline(always)]
     pub const fn new() -> Self {

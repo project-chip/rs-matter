@@ -56,6 +56,12 @@ pub struct Subscriptions<const N: usize> {
     pub(crate) notification: Notification<NoopRawMutex>,
 }
 
+impl<const N: usize> Default for Subscriptions<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> Subscriptions<N> {
     /// Create the instance.
     #[inline(always)]

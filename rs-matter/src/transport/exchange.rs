@@ -589,7 +589,7 @@ pub struct SenderTx<'a, 'b> {
 
 impl<'a, 'b> SenderTx<'a, 'b> {
     pub fn split(&mut self) -> (&Exchange<'_>, &mut [u8]) {
-        (&self.sender.exchange, self.message.payload())
+        (self.sender.exchange, self.message.payload())
     }
 
     pub fn payload(&mut self) -> &mut [u8] {
