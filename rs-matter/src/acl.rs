@@ -416,6 +416,12 @@ pub struct AclMgr {
     changed: bool,
 }
 
+impl Default for AclMgr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AclMgr {
     #[inline(always)]
     pub const fn new() -> Self {

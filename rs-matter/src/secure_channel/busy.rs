@@ -40,6 +40,12 @@ use super::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 /// not accepted in time by the actual Secure Channel responder, due to all its handlers being occupied with work.
 pub struct BusySecureChannel(());
 
+impl Default for BusySecureChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BusySecureChannel {
     const BUSY_RETRY_DELAY_MS: u16 = 500;
 

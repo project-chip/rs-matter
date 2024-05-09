@@ -43,6 +43,12 @@ pub struct CaseSession {
     local_fabric_idx: usize,
 }
 
+impl Default for CaseSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CaseSession {
     #[inline(always)]
     pub const fn new() -> Self {
