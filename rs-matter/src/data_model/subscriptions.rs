@@ -31,6 +31,7 @@ struct Subscription {
     min_int_secs: u16,
     // Ditto
     max_int_secs: u16,
+    // TODO: Change to `Option<Instant>` to avoid using `Instant::MAX` as a sentinel value
     reported_at: Instant,
     changed: bool,
 }
