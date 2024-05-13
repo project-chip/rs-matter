@@ -37,12 +37,18 @@ struct Subscription {
 
 impl Subscription {
     pub fn report_due(&self, now: Instant) -> bool {
-        self.changed
-            && self.reported_at + embassy_time::Duration::from_secs(self.min_int_secs as _) <= now
+        self.changed && self.expired(self.min_int_secs, now)
     }
 
     pub fn is_expired(&self, now: Instant) -> bool {
-        self.reported_at + embassy_time::Duration::from_secs(self.max_int_secs as _) <= now
+        self.expired(self.max_int_secs, now)
+    }
+
+    fn expired(&self, secs: u16, now: Instant) -> bool {
+        self.reported_at
+            .checked_add(embassy_time::Duration::from_secs(secs as _))
+            .map(|expiry| expiry <= now)
+            .unwrap_or(false)
     }
 }
 
