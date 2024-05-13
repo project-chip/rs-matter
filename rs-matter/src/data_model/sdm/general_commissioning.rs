@@ -46,6 +46,7 @@ pub enum Attributes {
     BasicCommissioningInfo(()) = 1,
     RegConfig(AttrType<u8>) = 2,
     LocationCapability(AttrType<u8>) = 3,
+    SupportsConcurrentConnection(AttrType<bool>) = 4,
 }
 
 attribute_enum!(Attributes);
@@ -106,6 +107,11 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::RV,
             Quality::FIXED,
         ),
+        Attribute::new(
+            AttributesDiscriminants::SupportsConcurrentConnection as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
     ],
     commands: &[
         Commands::ArmFailsafe as _,
@@ -129,11 +135,16 @@ struct BasicCommissioningInfo {
 pub struct GenCommCluster<'a> {
     data_ver: Dataver,
     basic_comm_info: BasicCommissioningInfo,
+    supports_concurrent_connection: bool,
     failsafe: &'a RefCell<FailSafe>,
 }
 
 impl<'a> GenCommCluster<'a> {
-    pub fn new(failsafe: &'a RefCell<FailSafe>, rand: Rand) -> Self {
+    pub fn new(
+        failsafe: &'a RefCell<FailSafe>,
+        supports_concurrent_connection: bool,
+        rand: Rand,
+    ) -> Self {
         Self {
             data_ver: Dataver::new(rand),
             failsafe,
@@ -142,6 +153,7 @@ impl<'a> GenCommCluster<'a> {
                 expiry_len: 120,
                 max_cmltv_failsafe_secs: 120,
             },
+            supports_concurrent_connection,
         }
     }
 
@@ -168,6 +180,9 @@ impl<'a> GenCommCluster<'a> {
                         self.basic_comm_info
                             .to_tlv(&mut writer, AttrDataWriter::TAG)?;
                         writer.complete()
+                    }
+                    Attributes::SupportsConcurrentConnection(codec) => {
+                        codec.encode(writer, self.supports_concurrent_connection)
                     }
                 }
             }
