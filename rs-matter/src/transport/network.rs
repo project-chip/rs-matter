@@ -141,15 +141,7 @@ mod async_io {
 
     impl NetworkReceive for &Async<UdpSocket> {
         async fn wait_available(&mut self) -> Result<(), Error> {
-            let mut buf = [0];
-
-            loop {
-                let (len, _) = Async::<UdpSocket>::peek_from(self, &mut buf).await?;
-
-                if len > 0 {
-                    break;
-                }
-            }
+            Async::<UdpSocket>::readable(self).await?;
 
             Ok(())
         }
