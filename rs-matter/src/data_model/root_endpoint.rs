@@ -139,7 +139,7 @@ pub fn wrap<'a>(
         .chain(
             endpoint_id,
             general_commissioning::ID,
-            GenCommCluster::new(failsafe, rand),
+            GenCommCluster::new(failsafe, true, rand),
         )
         .chain(
             endpoint_id,
