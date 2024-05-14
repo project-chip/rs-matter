@@ -41,6 +41,7 @@ use crate::{
 pub const MATTER_PORT: u16 = 5540;
 
 /// Device Commissioning Data
+#[derive(Debug, Clone)]
 pub struct CommissioningData {
     /// The data like password or verifier that is required to authenticate
     pub verifier: VerifierData,
@@ -149,16 +150,12 @@ impl<'a> Matter<'a> {
     fn start_comissioning(
         &self,
         dev_comm: CommissioningData,
+        discovery_capabilities: DiscoveryCapabilities,
         buf: &mut [u8],
     ) -> Result<bool, Error> {
         if !self.pase_mgr.borrow().is_pase_session_enabled() && self.fabric_mgr.borrow().is_empty()
         {
-            print_pairing_code_and_qr(
-                self.dev_det,
-                &dev_comm,
-                DiscoveryCapabilities::default(),
-                buf,
-            )?;
+            print_pairing_code_and_qr(self.dev_det, &dev_comm, discovery_capabilities, buf)?;
 
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,
@@ -182,17 +179,17 @@ impl<'a> Matter<'a> {
         &self,
         send: S,
         recv: R,
-        dev_comm: Option<CommissioningData>,
+        dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
     {
-        if let Some(dev_comm) = dev_comm {
+        if let Some((dev_comm, discovery_caps)) = dev_comm {
             let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
             let mut buf = buf_access.get().await.ok_or(ErrorCode::NoSpace)?;
 
-            self.start_comissioning(dev_comm, &mut buf)?;
+            self.start_comissioning(dev_comm, discovery_caps, &mut buf)?;
         }
 
         self.transport_mgr.run(send, recv).await

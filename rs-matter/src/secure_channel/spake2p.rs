@@ -86,6 +86,7 @@ impl Default for Spake2P {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct VerifierData {
     pub data: VerifierOption,
     // For the VerifierOption::Verifier, the following fields only serve
@@ -94,6 +95,7 @@ pub struct VerifierData {
     pub count: u32,
 }
 
+#[derive(Debug, Clone)]
 pub enum VerifierOption {
     /// With Password
     Password(u32),
