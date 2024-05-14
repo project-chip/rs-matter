@@ -172,8 +172,10 @@ impl<'a> Matter<'a> {
         }
     }
 
-    pub fn reset(&self) {
-        self.transport_mgr.reset();
+    /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
+    /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
+    pub fn reset_transport(&self) -> Result<(), Error> {
+        self.transport_mgr.reset()
     }
 
     pub async fn run<S, R>(
