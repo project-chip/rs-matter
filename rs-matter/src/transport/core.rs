@@ -27,7 +27,7 @@ use embassy_time::Timer;
 use log::{debug, error, info, trace, warn};
 
 use crate::error::{Error, ErrorCode};
-use crate::mdns::{Mdns, MdnsImpl};
+use crate::mdns::MdnsImpl;
 use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 use crate::secure_channel::status_report::StatusReport;
 use crate::tlv::TLVList;
@@ -115,9 +115,22 @@ impl<'m> TransportMgr<'m> {
         Ok(())
     }
 
-    pub fn reset(&self) {
+    /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
+    /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
+    pub fn reset(&self) -> Result<(), Error> {
         self.session_mgr.borrow_mut().reset();
-        self.mdns.reset();
+        self.rx
+            .try_lock()
+            .map_err(|_| ErrorCode::InvalidState)?
+            .buf
+            .clear();
+        self.tx
+            .try_lock()
+            .map_err(|_| ErrorCode::InvalidState)?
+            .buf
+            .clear();
+
+        Ok(())
     }
 
     pub(crate) async fn initiate<'a>(
