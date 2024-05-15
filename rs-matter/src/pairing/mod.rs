@@ -34,6 +34,7 @@ use self::{
     qr::{compute_qr_code_text, print_qr_code},
 };
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryCapabilities {
     on_ip_network: bool,
     ble: bool,
@@ -41,8 +42,8 @@ pub struct DiscoveryCapabilities {
 }
 
 impl DiscoveryCapabilities {
-    pub fn new(on_ip_network: bool, ble: bool, soft_access_point: bool) -> Self {
-        DiscoveryCapabilities {
+    pub const fn new(on_ip_network: bool, ble: bool, soft_access_point: bool) -> Self {
+        Self {
             on_ip_network,
             ble,
             soft_access_point,

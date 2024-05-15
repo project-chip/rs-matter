@@ -150,11 +150,14 @@ fn run() -> Result<(), Error> {
     let mut transport = pin!(matter.run(
         &socket,
         &socket,
-        Some(CommissioningData {
-            // TODO: Hard-coded for now
-            verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
-            discriminator: 250,
-        }),
+        Some((
+            CommissioningData {
+                // TODO: Hard-coded for now
+                verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
+                discriminator: 250,
+            },
+            Default::default(),
+        )),
     ));
 
     // NOTE:

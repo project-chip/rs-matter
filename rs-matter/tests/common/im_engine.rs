@@ -259,7 +259,7 @@ impl<'a> ImEngine<'a> {
     }
 
     fn init_matter(matter: &Matter, local_nodeid: u64, remote_nodeid: u64, cat_ids: &NocCatIds) {
-        matter.transport_mgr.reset();
+        matter.transport_mgr.reset().unwrap();
 
         let mut session = ReservedSession::reserve_now(matter).unwrap();
 
