@@ -181,7 +181,7 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint::endpoint(0),
+        root_endpoint::endpoint(0, root_endpoint::OperNwType::Ethernet),
         Endpoint {
             id: 1,
             device_type: DEV_TYPE_ON_OFF_LIGHT,
@@ -196,7 +196,7 @@ fn dm_handler<'a>(
 ) -> impl Metadata + NonBlockingHandler + 'a {
     (
         NODE,
-        root_endpoint::handler(0, matter)
+        root_endpoint::eth_handler(0, matter)
             .chain(
                 1,
                 descriptor::ID,
