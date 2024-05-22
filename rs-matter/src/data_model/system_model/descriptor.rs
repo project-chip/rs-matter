@@ -89,6 +89,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct DescriptorCluster<'a> {
     matcher: &'a dyn PartsMatcher,
     data_ver: Dataver,

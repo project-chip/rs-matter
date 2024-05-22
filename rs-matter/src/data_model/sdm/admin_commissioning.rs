@@ -98,6 +98,7 @@ pub struct OpenCommWindowReq<'a> {
     salt: OctetStr<'a>,
 }
 
+#[derive(Clone)]
 pub struct AdminCommCluster<'a> {
     data_ver: Dataver,
     pase_mgr: &'a RefCell<PaseMgr>,

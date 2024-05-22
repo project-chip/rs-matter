@@ -61,6 +61,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     ],
 };
 
+#[derive(Clone)]
 pub struct OnOffCluster {
     data_ver: Dataver,
     on: Cell<bool>,

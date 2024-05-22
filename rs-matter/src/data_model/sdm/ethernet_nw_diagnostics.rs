@@ -60,6 +60,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[CommandsDiscriminants::ResetCounts as _],
 };
 
+#[derive(Clone)]
 pub struct EthNwDiagCluster {
     data_ver: Dataver,
 }

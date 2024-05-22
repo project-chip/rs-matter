@@ -126,12 +126,13 @@ struct FailSafeParams {
     bread_crumb: u64,
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Clone)]
 struct BasicCommissioningInfo {
     expiry_len: u16,
     max_cmltv_failsafe_secs: u16,
 }
 
+#[derive(Clone)]
 pub struct GenCommCluster<'a> {
     data_ver: Dataver,
     basic_comm_info: BasicCommissioningInfo,
