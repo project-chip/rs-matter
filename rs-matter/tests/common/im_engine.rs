@@ -102,7 +102,7 @@ const NODE: Node<'static> = Node {
                 descriptor::CLUSTER,
                 cluster_basic_information::CLUSTER,
                 general_commissioning::CLUSTER,
-                nw_commissioning::CLUSTER,
+                nw_commissioning::ETH_CLUSTER,
                 admin_commissioning::CLUSTER,
                 noc::CLUSTER,
                 access_control::CLUSTER,
