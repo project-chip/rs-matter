@@ -187,19 +187,27 @@ impl<'a> MdnsImpl<'a> {
 
                 let len = match host.respond(self, &rx[..len], &mut tx, 60) {
                     Ok(len) => len,
-                    Err(err) => match err.code() {
-                        ErrorCode::MdnsError => {
-                            warn!("Got invalid message from {addr}, skipping");
-                            continue;
-                        }
-                        other => Err(other)?,
-                    },
+                    Err(err) => {
+                        warn!("mDNS protocol error {err} while replying to {addr}");
+                        continue;
+                    }
                 };
 
                 if len > 0 {
-                    info!("Replying to mDNS query from {}", addr);
+                    info!("Replying to mDNS query from {addr}");
 
-                    send.send_to(&tx[..len], addr).await?;
+                    match send.send_to(&tx[..len], addr).await {
+                        Ok(_) => (),
+                        Err(err) => {
+                            // Turns out we might receive queries from Ipv6 addresses which are actually unreachable by us
+                            // Still to be investigated why, but it does seem that we are receiving packets which contain
+                            // non-link-local Ipv6 addresses, to which we cannot respond
+                            //
+                            // A possible reason for this might be that we are receiving these packets via the broadcast group
+                            // - yet - it is still unclear how these arrive given that we are only listening on the link-local address
+                            warn!("IO error {err:?} while replying to {addr}");
+                        }
+                    }
                 }
             }
         }
