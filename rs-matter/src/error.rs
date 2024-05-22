@@ -35,6 +35,7 @@ pub enum ErrorCode {
     DataVersionMismatch,
     Crypto,
     TLSStack,
+    BtpError,
     MdnsError,
     NoCommand,
     NoEndpoint,
