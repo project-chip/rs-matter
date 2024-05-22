@@ -21,7 +21,7 @@ use crate::{
 };
 use log::error;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 #[allow(dead_code)]
 #[allow(clippy::enum_variant_names)]
 enum NocState {

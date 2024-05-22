@@ -135,6 +135,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[],
 };
 
+#[derive(Clone)]
 pub struct BasicInfoCluster<'a> {
     data_ver: Dataver,
     cfg: &'a BasicInfoConfig<'a>,

@@ -76,6 +76,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[CommandsDiscriminants::KeySetWrite as _],
 };
 
+#[derive(Clone)]
 pub struct GrpKeyMgmtCluster {
     data_ver: Dataver,
 }

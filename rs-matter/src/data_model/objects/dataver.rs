@@ -19,6 +19,7 @@ use core::cell::Cell;
 
 use crate::utils::rand::Rand;
 
+#[derive(Clone)]
 pub struct Dataver {
     ver: Cell<u32>,
     changed: Cell<bool>,

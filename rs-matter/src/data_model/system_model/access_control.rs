@@ -76,6 +76,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[],
 };
 
+#[derive(Clone)]
 pub struct AccessControlCluster<'a> {
     data_ver: Dataver,
     acl_mgr: &'a RefCell<AclMgr>,

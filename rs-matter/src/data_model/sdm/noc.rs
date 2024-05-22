@@ -213,6 +213,7 @@ struct RemoveFabricReq {
     fab_idx: u8,
 }
 
+#[derive(Clone)]
 pub struct NocCluster<'a> {
     data_ver: Dataver,
     epoch: Epoch,

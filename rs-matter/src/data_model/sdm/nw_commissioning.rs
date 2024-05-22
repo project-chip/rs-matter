@@ -83,6 +83,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[],
 };
 
+#[derive(Clone)]
 pub struct NwCommCluster {
     data_ver: Dataver,
 }

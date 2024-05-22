@@ -70,6 +70,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[CommandsDiscriminants::TestEventTrigger as _],
 };
 
+#[derive(Clone)]
 pub struct GenDiagCluster {
     data_ver: Dataver,
 }
