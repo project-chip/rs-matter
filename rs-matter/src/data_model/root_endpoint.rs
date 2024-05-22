@@ -22,7 +22,7 @@ use super::{
         group_key_management,
         group_key_management::GrpKeyMgmtCluster,
         noc::{self, NocCluster},
-        nw_commissioning::{self, NwCommCluster},
+        nw_commissioning::{self, EthNwCommCluster},
     },
     system_model::{
         access_control::{self, AccessControlCluster},
@@ -34,7 +34,7 @@ pub type RootEndpointHandler<'a> = handler_chain_type!(
     DescriptorCluster<'static>,
     BasicInfoCluster<'a>,
     GenCommCluster<'a>,
-    NwCommCluster,
+    EthNwCommCluster,
     AdminCommCluster<'a>,
     NocCluster<'a>,
     AccessControlCluster<'a>,
@@ -47,7 +47,7 @@ pub const CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
     cluster_basic_information::CLUSTER,
     general_commissioning::CLUSTER,
-    nw_commissioning::CLUSTER,
+    nw_commissioning::ETH_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
     access_control::CLUSTER,
@@ -135,7 +135,11 @@ pub fn wrap<'a>(
             admin_commissioning::ID,
             AdminCommCluster::new(pase, mdns, rand),
         )
-        .chain(endpoint_id, nw_commissioning::ID, NwCommCluster::new(rand))
+        .chain(
+            endpoint_id,
+            nw_commissioning::ID,
+            EthNwCommCluster::new(rand),
+        )
         .chain(
             endpoint_id,
             general_commissioning::ID,
