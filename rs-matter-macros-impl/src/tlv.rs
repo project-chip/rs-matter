@@ -138,13 +138,7 @@ fn gen_totlv_for_struct(
     let mut tags = Vec::new();
 
     for field in fields.named.iter() {
-        //        let field_name: &syn::Ident = field.ident.as_ref().unwrap();
-        //        let name: String = field_name.to_string();
-        //        let literal_key_str = syn::LitStr::new(&name, field.span());
-        //        let type_name = &field.ty;
-        //        keys.push(quote! { #literal_key_str });
         idents.push(&field.ident);
-        //        types.push(type_name.to_token_stream());
         if let Some(a) = parse_tag_val(&field.attrs) {
             tags.push(a);
         } else {
