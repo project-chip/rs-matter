@@ -151,7 +151,7 @@ totlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
 // - TLVArray: Is an array of entries, with reference within the original list
 
 /// Implements UTFString from the spec
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Default, Hash, Eq)]
 pub struct UtfStr<'a>(pub &'a [u8]);
 
 impl<'a> UtfStr<'a> {
@@ -177,7 +177,7 @@ impl<'a> FromTLV<'a> for UtfStr<'a> {
 }
 
 /// Implements OctetString from the spec
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Default, Hash, Eq)]
 pub struct OctetStr<'a>(pub &'a [u8]);
 
 impl<'a> OctetStr<'a> {

@@ -26,18 +26,15 @@ use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
 use log::info;
 use strum::{EnumDiscriminants, FromRepr};
+use rs_matter_macros::idl_import;
 
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-enum CommissioningError {
-    Ok = 0,
-    ErrValueOutsideRange = 1,
-    ErrInvalidAuth = 2,
-    ErrNotCommissioning = 3,
-    ErrBusyWithOtherAdmin = 4,
-}
+idl_import!(clusters = ["GeneralCommissioning"]);
 
-pub const ID: u32 = 0x0030;
+pub use general_commissioning::ID;
+pub use general_commissioning::Commands;
+pub use general_commissioning::CommissioningErrorEnum;
+pub use general_commissioning::RegulatoryLocationTypeEnum;
+
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
@@ -51,13 +48,6 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
-#[derive(FromRepr)]
-#[repr(u32)]
-pub enum Commands {
-    ArmFailsafe = 0x00,
-    SetRegulatoryConfig = 0x02,
-    CommissioningComplete = 0x04,
-}
 
 command_enum!(Commands);
 
@@ -73,12 +63,6 @@ pub enum RespCommands {
 struct CommonResponse<'a> {
     error_code: u8,
     debug_txt: UtfStr<'a>,
-}
-
-pub enum RegLocationType {
-    Indoor = 0,
-    Outdoor = 1,
-    IndoorOutdoor = 2,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -114,7 +98,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         ),
     ],
     commands: &[
-        Commands::ArmFailsafe as _,
+        Commands::ArmFailSafe as _,
         Commands::SetRegulatoryConfig as _,
         Commands::CommissioningComplete as _,
     ],
@@ -171,11 +155,11 @@ impl<'a> GenCommCluster<'a> {
                     Attributes::BreadCrumb(codec) => codec.encode(writer, 0),
                     // TODO: Arch-Specific
                     Attributes::RegConfig(codec) => {
-                        codec.encode(writer, RegLocationType::IndoorOutdoor as _)
+                        codec.encode(writer, RegulatoryLocationTypeEnum::IndoorOutdoor as _)
                     }
                     // TODO: Arch-Specific
                     Attributes::LocationCapability(codec) => {
-                        codec.encode(writer, RegLocationType::IndoorOutdoor as _)
+                        codec.encode(writer, RegulatoryLocationTypeEnum::IndoorOutdoor as _)
                     }
                     Attributes::BasicCommissioningInfo(_) => {
                         self.basic_comm_info
@@ -200,7 +184,7 @@ impl<'a> GenCommCluster<'a> {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::ArmFailsafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
+            Commands::ArmFailSafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
             Commands::SetRegulatoryConfig => {
                 self.handle_command_setregulatoryconfig(exchange, data, encoder)?
             }
@@ -233,9 +217,9 @@ impl<'a> GenCommCluster<'a> {
             )
             .is_err()
         {
-            CommissioningError::ErrBusyWithOtherAdmin as u8
+            CommissioningErrorEnum::BusyWithOtherAdmin as u8
         } else {
-            CommissioningError::Ok as u8
+            CommissioningErrorEnum::OK as u8
         };
 
         let cmd_data = CommonResponse {
@@ -282,14 +266,14 @@ impl<'a> GenCommCluster<'a> {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Commissioning Complete");
-        let mut status: u8 = CommissioningError::Ok as u8;
+        let mut status: u8 = CommissioningErrorEnum::OK as u8;
 
         // Has to be a Case Session
         if exchange
             .with_session(|sess| Ok(sess.get_local_fabric_idx()))?
             .is_none()
         {
-            status = CommissioningError::ErrInvalidAuth as u8;
+            status = CommissioningErrorEnum::InvalidAuthentication as u8;
         }
 
         // AddNOC or UpdateNOC must have happened, and that too for the same fabric
@@ -300,7 +284,7 @@ impl<'a> GenCommCluster<'a> {
             .disarm(exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))?)
             .is_err()
         {
-            status = CommissioningError::ErrInvalidAuth as u8;
+            status = CommissioningErrorEnum::InvalidAuthentication as u8;
         }
 
         let cmd_data = CommonResponse {
