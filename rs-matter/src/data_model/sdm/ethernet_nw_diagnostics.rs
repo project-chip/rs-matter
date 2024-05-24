@@ -19,14 +19,14 @@ use crate::{
     transport::exchange::Exchange, utils::rand::Rand,
 };
 use log::info;
-use strum::{EnumDiscriminants, FromRepr};
 use rs_matter_macros::idl_import;
+use strum::{EnumDiscriminants, FromRepr};
 
 idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
 
-pub use ethernet_network_diagnostics::ID;
 pub use ethernet_network_diagnostics::Commands;
 pub use ethernet_network_diagnostics::CommandsDiscriminants;
+pub use ethernet_network_diagnostics::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
