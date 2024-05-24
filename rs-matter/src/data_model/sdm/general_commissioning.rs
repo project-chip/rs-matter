@@ -25,16 +25,15 @@ use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
 use log::info;
-use strum::{EnumDiscriminants, FromRepr};
 use rs_matter_macros::idl_import;
+use strum::{EnumDiscriminants, FromRepr};
 
 idl_import!(clusters = ["GeneralCommissioning"]);
 
-pub use general_commissioning::ID;
 pub use general_commissioning::Commands;
 pub use general_commissioning::CommissioningErrorEnum;
 pub use general_commissioning::RegulatoryLocationTypeEnum;
-
+pub use general_commissioning::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
@@ -47,7 +46,6 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
-
 
 command_enum!(Commands);
 
