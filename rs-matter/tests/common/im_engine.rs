@@ -38,7 +38,7 @@ use rs_matter::{
             AttrData, AttrDataEncoder, AttrDetails, Endpoint, Handler, HandlerCompat, Metadata,
             Node, NonBlockingHandler, Privilege,
         },
-        root_endpoint::{self, RootEndpointHandler},
+        root_endpoint::{self, EthRootEndpointHandler},
         sdm::{
             admin_commissioning,
             dev_att::{DataType, DevAttDataFetcher},
@@ -148,12 +148,12 @@ pub struct ImOutput {
 }
 
 pub struct ImEngineHandler<'a> {
-    handler: handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster<'static>, EchoCluster | RootEndpointHandler<'a>),
+    handler: handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster<'static>, EchoCluster | EthRootEndpointHandler<'a>),
 }
 
 impl<'a> ImEngineHandler<'a> {
     pub fn new(matter: &'a Matter<'a>) -> Self {
-        let handler = root_endpoint::handler(0, matter)
+        let handler = root_endpoint::eth_handler(0, matter)
             .chain(0, echo_cluster::ID, EchoCluster::new(2, *matter.borrow()))
             .chain(1, descriptor::ID, DescriptorCluster::new(*matter.borrow()))
             .chain(1, echo_cluster::ID, EchoCluster::new(3, *matter.borrow()))
