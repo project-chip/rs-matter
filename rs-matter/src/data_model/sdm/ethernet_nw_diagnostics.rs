@@ -19,9 +19,14 @@ use crate::{
     transport::exchange::Exchange, utils::rand::Rand,
 };
 use log::info;
+use rs_matter_macros::idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
-pub const ID: u32 = 0x0037;
+idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
+
+pub use ethernet_network_diagnostics::Commands;
+pub use ethernet_network_diagnostics::CommandsDiscriminants;
+pub use ethernet_network_diagnostics::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
@@ -31,12 +36,6 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
-
-#[derive(FromRepr, EnumDiscriminants)]
-#[repr(u32)]
-pub enum Commands {
-    ResetCounts = 0x0,
-}
 
 command_enum!(Commands);
 
