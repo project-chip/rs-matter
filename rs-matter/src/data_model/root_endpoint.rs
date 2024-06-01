@@ -22,6 +22,7 @@ use super::{
         group_key_management::{self, GrpKeyMgmtCluster},
         noc::{self, NocCluster},
         nw_commissioning::{self, EthNwCommCluster},
+        wifi_nw_diagnostics,
     },
     system_model::{
         access_control::{self, AccessControlCluster},
@@ -46,12 +47,12 @@ const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
     cluster_basic_information::CLUSTER,
     general_commissioning::CLUSTER,
-    nw_commissioning::ETH_CLUSTER,
+    nw_commissioning::WIFI_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
     access_control::CLUSTER,
     general_diagnostics::CLUSTER,
-    ethernet_nw_diagnostics::CLUSTER,
+    wifi_nw_diagnostics::CLUSTER,
     group_key_management::CLUSTER,
 ];
 
