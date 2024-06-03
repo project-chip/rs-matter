@@ -156,7 +156,7 @@ impl ReliableMessage {
             if let Some(retrans) = &mut self.retrans {
                 if retrans.pre_send(tx_plain.ctr).is_err() {
                     // Too many retransmissions, give up
-                    error!("Too many retransmissions. Giving up");
+                    error!("Packet {tx_plain}{tx_proto}: Too many retransmissions. Giving up");
 
                     self.retrans = None;
                     self.ack = None;

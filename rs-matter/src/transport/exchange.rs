@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::cmp::max;
 use core::fmt::{self, Display};
 use core::pin::pin;
 
@@ -71,6 +70,10 @@ impl ExchangeId {
 
     pub(crate) fn exchange_index(&self) -> usize {
         (self.0 >> 28) as _
+    }
+
+    pub(crate) fn display<'a>(&'a self, session: &'a Session) -> ExchangeIdDisplay<'a> {
+        ExchangeIdDisplay { id: self, session }
     }
 
     async fn recv<'a>(&self, matter: &'a Matter<'a>) -> Result<RxMessage<'a>, Error> {
@@ -191,7 +194,7 @@ impl ExchangeId {
         if let Some(session) = session_mgr.get(self.session_id()) {
             f(session, self.exchange_index())
         } else {
-            warn!("Exchange {}: No session", self);
+            warn!("Exchange {self}: No session");
             Err(ErrorCode::NoSession.into())
         }
     }
@@ -223,7 +226,7 @@ impl ExchangeId {
             let exchange = sess.exchanges[exch_index].as_mut().unwrap();
 
             if exchange.mrp.is_retrans_pending() {
-                error!("Exchange {}: Retransmission pending", self);
+                error!("Exchange {}: Retransmission pending", self.display(sess));
                 Err(ErrorCode::InvalidState)?;
             }
 
@@ -247,6 +250,34 @@ impl ExchangeId {
 impl Display for ExchangeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}::{}", self.session_id(), self.exchange_index())
+    }
+}
+
+/// A display wrapper for `ExchangeId` which also displays
+/// the packet session ID, packet peer session ID and packet exchange ID.
+pub struct ExchangeIdDisplay<'a> {
+    id: &'a ExchangeId,
+    session: &'a Session,
+}
+
+impl<'a> Display for ExchangeIdDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self.session.exchanges[self.id.exchange_index()].as_ref();
+
+        if let Some(state) = state {
+            write!(
+                f,
+                "{} [SID:{:x},RSID:{:x},EID:{:x}]",
+                self.id,
+                self.session.get_local_sess_id(),
+                self.session.get_peer_sess_id(),
+                state.exch_id
+            )
+        } else {
+            // This should never happen, as that would mean we have invalid exchange index
+            // but let's not crash when displaying that
+            write!(f, "{}???", self.id)
+        }
     }
 }
 
@@ -751,20 +782,19 @@ impl<'a> Exchange<'a> {
     /// If there is no new pending responder exchange, the method will wait indefinitely until one appears.
     pub async fn accept_after(
         matter: &'a Matter<'a>,
-        received_timeout_ms: u64,
+        received_timeout_ms: u32,
     ) -> Result<Self, Error> {
         if received_timeout_ms > 0 {
             let epoch = matter.epoch;
 
             loop {
                 let mut accept = pin!(matter.transport_mgr.accept_if(matter, |_, exch, _| {
-                    exch.mrp.has_rx_timed_out(received_timeout_ms, epoch)
+                    exch.mrp.has_rx_timed_out(received_timeout_ms as _, epoch)
                 }));
 
-                let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(max(
-                    received_timeout_ms / 2,
-                    1,
-                ))));
+                let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(
+                    received_timeout_ms as u64
+                )));
 
                 if let Either::First(exchange) = select(&mut accept, &mut timer).await {
                     break exchange;

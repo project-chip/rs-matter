@@ -35,6 +35,10 @@ use crate::utils::buf::BufferAccess;
 use crate::utils::select::Coalesce;
 use crate::Matter;
 
+/// Send a busy response if - after that many ms - the exchange
+/// is still not accepted by the regular handlers.
+const RESPOND_BUSY_MS: u32 = 500;
+
 /// A trait modeling a generic handler for an exchange.
 pub trait ExchangeHandler {
     async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error>;
@@ -108,7 +112,7 @@ pub struct Responder<'a, T> {
     name: &'a str,
     handler: T,
     matter: &'a Matter<'a>,
-    respond_after_ms: u64,
+    respond_after_ms: u32,
 }
 
 impl<'a, T> Responder<'a, T>
@@ -127,7 +131,7 @@ where
         name: &'a str,
         handler: T,
         matter: &'a Matter<'a>,
-        respond_after_ms: u64,
+        respond_after_ms: u32,
     ) -> Self {
         Self {
             name,
@@ -177,7 +181,8 @@ where
     pub async fn respond_once(&self, handler_id: impl Display) -> Result<(), Error> {
         let mut exchange = Exchange::accept_after(self.matter, self.respond_after_ms).await?;
 
-        info!(
+        ::log::log!(
+            self.log_level(),
             "{}: Handler {handler_id} / exchange {}: Starting",
             self.name,
             exchange.id()
@@ -192,7 +197,8 @@ where
                 exchange.id()
             );
         } else {
-            info!(
+            ::log::log!(
+                self.log_level(),
                 "{}: Handler {handler_id} / exchange {}: Completed",
                 self.name,
                 exchange.id()
@@ -200,6 +206,14 @@ where
         }
 
         result
+    }
+
+    fn log_level(&self) -> log::Level {
+        if self.respond_after_ms > 0 {
+            log::Level::Warn
+        } else {
+            log::Level::Info
+        }
     }
 }
 
@@ -238,10 +252,10 @@ impl<'a> Responder<'a, ChainedExchangeHandler<BusyInteractionModel, BusySecureCh
     /// The resonder is using the `rs-matter`-provided `ExchangeHandler` instances (`BusySecureChannel` and `BusyInteractionModel`)
     /// capable of answering with "busy" messages the SC and IM protocols, respectively.
     ///
-    /// Exchanges which are not accepted after 200ms are answered by this responder, as the assumption is that the main responder is
-    /// busy and cannot answer these right now.
+    /// Exchanges which are not accepted after the specified milliseconds are answered by this responder,
+    /// as the assumption is that the main responder is busy and cannot answer these right now.
     #[inline(always)]
-    pub const fn new_busy(matter: &'a Matter<'a>) -> Self {
+    pub const fn new_busy(matter: &'a Matter<'a>, respond_after_ms: u32) -> Self {
         Self::new(
             "Busy Responder",
             ChainedExchangeHandler::new(
@@ -250,7 +264,7 @@ impl<'a> Responder<'a, ChainedExchangeHandler<BusyInteractionModel, BusySecureCh
                 BusySecureChannel::new(),
             ),
             matter,
-            200,
+            respond_after_ms,
         )
     }
 }
@@ -279,7 +293,7 @@ where
     ) -> Self {
         Self {
             responder: Responder::new_default(matter, buffers, subscriptions, dm_handler),
-            busy_responder: Responder::new_busy(matter),
+            busy_responder: Responder::new_busy(matter, RESPOND_BUSY_MS),
         }
     }
 
