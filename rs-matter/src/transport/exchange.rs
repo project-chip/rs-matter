@@ -411,24 +411,27 @@ impl MessageMeta {
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is a standalone ACK (`MrpStandaloneAck`).
     pub(crate) fn is_standalone_ack(&self) -> bool {
-        !self.reliable
-            && self.proto_id == PROTO_ID_SECURE_CHANNEL
+        self.proto_id == PROTO_ID_SECURE_CHANNEL
             && self.proto_opcode == secure_channel::common::OpCode::MRPStandAloneAck as u8
     }
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is Status.
     pub(crate) fn is_sc_status(&self) -> bool {
-        !self.reliable
-            && self.proto_id == PROTO_ID_SECURE_CHANNEL
+        self.proto_id == PROTO_ID_SECURE_CHANNEL
             && self.proto_opcode == secure_channel::common::OpCode::StatusReport as u8
     }
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is a new session request.
     pub(crate) fn is_new_session(&self) -> bool {
-        self.reliable
-            && self.proto_id == PROTO_ID_SECURE_CHANNEL
+        self.proto_id == PROTO_ID_SECURE_CHANNEL
             && (self.proto_opcode == secure_channel::common::OpCode::PBKDFParamRequest as u8
                 || self.proto_opcode == secure_channel::common::OpCode::CASESigma1 as u8)
+    }
+
+    /// Utility method to check if the meta-data indicates a new exchange
+    pub(crate) fn is_new_exchange(&self) -> bool {
+        // Don't create new exchanges for standalone ACKs and for SC status codes
+        !self.is_standalone_ack() && !self.is_sc_status()
     }
 }
 

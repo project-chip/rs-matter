@@ -449,7 +449,7 @@ impl<'m> TransportMgr<'m> {
                 if !packet.header.plain.is_encrypted()
                     && MessageMeta::from(&packet.header.proto).is_new_session()
                 {
-                    error!("\n>>>>> {packet}\n => No space for a new unencrypted session, sending Busy");
+                    warn!("\n>>>>> {packet}\n => No space for a new unencrypted session, sending Busy");
 
                     let ack = packet.header.plain.ctr;
 
@@ -519,6 +519,12 @@ impl<'m> TransportMgr<'m> {
 
                 Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                     .await?;
+            }
+            Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
+                warn!("\n>>>>> {packet}\n => No valid exchange found, dropping");
+            }
+            Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
+                warn!("\n>>>>> {packet}\n => No valid session found, dropping");
             }
             Err(e) => {
                 error!("\n>>>>> {packet}\n => Error ({e:?}), dropping");
@@ -720,30 +726,53 @@ impl<'m> TransportMgr<'m> {
         let mut session_mgr = self.session_mgr.borrow_mut();
         let epoch = session_mgr.epoch;
 
-        let res = if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain)
-        {
-            session.post_recv(&mut packet.header, &mut pb, epoch)
-        } else if !packet.header.plain.is_encrypted() {
-            let mut session =
-                session_mgr.add(false, packet.peer, packet.header.plain.get_src_nodeid());
-
-            if let Some(session) = session.as_mut() {
-                session.post_recv(&mut packet.header, &mut pb, epoch)
-            } else {
-                packet.header.decode_remaining(&mut pb, 0, None)?;
-                packet.header.proto.adjust_reliability(true, &packet.peer);
-
-                Err(ErrorCode::NoSpaceSessions.into())
-            }
-        } else {
-            Err(ErrorCode::NoSession.into())
+        let set_payload = |packet: &mut Packet<N>, (start, end)| {
+            packet.payload_start = start;
+            packet.buf.truncate(end);
         };
 
-        let range = pb.slice_range();
-        packet.payload_start = range.0;
-        packet.buf.truncate(range.1);
+        if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
+            // Found existing session: decode, indicate packet payload slice and process further
 
-        res
+            let payload_range = session.decode_remaining(&mut packet.header, pb)?;
+            set_payload(packet, payload_range);
+
+            return session.post_recv(&packet.header, epoch);
+        }
+
+        // No existing session: we either have to create one, or return an error
+
+        let mut error_code = ErrorCode::NoSession;
+
+        if !packet.header.plain.is_encrypted() {
+            // Unencrypted packets can be decoded without a session, and we need to anyway do that
+            // in order to determine (based on proto hdr data) whether to create a new session or not
+            packet.header.decode_remaining(&mut pb, 0, None)?;
+            packet.header.proto.adjust_reliability(true, &packet.peer);
+
+            let payload_range = pb.slice_range();
+            set_payload(packet, payload_range);
+
+            if MessageMeta::from(&packet.header.proto).is_new_session() {
+                // As per spec, new unencrypted sessions are only created for
+                // `PBKDFParamRequest` or `CASESigma1` unencrypted messages
+
+                if let Some(session) =
+                    session_mgr.add(false, packet.peer, packet.header.plain.get_src_nodeid())
+                {
+                    // Session created successfully: decode, indicate packet payload slice and process further
+                    return session.post_recv(&packet.header, epoch);
+                } else {
+                    // We tried to create a new PASE session, but there was no space
+                    error_code = ErrorCode::NoSpaceSessions;
+                }
+            }
+        } else {
+            // Packet cannot be decoded, set packet payload to empty
+            set_payload(packet, (0, 0));
+        }
+
+        Err(error_code.into())
     }
 
     fn encode_packet<const N: usize, F>(
@@ -979,9 +1008,15 @@ impl<const N: usize> Packet<N> {
     }
 
     fn fmt(f: &mut fmt::Formatter<'_>, peer: &Address, header: &PacketHdr) -> fmt::Result {
-        let meta = MessageMeta::from(&header.proto);
+        write!(f, "{peer} {header}")?;
 
-        write!(f, "{peer} {header}\n{meta}")
+        if header.proto.is_decoded() {
+            let meta = MessageMeta::from(&header.proto);
+
+            write!(f, "\n{meta}")?;
+        }
+
+        Ok(())
     }
 
     fn fmt_payload(f: &mut fmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) -> fmt::Result {
