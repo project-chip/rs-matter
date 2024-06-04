@@ -158,7 +158,7 @@ impl<'m> TransportMgr<'m> {
 
         let id = ExchangeId::new(session.id, exch_index);
 
-        info!("Exchange {id}: Initiated");
+        info!("Exchange {}: Initiated", id.display(session));
 
         Ok(Exchange::new(id, matter))
     }
@@ -200,7 +200,7 @@ impl<'m> TransportMgr<'m> {
 
                 let id = ExchangeId::new(session.id, exch_index);
 
-                info!("Exchange {id}: Accepted");
+                info!("Exchange {}: Accepted", id.display(session));
 
                 let exchange = Exchange::new(id, matter);
 
@@ -667,7 +667,8 @@ impl<'m> TransportMgr<'m> {
             // Close the whole session
 
             error!(
-                "Dropped exchange {exchange_id}: Closing session because the exchange cannot be closed cleanly"
+                "Dropped exchange {}: Closing session because the exchange cannot be closed cleanly",
+                exchange_id.display(session_mgr.get(session_id).unwrap()) // Session exists or else we wouldn't be here
             );
 
             self.encode_evict_session(packet, &mut session_mgr, session_id)?;
@@ -688,8 +689,8 @@ impl<'m> TransportMgr<'m> {
                 })?;
             }
 
+            warn!("Dropped exchange {}: Closed", exchange_id.display(session));
             session.exchanges[exch_index] = None;
-            warn!("Dropped exchange {exchange_id}: Closed");
         }
 
         Ok(exch.is_none())
@@ -845,6 +846,8 @@ impl<'m> TransportMgr<'m> {
 
             Ok(true)
         } else {
+            error!("All sessions have active exchanges, cannot evict any session");
+
             Ok(false)
         }
     }
@@ -860,6 +863,13 @@ impl<'m> TransportMgr<'m> {
 
         // It is a responsibility of the caller to ensure that this method is called with a valid session ID
         let mut session = session_mgr.remove(id).unwrap();
+
+        info!(
+            "Evicting session {} [SID:{:x},RSID:{:x}]",
+            session.id,
+            session.get_local_sess_id(),
+            session.get_peer_sess_id()
+        );
 
         self.encode_packet(packet, Some(&mut session), None, session_mgr.epoch, |wb| {
             sc_write(wb, SCStatusCodes::CloseSession, &[])

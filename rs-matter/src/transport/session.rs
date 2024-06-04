@@ -337,27 +337,34 @@ impl Session {
             mrp: ReliableMessage::new(),
         });
 
-        if self.exchanges.len() < MAX_EXCHANGES {
+        let exch_index = if self.exchanges.len() < MAX_EXCHANGES {
             let _ = self.exchanges.push(exch_state);
 
-            info!("Creating a new exchange: {:x}/{:?}", exch_id, role);
-            Some(self.exchanges.len() - 1)
+            self.exchanges.len() - 1
         } else {
             let index = self.exchanges.iter().position(Option::is_none);
 
             if let Some(index) = index {
                 self.exchanges[index] = exch_state;
 
-                info!("Creating a new exchange: {:x}/{:?}", exch_id, role);
-                Some(index)
+                index
             } else {
                 error!(
-                    "Too many exchanges for session {:x}; exchange creation failed",
-                    self.id
+                    "Too many exchanges for session {} [SID:{:x},RSID:{:x}]; exchange creation failed",
+                    self.id,
+                    self.get_local_sess_id(),
+                    self.get_peer_sess_id()
                 );
-                None
+
+                return None;
             }
-        }
+        };
+
+        let exch_id = ExchangeId::new(self.id, exch_index);
+
+        info!("New exchange: {} :: {:?}", exch_id.display(self), role);
+
+        Some(exch_index)
     }
 
     pub(crate) fn remove_exch(&mut self, index: usize) -> bool {
@@ -366,17 +373,20 @@ impl Session {
 
         if exchange.mrp.is_retrans_pending() {
             exchange.role.set_dropped_state();
-            error!("Exchange {exchange_id}, session {self}: A packet is still (re)transmitted! Marking as dropped, but session will be closed");
+            error!("Exchange {}: A packet is still (re)transmitted! Marking as dropped, but session will be closed", exchange_id.display(self));
 
             false
         } else if exchange.mrp.is_ack_pending() {
             exchange.role.set_dropped_state();
-            warn!("Exchange {exchange_id}, session {self}: Pending ACK. Marking as dropped");
+            warn!(
+                "Exchange {}: Pending ACK. Marking as dropped",
+                exchange_id.display(self)
+            );
 
             false
         } else {
+            trace!("Exchange {}: Dropped cleanly", exchange_id.display(self));
             self.exchanges[index] = None;
-            trace!("Exchange {exchange_id}: Dropped cleanly");
 
             true
         }
