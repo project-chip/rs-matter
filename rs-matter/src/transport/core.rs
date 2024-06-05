@@ -136,13 +136,14 @@ impl<'m> TransportMgr<'m> {
     pub(crate) async fn initiate<'a>(
         &'a self,
         matter: &'a Matter<'a>,
-        node_id: u64,
+        fabric_idx: u8,
+        peer_node_id: u64,
         secure: bool,
     ) -> Result<Exchange<'_>, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
         session_mgr
-            .get_for_node(node_id, secure)
+            .get_for_node(fabric_idx, peer_node_id, secure)
             .ok_or(ErrorCode::NoSession)?;
 
         let exch_id = session_mgr.get_next_exch_id();
@@ -150,7 +151,9 @@ impl<'m> TransportMgr<'m> {
         // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
         // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
         // we don't have a session in the first place
-        let session = session_mgr.get_for_node(node_id, secure).unwrap();
+        let session = session_mgr
+            .get_for_node(fabric_idx, peer_node_id, secure)
+            .unwrap();
 
         let exch_index = session
             .add_exch(exch_id, Role::Initiator(Default::default()))

@@ -205,8 +205,11 @@ impl Session {
         &self.att_challenge
     }
 
-    pub(crate) fn is_for_node(&self, node_id: u64, secure: bool) -> bool {
-        self.peer_nodeid == Some(node_id) && self.is_encrypted() == secure && !self.reserved
+    pub(crate) fn is_for_node(&self, fabric_idx: u8, peer_node_id: u64, secure: bool) -> bool {
+        self.get_local_fabric_idx() == Some(fabric_idx)
+            && self.peer_nodeid == Some(peer_node_id)
+            && self.is_encrypted() == secure
+            && !self.reserved
     }
 
     pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
@@ -658,11 +661,16 @@ impl SessionMgr {
         session
     }
 
-    pub(crate) fn get_for_node(&mut self, node_id: u64, secure: bool) -> Option<&mut Session> {
+    pub(crate) fn get_for_node(
+        &mut self,
+        fabric_idx: u8,
+        peer_node_id: u64,
+        secure: bool,
+    ) -> Option<&mut Session> {
         let mut session = self
             .sessions
             .iter_mut()
-            .find(|sess| sess.is_for_node(node_id, secure));
+            .find(|sess| sess.is_for_node(fabric_idx, peer_node_id, secure));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used(self.epoch);

@@ -25,7 +25,8 @@ use portable_atomic::{AtomicU32, Ordering};
 use crate::utils::notification::Notification;
 
 struct Subscription {
-    node_id: u64,
+    fabric_idx: u8,
+    peer_node_id: u64,
     id: u32,
     // We use u16 instead of embassy::Duration to save some storage
     min_int_secs: u16,
@@ -92,13 +93,20 @@ impl<const N: usize> Subscriptions<N> {
         self.notification.notify();
     }
 
-    pub(crate) fn add(&self, node_id: u64, min_int_secs: u16, max_int_secs: u16) -> Option<u32> {
+    pub(crate) fn add(
+        &self,
+        fabric_idx: u8,
+        peer_node_id: u64,
+        min_int_secs: u16,
+        max_int_secs: u16,
+    ) -> Option<u32> {
         let id = self.next_subscription_id.fetch_add(1, Ordering::SeqCst);
 
         self.subscriptions
             .borrow_mut()
             .push(Subscription {
-                node_id,
+                fabric_idx,
+                peer_node_id,
                 id,
                 min_int_secs,
                 max_int_secs,
@@ -126,32 +134,39 @@ impl<const N: usize> Subscriptions<N> {
         }
     }
 
-    pub(crate) fn remove(&self, node_id: Option<u64>, id: Option<u32>) {
+    pub(crate) fn remove(
+        &self,
+        fabric_idx: Option<u8>,
+        peer_node_id: Option<u64>,
+        id: Option<u32>,
+    ) {
         let mut subscriptions = self.subscriptions.borrow_mut();
         while let Some(index) = subscriptions.iter().position(|sub| {
-            sub.node_id == node_id.unwrap_or(sub.node_id) && sub.id == id.unwrap_or(sub.id)
+            sub.fabric_idx == fabric_idx.unwrap_or(sub.fabric_idx)
+                && sub.peer_node_id == peer_node_id.unwrap_or(sub.peer_node_id)
+                && sub.id == id.unwrap_or(sub.id)
         }) {
             subscriptions.swap_remove(index);
         }
     }
 
-    pub(crate) fn find_expired(&self, now: Instant) -> Option<(u64, u32)> {
-        self.subscriptions
-            .borrow()
-            .iter()
-            .find_map(|sub| sub.is_expired(now).then_some((sub.node_id, sub.id)))
+    pub(crate) fn find_expired(&self, now: Instant) -> Option<(u8, u64, u32)> {
+        self.subscriptions.borrow().iter().find_map(|sub| {
+            sub.is_expired(now)
+                .then_some((sub.fabric_idx, sub.peer_node_id, sub.id))
+        })
     }
 
     /// Note that this method has a side effect:
     /// it updates the `reported_at` field of the subscription that is returned.
-    pub(crate) fn find_report_due(&self, now: Instant) -> Option<(u64, u32)> {
+    pub(crate) fn find_report_due(&self, now: Instant) -> Option<(u8, u64, u32)> {
         self.subscriptions
             .borrow_mut()
             .iter_mut()
             .find(|sub| sub.report_due(now))
             .map(|sub| {
                 sub.reported_at = now;
-                (sub.node_id, sub.id)
+                (sub.fabric_idx, sub.peer_node_id, sub.id)
             })
     }
 }
