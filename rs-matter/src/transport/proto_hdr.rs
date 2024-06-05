@@ -72,7 +72,7 @@ impl fmt::Display for ExchFlags {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct ProtoHdr {
     pub exch_id: u16,
     exch_flags: ExchFlags,
@@ -88,11 +88,17 @@ impl ProtoHdr {
         Self {
             exch_id: 0,
             exch_flags: ExchFlags::empty(),
-            proto_id: 0,
-            proto_opcode: 0,
+            proto_id: u16::MAX,
+            proto_opcode: u8::MAX,
             proto_vendor_id: 0,
             ack_msg_ctr: 0,
         }
+    }
+
+    pub fn is_decoded(&self) -> bool {
+        // TODO: In future, consider better ways of representing a not-yet-decoded header
+        // in the packet - i.e. - `Option<ProtoHdr>` or similar
+        self.proto_id != u16::MAX && self.proto_opcode != u8::MAX
     }
 
     pub fn opcode<T: num::FromPrimitive>(&self) -> Result<T, Error> {
@@ -243,8 +249,19 @@ impl ProtoHdr {
     }
 }
 
+impl Default for ProtoHdr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for ProtoHdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.is_decoded() {
+            write!(f, "(encoded)")?;
+            return Ok(());
+        }
+
         if !self.exch_flags.is_empty() {
             write!(f, "{},", self.exch_flags)?;
         }

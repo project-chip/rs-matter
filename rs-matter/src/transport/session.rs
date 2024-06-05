@@ -32,7 +32,7 @@ use crate::utils::writebuf::WriteBuf;
 use crate::Matter;
 
 use super::dedup::RxCtrState;
-use super::exchange::{ExchangeState, Role};
+use super::exchange::{ExchangeState, MessageMeta, Role};
 use super::mrp::RetransEntry;
 use super::network::Address;
 use super::packet::PacketHdr;
@@ -221,16 +221,10 @@ impl Session {
             && !self.reserved
     }
 
-    pub(crate) fn post_recv(
-        &mut self,
-        rx_header: &mut PacketHdr,
-        pb: &mut ParseBuf,
-        epoch: Epoch,
-    ) -> Result<bool, Error> {
-        self.decode_remaining(rx_header, pb)?;
-
-        rx_header.proto.adjust_reliability(true, &self.peer_addr);
-
+    /// Update the session state with the data in the received packet headers.
+    ///
+    /// Return `true` if a new exchange was created, and `false` otherwise.
+    pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr, epoch: Epoch) -> Result<bool, Error> {
         if !self
             .rx_ctr_state
             .post_recv(rx_header.plain.ctr, self.is_encrypted())
@@ -246,13 +240,19 @@ impl Session {
 
             Ok(false)
         } else {
-            if !rx_header.proto.is_initiator() {
+            if !rx_header.proto.is_initiator()
+                || !MessageMeta::from(&rx_header.proto).is_new_exchange()
+            {
+                // Do not create a new exchange if the peer is not an initiator, or if
+                // the packet is NOT a candidate for a new exchange
+                // (i.e. it is a standalone ACK or a SC status response)
                 Err(ErrorCode::NoExchange)?;
             }
 
             if let Some(exch_index) =
                 self.add_exch(rx_header.proto.exch_id, Role::Responder(Default::default()))
             {
+                // unwrap is safe as we just created the exchange
                 let exch = self.exchanges[exch_index].as_mut().unwrap();
 
                 exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
@@ -299,8 +299,24 @@ impl Session {
         Ok((self.peer_addr, retransmission))
     }
 
-    fn decode_remaining(&self, rx: &mut PacketHdr, pb: &mut ParseBuf) -> Result<(), Error> {
-        rx.decode_remaining(pb, self.peer_nodeid.unwrap_or_default(), self.get_dec_key())
+    /// Decode the remaining part of the packet after the plain header and then consume the `ParseBuf`
+    /// instance as it no longer would be necessary.
+    ///
+    /// Returns the range of the decoded packet payload
+    pub(crate) fn decode_remaining(
+        &self,
+        rx_header: &mut PacketHdr,
+        mut pb: ParseBuf,
+    ) -> Result<(usize, usize), Error> {
+        rx_header.decode_remaining(
+            &mut pb,
+            self.peer_nodeid.unwrap_or_default(),
+            self.get_dec_key(),
+        )?;
+
+        rx_header.proto.adjust_reliability(true, &self.peer_addr);
+
+        Ok(pb.slice_range())
     }
 
     pub(crate) fn encode(&self, tx: &PacketHdr, wb: &mut WriteBuf) -> Result<(), Error> {

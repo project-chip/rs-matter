@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use log::error;
+use log::{error, warn};
 
 use crate::error::*;
 use crate::utils::epoch::Epoch;
@@ -171,11 +171,16 @@ impl ReliableMessage {
         Ok(())
     }
 
-    /* A note about Message ACKs, it is a bit asymmetric in the sense that:
-     * -  there can be only one pending ACK per exchange (so this is per-exchange)
-     * -  there can be only one pending retransmission per exchange (so this is per-exchange)
-     * -  duplicate detection should happen per session (obviously), so that part is per-session
-     */
+    /// This method will update the state of the rentransmission and ACK tables
+    /// with the data from the incoming packet.
+    ///
+    /// The method will return `Ok` if the message needs to be processed by the
+    /// exchange layer, and an error if it needs to be dropped.
+    ///
+    /// A note about Message ACKs, it is a bit asymmetric in the sense that:
+    /// - there can be only one pending ACK per exchange (so this is per-exchange)
+    /// - there can be only one pending retransmission per exchange (so this is per-exchange)
+    /// - duplicate detection should happen per session (obviously), so that part is per-session
     pub fn post_recv(
         &mut self,
         rx_plain: &PlainHdr,
@@ -186,7 +191,15 @@ impl ReliableMessage {
             // Handle received Acks
             if let Some(entry) = &self.retrans {
                 if entry.get_msg_ctr() != ack_msg_ctr {
-                    error!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:x}.", ack_msg_ctr, entry.msg_ctr);
+                    warn!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:x}.", ack_msg_ctr, entry.msg_ctr);
+
+                    // This can actually happen on a noisy channel, where we've just sent a reply to a message
+                    // - yet - the other side is still retransmitting the original message and thus acknowledging
+                    // an earlier counter we've sent.
+
+                    // In this case, we should ignore the ACK and not process this message any further, as it is
+                    // a duplicate.
+                    Err(ErrorCode::Duplicate)?;
                 }
 
                 self.retrans = None;
