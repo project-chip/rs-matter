@@ -184,6 +184,16 @@ impl Case {
 
                     session.complete();
 
+                    // Dropping a completed `ReservedSession` will remove the `reserved` flag from the enclosed
+                    // `Session` instance and will thus immediately make the `Session` instance available for use
+                    // by the system.
+                    //
+                    // We need to do this _before_ we send the response to the peer, or else we risk missing
+                    // (dropping) the first messages the peer would send us on the newly-established session,
+                    // as it might start using it right after it receives the response, while it is still marked
+                    // as reserved.
+                    drop(session);
+
                     SCStatusCodes::SessionEstablishmentSuccess
                 }
             } else {
