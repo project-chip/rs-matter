@@ -58,11 +58,24 @@ impl RetransEntry {
             .unwrap_or(true)
     }
 
+    /// Return how much to delay before (re)transmitting the message
+    /// based on the number of re-transmissions so far
     pub fn delay_ms(&self) -> u64 {
+        Self::delay_ms_counter(self.counter)
+    }
+
+    /// Maximum delay before giving up on retransmitting the message
+    pub fn max_delay_ms() -> u64 {
+        Self::delay_ms_counter(MRP_MAX_TRANSMISSIONS)
+    }
+
+    /// Return how much to delay before (re)transmitting the message
+    /// based on the provided number of re-transmissions so far
+    pub fn delay_ms_counter(counter: usize) -> u64 {
         let mut delay = MRP_BASE_RETRY_INTERVAL_MS;
 
-        if self.counter >= MRP_BACKOFF_THRESHOLD {
-            for _ in 0..self.counter - MRP_BACKOFF_THRESHOLD {
+        if counter >= MRP_BACKOFF_THRESHOLD {
+            for _ in 0..counter - MRP_BACKOFF_THRESHOLD {
                 delay = delay * MRP_BACKOFF_BASE.0 / MRP_BACKOFF_BASE.1;
             }
         }
@@ -76,7 +89,7 @@ impl RetransEntry {
                 self.counter += 1;
                 Ok(())
             } else {
-                Err(ErrorCode::Invalid.into()) // TODO
+                Err(ErrorCode::TxTimeout.into())
             }
         } else {
             // This indicates there was some existing entry for same sess-id/exch-id, which shouldn't happen

@@ -19,7 +19,7 @@ use core::fmt::{self, Display};
 use core::pin::pin;
 
 use embassy_futures::select::{select, Either};
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 
 use log::{debug, error, info, warn};
 
@@ -81,25 +81,32 @@ impl ExchangeId {
 
         let transport_mgr = &matter.transport_mgr;
 
-        let mut packet = transport_mgr
-            .get_if(&transport_mgr.rx, |packet| {
-                if packet.buf.is_empty() {
-                    false
-                } else {
-                    let for_us = self.with_ctx(matter, |sess, exch_index| {
-                        if sess.is_for_rx(&packet.peer, &packet.header.plain) {
-                            let exchange = sess.exchanges[exch_index].as_ref().unwrap();
+        let mut recv = pin!(transport_mgr.get_if(&transport_mgr.rx, |packet| {
+            if packet.buf.is_empty() {
+                false
+            } else {
+                let for_us = self.with_ctx(matter, |sess, exch_index| {
+                    if sess.is_for_rx(&packet.peer, &packet.header.plain) {
+                        let exchange = sess.exchanges[exch_index].as_ref().unwrap();
 
-                            return Ok(exchange.is_for_rx(&packet.header.proto));
-                        }
+                        return Ok(exchange.is_for_rx(&packet.header.proto));
+                    }
 
-                        Ok(false)
-                    });
+                    Ok(false)
+                });
 
-                    for_us.unwrap_or(true)
-                }
-            })
-            .await;
+                for_us.unwrap_or(true)
+            }
+        }));
+
+        let mut timeout = pin!(Timer::after(Duration::from_millis(
+            RetransEntry::max_delay_ms() * 3 / 2
+        )));
+
+        let Either::First(mut packet) = select(&mut recv, &mut timeout).await else {
+            // Timeout waiting for an answer from the other peer
+            return Err(ErrorCode::RxTimeout.into());
+        };
 
         packet.clear_on_drop(true);
 
