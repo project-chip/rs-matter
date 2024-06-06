@@ -453,6 +453,9 @@ impl<'a> NocCluster<'a> {
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
+        // TODO: Need to remove all sessions for this fabric
+        // TODO: Need to remove all IM subscriptions for this fabric
+
         cmd_enter!("Remove Fabric");
         let req = RemoveFabricReq::from_tlv(data).map_err(Error::map_invalid_data_type)?;
         if self

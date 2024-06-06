@@ -53,8 +53,9 @@ const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 7;
 pub type IMBuffer = heapless::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 struct SubscriptionBuffer<B> {
-    node_id: u64,
-    id: u32,
+    fabric_idx: u8,
+    peer_node_id: u64,
+    subscription_id: u32,
     buffer: B,
 }
 
@@ -367,22 +368,30 @@ where
         let req = SubscribeReq::from_tlv(&get_root_node_struct(&rx)?)?;
         debug!("IM: Subscribe request: {:?}", req);
 
-        let node_id = exchange
-            .with_session(|sess| sess.get_peer_node_id().ok_or(ErrorCode::Invalid.into()))?;
+        let (fabric_idx, peer_node_id) = exchange.with_session(|sess| {
+            let fabric_idx = sess.get_local_fabric_idx().ok_or(ErrorCode::Invalid)?;
+            let peer_node_id = sess.get_peer_node_id().ok_or(ErrorCode::Invalid)?;
+
+            Ok((fabric_idx, peer_node_id))
+        })?;
 
         if !req.keep_subs {
-            self.subscriptions.remove(Some(node_id), None);
+            self.subscriptions
+                .remove(Some(fabric_idx), Some(peer_node_id), None);
             self.subscriptions_buffers
                 .borrow_mut()
-                .retain(|sb| sb.node_id != node_id);
+                .retain(|sb| sb.fabric_idx != fabric_idx || sb.peer_node_id != peer_node_id);
 
-            info!("All subscriptions for node {node_id:x} removed");
+            info!("All subscriptions for [F:{fabric_idx:x},P:{peer_node_id:x}] removed");
         }
 
         let max_int_secs = core::cmp::max(req.max_int_ceil, 40); // Say we need at least 4 secs for potential latencies
         let min_int_secs = req.min_int_floor;
 
-        let Some(id) = self.subscriptions.add(node_id, min_int_secs, max_int_secs) else {
+        let Some(id) = self
+            .subscriptions
+            .add(fabric_idx, peer_node_id, min_int_secs, max_int_secs)
+        else {
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
 
@@ -390,12 +399,12 @@ where
 
         let _guard = scopeguard::guard((), |_| {
             if !subscribed.get() {
-                self.subscriptions.remove(None, Some(id));
+                self.subscriptions.remove(None, None, Some(id));
             }
         });
 
         let primed = self
-            .report_data(id, node_id, &rx, &mut tx, exchange)
+            .report_data(id, fabric_idx, peer_node_id, &rx, &mut tx, exchange)
             .await?;
 
         if primed {
@@ -406,15 +415,16 @@ where
                 })
                 .await?;
 
-            info!("Subscription {node_id:x}::{id} created");
+            info!("Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} created");
 
             if self.subscriptions.mark_reported(id) {
                 let _ = self
                     .subscriptions_buffers
                     .borrow_mut()
                     .push(SubscriptionBuffer {
-                        node_id,
-                        id,
+                        fabric_idx,
+                        peer_node_id,
+                        subscription_id: id,
                         buffer: rx,
                     });
 
@@ -436,27 +446,33 @@ where
             let now = Instant::now();
 
             {
-                while let Some((node_id, id)) = self.subscriptions.find_expired(now) {
-                    self.subscriptions.remove(None, Some(id));
+                while let Some((fabric_idx, peer_node_id, id)) =
+                    self.subscriptions.find_expired(now)
+                {
+                    self.subscriptions.remove(None, None, Some(id));
                     self.subscriptions_buffers
                         .borrow_mut()
-                        .retain(|sb| sb.id != id);
+                        .retain(|sb| sb.subscription_id != id);
 
-                    info!("Subscription {node_id:x}::{id} removed due to inactivity");
+                    info!(
+                        "Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed due to inactivity"
+                    );
                 }
             }
 
             loop {
                 let sub = self.subscriptions.find_report_due(now);
 
-                if let Some((node_id, id)) = sub {
-                    info!("About to report data for subscription {node_id:x}::{id}");
+                if let Some((fabric_idx, peer_node_id, id)) = sub {
+                    info!(
+                        "About to report data for subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id}"
+                    );
 
                     let subscribed = Cell::new(false);
 
                     let _guard = scopeguard::guard((), |_| {
                         if !subscribed.get() {
-                            self.subscriptions.remove(None, Some(id));
+                            self.subscriptions.remove(None, None, Some(id));
                         }
                     });
 
@@ -466,7 +482,7 @@ where
                         .subscriptions_buffers
                         .borrow()
                         .iter()
-                        .position(|sb| sb.id == id)
+                        .position(|sb| sb.subscription_id == id)
                         .unwrap();
                     let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
 
@@ -475,11 +491,12 @@ where
                     // Only used when priming the subscription
                     req.dataver_filters = None;
 
-                    let mut exchange = Exchange::initiate(matter, node_id, true).await?;
+                    let mut exchange =
+                        Exchange::initiate(matter, fabric_idx, peer_node_id, true).await?;
 
                     if let Some(mut tx) = self.buffers.get().await {
                         let primed = self
-                            .report_data(id, node_id, &rx, &mut tx, &mut exchange)
+                            .report_data(id, fabric_idx, peer_node_id, &rx, &mut tx, &mut exchange)
                             .await?;
 
                         exchange.acknowledge().await?;
@@ -489,8 +506,9 @@ where
                                 self.subscriptions_buffers
                                     .borrow_mut()
                                     .push(SubscriptionBuffer {
-                                        node_id,
-                                        id,
+                                        fabric_idx,
+                                        peer_node_id,
+                                        subscription_id: id,
                                         buffer: rx,
                                     });
                             subscribed.set(true);
@@ -545,7 +563,8 @@ where
     async fn report_data(
         &self,
         id: u32,
-        node_id: u64,
+        fabric_idx: u8,
+        peer_node_id: u64,
         rx: &[u8],
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
@@ -574,7 +593,7 @@ where
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
                 if !Self::recv_status_success(exchange).await? {
-                    info!("Subscription {node_id:x}::{id} removed during reporting");
+                    info!("Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed during reporting");
                     return Ok(false);
                 }
 

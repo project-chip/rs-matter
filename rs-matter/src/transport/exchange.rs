@@ -764,18 +764,24 @@ impl<'a> Exchange<'a> {
         self.matter
     }
 
-    /// Create a new initiator exchange on the provided Matter stack for the provided Node ID
+    /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID
     ///
-    /// This method will fail if there is no existing session in the provided Matter satack for the provided Node ID.
+    /// This method will fail if there is no existing session in the provided Matter stack for the provided peer Node ID.
     ///
-    // TODO: This signature will change in future
+    // TODO: This signature will change in future, once we are able to do mDNS lookups and thus create a
+    // new session on our own (currently we can't do it because - in the absence of mDNS lookups - we cannot
+    // find the IP address and port corresponding to the peer Node ID with which we are trying to initiate an exchange).
     #[inline(always)]
     pub async fn initiate(
         matter: &'a Matter<'a>,
-        node_id: u64,
+        fabric_idx: u8,
+        peer_node_id: u64,
         secure: bool,
     ) -> Result<Self, Error> {
-        matter.transport_mgr.initiate(matter, node_id, secure).await
+        matter
+            .transport_mgr
+            .initiate(matter, fabric_idx, peer_node_id, secure)
+            .await
     }
 
     /// Accepts a new responder exchange pending on the provided Matter stack.

@@ -335,8 +335,13 @@ impl<'a> ImEngine<'a> {
                     NetworkReceiveImpl(recv_remote),
                 ),
                 join(responder.respond_once("0"), async move {
-                    let mut exchange =
-                        Exchange::initiate(matter_client, IM_ENGINE_REMOTE_PEER_ID, true).await?;
+                    let mut exchange = Exchange::initiate(
+                        matter_client,
+                        1, /*just one fabric in tests*/
+                        IM_ENGINE_REMOTE_PEER_ID,
+                        true,
+                    )
+                    .await?;
 
                     for ip in input {
                         exchange
