@@ -182,6 +182,13 @@ impl Case {
                         Some(&session_keys[32..48]),
                     )?;
 
+                    // Complete the reserved session and thus make the `Session` instance
+                    // immediately available for use by the system.
+                    //
+                    // We need to do this _before_ we send the response to the peer, or else we risk missing
+                    // (dropping) the first messages the peer would send us on the newly-established session,
+                    // as it might start using it right after it receives the response, while it is still marked
+                    // as reserved.
                     session.complete();
 
                     SCStatusCodes::SessionEstablishmentSuccess
