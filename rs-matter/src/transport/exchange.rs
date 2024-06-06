@@ -18,8 +18,8 @@
 use core::fmt::{self, Display};
 use core::pin::pin;
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Timer};
+use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_time::{Duration, Instant, Timer};
 
 use log::{debug, error, info, warn};
 
@@ -81,38 +81,54 @@ impl ExchangeId {
 
         let transport_mgr = &matter.transport_mgr;
 
-        let mut recv = pin!(transport_mgr.get_if(&transport_mgr.rx, |packet| {
-            if packet.buf.is_empty() {
-                false
-            } else {
-                let for_us = self.with_ctx(matter, |sess, exch_index| {
-                    if sess.is_for_rx(&packet.peer, &packet.header.plain) {
-                        let exchange = sess.exchanges[exch_index].as_ref().unwrap();
+        loop {
+            let mut recv = pin!(transport_mgr.get_if(&transport_mgr.rx, |packet| {
+                if packet.buf.is_empty() {
+                    false
+                } else {
+                    let for_us = self.with_ctx(matter, |sess, exch_index| {
+                        if sess.is_for_rx(&packet.peer, &packet.header.plain) {
+                            let exchange = sess.exchanges[exch_index].as_ref().unwrap();
 
-                        return Ok(exchange.is_for_rx(&packet.header.proto));
-                    }
+                            return Ok(exchange.is_for_rx(&packet.header.proto));
+                        }
 
-                    Ok(false)
-                });
+                        Ok(false)
+                    });
 
-                for_us.unwrap_or(true)
-            }
-        }));
+                    for_us.unwrap_or(true)
+                }
+            }));
 
-        let mut timeout = pin!(Timer::after(Duration::from_millis(
-            RetransEntry::max_delay_ms() * 3 / 2
-        )));
+            let mut session_removed = pin!(transport_mgr.session_removed.wait());
 
-        let Either::First(mut packet) = select(&mut recv, &mut timeout).await else {
-            // Timeout waiting for an answer from the other peer
-            return Err(ErrorCode::RxTimeout.into());
-        };
+            let mut timeout = pin!(Timer::after(Duration::from_millis(
+                RetransEntry::max_delay_ms() * 3 / 2
+            )));
 
-        packet.clear_on_drop(true);
+            match select3(&mut recv, &mut session_removed, &mut timeout).await {
+                Either3::First(mut packet) => {
+                    packet.clear_on_drop(true);
 
-        self.check_no_pending_retrans(matter)?;
+                    self.check_no_pending_retrans(matter)?;
 
-        Ok(RxMessage(packet))
+                    break Ok(RxMessage(packet));
+                }
+                Either3::Second(_) => {
+                    // Session removed
+
+                    // Bail out if it was ours
+                    self.with_session(matter, |_| Ok(()))?;
+
+                    // If not, go back waiting for a packet
+                    continue;
+                }
+                Either3::Third(_) => {
+                    // Timeout waiting for an answer from the other peer
+                    Err(ErrorCode::RxTimeout)?;
+                }
+            };
+        }
     }
 
     /// Gets access to the TX buffer of the Matter stack for constructing a new TX message.
@@ -164,10 +180,25 @@ impl ExchangeId {
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     async fn wait_tx<'a>(&self, matter: &'a Matter<'a>) -> Result<TxOutcome, Error> {
         if let Some(delay) = self.retrans_delay_ms(matter)? {
-            let mut notification = pin!(self.internal_wait_ack(matter));
-            let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(delay)));
+            let expired = Instant::now()
+                .checked_add(Duration::from_millis(delay))
+                .unwrap();
 
-            select(&mut notification, &mut timer).await;
+            loop {
+                let mut notification = pin!(self.internal_wait_ack(matter));
+                let mut session_removed = pin!(matter.transport_mgr.session_removed.wait());
+                let mut timer = pin!(Timer::at(expired));
+
+                if !matches!(
+                    select3(&mut notification, &mut session_removed, &mut timer).await,
+                    Either3::Second(_)
+                ) {
+                    break;
+                }
+
+                // Bail out if the removed session was ours
+                self.with_session(matter, |_| Ok(()))?;
+            }
 
             if self.retrans_delay_ms(matter)?.is_some() {
                 Ok(TxOutcome::Retransmit)
@@ -764,13 +795,12 @@ impl<'a> Exchange<'a> {
         self.matter
     }
 
-    /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID
+    /// Create a new initiator exchange on the provided Matter stack for the provided peer Node ID.
     ///
-    /// This method will fail if there is no existing session in the provided Matter stack for the provided peer Node ID.
+    /// For now, this method will fail if there is no existing session in the provided Matter stack
+    /// for the provided peer Node ID.
     ///
-    // TODO: This signature will change in future, once we are able to do mDNS lookups and thus create a
-    // new session on our own (currently we can't do it because - in the absence of mDNS lookups - we cannot
-    // find the IP address and port corresponding to the peer Node ID with which we are trying to initiate an exchange).
+    /// In future, this method will do an mDNS lookup and create a new session on its own.
     #[inline(always)]
     pub async fn initiate(
         matter: &'a Matter<'a>,
@@ -782,6 +812,14 @@ impl<'a> Exchange<'a> {
             .transport_mgr
             .initiate(matter, fabric_idx, peer_node_id, secure)
             .await
+    }
+
+    /// Create a new initiator exchange on the provided Matter stack for the provided session ID.
+    #[inline(always)]
+    pub fn initiate_for_session(matter: &'a Matter<'a>, session_id: u32) -> Result<Self, Error> {
+        matter
+            .transport_mgr
+            .initiate_for_session(matter, session_id)
     }
 
     /// Accepts a new responder exchange pending on the provided Matter stack.

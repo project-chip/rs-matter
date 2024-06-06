@@ -77,6 +77,7 @@ pub struct TransportMgr<'m> {
     pub(crate) rx: IfMutex<NoopRawMutex, Packet<MAX_RX_BUF_SIZE>>,
     pub(crate) tx: IfMutex<NoopRawMutex, Packet<MAX_TX_BUF_SIZE>>,
     pub(crate) dropped: Notification<NoopRawMutex>,
+    pub(crate) session_removed: Notification<NoopRawMutex>,
     pub session_mgr: RefCell<SessionMgr>, // For testing
     pub(crate) mdns: MdnsImpl<'m>,
 }
@@ -88,6 +89,7 @@ impl<'m> TransportMgr<'m> {
             rx: IfMutex::new(Packet::new()),
             tx: IfMutex::new(Packet::new()),
             dropped: Notification::new(),
+            session_removed: Notification::new(),
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
             mdns,
         }
@@ -140,20 +142,38 @@ impl<'m> TransportMgr<'m> {
         peer_node_id: u64,
         secure: bool,
     ) -> Result<Exchange<'_>, Error> {
+        // TODO: Future: once we have mDNS lookups in place
+        // create a new session if no suitable one is found
+
+        let session_id = {
+            // (block necessary, or else we end up re-borrowing `SessionMgr` as mut twice)
+
+            let mut session_mgr = self.session_mgr.borrow_mut();
+
+            session_mgr
+                .get_for_node(fabric_idx, peer_node_id, secure)
+                .ok_or(ErrorCode::NoSession)?
+                .id
+        };
+
+        self.initiate_for_session(matter, session_id)
+    }
+
+    pub(crate) fn initiate_for_session<'a>(
+        &'a self,
+        matter: &'a Matter<'a>,
+        session_id: u32,
+    ) -> Result<Exchange<'_>, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
-        session_mgr
-            .get_for_node(fabric_idx, peer_node_id, secure)
-            .ok_or(ErrorCode::NoSession)?;
+        session_mgr.get(session_id).ok_or(ErrorCode::NoSession)?;
 
         let exch_id = session_mgr.get_next_exch_id();
 
         // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
         // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
         // we don't have a session in the first place
-        let session = session_mgr
-            .get_for_node(fabric_idx, peer_node_id, secure)
-            .unwrap();
+        let session = session_mgr.get(session_id).unwrap();
 
         let exch_index = session
             .add_exch(exch_id, Role::Initiator(Default::default()))
@@ -510,6 +530,7 @@ impl<'m> TransportMgr<'m> {
 
                     // See above why `unwrap` is safe
                     let mut session = session_mgr.remove(session_id).unwrap();
+                    self.session_removed.notify();
 
                     self.encode_packet(
                         packet,
@@ -552,6 +573,7 @@ impl<'m> TransportMgr<'m> {
                         .map(|sess| sess.id)
                     {
                         session_mgr.remove(session_id);
+                        self.session_removed.notify();
                     }
                 } else {
                     info!(
@@ -895,6 +917,7 @@ impl<'m> TransportMgr<'m> {
 
         // It is a responsibility of the caller to ensure that this method is called with a valid session ID
         let mut session = session_mgr.remove(id).unwrap();
+        self.session_removed.notify();
 
         info!(
             "Evicting session {} [SID:{:x},RSID:{:x}]",

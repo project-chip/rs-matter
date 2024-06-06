@@ -642,12 +642,28 @@ impl SessionMgr {
     }
 
     /// This assumes that the higher layer has taken care of doing anything required
-    /// as per the spec before the session is erased
+    /// as per the spec before the session is removed
     pub fn remove(&mut self, id: u32) -> Option<Session> {
         if let Some(index) = self.sessions.iter().position(|sess| sess.id == id) {
             Some(self.sessions.swap_remove(index))
         } else {
             None
+        }
+    }
+
+    /// This assumes that the higher layer has taken care of doing anything required
+    /// as per the spec before the sessions are removed
+    pub fn remove_for_fabric(&mut self, fabric_idx: u8) {
+        loop {
+            let Some(index) = self
+                .sessions
+                .iter()
+                .position(|sess| sess.get_local_fabric_idx() == Some(fabric_idx))
+            else {
+                break;
+            };
+
+            self.sessions.swap_remove(index);
         }
     }
 
