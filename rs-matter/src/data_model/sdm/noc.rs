@@ -25,6 +25,7 @@ use crate::data_model::sdm::dev_att;
 use crate::fabric::{Fabric, FabricMgr, MAX_SUPPORTED_FABRICS};
 use crate::mdns::Mdns;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
+use crate::transport::core::TransportMgr;
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::epoch::Epoch;
@@ -222,15 +223,18 @@ pub struct NocCluster<'a> {
     fabric_mgr: &'a RefCell<FabricMgr>,
     acl_mgr: &'a RefCell<AclMgr>,
     failsafe: &'a RefCell<FailSafe>,
+    transport_mgr: &'a TransportMgr<'a>,
     mdns: &'a dyn Mdns,
 }
 
 impl<'a> NocCluster<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dev_att: &'a dyn DevAttDataFetcher,
         fabric_mgr: &'a RefCell<FabricMgr>,
         acl_mgr: &'a RefCell<AclMgr>,
         failsafe: &'a RefCell<FailSafe>,
+        transport_mgr: &'a TransportMgr<'a>,
         mdns: &'a dyn Mdns,
         epoch: Epoch,
         rand: Rand,
@@ -243,6 +247,7 @@ impl<'a> NocCluster<'a> {
             fabric_mgr,
             acl_mgr,
             failsafe,
+            transport_mgr,
             mdns,
         }
     }
@@ -453,9 +458,6 @@ impl<'a> NocCluster<'a> {
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        // TODO: Need to remove all sessions for this fabric
-        // TODO: Need to remove all IM subscriptions for this fabric
-
         cmd_enter!("Remove Fabric");
         let req = RemoveFabricReq::from_tlv(data).map_err(Error::map_invalid_data_type)?;
         if self
@@ -465,7 +467,15 @@ impl<'a> NocCluster<'a> {
             .is_ok()
         {
             let _ = self.acl_mgr.borrow_mut().delete_for_fabric(req.fab_idx);
-            // TODO: transaction.terminate();
+            self.transport_mgr
+                .session_mgr
+                .borrow_mut()
+                .remove_for_fabric(req.fab_idx);
+            self.transport_mgr.session_removed.notify();
+
+            // Note that since we might have removed our own session, the exchange
+            // will terminate with a "NoSession" error, but that's OK and handled properly
+
             Ok(())
         } else {
             Self::create_nocresponse(encoder, NocStatus::InvalidFabricIndex, req.fab_idx, "")

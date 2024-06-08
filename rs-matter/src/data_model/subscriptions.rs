@@ -27,6 +27,7 @@ use crate::utils::notification::Notification;
 struct Subscription {
     fabric_idx: u8,
     peer_node_id: u64,
+    session_id: Option<u32>,
     id: u32,
     // We use u16 instead of embassy::Duration to save some storage
     min_int_secs: u16,
@@ -97,6 +98,7 @@ impl<const N: usize> Subscriptions<N> {
         &self,
         fabric_idx: u8,
         peer_node_id: u64,
+        session_id: u32,
         min_int_secs: u16,
         max_int_secs: u16,
     ) -> Option<u32> {
@@ -107,6 +109,7 @@ impl<const N: usize> Subscriptions<N> {
             .push(Subscription {
                 fabric_idx,
                 peer_node_id,
+                session_id: Some(session_id),
                 id,
                 min_int_secs,
                 max_int_secs,
@@ -150,23 +153,44 @@ impl<const N: usize> Subscriptions<N> {
         }
     }
 
-    pub(crate) fn find_expired(&self, now: Instant) -> Option<(u8, u64, u32)> {
+    pub(crate) fn find_removed_session<F>(&self, session_removed: F) -> Option<(u8, u64, u32, u32)>
+    where
+        F: Fn(u32) -> bool,
+    {
         self.subscriptions.borrow().iter().find_map(|sub| {
-            sub.is_expired(now)
-                .then_some((sub.fabric_idx, sub.peer_node_id, sub.id))
+            sub.session_id
+                .map(&session_removed)
+                .unwrap_or(false)
+                .then_some((
+                    sub.fabric_idx,
+                    sub.peer_node_id,
+                    sub.session_id.unwrap(),
+                    sub.id,
+                ))
+        })
+    }
+
+    pub(crate) fn find_expired(&self, now: Instant) -> Option<(u8, u64, Option<u32>, u32)> {
+        self.subscriptions.borrow().iter().find_map(|sub| {
+            sub.is_expired(now).then_some((
+                sub.fabric_idx,
+                sub.peer_node_id,
+                sub.session_id,
+                sub.id,
+            ))
         })
     }
 
     /// Note that this method has a side effect:
     /// it updates the `reported_at` field of the subscription that is returned.
-    pub(crate) fn find_report_due(&self, now: Instant) -> Option<(u8, u64, u32)> {
+    pub(crate) fn find_report_due(&self, now: Instant) -> Option<(u8, u64, Option<u32>, u32)> {
         self.subscriptions
             .borrow_mut()
             .iter_mut()
             .find(|sub| sub.report_due(now))
             .map(|sub| {
                 sub.reported_at = now;
-                (sub.fabric_idx, sub.peer_node_id, sub.id)
+                (sub.fabric_idx, sub.peer_node_id, sub.session_id, sub.id)
             })
     }
 }

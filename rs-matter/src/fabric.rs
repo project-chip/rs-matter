@@ -247,7 +247,13 @@ impl FabricMgr {
     }
 
     pub fn add(&mut self, f: Fabric, mdns: &dyn Mdns) -> Result<u8, Error> {
-        let slot = self.fabrics.iter().position(|x| x.is_none());
+        // Do not re-use slots (if possible) because currently we use the
+        // position of the fabric in the array as a `fabric_index` as per the Matter Core spec
+        // TODO: In future introduce a new field in Fabric to store the fabric index, as
+        // we do for session indexes.
+        let slot = (self.fabrics.len() == MAX_SUPPORTED_FABRICS)
+            .then(|| self.fabrics.iter().position(|x| x.is_none()))
+            .flatten();
 
         if slot.is_some() || self.fabrics.len() < MAX_SUPPORTED_FABRICS {
             mdns.add(&f.mdns_service_name, ServiceMode::Commissioned)?;

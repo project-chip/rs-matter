@@ -6,6 +6,7 @@ use crate::{
     handler_chain_type,
     mdns::Mdns,
     secure_channel::pake::PaseMgr,
+    transport::core::TransportMgr,
     utils::{epoch::Epoch, rand::Rand},
 };
 
@@ -108,6 +109,7 @@ where
         + Borrow<RefCell<FabricMgr>>
         + Borrow<RefCell<AclMgr>>
         + Borrow<RefCell<FailSafe>>
+        + Borrow<TransportMgr<'a>>
         + Borrow<dyn Mdns + 'a>
         + Borrow<Epoch>
         + Borrow<Rand>
@@ -126,6 +128,10 @@ where
 /// Besides a reference to the main `Matter` object, this function
 /// needs user-supplied implementations of the network commissioning
 /// and network diagnostics clusters.
+//
+// TODO: The borrow abstraction below is not of much use and only increases
+// the size of the handlers, as they hold on to various managers instead
+// of simply keeping a reference to the `Matter` object. Remove it in future.
 pub fn handler<'a, NWCOMM, NWDIAG, T>(
     endpoint_id: u16,
     matter: &'a T,
@@ -140,6 +146,7 @@ where
         + Borrow<RefCell<FabricMgr>>
         + Borrow<RefCell<AclMgr>>
         + Borrow<RefCell<FailSafe>>
+        + Borrow<TransportMgr<'a>>
         + Borrow<dyn Mdns + 'a>
         + Borrow<Epoch>
         + Borrow<Rand>
@@ -147,6 +154,7 @@ where
 {
     wrap(
         endpoint_id,
+        matter.borrow(),
         matter.borrow(),
         matter.borrow(),
         matter.borrow(),
@@ -171,6 +179,7 @@ fn wrap<'a, NWCOMM, NWDIAG>(
     fabric: &'a RefCell<FabricMgr>,
     acl: &'a RefCell<AclMgr>,
     failsafe: &'a RefCell<FailSafe>,
+    transport_mgr: &'a TransportMgr<'a>,
     mdns: &'a dyn Mdns,
     epoch: Epoch,
     rand: Rand,
@@ -198,7 +207,14 @@ fn wrap<'a, NWCOMM, NWDIAG>(
             endpoint_id,
             noc::ID,
             HandlerCompat(NocCluster::new(
-                dev_att, fabric, acl, failsafe, mdns, epoch, rand,
+                dev_att,
+                fabric,
+                acl,
+                failsafe,
+                transport_mgr,
+                mdns,
+                epoch,
+                rand,
             )),
         )
         .chain(

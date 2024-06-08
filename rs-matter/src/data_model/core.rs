@@ -20,7 +20,7 @@ use core::iter::Peekable;
 use core::pin::pin;
 use core::time::Duration;
 
-use embassy_futures::select::select;
+use embassy_futures::select::select3;
 use embassy_time::{Instant, Timer};
 use log::{debug, error, info, warn};
 
@@ -388,10 +388,13 @@ where
         let max_int_secs = core::cmp::max(req.max_int_ceil, 40); // Say we need at least 4 secs for potential latencies
         let min_int_secs = req.min_int_floor;
 
-        let Some(id) = self
-            .subscriptions
-            .add(fabric_idx, peer_node_id, min_int_secs, max_int_secs)
-        else {
+        let Some(id) = self.subscriptions.add(
+            fabric_idx,
+            peer_node_id,
+            exchange.id().session_id(),
+            min_int_secs,
+            max_int_secs,
+        ) else {
             return Self::send_status(exchange, IMStatusCode::ResourceExhausted).await;
         };
 
@@ -440,30 +443,48 @@ where
             // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
             let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
             let mut notification = pin!(self.subscriptions.notification.wait());
+            let mut session_removed = pin!(matter.transport_mgr.session_removed.wait());
 
-            select(&mut notification, &mut timeout).await;
+            select3(&mut notification, &mut timeout, &mut session_removed).await;
+
+            while let Some((fabric_idx, peer_node_id, session_id, id)) =
+                self.subscriptions.find_removed_session(|session_id| {
+                    matter
+                        .transport_mgr
+                        .session_mgr
+                        .borrow_mut()
+                        .get(session_id)
+                        .is_none()
+                })
+            {
+                self.subscriptions.remove(None, None, Some(id));
+                self.subscriptions_buffers
+                    .borrow_mut()
+                    .retain(|sb| sb.subscription_id != id);
+
+                info!(
+                    "Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed since its session ({session_id}) had been removed too"
+                );
+            }
 
             let now = Instant::now();
 
+            while let Some((fabric_idx, peer_node_id, _, id)) = self.subscriptions.find_expired(now)
             {
-                while let Some((fabric_idx, peer_node_id, id)) =
-                    self.subscriptions.find_expired(now)
-                {
-                    self.subscriptions.remove(None, None, Some(id));
-                    self.subscriptions_buffers
-                        .borrow_mut()
-                        .retain(|sb| sb.subscription_id != id);
+                self.subscriptions.remove(None, None, Some(id));
+                self.subscriptions_buffers
+                    .borrow_mut()
+                    .retain(|sb| sb.subscription_id != id);
 
-                    info!(
-                        "Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed due to inactivity"
-                    );
-                }
+                info!(
+                    "Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed due to inactivity"
+                );
             }
 
             loop {
                 let sub = self.subscriptions.find_report_due(now);
 
-                if let Some((fabric_idx, peer_node_id, id)) = sub {
+                if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
                     info!(
                         "About to report data for subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id}"
                     );
@@ -491,8 +512,14 @@ where
                     // Only used when priming the subscription
                     req.dataver_filters = None;
 
-                    let mut exchange =
-                        Exchange::initiate(matter, fabric_idx, peer_node_id, true).await?;
+                    let mut exchange = if let Some(session_id) = session_id {
+                        Exchange::initiate_for_session(matter, session_id)?
+                    } else {
+                        // Commented out as we have issues on HomeKit with that:
+                        // https://github.com/ivmarkov/esp-idf-matter/issues/3
+                        // Exchange::initiate(matter, fabric_idx, peer_node_id, true).await?
+                        Err(ErrorCode::NoSession)?
+                    };
 
                     if let Some(mut tx) = self.buffers.get().await {
                         let primed = self

@@ -261,6 +261,12 @@ impl<'a> Borrow<RefCell<FailSafe>> for Matter<'a> {
     }
 }
 
+impl<'a> Borrow<TransportMgr<'a>> for Matter<'a> {
+    fn borrow(&self) -> &TransportMgr<'a> {
+        &self.transport_mgr
+    }
+}
+
 impl<'a> Borrow<BasicInfoConfig<'a>> for Matter<'a> {
     fn borrow(&self) -> &BasicInfoConfig<'a> {
         self.dev_det
