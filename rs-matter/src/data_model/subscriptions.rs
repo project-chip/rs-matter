@@ -16,6 +16,7 @@
  */
 
 use core::cell::RefCell;
+use core::num::NonZeroU8;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Instant;
@@ -25,7 +26,7 @@ use portable_atomic::{AtomicU32, Ordering};
 use crate::utils::notification::Notification;
 
 struct Subscription {
-    fabric_idx: u8,
+    fabric_idx: NonZeroU8,
     peer_node_id: u64,
     session_id: Option<u32>,
     id: u32,
@@ -96,7 +97,7 @@ impl<const N: usize> Subscriptions<N> {
 
     pub(crate) fn add(
         &self,
-        fabric_idx: u8,
+        fabric_idx: NonZeroU8,
         peer_node_id: u64,
         session_id: u32,
         min_int_secs: u16,
@@ -139,7 +140,7 @@ impl<const N: usize> Subscriptions<N> {
 
     pub(crate) fn remove(
         &self,
-        fabric_idx: Option<u8>,
+        fabric_idx: Option<NonZeroU8>,
         peer_node_id: Option<u64>,
         id: Option<u32>,
     ) {
@@ -153,7 +154,10 @@ impl<const N: usize> Subscriptions<N> {
         }
     }
 
-    pub(crate) fn find_removed_session<F>(&self, session_removed: F) -> Option<(u8, u64, u32, u32)>
+    pub(crate) fn find_removed_session<F>(
+        &self,
+        session_removed: F,
+    ) -> Option<(NonZeroU8, u64, u32, u32)>
     where
         F: Fn(u32) -> bool,
     {
@@ -170,7 +174,7 @@ impl<const N: usize> Subscriptions<N> {
         })
     }
 
-    pub(crate) fn find_expired(&self, now: Instant) -> Option<(u8, u64, Option<u32>, u32)> {
+    pub(crate) fn find_expired(&self, now: Instant) -> Option<(NonZeroU8, u64, Option<u32>, u32)> {
         self.subscriptions.borrow().iter().find_map(|sub| {
             sub.is_expired(now).then_some((
                 sub.fabric_idx,
@@ -183,7 +187,10 @@ impl<const N: usize> Subscriptions<N> {
 
     /// Note that this method has a side effect:
     /// it updates the `reported_at` field of the subscription that is returned.
-    pub(crate) fn find_report_due(&self, now: Instant) -> Option<(u8, u64, Option<u32>, u32)> {
+    pub(crate) fn find_report_due(
+        &self,
+        now: Instant,
+    ) -> Option<(NonZeroU8, u64, Option<u32>, u32)> {
         self.subscriptions
             .borrow_mut()
             .iter_mut()

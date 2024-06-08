@@ -16,6 +16,7 @@
  */
 
 use core::cell::RefCell;
+use core::num::NonZeroU8;
 
 use strum::{EnumDiscriminants, FromRepr};
 
@@ -99,7 +100,7 @@ impl<'a> AccessControlCluster<'a> {
                     Attributes::Acl(_) => {
                         writer.start_array(AttrDataWriter::TAG)?;
                         self.acl_mgr.borrow().for_each_acl(|entry| {
-                            if !attr.fab_filter || Some(attr.fab_idx) == entry.fab_idx {
+                            if !attr.fab_filter || attr.fab_idx == entry.fab_idx.get() {
                                 entry.to_tlv(&mut writer, TagType::Anonymous)?;
                             }
 
@@ -136,7 +137,11 @@ impl<'a> AccessControlCluster<'a> {
         match attr.attr_id.try_into()? {
             Attributes::Acl(_) => {
                 attr_list_write(attr, data.with_dataver(self.data_ver.get())?, |op, data| {
-                    self.write_acl_attr(&op, data, attr.fab_idx)
+                    self.write_acl_attr(
+                        &op,
+                        data,
+                        NonZeroU8::new(attr.fab_idx).ok_or(ErrorCode::Invalid)?,
+                    )
                 })
             }
             _ => {
@@ -154,7 +159,7 @@ impl<'a> AccessControlCluster<'a> {
         &self,
         op: &ListOperation,
         data: &TLVElement,
-        fab_idx: u8,
+        fab_idx: NonZeroU8,
     ) -> Result<(), Error> {
         info!("Performing ACL operation {:?}", op);
         match op {
@@ -162,15 +167,17 @@ impl<'a> AccessControlCluster<'a> {
                 let mut acl_entry = AclEntry::from_tlv(data)?;
                 info!("ACL  {:?}", acl_entry);
                 // Overwrite the fabric index with our accessing fabric index
-                acl_entry.fab_idx = Some(fab_idx);
+                acl_entry.fab_idx = fab_idx;
 
                 if let ListOperation::EditItem(index) = op {
                     self.acl_mgr
                         .borrow_mut()
-                        .edit(*index as u8, fab_idx, acl_entry)
+                        .edit(*index as u8, fab_idx, acl_entry)?;
                 } else {
-                    self.acl_mgr.borrow_mut().add(acl_entry)
+                    self.acl_mgr.borrow_mut().add(acl_entry)?;
                 }
+
+                Ok(())
             }
             ListOperation::DeleteItem(index) => {
                 self.acl_mgr.borrow_mut().delete(*index as u8, fab_idx)
@@ -212,6 +219,8 @@ mod tests {
 
     use super::AccessControlCluster;
 
+    use crate::acl::tests::{FAB_1, FAB_2};
+
     #[test]
     /// Add an ACL entry
     fn acl_cluster_add() {
@@ -222,16 +231,16 @@ mod tests {
         let acl_mgr = RefCell::new(AclMgr::new());
         let acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
 
-        let new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        let new = AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case);
         new.to_tlv(&mut tw, TagType::Anonymous).unwrap();
         let data = get_root_node_struct(writebuf.as_slice()).unwrap();
 
         // Test, ACL has fabric index 2, but the accessing fabric is 1
         //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1
-        let result = acl.write_acl_attr(&ListOperation::AddItem, &data, 1);
+        let result = acl.write_acl_attr(&ListOperation::AddItem, &data, FAB_1);
         assert!(result.is_ok());
 
-        let verifier = AclEntry::new(1, Privilege::VIEW, AuthMode::Case);
+        let verifier = AclEntry::new(FAB_1, Privilege::VIEW, AuthMode::Case);
         acl_mgr
             .borrow()
             .for_each_acl(|a| {
@@ -251,21 +260,21 @@ mod tests {
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let acl_mgr = RefCell::new(AclMgr::new());
         let mut verifier = [
-            AclEntry::new(2, Privilege::VIEW, AuthMode::Case),
-            AclEntry::new(1, Privilege::VIEW, AuthMode::Case),
-            AclEntry::new(2, Privilege::ADMIN, AuthMode::Case),
+            AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(FAB_1, Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(FAB_2, Privilege::ADMIN, AuthMode::Case),
         ];
         for i in &verifier {
             acl_mgr.borrow_mut().add(i.clone()).unwrap();
         }
         let acl = AccessControlCluster::new(&acl_mgr, dummy_rand);
 
-        let new = AclEntry::new(2, Privilege::VIEW, AuthMode::Case);
+        let new = AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case);
         new.to_tlv(&mut tw, TagType::Anonymous).unwrap();
         let data = get_root_node_struct(writebuf.as_slice()).unwrap();
 
         // Test, Edit Fabric 2's index 1 - with accessing fabring as 2 - allow
-        let result = acl.write_acl_attr(&ListOperation::EditItem(1), &data, 2);
+        let result = acl.write_acl_attr(&ListOperation::EditItem(1), &data, FAB_2);
         // Fabric 2's index 1, is actually our index 2, update the verifier
         verifier[2] = new;
         assert!(result.is_ok());
@@ -288,9 +297,9 @@ mod tests {
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let acl_mgr = RefCell::new(AclMgr::new());
         let input = [
-            AclEntry::new(2, Privilege::VIEW, AuthMode::Case),
-            AclEntry::new(1, Privilege::VIEW, AuthMode::Case),
-            AclEntry::new(2, Privilege::ADMIN, AuthMode::Case),
+            AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(FAB_1, Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(FAB_2, Privilege::ADMIN, AuthMode::Case),
         ];
         for i in &input {
             acl_mgr.borrow_mut().add(i.clone()).unwrap();
@@ -300,7 +309,7 @@ mod tests {
         let data = TLVElement::new(TagType::Anonymous, ElementType::True);
 
         // Test , Delete Fabric 1's index 0
-        let result = acl.write_acl_attr(&ListOperation::DeleteItem(0), &data, 1);
+        let result = acl.write_acl_attr(&ListOperation::DeleteItem(0), &data, FAB_1);
         assert!(result.is_ok());
 
         let verifier = [input[0].clone(), input[2].clone()];
@@ -325,9 +334,9 @@ mod tests {
         // Add 3 ACLs, belonging to fabric index 2, 1 and 2, in that order
         let acl_mgr = RefCell::new(AclMgr::new());
         let input = [
-            AclEntry::new(2, Privilege::VIEW, AuthMode::Case),
-            AclEntry::new(1, Privilege::VIEW, AuthMode::Case),
-            AclEntry::new(2, Privilege::ADMIN, AuthMode::Case),
+            AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(FAB_1, Privilege::VIEW, AuthMode::Case),
+            AclEntry::new(FAB_2, Privilege::ADMIN, AuthMode::Case),
         ];
         for i in input {
             acl_mgr.borrow_mut().add(i).unwrap();

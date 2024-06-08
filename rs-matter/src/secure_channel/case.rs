@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::num::NonZeroU8;
+
 use log::{error, trace};
 
 use crate::{
@@ -27,7 +29,7 @@ use crate::{
     tlv::{get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType},
     transport::{
         exchange::Exchange,
-        session::{CaseDetails, NocCatIds, ReservedSession, SessionMode},
+        session::{NocCatIds, ReservedSession, SessionMode},
     },
     utils::{rand::Rand, writebuf::WriteBuf},
 };
@@ -40,7 +42,7 @@ pub struct CaseSession {
     shared_secret: [u8; crypto::ECDH_SHARED_SECRET_LEN_BYTES],
     our_pub_key: [u8; crypto::EC_POINT_LEN_BYTES],
     peer_pub_key: [u8; crypto::EC_POINT_LEN_BYTES],
-    local_fabric_idx: usize,
+    local_fabric_idx: u8,
 }
 
 impl Default for CaseSession {
@@ -103,7 +105,8 @@ impl Case {
         let status = {
             let fabric_mgr = exchange.matter().fabric_mgr.borrow();
 
-            let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
+            let fabric = NonZeroU8::new(case_session.local_fabric_idx)
+                .and_then(|fabric_idx| fabric_mgr.get_fabric(fabric_idx));
             if let Some(fabric) = fabric {
                 let root = get_root_node_struct(exchange.rx()?.payload())?;
                 let encrypted = root.find_tag(1)?.slice()?;
@@ -173,10 +176,11 @@ impl Case {
                         case_session.peer_sessid,
                         case_session.local_sessid,
                         peer_addr,
-                        SessionMode::Case(CaseDetails::new(
-                            case_session.local_fabric_idx as u8,
-                            &peer_catids,
-                        )),
+                        SessionMode::Case {
+                            // Unwrapping is safe, because if the fabric index was 0, we would not be in here
+                            fab_idx: NonZeroU8::new(case_session.local_fabric_idx).unwrap(),
+                            cat_ids: peer_catids,
+                        },
                         Some(&session_keys[0..16]),
                         Some(&session_keys[16..32]),
                         Some(&session_keys[32..48]),
@@ -237,7 +241,7 @@ impl Case {
             .as_mut()
             .unwrap()
             .update(exchange.rx()?.payload())?;
-        case_session.local_fabric_idx = local_fabric_idx?;
+        case_session.local_fabric_idx = local_fabric_idx?.get();
         if r.peer_pub_key.0.len() != crypto::EC_POINT_LEN_BYTES {
             error!("Invalid public key length");
             Err(ErrorCode::Invalid)?;
@@ -272,7 +276,8 @@ impl Case {
         let encrypted_len = {
             let fabric_mgr = exchange.matter().fabric_mgr.borrow();
 
-            let fabric = fabric_mgr.get_fabric(case_session.local_fabric_idx)?;
+            let fabric = NonZeroU8::new(case_session.local_fabric_idx)
+                .and_then(|fabric_idx| fabric_mgr.get_fabric(fabric_idx));
             if let Some(fabric) = fabric {
                 #[cfg(feature = "alloc")]
                 let signature_mut = &mut *signature;

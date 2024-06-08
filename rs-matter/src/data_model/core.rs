@@ -17,6 +17,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::iter::Peekable;
+use core::num::NonZeroU8;
 use core::pin::pin;
 use core::time::Duration;
 
@@ -53,7 +54,7 @@ const MAX_WRITE_ATTRS_IN_ONE_TRANS: usize = 7;
 pub type IMBuffer = heapless::Vec<u8, MAX_EXCHANGE_RX_BUF_SIZE>;
 
 struct SubscriptionBuffer<B> {
-    fabric_idx: u8,
+    fabric_idx: NonZeroU8,
     peer_node_id: u64,
     subscription_id: u32,
     buffer: B,
@@ -369,7 +370,8 @@ where
         debug!("IM: Subscribe request: {:?}", req);
 
         let (fabric_idx, peer_node_id) = exchange.with_session(|sess| {
-            let fabric_idx = sess.get_local_fabric_idx().ok_or(ErrorCode::Invalid)?;
+            let fabric_idx =
+                NonZeroU8::new(sess.get_local_fabric_idx()).ok_or(ErrorCode::Invalid)?;
             let peer_node_id = sess.get_peer_node_id().ok_or(ErrorCode::Invalid)?;
 
             Ok((fabric_idx, peer_node_id))
@@ -407,7 +409,7 @@ where
         });
 
         let primed = self
-            .report_data(id, fabric_idx, peer_node_id, &rx, &mut tx, exchange)
+            .report_data(id, fabric_idx.get(), peer_node_id, &rx, &mut tx, exchange)
             .await?;
 
         if primed {
@@ -523,7 +525,14 @@ where
 
                     if let Some(mut tx) = self.buffers.get().await {
                         let primed = self
-                            .report_data(id, fabric_idx, peer_node_id, &rx, &mut tx, &mut exchange)
+                            .report_data(
+                                id,
+                                fabric_idx.get(),
+                                peer_node_id,
+                                &rx,
+                                &mut tx,
+                                &mut exchange,
+                            )
                             .await?;
 
                         exchange.acknowledge().await?;
