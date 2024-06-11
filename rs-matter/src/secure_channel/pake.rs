@@ -204,7 +204,7 @@ impl Pake {
                 peer_sessid,
                 local_sessid,
                 peer_addr,
-                SessionMode::Pase,
+                SessionMode::Pase { fab_idx: 0 },
                 Some(&session_keys[0..16]),
                 Some(&session_keys[16..32]),
                 Some(&session_keys[32..48]),

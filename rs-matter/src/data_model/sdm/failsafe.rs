@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::num::NonZeroU8;
+
 use crate::{
     error::{Error, ErrorCode},
     transport::session::SessionMode,
@@ -27,13 +29,12 @@ use log::error;
 enum NocState {
     NocNotRecvd,
     // This is the local fabric index
-    AddNocRecvd(u8),
-    UpdateNocRecvd(u8),
+    AddNocRecvd(NonZeroU8),
+    UpdateNocRecvd(NonZeroU8),
 }
 
 #[derive(PartialEq)]
 pub struct ArmedCtx {
-    session_mode: SessionMode,
     timeout: u16,
     noc_state: NocState,
 }
@@ -58,16 +59,26 @@ impl FailSafe {
         match &mut self.state {
             State::Idle => {
                 self.state = State::Armed(ArmedCtx {
-                    session_mode,
                     timeout,
                     noc_state: NocState::NocNotRecvd,
                 })
             }
             State::Armed(c) => {
-                if c.session_mode != session_mode {
-                    error!("Received Fail-Safe Arm with different session modes; current {:?}, incoming {:?}", c.session_mode, session_mode);
-                    Err(ErrorCode::Invalid)?;
+                match c.noc_state {
+                    NocState::NocNotRecvd => (),
+                    NocState::AddNocRecvd(fab_idx) | NocState::UpdateNocRecvd(fab_idx) => {
+                        if let Some(sess_fab_idx) = NonZeroU8::new(session_mode.fab_idx()) {
+                            if sess_fab_idx != fab_idx {
+                                error!("Received Fail-Safe Re-arm with a different fabric index from a previous Add/Update NOC");
+                                Err(ErrorCode::Invalid)?;
+                            }
+                        } else {
+                            error!("Received Fail-Safe Re-arm from a session that does not have a fabric index");
+                            Err(ErrorCode::Invalid)?;
+                        }
+                    }
                 }
+
                 // re-arm
                 c.timeout = timeout;
             }
@@ -83,17 +94,20 @@ impl FailSafe {
             }
             State::Armed(c) => {
                 match c.noc_state {
-                    NocState::NocNotRecvd => Err(ErrorCode::Invalid)?,
-                    NocState::AddNocRecvd(idx) | NocState::UpdateNocRecvd(idx) => {
-                        if let SessionMode::Case(c) = session_mode {
-                            if c.fab_idx != idx {
-                                error!(
-                                    "Received disarm in separate session from previous Add/Update NOC"
-                                );
+                    NocState::NocNotRecvd => {
+                        error!("Received Fail-Safe Disarm, yet the failsafe has not received Add/Update NOC first");
+                        Err(ErrorCode::Invalid)?;
+                    }
+                    NocState::AddNocRecvd(fab_idx) | NocState::UpdateNocRecvd(fab_idx) => {
+                        if let Some(sess_fab_idx) = NonZeroU8::new(session_mode.fab_idx()) {
+                            if sess_fab_idx != fab_idx {
+                                error!("Received disarm with different fabric index from a previous Add/Update NOC");
                                 Err(ErrorCode::Invalid)?;
                             }
                         } else {
-                            error!("Received disarm in a non-CASE session");
+                            error!(
+                                "Received disarm from a session that does not have a fabric index"
+                            );
                             Err(ErrorCode::Invalid)?;
                         }
                     }
@@ -108,7 +122,7 @@ impl FailSafe {
         self.state != State::Idle
     }
 
-    pub fn record_add_noc(&mut self, fabric_index: u8) -> Result<(), Error> {
+    pub fn record_add_noc(&mut self, fabric_index: NonZeroU8) -> Result<(), Error> {
         match &mut self.state {
             State::Idle => Err(ErrorCode::Invalid.into()),
             State::Armed(c) => {

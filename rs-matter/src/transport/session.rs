@@ -17,6 +17,7 @@
 
 use core::cell::RefCell;
 use core::fmt;
+use core::num::NonZeroU8;
 use core::time::Duration;
 
 use log::{error, info, trace, warn};
@@ -44,28 +45,32 @@ pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
 const MATTER_AES128_KEY_SIZE: usize = 16;
 
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct CaseDetails {
-    pub fab_idx: u8,
-    pub cat_ids: NocCatIds,
-}
-
-impl CaseDetails {
-    pub fn new(fab_idx: u8, cat_ids: &NocCatIds) -> Self {
-        Self {
-            fab_idx,
-            cat_ids: *cat_ids,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum SessionMode {
     // The Case session will capture the local fabric index
-    Case(CaseDetails),
-    Pase,
+    // and the local fabric index
+    Case {
+        fab_idx: NonZeroU8,
+        cat_ids: NocCatIds,
+    },
+    // The Pase session always starts with a fabric index of 0
+    // (i.e. no fabric) but will be upgraded to the actual fabric index
+    // once AddNOC or UpdateNOC is received
+    Pase {
+        fab_idx: u8,
+    },
     #[default]
     PlainText,
+}
+
+impl SessionMode {
+    pub fn fab_idx(&self) -> u8 {
+        match self {
+            SessionMode::Case { fab_idx, .. } => fab_idx.get(),
+            SessionMode::Pase { fab_idx, .. } => *fab_idx,
+            SessionMode::PlainText => 0,
+        }
+    }
 }
 
 pub struct Session {
@@ -154,7 +159,7 @@ impl Session {
 
     pub fn is_encrypted(&self) -> bool {
         match self.mode {
-            SessionMode::Case(_) | SessionMode::Pase => true,
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => true,
             SessionMode::PlainText => false,
         }
     }
@@ -163,18 +168,8 @@ impl Session {
         self.peer_nodeid
     }
 
-    pub fn get_peer_cat_ids(&self) -> Option<&NocCatIds> {
-        match &self.mode {
-            SessionMode::Case(a) => Some(&a.cat_ids),
-            _ => None,
-        }
-    }
-
-    pub fn get_local_fabric_idx(&self) -> Option<u8> {
-        match &self.mode {
-            SessionMode::Case(a) => Some(a.fab_idx),
-            _ => None,
-        }
+    pub fn get_local_fabric_idx(&self) -> u8 {
+        self.mode.fab_idx()
     }
 
     pub fn get_session_mode(&self) -> &SessionMode {
@@ -189,14 +184,14 @@ impl Session {
 
     pub fn get_dec_key(&self) -> Option<&[u8]> {
         match self.mode {
-            SessionMode::Case(_) | SessionMode::Pase => Some(&self.dec_key),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.dec_key),
             SessionMode::PlainText => None,
         }
     }
 
     pub fn get_enc_key(&self) -> Option<&[u8]> {
         match self.mode {
-            SessionMode::Case(_) | SessionMode::Pase => Some(&self.enc_key),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.enc_key),
             SessionMode::PlainText => None,
         }
     }
@@ -206,7 +201,7 @@ impl Session {
     }
 
     pub(crate) fn is_for_node(&self, fabric_idx: u8, peer_node_id: u64, secure: bool) -> bool {
-        self.get_local_fabric_idx() == Some(fabric_idx)
+        self.get_local_fabric_idx() == fabric_idx
             && self.peer_nodeid == Some(peer_node_id)
             && self.is_encrypted() == secure
             && !self.reserved
@@ -222,6 +217,23 @@ impl Session {
             && self.peer_addr == *rx_peer
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
+    }
+
+    pub fn upgrade_fabric_idx(&mut self, fabric_idx: NonZeroU8) -> Result<(), Error> {
+        if let SessionMode::Pase { fab_idx } = &mut self.mode {
+            if *fab_idx == 0 {
+                *fab_idx = fabric_idx.get();
+            } else {
+                // Upgrading a PASE session can happen only once
+                Err(ErrorCode::Invalid)?;
+            }
+        } else {
+            // CASE sessions are not upgradeable, as per spec
+            // And for plain text sessions - we shoudn't even get here in the first place
+            Err(ErrorCode::Invalid)?;
+        }
+
+        Ok(())
     }
 
     /// Update the session state with the data in the received packet headers.
@@ -653,12 +665,12 @@ impl SessionMgr {
 
     /// This assumes that the higher layer has taken care of doing anything required
     /// as per the spec before the sessions are removed
-    pub fn remove_for_fabric(&mut self, fabric_idx: u8) {
+    pub fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8) {
         loop {
             let Some(index) = self
                 .sessions
                 .iter()
-                .position(|sess| sess.get_local_fabric_idx() == Some(fabric_idx))
+                .position(|sess| sess.get_local_fabric_idx() == fabric_idx.get())
             else {
                 break;
             };

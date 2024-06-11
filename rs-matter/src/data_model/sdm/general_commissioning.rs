@@ -21,6 +21,7 @@ use crate::data_model::objects::*;
 use crate::data_model::sdm::failsafe::FailSafe;
 use crate::tlv::{FromTLV, TLVElement, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
+use crate::transport::session::SessionMode;
 use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
@@ -267,9 +268,8 @@ impl<'a> GenCommCluster<'a> {
         let mut status: u8 = CommissioningErrorEnum::OK as u8;
 
         // Has to be a Case Session
-        if exchange
-            .with_session(|sess| Ok(sess.get_local_fabric_idx()))?
-            .is_none()
+        if !exchange
+            .with_session(|sess| Ok(matches!(sess.get_session_mode(), SessionMode::Case { .. })))?
         {
             status = CommissioningErrorEnum::InvalidAuthentication as u8;
         }

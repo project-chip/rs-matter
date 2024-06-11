@@ -17,6 +17,7 @@
 
 use crate::common::echo_cluster;
 use core::borrow::Borrow;
+use core::num::NonZeroU8;
 
 use embassy_futures::{block_on, join::join, select::select3};
 
@@ -62,7 +63,7 @@ use rs_matter::{
             Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
             MAX_RX_PACKET_SIZE, MAX_TX_PACKET_SIZE,
         },
-        session::{CaseDetails, NocCatIds, ReservedSession, SessionMode},
+        session::{NocCatIds, ReservedSession, SessionMode},
     },
     utils::{buf::PooledBuffers, select::Coalesce},
     Matter, MATTER_PORT,
@@ -222,7 +223,8 @@ impl<'a> ImEngine<'a> {
 
     pub fn add_default_acl(&self) {
         // Only allow the standard peer node id of the IM Engine
-        let mut default_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+        let mut default_acl =
+            AclEntry::new(NonZeroU8::new(1).unwrap(), Privilege::ADMIN, AuthMode::Case);
         default_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
         self.matter.acl_mgr.borrow_mut().add(default_acl).unwrap();
     }
@@ -270,7 +272,10 @@ impl<'a> ImEngine<'a> {
                 1,
                 1,
                 ADDR,
-                SessionMode::Case(CaseDetails::new(1, cat_ids)),
+                SessionMode::Case {
+                    fab_idx: NonZeroU8::new(1).unwrap(),
+                    cat_ids: cat_ids.clone(),
+                },
                 None,
                 None,
                 None,

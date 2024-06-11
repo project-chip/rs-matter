@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::num::NonZeroU8;
+
 use rs_matter::{
     acl::{gen_noc_cat, AclEntry, AuthMode, Target},
     data_model::{
@@ -37,6 +39,11 @@ use crate::{
         im_engine::{ImEngine, IM_ENGINE_PEER_ID},
         init_env_logger,
     },
+};
+
+const FAB_1: NonZeroU8 = match NonZeroU8::new(1) {
+    Some(f) => f,
+    None => unreachable!(),
 };
 
 #[test]
@@ -70,7 +77,7 @@ fn wc_read_attribute() {
     im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to only access endpoint 0
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
@@ -81,7 +88,7 @@ fn wc_read_attribute() {
     im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to also access endpoint 1
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
@@ -121,7 +128,7 @@ fn exact_read_attribute() {
     im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to access any endpoint
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
@@ -184,7 +191,7 @@ fn wc_write_attribute() {
     );
 
     // Add ACL to allow our peer to access one endpoint
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
@@ -203,7 +210,7 @@ fn wc_write_attribute() {
     );
 
     // Add ACL to allow our peer to access another endpoint
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(1), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
@@ -262,7 +269,7 @@ fn exact_write_attribute() {
     );
 
     // Add ACL to allow our peer to access any endpoint
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
@@ -317,7 +324,7 @@ fn exact_write_attribute_noc_cat() {
     );
 
     // Add ACL to allow our peer to access any endpoint
-    let mut acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     acl.add_subject_catid(cat_in_acl).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
@@ -350,7 +357,7 @@ fn insufficient_perms_write() {
     let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
-    let mut acl = AclEntry::new(1, Privilege::OPERATE, AuthMode::Case);
+    let mut acl = AclEntry::new(FAB_1, Privilege::OPERATE, AuthMode::Case);
     acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     acl.add_target(Target::new(Some(0), None, None)).unwrap();
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
@@ -412,7 +419,7 @@ fn write_with_runtime_acl_add() {
     );
 
     // Create ACL to allow our peer ADMIN on everything
-    let mut allow_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut allow_acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     allow_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
 
     let acl_att = GenericPath::new(
@@ -427,7 +434,7 @@ fn write_with_runtime_acl_add() {
     );
 
     // Create ACL that only allows write to the ACL Cluster
-    let mut basic_acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let mut basic_acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     basic_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     basic_acl
         .add_target(Target::new(Some(0), Some(access_control::ID), None))
@@ -462,7 +469,7 @@ fn test_read_data_ver() {
     let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
-    let acl = AclEntry::new(1, Privilege::OPERATE, AuthMode::Case);
+    let acl = AclEntry::new(FAB_1, Privilege::OPERATE, AuthMode::Case);
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     let wc_ep_att1 = GenericPath::new(
@@ -566,7 +573,7 @@ fn test_write_data_ver() {
     let handler = im.handler();
 
     // Add ACL to allow our peer with only OPERATE permission
-    let acl = AclEntry::new(1, Privilege::ADMIN, AuthMode::Case);
+    let acl = AclEntry::new(FAB_1, Privilege::ADMIN, AuthMode::Case);
     im.matter.acl_mgr.borrow_mut().add(acl).unwrap();
 
     let wc_ep_attwrite = GenericPath::new(
