@@ -545,10 +545,7 @@ impl AclMgr {
         //     ],
         //     Extension: []
         // }
-        if req.accessor.auth_mode == AuthMode::Pase
-            && req.accessor.fab_idx == 0
-            && self.entries.iter().all(Option::is_none)
-        {
+        if req.accessor.auth_mode == AuthMode::Pase {
             return true;
         }
 
@@ -676,11 +673,11 @@ pub(crate) mod tests {
 
         let accessor = Accessor::new(0, AccessorSubjects::new(112233), AuthMode::Pase, &am);
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let mut req = AccessReq::new(&accessor, path, Access::READ);
-        req.set_target_perms(Access::RWVA);
+        let mut req_pase = AccessReq::new(&accessor, path, Access::READ);
+        req_pase.set_target_perms(Access::RWVA);
 
-        // Default allow for PASE if no entries yet
-        assert!(req.allow());
+        // Always allow for PASE sessions
+        assert!(req_pase.allow());
 
         let accessor = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, &am);
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -698,6 +695,9 @@ pub(crate) mod tests {
         let new = AclEntry::new(FAB_1, Privilege::VIEW, AuthMode::Case);
         assert_eq!(am.borrow_mut().add(new).unwrap(), 0);
         assert_eq!(req.allow(), false);
+
+        // Always allow for PASE sessions
+        assert!(req_pase.allow());
 
         // Allow
         let new = AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case);

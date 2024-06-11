@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::num::NonZeroU8;
 
 use crate::acl::{AclEntry, AclMgr, AuthMode};
@@ -33,7 +33,7 @@ use crate::utils::epoch::Epoch;
 use crate::utils::rand::Rand;
 use crate::utils::writebuf::WriteBuf;
 use crate::{attribute_enum, cmd_enter, command_enum, error::*};
-use log::{error, info};
+use log::{error, info, warn};
 use strum::{EnumDiscriminants, FromRepr};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
@@ -373,18 +373,25 @@ impl<'a> NocCluster<'a> {
             "",
         )
         .map_err(|_| NocStatus::TableFull)?;
+
         let fab_idx = self
             .fabric_mgr
             .borrow_mut()
             .add(fabric, self.mdns)
             .map_err(|_| NocStatus::TableFull)?;
 
+        let succeeded = Cell::new(false);
+
         let _fab_guard = scopeguard::guard(fab_idx, |fab_idx| {
-            // Remove the fabric if we fail further down this function
-            self.fabric_mgr
-                .borrow_mut()
-                .remove(fab_idx, self.mdns)
-                .unwrap();
+            if !succeeded.get() {
+                // Remove the fabric if we fail further down this function
+                warn!("Removing fabric {} due to failure", fab_idx.get());
+
+                self.fabric_mgr
+                    .borrow_mut()
+                    .remove(fab_idx, self.mdns)
+                    .unwrap();
+            }
         });
 
         let mut acl = AclEntry::new(fab_idx, Privilege::ADMIN, AuthMode::Case);
@@ -392,11 +399,19 @@ impl<'a> NocCluster<'a> {
         let acl_entry_index = self.acl_mgr.borrow_mut().add(acl)?;
 
         let _acl_guard = scopeguard::guard(fab_idx, |fab_idx| {
-            // Remove the ACL entry if we fail further down this function
-            self.acl_mgr
-                .borrow_mut()
-                .delete(acl_entry_index, fab_idx)
-                .unwrap();
+            if !succeeded.get() {
+                // Remove the ACL entry if we fail further down this function
+                warn!(
+                    "Removing ACL entry {}/{} due to failure",
+                    acl_entry_index,
+                    fab_idx.get()
+                );
+
+                self.acl_mgr
+                    .borrow_mut()
+                    .delete(acl_entry_index, fab_idx)
+                    .unwrap();
+            }
         });
 
         self.failsafe.borrow_mut().record_add_noc(fab_idx)?;
@@ -409,6 +424,9 @@ impl<'a> NocCluster<'a> {
 
             Ok(())
         })?;
+
+        // Leave the fabric and its ACLs in place now that we've updated everything
+        succeeded.set(true);
 
         Ok(fab_idx)
     }
