@@ -991,7 +991,10 @@ impl<'m> TransportMgr<'m> {
                     data
                 );
 
-                Err(e)
+                // Do not return an error as that would unroll the main `rs-matter` loop
+                // and sending errors are normal and can happen for various reasons
+                // TODO: Provide the error as a feedback to the packet creator instead, in the mutex data
+                Ok(())
             }
         }
     }
