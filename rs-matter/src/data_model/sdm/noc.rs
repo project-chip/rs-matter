@@ -402,7 +402,13 @@ impl<'a> NocCluster<'a> {
         self.failsafe.borrow_mut().record_add_noc(fab_idx)?;
 
         // Finally, upgrade our session with the new fabric index
-        exchange.with_session(|sess| sess.upgrade_fabric_idx(fab_idx))?;
+        exchange.with_session(|sess| {
+            if matches!(sess.get_session_mode(), SessionMode::Pase { .. }) {
+                sess.upgrade_fabric_idx(fab_idx)?;
+            }
+
+            Ok(())
+        })?;
 
         Ok(fab_idx)
     }

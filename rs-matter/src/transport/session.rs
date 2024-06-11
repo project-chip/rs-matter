@@ -169,11 +169,7 @@ impl Session {
     }
 
     pub fn get_local_fabric_idx(&self) -> u8 {
-        match &self.mode {
-            SessionMode::Case { fab_idx, .. } => fab_idx.get(),
-            SessionMode::Pase { fab_idx, .. } => *fab_idx,
-            _ => 0,
-        }
+        self.mode.fab_idx()
     }
 
     pub fn get_session_mode(&self) -> &SessionMode {
@@ -224,17 +220,17 @@ impl Session {
     }
 
     pub fn upgrade_fabric_idx(&mut self, fabric_idx: NonZeroU8) -> Result<(), Error> {
-        match &mut self.mode {
-            SessionMode::Pase { fab_idx } => {
-                if *fab_idx == 0 {
-                    *fab_idx = fabric_idx.get();
-                } else {
-                    // Upgrading a PASE session can happen only once
-                    Err(ErrorCode::Invalid)?;
-                }
+        if let SessionMode::Pase { fab_idx } = &mut self.mode {
+            if *fab_idx == 0 {
+                *fab_idx = fabric_idx.get();
+            } else {
+                // Upgrading a PASE session can happen only once
+                Err(ErrorCode::Invalid)?;
             }
-            SessionMode::Case { .. } => (), // CASE sessions are not upgradeable, as per spec
-            _ => Err(ErrorCode::Invalid)?,  // We shouldn't get here in the first place
+        } else {
+            // CASE sessions are not upgradeable, as per spec
+            // And for plain text sessions - we shoudn't even get here in the first place
+            Err(ErrorCode::Invalid)?;
         }
 
         Ok(())
