@@ -82,9 +82,9 @@ where
     /// The parameters are as follows:
     /// * `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
     /// * `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
-    /// number of subscriptions that can be managed by this handler.
+    ///   number of subscriptions that can be managed by this handler.
     /// * `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
-    /// clusters of the data model.
+    ///   clusters of the data model.
     #[inline(always)]
     pub const fn new(buffers: &'a B, subscriptions: &'a Subscriptions<N>, handler: T) -> Self {
         Self {

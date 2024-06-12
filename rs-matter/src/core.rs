@@ -83,8 +83,8 @@ impl<'a> Matter<'a> {
     ///
     /// # Parameters
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
-    /// requires a set of device attestation certificates and keys. It is the responsibility of
-    /// this object to return the device attestation details when queried upon.
+    ///   requires a set of device attestation certificates and keys. It is the responsibility of
+    ///   this object to return the device attestation details when queried upon.
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
@@ -203,7 +203,7 @@ impl<'a> Matter<'a> {
         &self,
         send: S,
         recv: R,
-        host: crate::mdns::Host<'_>,
+        host: &crate::mdns::Host<'_>,
         interface: Option<u32>,
     ) -> Result<(), Error>
     where

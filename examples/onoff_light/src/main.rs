@@ -292,7 +292,7 @@ async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
         .run_builtin_mdns(
             &socket,
             &socket,
-            Host {
+            &Host {
                 id: 0,
                 hostname: "rs-matter-demo",
                 ip: ipv4_addr.octets(),
