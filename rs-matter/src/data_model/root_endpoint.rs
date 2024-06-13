@@ -121,6 +121,7 @@ where
         EthNwCommCluster::new(*matter.borrow()),
         ethernet_nw_diagnostics::ID,
         EthNwDiagCluster::new(*matter.borrow()),
+        true,
     )
 }
 
@@ -138,6 +139,7 @@ pub fn handler<'a, NWCOMM, NWDIAG, T>(
     nwcomm: NWCOMM,
     nwdiag_id: u32,
     nwdiag: NWDIAG,
+    supports_concurrent_connection: bool,
 ) -> RootEndpointHandler<'a, NWCOMM, NWDIAG>
 where
     T: Borrow<BasicInfoConfig<'a>>
@@ -167,6 +169,7 @@ where
         nwcomm,
         nwdiag_id,
         nwdiag,
+        supports_concurrent_connection,
     )
 }
 
@@ -186,6 +189,7 @@ fn wrap<'a, NWCOMM, NWDIAG>(
     nwcomm: NWCOMM,
     nwdiag_id: u32,
     nwdiag: NWDIAG,
+    supports_concurrent_connection: bool,
 ) -> RootEndpointHandler<'a, NWCOMM, NWDIAG> {
     EmptyHandler
         .chain(
@@ -225,7 +229,11 @@ fn wrap<'a, NWCOMM, NWDIAG>(
         .chain(
             endpoint_id,
             general_commissioning::ID,
-            HandlerCompat(GenCommCluster::new(failsafe, false, rand)),
+            HandlerCompat(GenCommCluster::new(
+                failsafe,
+                supports_concurrent_connection,
+                rand,
+            )),
         )
         .chain(
             endpoint_id,

@@ -274,7 +274,7 @@ impl<'m> TransportMgr<'m> {
                 send,
                 recv,
                 &PacketBufferExternalAccess(&self.tx),
-                PacketBufferExternalAccess(&self.rx),
+                &PacketBufferExternalAccess(&self.rx),
                 host,
                 interface,
                 self.rand,
