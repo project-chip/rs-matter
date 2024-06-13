@@ -143,7 +143,7 @@ impl EmptyHandler {
     ///
     /// The returned chained handler works as follows:
     /// - It will call the provided `handler` instance if the endpoint and cluster
-    /// of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    ///   of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
     /// - Otherwise, the empty handler would be invoked, causing the operation to error out.
     pub const fn chain<H>(
         self,
@@ -185,7 +185,7 @@ pub struct ChainedHandler<H, T> {
 impl<H, T> ChainedHandler<H, T> {
     /// Construct a chained handler that works as follows:
     /// - It will call the provided `handler` instance if the endpoint and cluster
-    /// of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    ///   of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
     /// - Otherwise, it will call the `next` handler
     pub const fn new(handler_endpoint: u16, handler_cluster: u32, handler: H, next: T) -> Self {
         Self {
@@ -200,7 +200,7 @@ impl<H, T> ChainedHandler<H, T> {
     ///
     /// The returned chained handler works as follows:
     /// - It will call the provided `handler` instance if the endpoint and cluster
-    /// of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    ///   of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
     /// - Otherwise, it will call the `self` handler
     pub const fn chain<H2>(
         self,

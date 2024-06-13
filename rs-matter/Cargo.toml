@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.77"
+rust-version = "1.78"
 
 [features]
 default = ["os", "mbedtls"]
@@ -27,7 +27,6 @@ rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
 bitflags = { version =  "2.5", default-features = false } # TODO: Update to 2.x
 byteorder = { version = "1.5", default-features = false }
 heapless = "0.8"
-heapless07 = { package = "heapless", version = "0.7" } # Necessary for domain 0.9
 num = { version = "0.4", default-features = false }
 num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
@@ -42,8 +41,7 @@ embassy-futures = "0.1"
 embassy-time = "0.3"
 embassy-sync = "0.5"
 critical-section = "1.1"
-domain = { version = "0.9", default-features = false, features = ["heapless"] }
-octseq = { version = "0.3", default-features = false }
+domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
 scopeguard = "1"
