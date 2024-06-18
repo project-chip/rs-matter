@@ -97,6 +97,10 @@ impl<'m> TransportMgr<'m> {
         }
     }
 
+    pub(crate) fn replace_mdns(&mut self, mdns: MdnsImpl<'m>) {
+        self.mdns = mdns;
+    }
+
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn initialize_buffers(&self) -> Result<(), Error> {
         let mut rx = self.rx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
