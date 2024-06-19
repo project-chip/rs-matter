@@ -21,8 +21,10 @@ use crate::error::{Error, ErrorCode};
 use super::Service;
 
 /// Internet DNS class with the "Cache Flush" bit set.
+/// See https://datatracker.ietf.org/doc/html/rfc6762#section-10.2 for details.
 fn dns_class_with_flush(dns_class: Class) -> Class {
-    Class::Int(u16::from(dns_class) | 0x8000)
+    const RESOURCE_RECORD_CACHE_FLUSH_BIT: u16 = 0x8000;
+    Class::Int(u16::from(dns_class) | RESOURCE_RECORD_CACHE_FLUSH_BIT)
 }
 
 impl From<ShortBuf> for Error {
@@ -362,9 +364,12 @@ impl<'a> Service<'a> {
         answer: &mut AnswerBuilder<T>,
         ttl_sec: u32,
     ) -> Result<(), PushError> {
+        // Don't set the flush-bit when sending this PTR record, as we're not the
+        // authority of dns_sd_fqdn: there may be answers from other devices on
+        // the network as well.
         answer.push((
             Self::dns_sd_fqdn(false).unwrap(),
-            dns_class_with_flush(Class::In),
+            Class::In,
             ttl_sec,
             Ptr::new(self.service_type_fqdn(false).unwrap()),
         ))?;
@@ -395,9 +400,12 @@ impl<'a> Service<'a> {
         service_subtype: &str,
         ttl_sec: u32,
     ) -> Result<(), PushError> {
+        // Don't set the flush-bit when sending this PTR record, as we're not the
+        // authority of dns_sd_fqdn: there may be answers from other devices on
+        // the network as well.
         answer.push((
             Self::dns_sd_fqdn(false).unwrap(),
-            dns_class_with_flush(Class::In),
+            Class::In,
             ttl_sec,
             Ptr::new(self.service_subtype_fqdn(service_subtype, false).unwrap()),
         ))?;
