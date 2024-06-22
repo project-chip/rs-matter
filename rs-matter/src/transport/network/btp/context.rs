@@ -35,7 +35,12 @@ pub const MAX_BTP_SESSIONS: usize = 2;
 
 /// Represents an error that occurred while trying to lock a session for sending.
 #[derive(Debug)]
-pub(crate) struct LockError(());
+pub(crate) enum LockError {
+    /// Session for the specified condition was not found.
+    NoMatch,
+    /// Session for the specified condition was found, but it was already locked for sending.
+    AlreadyLocked,
+}
 
 /// An internal utility for representing a session which is locked for sending.
 ///
@@ -57,12 +62,12 @@ where
 {
     /// Try to find a session that matches the given condition and lock it for sending.
     ///
-    /// If there is no session matching the given condition, the method will return `LockError`.
-    /// If the first session matching the given condition is already locked for sending, the method will return `None`.
+    /// - If there is no session matching the given condition, the method will return `LockError::NoMatch`.
+    /// - If the first session matching the given condition is already locked for sending, the method will return `LockError::AlreadyLocked`.
     ///
     /// Due to the above semantics, the condition is expected to uniquely identify a session, by - say - matching on
     /// the session peer BLE address.
-    pub fn try_lock<F>(context: &'a BtpContext<M>, condition: F) -> Result<Option<Self>, LockError>
+    pub fn try_lock<F>(context: &'a BtpContext<M>, condition: F) -> Result<Self, LockError>
     where
         F: Fn(&Session) -> bool,
     {
@@ -70,19 +75,17 @@ where
             let mut sessions = sessions.borrow_mut();
 
             let Some(session) = sessions.iter_mut().find(|session| condition(session)) else {
-                return Err(LockError(()));
+                return Err(LockError::NoMatch);
             };
 
-            let lock = if session.set_sending(true) {
-                Some(Self {
-                    context,
-                    address: session.address(),
-                })
-            } else {
-                None
-            };
+            if !session.set_sending(true) {
+                Err(LockError::AlreadyLocked)?;
+            }
 
-            Ok(lock)
+            Ok(Self {
+                context,
+                address: session.address(),
+            })
         })
     }
 
@@ -90,7 +93,7 @@ where
     ///
     /// If all sessions matching the provided condition are already locked for sending, or if there is no
     /// session matching the provided condition, the method will return `None`.
-    pub fn lock<F>(context: &'a BtpContext<M>, condition: F) -> Option<Self>
+    pub fn lock_any<F>(context: &'a BtpContext<M>, condition: F) -> Option<Self>
     where
         F: Fn(&Session) -> bool,
     {

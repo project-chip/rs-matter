@@ -25,6 +25,8 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_time::{Duration, Instant, Timer};
 
 use log::trace;
+
+use context::LockError;
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
@@ -170,17 +172,17 @@ where
     pub async fn send(&self, data: &[u8], address: BtAddr) -> Result<(), Error> {
         let context = self.context.borrow();
 
-        loop {
-            if let Some(session_lock) =
-                SessionSendLock::try_lock(context, |session| session.address() == address)
-                    .map_err(|_| ErrorCode::NoNetworkInterface)?
-            {
-                self.do_send(&session_lock, data).await?;
-                break;
+        let session_lock = loop {
+            match SessionSendLock::try_lock(context, |session| session.address() == address) {
+                Ok(session_lock) => break session_lock,
+                Err(LockError::NoMatch) => Err(ErrorCode::NoNetworkInterface)?,
+                Err(LockError::AlreadyLocked) => (),
             }
 
             context.send_notif.wait().await;
-        }
+        };
+
+        self.do_send(&session_lock, data).await?;
 
         Ok(())
     }
@@ -248,7 +250,7 @@ where
         let context = self.context.borrow();
 
         loop {
-            while let Some(session_lock) = SessionSendLock::lock(context, |session| {
+            while let Some(session_lock) = SessionSendLock::lock_any(context, |session| {
                 session.is_ack_due(Instant::now(), self.ack_timeout_secs)
             }) {
                 self.do_send(&session_lock, &[]).await?;
@@ -266,7 +268,7 @@ where
 
         loop {
             while let Some(session_lock) =
-                SessionSendLock::lock(context, session::Session::is_handshake_resp_due)
+                SessionSendLock::lock_any(context, session::Session::is_handshake_resp_due)
             {
                 let mut buf = self.send_buf().await;
 
