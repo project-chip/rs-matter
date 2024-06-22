@@ -57,7 +57,7 @@ where
 {
     /// Try to find a session that matches the given condition and lock it for sending.
     ///
-    /// If there is no session matching the given condition, the methos will return `LockError`.
+    /// If there is no session matching the given condition, the method will return `LockError`.
     /// If the first session matching the given condition is already locked for sending, the method will return `None`.
     ///
     /// Due to the above semantics, the condition is expected to uniquely identify a session, by - say - matching on
@@ -144,6 +144,12 @@ where
                 .find(|session| session.address() == self.address)
             {
                 if !session.set_sending(false) || !session.set_running() {
+                    // If we reach here this is a bug, because
+                    // - a `SessionSendLock` cannot be acqired unless the session is
+                    //   either in `Subscribed` or `Running` state already, during the
+                    //   lock acqusition.
+                    // - The session is set to `seding` state when the lock is acquired,
+                    //   and is unset when the lock is dropped.
                     unreachable!("Should not happen")
                 }
             }

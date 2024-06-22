@@ -207,6 +207,8 @@ impl From<ccm::aead::Error> for Error {
 #[cfg(all(feature = "std", target_os = "linux", not(feature = "backtrace")))]
 impl From<bluer::Error> for Error {
     fn from(e: bluer::Error) -> Self {
+        // Log the error given that we lose all context from the
+        // original error here
         ::log::error!("Error in BTP: {e}");
         Self::new(ErrorCode::BtpError)
     }

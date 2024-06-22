@@ -16,6 +16,7 @@
  */
 
 use core::cmp::min;
+use core::num::Wrapping;
 
 use embassy_time::{Duration, Instant};
 
@@ -90,13 +91,36 @@ impl SendWindow {
             self.level = self.window_size;
             self.sent_at = Instant::MAX;
         } else {
-            let distance = if ack_seq_num > self.last_sent_seq_num {
-                255 - ack_seq_num + self.last_sent_seq_num + 1
-            } else {
-                self.last_sent_seq_num - ack_seq_num
-            };
+            // Two examples just to clarify the logic of computing `unacknowledged`:
+            //
+            // Example 1:
+            // We got an ACK for a seq num which is smaller than the last one we have sent
+            // - if we have sent i.e. sequence numbers [3, 4, 5, 6, 7]
+            // - i.e. our `last_sent_seq_num` would be = 7
+            // - ... and we got ACK = 5
+            // ... the unacknowledged packets are [6, 7] = 2 of these
+            // which is computed as 7 - 5 = 2
+            // ... and `(Wrapping(last_sent_seq_num) - Wrapping(ack_seq_num)).0` obviously gives 2
+            //
+            // Example 2:
+            // We got an ACK for a seq num which is bigger than the last one we have sent.
+            // This might happen if the sequence number has wrapped around (which might well
+            // happen, as it is only one byte).
+            //
+            // In this case, the the number of packets we have sent and which remain un-acknowledged
+            // has to account for the wrapping of the sequence number.
+            // I.e.
+            // - if we have sent i.e. sequence numbers [254, 255, 0, 1, 2]
+            // - i.e. our `last_sent_seq_num` would be = 2
+            // - ... and we got ACK = 254
+            // ... the unacknowledged packets are [255, 0, 2, 1] = 4 of these
+            // which is computed as 255 - 254 + 2 + 1 = 4
+            // ... and `(Wrapping(last_sent_seq_num) - Wrapping(ack_seq_num)).0` (non-)obviously gives 4 as well!
 
-            self.level = self.window_size - distance;
+            let unacknowledged = (Wrapping(self.last_sent_seq_num) - Wrapping(ack_seq_num)).0;
+
+            // Adjust our "fullness" level with the number of packets that have been acknowledged
+            self.level = self.window_size - unacknowledged;
             self.sent_at = Instant::now();
         }
     }
@@ -180,7 +204,8 @@ impl RecvWindow {
                     // New SDU; skip 0-length ones as they do not contain Matter messages
                     self.buf.push(&u16::to_le_bytes(msg_len));
                 } else {
-                    Err(ErrorCode::NoSpace)?;
+                    warn!("RX data integrity failure: got more data when the ring-buffer is full. Is the other party overflowing our recv window?");
+                    Err(ErrorCode::InvalidData)?;
                 }
             }
         }
@@ -188,20 +213,22 @@ impl RecvWindow {
         if self.rem_msg_len < payload.len() as u16 {
             warn!("RX data integrity failure: Packet contains more data than the message length");
             Err(ErrorCode::InvalidData)?;
-        } else {
-            self.rem_msg_len -= payload.len() as u16;
-            if hdr.is_final() && self.rem_msg_len > 0 {
-                warn!("RX data integrity failure: Packet is final but the message length is not reached");
-                Err(ErrorCode::InvalidData)?;
-            }
         }
 
-        if self.buf.free() >= payload.len() {
-            self.buf.push(payload);
-        } else {
-            Err(ErrorCode::NoSpace)?;
+        self.rem_msg_len -= payload.len() as u16;
+        if hdr.is_final() && self.rem_msg_len > 0 {
+            warn!(
+                "RX data integrity failure: Packet is final but the message length is not reached"
+            );
+            Err(ErrorCode::InvalidData)?;
         }
 
+        if self.buf.free() < payload.len() {
+            warn!("RX data integrity failure: got more data when the ring-buffer is full. Is the other party overflowing our recv window?");
+            Err(ErrorCode::InvalidData)?;
+        }
+
+        self.buf.push(payload);
         self.level -= 1;
         // Unwrap is safe because we are only processing BTP data segments here and they always have a sequence number
         self.ack_seq = hdr.get_seq().unwrap();
@@ -270,7 +297,7 @@ impl RecvWindow {
             || hdr.get_ack().is_some()
         // Handshake packets must not have an ACK
         {
-            warn!("RX handshake integrity failure");
+            warn!("RX handshake integrity failure: {hdr}");
             return Err(ErrorCode::InvalidData.into());
         }
 

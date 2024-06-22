@@ -59,30 +59,30 @@ impl<'a> WifiNwCommCluster<'a> {
         attr: &AttrDetails<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
-            if attr.is_system() {
-                WIFI_CLUSTER.read(attr.attr_id, writer)
-            } else {
-                match attr.attr_id.try_into()? {
-                    Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, 1_u8),
-                    Attributes::Networks => {
-                        writer.start_array(AttrDataWriter::TAG)?;
+        let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? else {
+            return Ok(());
+        };
 
-                        writer.end_container()?;
-                        writer.complete()
-                    }
-                    Attributes::ScanMaxTimeSecs => AttrType::new().encode(writer, 30_u8),
-                    Attributes::ConnectMaxTimeSecs => AttrType::new().encode(writer, 60_u8),
-                    Attributes::InterfaceEnabled => AttrType::new().encode(writer, true),
-                    Attributes::LastNetworkingStatus => AttrType::new().encode(writer, 0_u8),
-                    Attributes::LastNetworkID => {
-                        AttrType::new().encode(writer, OctetStr("ssid".as_bytes()))
-                    }
-                    Attributes::LastConnectErrorValue => AttrType::new().encode(writer, 0),
-                }
+        if attr.is_system() {
+            return WIFI_CLUSTER.read(attr.attr_id, writer);
+        }
+
+        match attr.attr_id.try_into()? {
+            Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, 1_u8),
+            Attributes::Networks => {
+                writer.start_array(AttrDataWriter::TAG)?;
+
+                writer.end_container()?;
+                writer.complete()
             }
-        } else {
-            Ok(())
+            Attributes::ScanMaxTimeSecs => AttrType::new().encode(writer, 30_u8),
+            Attributes::ConnectMaxTimeSecs => AttrType::new().encode(writer, 60_u8),
+            Attributes::InterfaceEnabled => AttrType::new().encode(writer, true),
+            Attributes::LastNetworkingStatus => AttrType::new().encode(writer, 0_u8),
+            Attributes::LastNetworkID => {
+                AttrType::new().encode(writer, OctetStr("ssid".as_bytes()))
+            }
+            Attributes::LastConnectErrorValue => AttrType::new().encode(writer, 0),
         }
     }
 
