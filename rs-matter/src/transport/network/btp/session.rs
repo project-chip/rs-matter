@@ -457,17 +457,11 @@ impl Session {
     ///
     /// Will return `false` if the session is already locked for sending.
     pub fn set_sending(&mut self, sending: bool) -> bool {
-        if sending {
-            if self.send_window.sending {
-                false
-            } else {
-                self.send_window.sending = true;
-                true
-            }
-        } else {
-            self.send_window.sending = false;
-            true
+        if sending && self.send_window.sending {
+            return false; // already in sending mode, cannot set twice
         }
+        self.send_window.sending = sending;
+        true
     }
 
     /// Return `true` if the session buffer contains at least one complete DSDU, for consumption by the
