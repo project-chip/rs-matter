@@ -243,9 +243,12 @@ impl RecvWindow {
     }
 
     fn check_data_integrity(&self, hdr: &BtpHdr, payload: &[u8], mtu: u16) -> Result<(), Error> {
-        if hdr.is_handshake() // Handshake packets are not allowed here
-            || hdr.get_opcode().is_some()
-        {
+        if hdr.is_handshake() {
+            warn!("RX data integrity failure: Handshake packets are not allowed here");
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        if hdr.get_opcode().is_some() {
             warn!("RX data integrity failure: Data and standalone ACK packets must not have an opcode");
             return Err(ErrorCode::InvalidData.into());
         }
@@ -455,7 +458,7 @@ impl Session {
     /// (As per the Matter Core spec, at any moment in time, a session
     /// can send the BTP segments of a single BTP SDU, hence the need for locking.)
     ///
-    /// Will return `false` if the session is already locked for sending.
+    /// Will return `false` if sending is true and the session is already locked for sending.
     pub fn set_sending(&mut self, sending: bool) -> bool {
         if sending && self.send_window.sending {
             return false; // already in sending mode, cannot set twice

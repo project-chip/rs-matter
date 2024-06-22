@@ -292,7 +292,8 @@ where
                 .find(|session| session.address() == address)
             {
                 if !session.set_subscribed() {
-                    unreachable!();
+                    warn!("Got a second subscribe request for an address which is already subscribed: {address}");
+                    Err(ErrorCode::InvalidState)?;
                 }
 
                 self.handshake_notif.notify();
