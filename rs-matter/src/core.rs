@@ -125,6 +125,31 @@ impl<'a> Matter<'a> {
         self.port
     }
 
+    /// A utility method to replace the initial mDNS implementation with another one.
+    ///
+    /// Useful in particular with `MdnsService::Provided`, where the user would still like
+    /// to create the `Matter` instance in a const-context, as in e.g.:
+    /// `const MATTER: Matter<'static> = Matter::new(...);`
+    ///
+    /// The above const-creation is incompatible with `MdnsService::Provided` which carries a
+    /// `&dyn Mdns` pointer, which cannot be initialized from within a const context with anything
+    /// else than a `const`. (At least not yet - there is an unstable nightly Rust feature for that).
+    ///
+    /// The solution is to const-construct the `Matter` object with `MdnsService::Disabled`, and
+    /// after that - while/if we still have exclusive, mutable access to the `Matter` object -
+    /// replace the `MdnsService::Disabled` initial impl with another, like `MdnsService::Provided`.
+    pub fn replace_mdns(&mut self, mdns: MdnsService<'a>) {
+        self.transport_mgr
+            .replace_mdns(mdns.new_impl(self.dev_det, self.port));
+    }
+
+    /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
+    ///
+    /// Reasoning and use-cases explained in the documentation of `replace_mdns`.
+    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DevAttDataFetcher) {
+        self.dev_att = dev_att;
+    }
+
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
         self.fabric_mgr
             .borrow_mut()
