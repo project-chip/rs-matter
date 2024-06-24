@@ -39,7 +39,7 @@ time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-time = "0.3"
-embassy-sync = "0.5"
+embassy-sync = "0.6"
 critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
