@@ -289,6 +289,22 @@ impl<'m> TransportMgr<'m> {
         }
     }
 
+    /// Return a reference to the transport RX buffer.
+    ///
+    /// Useful when external code (like i.e. a user-provided mDNS implementation)
+    /// needs an RX buffer.
+    pub fn rx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
+        PacketBufferExternalAccess(&self.rx)
+    }
+
+    /// Return a reference to the transport TX buffer.
+    ///
+    /// Useful when external code (like i.e. a user-provided mDNS implementation)
+    /// needs a TX buffer.
+    pub fn tx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
+        PacketBufferExternalAccess(&self.tx)
+    }
+
     pub(crate) async fn get_if<'a, F, const N: usize>(
         &'a self,
         packet_mutex: &'a IfMutex<NoopRawMutex, Packet<N>>,
