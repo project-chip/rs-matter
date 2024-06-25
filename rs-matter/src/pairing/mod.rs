@@ -34,6 +34,7 @@ use self::{
     qr::{compute_qr_code_text, print_qr_code},
 };
 
+// TODO: Rework as a `bitflags!` enum
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryCapabilities {
     on_ip_network: bool,

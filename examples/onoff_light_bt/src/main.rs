@@ -136,7 +136,6 @@ fn run() -> Result<(), Error> {
         discriminator: 250,
     };
 
-    //let discovery_caps = DiscoveryCapabilities::new(true, false, false);
     let discovery_caps = DiscoveryCapabilities::new(false, true, false);
 
     matter.initialize_transport_buffers()?;
