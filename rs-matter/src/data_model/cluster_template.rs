@@ -15,11 +15,9 @@
  *    limitations under the License.
  */
 
-use crate::{
-    data_model::objects::{Cluster, Handler},
-    error::{Error, ErrorCode},
-    utils::rand::Rand,
-};
+use crate::data_model::objects::{Cluster, Handler};
+use crate::error::{Error, ErrorCode};
+use crate::transport::exchange::Exchange;
 
 use super::objects::{
     AttrDataEncoder, AttrDetails, ChangeNotifier, Dataver, NonBlockingHandler, ATTRIBUTE_LIST,
@@ -40,13 +38,16 @@ pub struct TemplateCluster {
 }
 
 impl TemplateCluster {
-    pub fn new(rand: Rand) -> Self {
-        Self {
-            data_ver: Dataver::new(rand),
-        }
+    pub const fn new(data_ver: Dataver) -> Self {
+        Self { data_ver }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -60,8 +61,13 @@ impl TemplateCluster {
 }
 
 impl Handler for TemplateCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        TemplateCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        TemplateCluster::read(self, exchange, attr, encoder)
     }
 }
 

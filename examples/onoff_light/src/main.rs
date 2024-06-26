@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::borrow::Borrow;
 use core::pin::pin;
 use std::net::UdpSocket;
 
@@ -108,7 +107,7 @@ fn run() -> Result<(), Error> {
 
     let mut mdns = pin!(run_mdns(&matter));
 
-    let on_off = cluster_on_off::OnOffCluster::new(*matter.borrow());
+    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(matter.rand()));
 
     let subscriptions = Subscriptions::<3>::new();
 
@@ -153,7 +152,7 @@ fn run() -> Result<(), Error> {
         Some((
             CommissioningData {
                 // TODO: Hard-coded for now
-                verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
+                verifier: VerifierData::new_with_pw(123456, matter.rand()),
                 discriminator: 250,
             },
             Default::default(),
@@ -196,11 +195,11 @@ fn dm_handler<'a>(
 ) -> impl Metadata + NonBlockingHandler + 'a {
     (
         NODE,
-        root_endpoint::eth_handler(0, matter)
+        root_endpoint::eth_handler(0, matter.rand())
             .chain(
                 1,
                 descriptor::ID,
-                descriptor::DescriptorCluster::new(*matter.borrow()),
+                descriptor::DescriptorCluster::new(Dataver::new_rand(matter.rand())),
             )
             .chain(1, cluster_on_off::ID, on_off),
     )

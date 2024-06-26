@@ -16,18 +16,17 @@
  */
 
 use rs_matter_macros::FromTLV;
+
 use strum::FromRepr;
 
-use crate::{
-    attribute_enum, command_enum,
-    data_model::objects::{
-        Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, ChangeNotifier,
-        Cluster, Dataver, Handler, NonBlockingHandler, Quality, ATTRIBUTE_LIST, FEATURE_MAP,
-    },
-    error::{Error, ErrorCode},
-    tlv::{OctetStr, TLVArray, TagType, ToTLV},
-    utils::rand::Rand,
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, ChangeNotifier,
+    Cluster, Dataver, Handler, NonBlockingHandler, Quality, ATTRIBUTE_LIST, FEATURE_MAP,
 };
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{OctetStr, TLVArray, TagType, ToTLV};
+use crate::transport::exchange::Exchange;
+use crate::{attribute_enum, command_enum};
 
 pub const ID: u32 = 0x0031;
 
@@ -270,15 +269,59 @@ pub struct ThreadInterfaceScanResult<'a> {
     pub lqi: u8,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EthNwCommCluster {
     data_ver: Dataver,
 }
 
 impl EthNwCommCluster {
-    pub fn new(rand: Rand) -> Self {
-        Self {
-            data_ver: Dataver::new(rand),
+    pub const fn new(data_ver: Dataver) -> Self {
+        Self { data_ver }
+    }
+
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        let info = self.get_network_info();
+        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
+            if attr.is_system() {
+                ETH_CLUSTER.read(attr.attr_id, writer)
+            } else {
+                match attr.attr_id.try_into()? {
+                    Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, 1),
+                    Attributes::Networks => {
+                        writer.start_array(AttrDataWriter::TAG)?;
+                        info.nw_info.to_tlv(&mut writer, TagType::Anonymous)?;
+                        writer.end_container()?;
+                        writer.complete()
+                    }
+                    Attributes::ConnectMaxTimeSecs => {
+                        AttrType::<u8>::new().encode(writer, info.connect_max_time_secs)
+                    }
+                    Attributes::InterfaceEnabled => {
+                        AttrType::<bool>::new().encode(writer, info.interface_enabled)
+                    }
+                    Attributes::LastNetworkingStatus => {
+                        AttrType::<u8>::new().encode(writer, info.last_nw_status as u8)
+                    }
+                    Attributes::LastNetworkID => {
+                        info.nw_info
+                            .network_id
+                            .to_tlv(&mut writer, AttrDataWriter::TAG)?;
+                        writer.complete()
+                    }
+                    Attributes::LastConnectErrorValue => {
+                        writer.null(AttrDataWriter::TAG)?;
+                        writer.complete()
+                    }
+                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                }
+            }
+        } else {
+            Ok(())
         }
     }
 
@@ -330,45 +373,13 @@ pub enum NetworkCommissioningStatus {
 }
 
 impl Handler for EthNwCommCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        let info = self.get_network_info();
-        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
-            if attr.is_system() {
-                ETH_CLUSTER.read(attr.attr_id, writer)
-            } else {
-                match attr.attr_id.try_into()? {
-                    Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, 1),
-                    Attributes::Networks => {
-                        writer.start_array(AttrDataWriter::TAG)?;
-                        info.nw_info.to_tlv(&mut writer, TagType::Anonymous)?;
-                        writer.end_container()?;
-                        writer.complete()
-                    }
-                    Attributes::ConnectMaxTimeSecs => {
-                        AttrType::<u8>::new().encode(writer, info.connect_max_time_secs)
-                    }
-                    Attributes::InterfaceEnabled => {
-                        AttrType::<bool>::new().encode(writer, info.interface_enabled)
-                    }
-                    Attributes::LastNetworkingStatus => {
-                        AttrType::<u8>::new().encode(writer, info.last_nw_status as u8)
-                    }
-                    Attributes::LastNetworkID => {
-                        info.nw_info
-                            .network_id
-                            .to_tlv(&mut writer, AttrDataWriter::TAG)?;
-                        writer.complete()
-                    }
-                    Attributes::LastConnectErrorValue => {
-                        writer.null(AttrDataWriter::TAG)?;
-                        writer.complete()
-                    }
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
-                }
-            }
-        } else {
-            Ok(())
-        }
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        EthNwCommCluster::read(self, exchange, attr, encoder)
     }
 }
 

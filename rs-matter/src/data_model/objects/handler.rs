@@ -37,9 +37,19 @@ pub trait ChangeNotifier<T> {
 ///
 /// Prefer this trait when implementing handlers that are known to be non-blocking.
 pub trait Handler {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error>;
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error>;
 
-    fn write(&self, _attr: &AttrDetails, _data: AttrData) -> Result<(), Error> {
+    fn write(
+        &self,
+        _exchange: &Exchange,
+        _attr: &AttrDetails,
+        _data: AttrData,
+    ) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 
@@ -58,12 +68,17 @@ impl<T> Handler for &T
 where
     T: Handler,
 {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        (**self).read(attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        (**self).read(exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        (**self).write(attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        (**self).write(exchange, attr, data)
     }
 
     fn invoke(
@@ -81,12 +96,17 @@ impl<T> Handler for &mut T
 where
     T: Handler,
 {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        (**self).read(attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        (**self).read(exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        (**self).write(attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        (**self).write(exchange, attr, data)
     }
 
     fn invoke(
@@ -111,12 +131,17 @@ impl<M, H> Handler for (M, H)
 where
     H: Handler,
 {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        self.1.read(attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        self.1.read(exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        self.1.write(attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        self.1.write(exchange, attr, data)
     }
 
     fn invoke(
@@ -161,7 +186,12 @@ impl EmptyHandler {
 }
 
 impl Handler for EmptyHandler {
-    fn read(&self, _attr: &AttrDetails, _encoder: AttrDataEncoder) -> Result<(), Error> {
+    fn read(
+        &self,
+        _exchange: &Exchange,
+        _attr: &AttrDetails,
+        _encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         Err(ErrorCode::AttributeNotFound.into())
     }
 }
@@ -217,19 +247,24 @@ where
     H: Handler,
     T: Handler,
 {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id {
-            self.handler.read(attr, encoder)
+            self.handler.read(exchange, attr, encoder)
         } else {
-            self.next.read(attr, encoder)
+            self.next.read(exchange, attr, encoder)
         }
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id {
-            self.handler.write(attr, data)
+            self.handler.write(exchange, attr, data)
         } else {
-            self.next.write(attr, data)
+            self.next.write(exchange, attr, data)
         }
     }
 
@@ -279,12 +314,17 @@ impl<T> Handler for HandlerCompat<T>
 where
     T: Handler,
 {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        self.0.read(attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        self.0.read(exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        self.0.write(attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        self.0.write(exchange, attr, data)
     }
 
     fn invoke(
@@ -365,7 +405,7 @@ mod asynch {
         ///
         /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
         /// await while reading any attribute.
-        fn read_awaits(&self, _attr: &AttrDetails) -> bool {
+        fn read_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
             true
         }
 
@@ -378,7 +418,7 @@ mod asynch {
         ///
         /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
         /// await while writing any attribute.
-        fn write_awaits(&self, _attr: &AttrDetails) -> bool {
+        fn write_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
             true
         }
 
@@ -391,24 +431,26 @@ mod asynch {
         ///
         /// The default implementation unconditionally returns `true` i.e. the handler is assumed to
         /// await while invoking any command.
-        fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
+        fn invoke_awaits(&self, _exchange: &Exchange, _cmd: &CmdDetails) -> bool {
             true
         }
 
         /// Reads from the requested attribute and encodes the result using the provided encoder.
-        async fn read<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error>;
 
         /// Writes into the requested attribute using the provided data.
         ///
         /// The default implementation errors out with `ErrorCode::AttributeNotFound`.
-        async fn write<'a>(
-            &'a self,
-            _attr: &'a AttrDetails<'_>,
-            _data: AttrData<'a>,
+        async fn write(
+            &self,
+            _exchange: &Exchange<'_>,
+            _attr: &AttrDetails<'_>,
+            _data: AttrData<'_>,
         ) -> Result<(), Error> {
             Err(ErrorCode::AttributeNotFound.into())
         }
@@ -416,12 +458,12 @@ mod asynch {
         /// Invokes the requested command with the provided data and encodes the result using the provided encoder.
         ///
         /// The default implementation errors out with `ErrorCode::CommandNotFound`.
-        async fn invoke<'a>(
-            &'a self,
-            _exchange: &'a Exchange<'_>,
-            _cmd: &'a CmdDetails<'_>,
-            _data: &'a TLVElement<'_>,
-            _encoder: CmdDataEncoder<'a, '_, '_>,
+        async fn invoke(
+            &self,
+            _exchange: &Exchange<'_>,
+            _cmd: &CmdDetails<'_>,
+            _data: &TLVElement<'_>,
+            _encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             Err(ErrorCode::CommandNotFound.into())
         }
@@ -431,40 +473,42 @@ mod asynch {
     where
         T: AsyncHandler,
     {
-        fn read_awaits(&self, attr: &AttrDetails) -> bool {
-            (**self).read_awaits(attr)
+        fn read_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
+            (**self).read_awaits(exchange, attr)
         }
 
-        fn write_awaits(&self, attr: &AttrDetails) -> bool {
-            (**self).write_awaits(attr)
+        fn write_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
+            (**self).write_awaits(exchange, attr)
         }
 
-        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
-            (**self).invoke_awaits(cmd)
+        fn invoke_awaits(&self, exchange: &Exchange, cmd: &CmdDetails) -> bool {
+            (**self).invoke_awaits(exchange, cmd)
         }
 
-        async fn read<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
-            (**self).read(attr, encoder).await
+            (**self).read(exchange, attr, encoder).await
         }
 
-        async fn write<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            data: AttrData<'a>,
+        async fn write(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            data: AttrData<'_>,
         ) -> Result<(), Error> {
-            (**self).write(attr, data).await
+            (**self).write(exchange, attr, data).await
         }
 
-        async fn invoke<'a>(
-            &'a self,
-            exchange: &'a Exchange<'_>,
-            cmd: &'a CmdDetails<'_>,
-            data: &'a TLVElement<'_>,
-            encoder: CmdDataEncoder<'a, '_, '_>,
+        async fn invoke(
+            &self,
+            exchange: &Exchange<'_>,
+            cmd: &CmdDetails<'_>,
+            data: &TLVElement<'_>,
+            encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             (**self).invoke(exchange, cmd, data, encoder).await
         }
@@ -474,40 +518,42 @@ mod asynch {
     where
         T: AsyncHandler,
     {
-        fn read_awaits(&self, attr: &AttrDetails) -> bool {
-            (**self).read_awaits(attr)
+        fn read_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
+            (**self).read_awaits(exchange, attr)
         }
 
-        fn write_awaits(&self, attr: &AttrDetails) -> bool {
-            (**self).write_awaits(attr)
+        fn write_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
+            (**self).write_awaits(exchange, attr)
         }
 
-        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
-            (**self).invoke_awaits(cmd)
+        fn invoke_awaits(&self, exchange: &Exchange, cmd: &CmdDetails) -> bool {
+            (**self).invoke_awaits(exchange, cmd)
         }
 
-        async fn read<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
-            (**self).read(attr, encoder).await
+            (**self).read(exchange, attr, encoder).await
         }
 
-        async fn write<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            data: AttrData<'a>,
+        async fn write(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            data: AttrData<'_>,
         ) -> Result<(), Error> {
-            (**self).write(attr, data).await
+            (**self).write(exchange, attr, data).await
         }
 
-        async fn invoke<'a>(
-            &'a self,
-            exchange: &'a Exchange<'_>,
-            cmd: &'a CmdDetails<'_>,
-            data: &'a TLVElement<'_>,
-            encoder: CmdDataEncoder<'a, '_, '_>,
+        async fn invoke(
+            &self,
+            exchange: &Exchange<'_>,
+            cmd: &CmdDetails<'_>,
+            data: &TLVElement<'_>,
+            encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             (**self).invoke(exchange, cmd, data, encoder).await
         }
@@ -517,40 +563,42 @@ mod asynch {
     where
         H: AsyncHandler,
     {
-        fn read_awaits(&self, attr: &AttrDetails) -> bool {
-            self.1.read_awaits(attr)
+        fn read_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
+            self.1.read_awaits(exchange, attr)
         }
 
-        fn write_awaits(&self, attr: &AttrDetails) -> bool {
-            self.1.write_awaits(attr)
+        fn write_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
+            self.1.write_awaits(exchange, attr)
         }
 
-        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
-            self.1.invoke_awaits(cmd)
+        fn invoke_awaits(&self, exchange: &Exchange, cmd: &CmdDetails) -> bool {
+            self.1.invoke_awaits(exchange, cmd)
         }
 
-        async fn read<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
-            self.1.read(attr, encoder).await
+            self.1.read(exchange, attr, encoder).await
         }
 
-        async fn write<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            data: AttrData<'a>,
+        async fn write(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            data: AttrData<'_>,
         ) -> Result<(), Error> {
-            self.1.write(attr, data).await
+            self.1.write(exchange, attr, data).await
         }
 
-        async fn invoke<'a>(
-            &'a self,
-            exchange: &'a Exchange<'_>,
-            cmd: &'a CmdDetails<'_>,
-            data: &'a TLVElement<'_>,
-            encoder: CmdDataEncoder<'a, '_, '_>,
+        async fn invoke(
+            &self,
+            exchange: &Exchange<'_>,
+            cmd: &CmdDetails<'_>,
+            data: &TLVElement<'_>,
+            encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             self.1.invoke(exchange, cmd, data, encoder).await
         }
@@ -560,62 +608,65 @@ mod asynch {
     where
         T: NonBlockingHandler,
     {
-        fn read_awaits(&self, _attr: &AttrDetails) -> bool {
+        fn read_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
             false
         }
 
-        fn write_awaits(&self, _attr: &AttrDetails) -> bool {
+        fn write_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
             false
         }
 
-        fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
+        fn invoke_awaits(&self, _exchange: &Exchange, _cmd: &CmdDetails) -> bool {
             false
         }
 
-        async fn read<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
-            Handler::read(&self.0, attr, encoder)
+            Handler::read(&self.0, exchange, attr, encoder)
         }
 
-        async fn write<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            data: AttrData<'a>,
+        async fn write(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            data: AttrData<'_>,
         ) -> Result<(), Error> {
-            Handler::write(&self.0, attr, data)
+            Handler::write(&self.0, exchange, attr, data)
         }
 
-        async fn invoke<'a>(
-            &'a self,
-            exchange: &'a Exchange<'_>,
-            cmd: &'a CmdDetails<'_>,
-            data: &'a TLVElement<'_>,
-            encoder: CmdDataEncoder<'a, '_, '_>,
+        async fn invoke(
+            &self,
+            exchange: &Exchange<'_>,
+            cmd: &CmdDetails<'_>,
+            data: &TLVElement<'_>,
+            encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             Handler::invoke(&self.0, exchange, cmd, data, encoder)
         }
     }
 
     impl AsyncHandler for EmptyHandler {
-        fn read_awaits(&self, _attr: &AttrDetails) -> bool {
+        fn read_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
             false
         }
 
-        fn write_awaits(&self, _attr: &AttrDetails) -> bool {
+        fn write_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
             false
         }
 
-        fn invoke_awaits(&self, _cmd: &CmdDetails) -> bool {
+        fn invoke_awaits(&self, _exchange: &Exchange, _cmd: &CmdDetails) -> bool {
             false
         }
 
-        async fn read<'a>(
-            &'a self,
-            _attr: &'a AttrDetails<'_>,
-            _encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            _exchange: &Exchange<'_>,
+            _attr: &AttrDetails<'_>,
+            _encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             Err(ErrorCode::AttributeNotFound.into())
         }
@@ -626,64 +677,66 @@ mod asynch {
         H: AsyncHandler,
         T: AsyncHandler,
     {
-        fn read_awaits(&self, attr: &AttrDetails) -> bool {
+        fn read_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
             if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id
             {
-                self.handler.read_awaits(attr)
+                self.handler.read_awaits(exchange, attr)
             } else {
-                self.next.read_awaits(attr)
+                self.next.read_awaits(exchange, attr)
             }
         }
 
-        fn write_awaits(&self, attr: &AttrDetails) -> bool {
+        fn write_awaits(&self, exchange: &Exchange, attr: &AttrDetails) -> bool {
             if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id
             {
-                self.handler.write_awaits(attr)
+                self.handler.write_awaits(exchange, attr)
             } else {
-                self.next.write_awaits(attr)
+                self.next.write_awaits(exchange, attr)
             }
         }
 
-        fn invoke_awaits(&self, cmd: &CmdDetails) -> bool {
+        fn invoke_awaits(&self, exchange: &Exchange, cmd: &CmdDetails) -> bool {
             if self.handler_endpoint == cmd.endpoint_id && self.handler_cluster == cmd.cluster_id {
-                self.handler.invoke_awaits(cmd)
+                self.handler.invoke_awaits(exchange, cmd)
             } else {
-                self.next.invoke_awaits(cmd)
+                self.next.invoke_awaits(exchange, cmd)
             }
         }
 
-        async fn read<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            encoder: AttrDataEncoder<'a, '_, '_>,
+        async fn read(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id
             {
-                self.handler.read(attr, encoder).await
+                self.handler.read(exchange, attr, encoder).await
             } else {
-                self.next.read(attr, encoder).await
+                self.next.read(exchange, attr, encoder).await
             }
         }
 
-        async fn write<'a>(
-            &'a self,
-            attr: &'a AttrDetails<'_>,
-            data: AttrData<'a>,
+        async fn write(
+            &self,
+            exchange: &Exchange<'_>,
+            attr: &AttrDetails<'_>,
+            data: AttrData<'_>,
         ) -> Result<(), Error> {
             if self.handler_endpoint == attr.endpoint_id && self.handler_cluster == attr.cluster_id
             {
-                self.handler.write(attr, data).await
+                self.handler.write(exchange, attr, data).await
             } else {
-                self.next.write(attr, data).await
+                self.next.write(exchange, attr, data).await
             }
         }
 
-        async fn invoke<'a>(
-            &'a self,
-            exchange: &'a Exchange<'_>,
-            cmd: &'a CmdDetails<'_>,
-            data: &'a TLVElement<'_>,
-            encoder: CmdDataEncoder<'a, '_, '_>,
+        async fn invoke(
+            &self,
+            exchange: &Exchange<'_>,
+            cmd: &CmdDetails<'_>,
+            data: &TLVElement<'_>,
+            encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
             if self.handler_endpoint == cmd.endpoint_id && self.handler_cluster == cmd.cluster_id {
                 self.handler.invoke(exchange, cmd, data, encoder).await

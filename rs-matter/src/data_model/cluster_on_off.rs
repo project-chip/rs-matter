@@ -17,14 +17,18 @@
 
 use core::cell::Cell;
 
-use super::objects::*;
-use crate::{
-    attribute_enum, cmd_enter, command_enum, error::Error, tlv::TLVElement,
-    transport::exchange::Exchange, utils::rand::Rand,
-};
 use log::info;
+
 use rs_matter_macros::idl_import;
+
 use strum::{EnumDiscriminants, FromRepr};
+
+use crate::error::Error;
+use crate::tlv::TLVElement;
+use crate::transport::exchange::Exchange;
+use crate::{attribute_enum, cmd_enter, command_enum};
+
+use super::objects::*;
 
 idl_import!(clusters = ["OnOff"]);
 
@@ -68,9 +72,9 @@ pub struct OnOffCluster {
 }
 
 impl OnOffCluster {
-    pub fn new(rand: Rand) -> Self {
+    pub const fn new(data_ver: Dataver) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
+            data_ver,
             on: Cell::new(false),
         }
     }
@@ -86,7 +90,12 @@ impl OnOffCluster {
         }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -100,7 +109,12 @@ impl OnOffCluster {
         }
     }
 
-    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        data: AttrData,
+    ) -> Result<(), Error> {
         let data = data.with_dataver(self.data_ver.get())?;
 
         match attr.attr_id.try_into()? {
@@ -144,12 +158,17 @@ impl OnOffCluster {
 }
 
 impl Handler for OnOffCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        OnOffCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        OnOffCluster::read(self, exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        OnOffCluster::write(self, attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        OnOffCluster::write(self, exchange, attr, data)
     }
 
     fn invoke(

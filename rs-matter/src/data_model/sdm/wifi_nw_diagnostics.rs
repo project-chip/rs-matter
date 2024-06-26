@@ -17,19 +17,17 @@
 
 use core::cell::RefCell;
 
-use crate::{
-    attribute_enum, command_enum,
-    data_model::objects::*,
-    error::{Error, ErrorCode},
-    tlv::{TLVElement, TagType},
-    transport::exchange::Exchange,
-    utils::rand::Rand,
-};
-
 use log::info;
 
 use rs_matter_macros::{FromTLV, ToTLV};
+
 use strum::{EnumDiscriminants, FromRepr};
+
+use crate::data_model::objects::*;
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{TLVElement, TagType};
+use crate::transport::exchange::Exchange;
+use crate::{attribute_enum, command_enum};
 
 pub const ID: u32 = 0x0036;
 
@@ -144,7 +142,7 @@ pub struct WifiNwDiagData {
 }
 
 /// A cluster implementing the Matter Wifi Diagnostics Cluster.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct WifiNwDiagCluster {
     data_ver: Dataver,
     data: RefCell<WifiNwDiagData>,
@@ -152,9 +150,9 @@ pub struct WifiNwDiagCluster {
 
 impl WifiNwDiagCluster {
     /// Create a new instance.
-    pub fn new(rand: Rand, data: WifiNwDiagData) -> Self {
+    pub const fn new(data_ver: Dataver, data: WifiNwDiagData) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
+            data_ver,
             data: RefCell::new(data),
         }
     }
@@ -171,7 +169,12 @@ impl WifiNwDiagCluster {
     }
 
     /// Read the value of an attribute.
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -193,7 +196,12 @@ impl WifiNwDiagCluster {
     }
 
     /// Write the value of an attribute.
-    pub fn write(&self, _attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(
+        &self,
+        _exchange: &Exchange,
+        _attr: &AttrDetails,
+        data: AttrData,
+    ) -> Result<(), Error> {
         let _data = data.with_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
@@ -222,12 +230,17 @@ impl WifiNwDiagCluster {
 }
 
 impl Handler for WifiNwDiagCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        WifiNwDiagCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        WifiNwDiagCluster::read(self, exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        WifiNwDiagCluster::write(self, attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        WifiNwDiagCluster::write(self, exchange, attr, data)
     }
 
     fn invoke(

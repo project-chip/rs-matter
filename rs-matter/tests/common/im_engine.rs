@@ -15,9 +15,9 @@
  *    limitations under the License.
  */
 
-use crate::common::echo_cluster;
-use core::borrow::Borrow;
 use core::num::NonZeroU8;
+
+use crate::common::echo_cluster;
 
 use embassy_futures::{block_on, join::join, select::select3};
 
@@ -36,8 +36,8 @@ use rs_matter::{
         core::{DataModel, IMBuffer},
         device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE},
         objects::{
-            AttrData, AttrDataEncoder, AttrDetails, Endpoint, Handler, HandlerCompat, Metadata,
-            Node, NonBlockingHandler, Privilege,
+            AttrData, AttrDataEncoder, AttrDetails, Dataver, Endpoint, Handler, HandlerCompat,
+            Metadata, Node, NonBlockingHandler, Privilege,
         },
         root_endpoint::{self, EthRootEndpointHandler},
         sdm::{
@@ -154,11 +154,27 @@ pub struct ImEngineHandler<'a> {
 
 impl<'a> ImEngineHandler<'a> {
     pub fn new(matter: &'a Matter<'a>) -> Self {
-        let handler = root_endpoint::eth_handler(0, matter)
-            .chain(0, echo_cluster::ID, EchoCluster::new(2, *matter.borrow()))
-            .chain(1, descriptor::ID, DescriptorCluster::new(*matter.borrow()))
-            .chain(1, echo_cluster::ID, EchoCluster::new(3, *matter.borrow()))
-            .chain(1, cluster_on_off::ID, OnOffCluster::new(*matter.borrow()));
+        let handler = root_endpoint::eth_handler(0, matter.rand())
+            .chain(
+                0,
+                echo_cluster::ID,
+                EchoCluster::new(2, Dataver::new_rand(matter.rand())),
+            )
+            .chain(
+                1,
+                descriptor::ID,
+                DescriptorCluster::new(Dataver::new_rand(matter.rand())),
+            )
+            .chain(
+                1,
+                echo_cluster::ID,
+                EchoCluster::new(3, Dataver::new_rand(matter.rand())),
+            )
+            .chain(
+                1,
+                cluster_on_off::ID,
+                OnOffCluster::new(Dataver::new_rand(matter.rand())),
+            );
 
         Self { handler }
     }
@@ -173,12 +189,17 @@ impl<'a> ImEngineHandler<'a> {
 }
 
 impl<'a> Handler for ImEngineHandler<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        self.handler.read(attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        self.handler.read(exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        self.handler.write(attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        self.handler.write(exchange, attr, data)
     }
 
     fn invoke(

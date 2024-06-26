@@ -593,7 +593,7 @@ impl<'a> TxMessage<'a> {
         let (peer, retransmission) = session.pre_send(
             Some(self.exchange_id.exchange_index()),
             &mut self.packet.header,
-            self.matter.epoch,
+            self.matter.epoch(),
         )?;
 
         self.packet.peer = peer;
@@ -839,7 +839,7 @@ impl<'a> Exchange<'a> {
         received_timeout_ms: u32,
     ) -> Result<Self, Error> {
         if received_timeout_ms > 0 {
-            let epoch = matter.epoch;
+            let epoch = matter.epoch();
 
             loop {
                 let mut accept = pin!(matter.transport_mgr.accept_if(matter, |_, exch, _| {

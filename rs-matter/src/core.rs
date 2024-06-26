@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use core::{borrow::Borrow, cell::RefCell};
+use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
@@ -27,7 +27,7 @@ use crate::{
     },
     error::*,
     fabric::FabricMgr,
-    mdns::{Mdns, MdnsService},
+    mdns::MdnsService,
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
     transport::{
@@ -57,11 +57,11 @@ pub struct Matter<'a> {
     pub(crate) failsafe: RefCell<FailSafe>,
     pub transport_mgr: TransportMgr<'a>, // Public for tests
     persist_notification: Notification<NoopRawMutex>,
-    pub(crate) epoch: Epoch,
-    pub(crate) rand: Rand,
+    epoch: Epoch,
+    rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_att: &'a dyn DevAttDataFetcher,
-    pub(crate) port: u16,
+    port: u16,
 }
 
 impl<'a> Matter<'a> {
@@ -125,6 +125,14 @@ impl<'a> Matter<'a> {
         self.port
     }
 
+    pub fn rand(&self) -> Rand {
+        self.rand
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
     /// A utility method to replace the initial mDNS implementation with another one.
     ///
     /// Useful in particular with `MdnsService::Provided`, where the user would still like
@@ -170,6 +178,21 @@ impl<'a> Matter<'a> {
 
     pub fn is_changed(&self) -> bool {
         self.acl_mgr.borrow().is_changed() || self.fabric_mgr.borrow().is_changed()
+    }
+
+    /// Return `true` if there is at least one commissioned fabric
+    //
+    // TODO:
+    // The implementation of this method needs to change in future,
+    // because the current implementation does not really track whether
+    // `CommissioningComplete` had been actually received for the fabric.
+    //
+    // The fabric is created once we receive `AddNoc`, but that's just
+    // not enough. The fabric should NOT be considered commissioned until
+    // after we receive `CommissioningComplete` on behalf of a Case session
+    // for the fabric in question.
+    pub fn is_commissioned(&self) -> bool {
+        self.fabric_mgr.borrow().used_count() > 0
     }
 
     fn start_comissioning(
@@ -259,65 +282,5 @@ impl<'a> Matter<'a> {
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub async fn wait_changed(&self) {
         self.persist_notification.wait().await
-    }
-}
-
-impl<'a> Borrow<RefCell<FabricMgr>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<FabricMgr> {
-        &self.fabric_mgr
-    }
-}
-
-impl<'a> Borrow<RefCell<AclMgr>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<AclMgr> {
-        &self.acl_mgr
-    }
-}
-
-impl<'a> Borrow<RefCell<PaseMgr>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<PaseMgr> {
-        &self.pase_mgr
-    }
-}
-
-impl<'a> Borrow<RefCell<FailSafe>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<FailSafe> {
-        &self.failsafe
-    }
-}
-
-impl<'a> Borrow<TransportMgr<'a>> for Matter<'a> {
-    fn borrow(&self) -> &TransportMgr<'a> {
-        &self.transport_mgr
-    }
-}
-
-impl<'a> Borrow<BasicInfoConfig<'a>> for Matter<'a> {
-    fn borrow(&self) -> &BasicInfoConfig<'a> {
-        self.dev_det
-    }
-}
-
-impl<'a> Borrow<dyn DevAttDataFetcher + 'a> for Matter<'a> {
-    fn borrow(&self) -> &(dyn DevAttDataFetcher + 'a) {
-        self.dev_att
-    }
-}
-
-impl<'a> Borrow<dyn Mdns + 'a> for Matter<'a> {
-    fn borrow(&self) -> &(dyn Mdns + 'a) {
-        &self.transport_mgr.mdns
-    }
-}
-
-impl<'a> Borrow<Epoch> for Matter<'a> {
-    fn borrow(&self) -> &Epoch {
-        &self.epoch
-    }
-}
-
-impl<'a> Borrow<Rand> for Matter<'a> {
-    fn borrow(&self) -> &Rand {
-        &self.rand
     }
 }

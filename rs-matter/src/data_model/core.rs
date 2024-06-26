@@ -25,7 +25,6 @@ use embassy_futures::select::select3;
 use embassy_time::{Instant, Timer};
 use log::{debug, error, info, warn};
 
-use crate::acl::Accessor;
 use crate::interaction_model::messages::ib::AttrStatus;
 use crate::utils::buf::BufferAccess;
 use crate::{error::*, Matter};
@@ -157,7 +156,7 @@ where
 
         // Will the clusters that are to be invoked await?
         let awaits = metadata.node().read(&req, None, &accessor).any(|item| {
-            item.map(|attr| self.handler.read_awaits(&attr))
+            item.map(|attr| self.handler.read_awaits(exchange, &attr))
                 .unwrap_or(false)
         });
 
@@ -169,7 +168,7 @@ where
             let mut attrs = node.read(&req, None, &accessor).peekable();
 
             if !req
-                .respond(&self.handler, None, &mut attrs, &mut wb, true)
+                .respond(&self.handler, exchange, None, &mut attrs, &mut wb, true)
                 .await?
             {
                 drop(attrs);
@@ -210,7 +209,7 @@ where
 
         loop {
             let more_chunks = req
-                .respond(&self.handler, None, &mut attrs, &mut wb, true)
+                .respond(&self.handler, exchange, None, &mut attrs, &mut wb, true)
                 .await?;
 
             exchange.send(OpCode::ReportData, wb.as_slice()).await?;
@@ -256,7 +255,7 @@ where
             .node()
             .write(&req, &exchange.accessor()?)
             .any(|item| {
-                item.map(|(attr, _)| self.handler.write_awaits(&attr))
+                item.map(|(attr, _)| self.handler.write_awaits(exchange, &attr))
                     .unwrap_or(false)
             });
 
@@ -272,24 +271,14 @@ where
 
             let req = WriteReq::from_tlv(&get_root_node_struct(&rx)?)?;
 
-            req.respond(
-                &self.handler,
-                &exchange.accessor()?,
-                &metadata.node(),
-                &mut wb,
-            )
-            .await?
+            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+                .await?
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(
-                &self.handler,
-                &exchange.accessor()?,
-                &metadata.node(),
-                &mut wb,
-            )
-            .await?
+            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+                .await?
         };
 
         exchange.send(OpCode::WriteResponse, wb.as_slice()).await?;
@@ -326,7 +315,7 @@ where
             .node()
             .invoke(&req, &exchange.accessor()?)
             .any(|item| {
-                item.map(|(cmd, _)| self.handler.invoke_awaits(&cmd))
+                item.map(|(cmd, _)| self.handler.invoke_awaits(exchange, &cmd))
                     .unwrap_or(false)
             });
 
@@ -561,7 +550,7 @@ where
         let req = TimedReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
         debug!("IM: Timed request: {:?}", req);
 
-        let timeout_instant = req.timeout_instant(exchange.matter().epoch);
+        let timeout_instant = req.timeout_instant(exchange.matter().epoch());
 
         Self::send_status(exchange, IMStatusCode::Success).await?;
 
@@ -578,7 +567,7 @@ where
             if timed_req != timeout_instant.is_some() {
                 Some(IMStatusCode::TimedRequestMisMatch)
             } else if timeout_instant
-                .map(|timeout_instant| (exchange.matter().epoch)() > timeout_instant)
+                .map(|timeout_instant| (exchange.matter().epoch())() > timeout_instant)
                 .unwrap_or(false)
             {
                 Some(IMStatusCode::Timeout)
@@ -623,7 +612,14 @@ where
 
             loop {
                 let more_chunks = req
-                    .respond(&self.handler, Some(id), &mut attrs, &mut wb, false)
+                    .respond(
+                        &self.handler,
+                        exchange,
+                        Some(id),
+                        &mut attrs,
+                        &mut wb,
+                        false,
+                    )
                     .await?;
 
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
@@ -742,6 +738,7 @@ impl<'a> ReportDataReq<'a> {
     pub(crate) async fn respond<T, I>(
         &self,
         handler: T,
+        exchange: &Exchange<'_>,
         subscription_id: Option<u32>,
         attrs: &mut Peekable<I>,
         wb: &mut WriteBuf<'_>,
@@ -775,7 +772,7 @@ impl<'a> ReportDataReq<'a> {
         }
 
         while let Some(item) = attrs.peek() {
-            if AttrDataEncoder::handle_read(item, &handler, &mut tw).await? {
+            if AttrDataEncoder::handle_read(exchange, item, &handler, &mut tw).await? {
                 attrs.next();
             } else {
                 break;
@@ -809,13 +806,15 @@ impl<'a> WriteReq<'a> {
     async fn respond<T>(
         &self,
         handler: T,
-        accessor: &Accessor<'_>,
+        exchange: &Exchange<'_>,
         node: &Node<'_>,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error>
     where
         T: DataModelHandler,
     {
+        let accessor = exchange.accessor()?;
+
         wb.reset();
 
         let mut tw = TLVWriter::new(wb);
@@ -834,10 +833,10 @@ impl<'a> WriteReq<'a> {
         // Thus we support the Case1 by doing this. It does come at the cost of maintaining an
         // additional list of expanded write requests as we start processing those.
         let write_attrs: heapless::Vec<_, MAX_WRITE_ATTRS_IN_ONE_TRANS> =
-            node.write(self, accessor).collect();
+            node.write(self, &accessor).collect();
 
         for item in write_attrs {
-            AttrDataEncoder::handle_write(&item, &handler, &mut tw).await?;
+            AttrDataEncoder::handle_write(exchange, &item, &handler, &mut tw).await?;
         }
 
         tw.end_container()?;

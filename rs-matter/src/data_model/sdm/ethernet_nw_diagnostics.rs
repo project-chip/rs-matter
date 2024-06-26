@@ -14,13 +14,18 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use crate::{
-    attribute_enum, cmd_enter, command_enum, data_model::objects::*, error::Error, tlv::TLVElement,
-    transport::exchange::Exchange, utils::rand::Rand,
-};
+
 use log::info;
+
 use rs_matter_macros::idl_import;
+
 use strum::{EnumDiscriminants, FromRepr};
+
+use crate::data_model::objects::*;
+use crate::error::Error;
+use crate::tlv::TLVElement;
+use crate::transport::exchange::Exchange;
+use crate::{attribute_enum, cmd_enter, command_enum};
 
 idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
 
@@ -59,19 +64,22 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[CommandsDiscriminants::ResetCounts as _],
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EthNwDiagCluster {
     data_ver: Dataver,
 }
 
 impl EthNwDiagCluster {
-    pub fn new(rand: Rand) -> Self {
-        Self {
-            data_ver: Dataver::new(rand),
-        }
+    pub const fn new(data_ver: Dataver) -> Self {
+        Self { data_ver }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -86,7 +94,12 @@ impl EthNwDiagCluster {
         }
     }
 
-    pub fn write(&self, _attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(
+        &self,
+        _exchange: &Exchange,
+        _attr: &AttrDetails,
+        data: AttrData,
+    ) -> Result<(), Error> {
         let _data = data.with_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
@@ -114,12 +127,17 @@ impl EthNwDiagCluster {
 }
 
 impl Handler for EthNwDiagCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        EthNwDiagCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        EthNwDiagCluster::read(self, exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        EthNwDiagCluster::write(self, attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        EthNwDiagCluster::write(self, exchange, attr, data)
     }
 
     fn invoke(
