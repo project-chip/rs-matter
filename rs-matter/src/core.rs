@@ -133,6 +133,14 @@ impl<'a> Matter<'a> {
         self.epoch
     }
 
+    pub fn transport_rx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
+        self.transport_mgr.rx_buffer()
+    }
+
+    pub fn transport_tx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
+        self.transport_mgr.tx_buffer()
+    }
+
     /// A utility method to replace the initial mDNS implementation with another one.
     ///
     /// Useful in particular with `MdnsService::Provided`, where the user would still like
