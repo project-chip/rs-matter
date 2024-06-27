@@ -33,7 +33,6 @@ use rs_matter::interaction_model::messages::ib::Status;
 use rs_matter::tlv::{FromTLV, OctetStr, TLVElement};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::notification::Notification;
-use rs_matter::utils::rand::Rand;
 
 /// A _fake_ cluster implementing the Matter Network Commissioning Cluster
 /// for managing WiFi networks.
@@ -46,9 +45,9 @@ pub struct WifiNwCommCluster<'a> {
 
 impl<'a> WifiNwCommCluster<'a> {
     /// Create a new instance.
-    pub fn new(rand: Rand, nw_setup_complete: &'a Notification<NoopRawMutex>) -> Self {
+    pub const fn new(data_ver: Dataver, nw_setup_complete: &'a Notification<NoopRawMutex>) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
+            data_ver,
             nw_setup_complete,
         }
     }
@@ -56,6 +55,7 @@ impl<'a> WifiNwCommCluster<'a> {
     /// Read an attribute.
     pub fn read(
         &self,
+        _exchange: &Exchange,
         attr: &AttrDetails<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
@@ -241,8 +241,13 @@ impl<'a> WifiNwCommCluster<'a> {
 }
 
 impl<'a> Handler for WifiNwCommCluster<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        WifiNwCommCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        WifiNwCommCluster::read(self, exchange, attr, encoder)
     }
 
     fn invoke(

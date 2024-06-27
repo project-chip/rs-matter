@@ -101,7 +101,7 @@ impl BluerGattPeripheral {
         let session = bluer::Session::new().await?;
 
         // Register a "NoInputNoOutput" agent that will accept all incoming requests.
-        session.register_agent(Agent::default()).await?;
+        let _handle = session.register_agent(Agent::default()).await?;
 
         let adapter = if let Some(adapter_name) = self.0.adapter_name.as_ref() {
             session.adapter(adapter_name)?

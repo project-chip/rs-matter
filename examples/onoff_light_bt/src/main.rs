@@ -31,8 +31,6 @@
 //! that can manage Wifi networks on the device by using the device-specific APIs.
 //! (For (embedded) Linux, this could be done using `nmcli` or `wpa_supplicant`.)
 
-use core::borrow::Borrow;
-use core::cell::RefCell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -57,7 +55,6 @@ use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
 use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
-use rs_matter::fabric::FabricMgr;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
@@ -132,7 +129,7 @@ fn run() -> Result<(), Error> {
 
     let dev_comm = CommissioningData {
         // TODO: Hard-coded for now
-        verifier: VerifierData::new_with_pw(123456, *matter.borrow()),
+        verifier: VerifierData::new_with_pw(123456, matter.rand()),
         discriminator: 250,
     };
 
@@ -148,7 +145,7 @@ fn run() -> Result<(), Error> {
 
     let mut mdns = pin!(run_mdns(&matter));
 
-    let on_off = cluster_on_off::OnOffCluster::new(*matter.borrow());
+    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(matter.rand()));
 
     let subscriptions = Subscriptions::<3>::new();
 
@@ -188,8 +185,7 @@ fn run() -> Result<(), Error> {
     let mut psm = Psm::new(&matter, std::env::temp_dir().join("rs-matter"))?;
     let mut persist = pin!(psm.run());
 
-    let fabrics: &RefCell<FabricMgr> = matter.borrow();
-    if fabrics.borrow().is_empty() {
+    if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
 
         let btp = Btp::new_builtin(&BTP_CONTEXT);
@@ -264,11 +260,13 @@ fn dm_handler<'a>(
         NODE,
         root_endpoint::handler(
             0,
-            matter,
-            HandlerCompat(WifiNwCommCluster::new(*matter.borrow(), &wifi_complete)),
+            HandlerCompat(WifiNwCommCluster::new(
+                Dataver::new_rand(matter.rand()),
+                &wifi_complete,
+            )),
             wifi_nw_diagnostics::ID,
             HandlerCompat(WifiNwDiagCluster::new(
-                *matter.borrow(),
+                Dataver::new_rand(matter.rand()),
                 WifiNwDiagData {
                     bssid: [0; 6],
                     security_type: WiFiSecurity::Wpa2Personal,
@@ -278,11 +276,12 @@ fn dm_handler<'a>(
                 },
             )),
             false,
+            matter.rand(),
         )
         .chain(
             1,
             descriptor::ID,
-            descriptor::DescriptorCluster::new(*matter.borrow()),
+            descriptor::DescriptorCluster::new(Dataver::new_rand(matter.rand())),
         )
         .chain(1, cluster_on_off::ID, on_off),
     )
