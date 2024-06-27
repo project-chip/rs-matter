@@ -253,7 +253,7 @@ impl Case {
         );
 
         // Create an ephemeral Key Pair
-        let key_pair = KeyPair::new(exchange.matter().rand)?;
+        let key_pair = KeyPair::new(exchange.matter().rand())?;
         let _ = key_pair.get_public_key(&mut case_session.our_pub_key)?;
 
         // Derive the Shared Secret
@@ -265,7 +265,7 @@ impl Case {
         //        println!("Derived secret: {:x?} len: {}", secret, len);
 
         let mut our_random: [u8; 32] = [0; 32];
-        (exchange.matter().rand)(&mut our_random);
+        (exchange.matter().rand())(&mut our_random);
 
         // Derive the Encrypted Part
         const MAX_ENCRYPTED_SIZE: usize = 800;
@@ -301,7 +301,7 @@ impl Case {
 
                 let encrypted_len = Case::get_sigma2_encryption(
                     fabric,
-                    exchange.matter().rand,
+                    exchange.matter().rand(),
                     &our_random,
                     case_session,
                     signature,

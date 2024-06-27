@@ -15,19 +15,18 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use log::info;
+
+use rs_matter_macros::idl_import;
+
+use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
-use crate::data_model::sdm::failsafe::FailSafe;
 use crate::tlv::{FromTLV, TLVElement, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
-use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
-use log::info;
-use rs_matter_macros::idl_import;
-use strum::{EnumDiscriminants, FromRepr};
 
 idl_import!(clusters = ["GeneralCommissioning"]);
 
@@ -109,43 +108,54 @@ struct FailSafeParams {
     bread_crumb: u64,
 }
 
-#[derive(ToTLV, Clone)]
-struct BasicCommissioningInfo {
-    expiry_len: u16,
-    max_cmltv_failsafe_secs: u16,
+#[derive(FromTLV, ToTLV, Debug, Clone)]
+pub struct BasicCommissioningInfo {
+    pub expiry_len: u16,
+    pub max_cmltv_failsafe_secs: u16,
 }
 
-#[derive(Clone)]
-pub struct GenCommCluster<'a> {
+impl BasicCommissioningInfo {
+    pub const fn new() -> Self {
+        // TODO: Arch-Specific
+        Self {
+            expiry_len: 120,
+            max_cmltv_failsafe_secs: 120,
+        }
+    }
+}
+
+impl Default for BasicCommissioningInfo {
+    fn default() -> Self {
+        BasicCommissioningInfo::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GenCommCluster {
     data_ver: Dataver,
     basic_comm_info: BasicCommissioningInfo,
     supports_concurrent_connection: bool,
-    failsafe: &'a RefCell<FailSafe>,
 }
 
-impl<'a> GenCommCluster<'a> {
-    pub fn new(
-        failsafe: &'a RefCell<FailSafe>,
+impl GenCommCluster {
+    pub const fn new(
+        data_ver: Dataver,
+        basic_comm_info: BasicCommissioningInfo,
         supports_concurrent_connection: bool,
-        rand: Rand,
     ) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
-            failsafe,
-            // TODO: Arch-Specific
-            basic_comm_info: BasicCommissioningInfo {
-                expiry_len: 120,
-                max_cmltv_failsafe_secs: 120,
-            },
+            data_ver,
+            basic_comm_info,
             supports_concurrent_connection,
         }
     }
 
-    pub fn failsafe(&self) -> &RefCell<FailSafe> {
-        self.failsafe
-    }
-
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -207,7 +217,8 @@ impl<'a> GenCommCluster<'a> {
 
         let p = FailSafeParams::from_tlv(data)?;
 
-        let status = if self
+        let status = if exchange
+            .matter()
             .failsafe
             .borrow_mut()
             .arm(
@@ -276,7 +287,8 @@ impl<'a> GenCommCluster<'a> {
 
         // AddNOC or UpdateNOC must have happened, and that too for the same fabric
         // scope that is for this session
-        if self
+        if exchange
+            .matter()
             .failsafe
             .borrow_mut()
             .disarm(exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))?)
@@ -298,9 +310,14 @@ impl<'a> GenCommCluster<'a> {
     }
 }
 
-impl<'a> Handler for GenCommCluster<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        GenCommCluster::read(self, attr, encoder)
+impl Handler for GenCommCluster {
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        GenCommCluster::read(self, exchange, attr, encoder)
     }
 
     fn invoke(
@@ -314,9 +331,9 @@ impl<'a> Handler for GenCommCluster<'a> {
     }
 }
 
-impl<'a> NonBlockingHandler for GenCommCluster<'a> {}
+impl NonBlockingHandler for GenCommCluster {}
 
-impl<'a> ChangeNotifier<()> for GenCommCluster<'a> {
+impl ChangeNotifier<()> for GenCommCluster {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }
