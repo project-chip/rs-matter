@@ -26,6 +26,7 @@ use embassy_futures::select::{select, Either};
 
 use crate::error::{Error, ErrorCode};
 
+pub mod btp;
 pub mod udp;
 
 // Maximum UDP RX packet size per Matter spec

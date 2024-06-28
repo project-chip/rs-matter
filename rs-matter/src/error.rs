@@ -204,6 +204,23 @@ impl From<ccm::aead::Error> for Error {
     }
 }
 
+#[cfg(all(feature = "std", target_os = "linux", not(feature = "backtrace")))]
+impl From<bluer::Error> for Error {
+    fn from(e: bluer::Error) -> Self {
+        // Log the error given that we lose all context from the
+        // original error here
+        ::log::error!("Error in BTP: {e}");
+        Self::new(ErrorCode::BtpError)
+    }
+}
+
+#[cfg(all(feature = "std", target_os = "linux", feature = "backtrace"))]
+impl From<bluer::Error> for Error {
+    fn from(e: bluer::Error) -> Self {
+        Self::new_with_details(ErrorCode::BtpError, Box::new(e))
+    }
+}
+
 #[cfg(feature = "std")]
 impl From<std::time::SystemTimeError> for Error {
     fn from(_e: std::time::SystemTimeError) -> Self {
