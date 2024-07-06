@@ -38,6 +38,7 @@ mod builtin;
 pub use builtin::{
     Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT, MDNS_SOCKET_BIND_ADDR,
 };
+use pinned_init::{init, Init};
 
 /// A trait representing an mDNS implementation capable of registering and de-registering Matter-specific services
 pub trait Mdns {
@@ -98,48 +99,65 @@ pub enum MdnsService<'a> {
     Provided(&'a dyn Mdns),
 }
 
-impl<'a> MdnsService<'a> {
-    pub(crate) const fn new_impl(
-        &self,
-        dev_det: &'a BasicInfoConfig<'a>,
-        matter_port: u16,
-    ) -> MdnsImpl<'a> {
-        match self {
-            Self::Disabled => MdnsImpl::Disabled,
-            Self::Builtin => MdnsImpl::Builtin(builtin::MdnsImpl::new(dev_det, matter_port)),
-            Self::Provided(mdns) => MdnsImpl::Provided(*mdns),
-        }
-    }
+pub(crate) struct MdnsImpl<'a> {
+    service: MdnsService<'a>,
+    builtin: builtin::MdnsImpl<'a>,
 }
 
-pub(crate) enum MdnsImpl<'a> {
-    Disabled,
-    Builtin(builtin::MdnsImpl<'a>),
-    Provided(&'a dyn Mdns),
+impl<'a> MdnsImpl<'a> {
+    pub(crate) const fn new(
+        service: MdnsService<'a>,
+        dev_det: &'a BasicInfoConfig<'a>,
+        matter_port: u16,
+    ) -> Self {
+        Self {
+            service,
+            builtin: builtin::MdnsImpl::new(dev_det, matter_port),
+        }
+    }
+
+    pub(crate) fn init(
+        service: MdnsService<'a>,
+        dev_det: &'a BasicInfoConfig<'a>,
+        matter_port: u16,
+    ) -> impl Init<Self> {
+        init!(Self {
+            service,
+            builtin <- builtin::MdnsImpl::init(dev_det, matter_port),
+        })
+    }
+
+    pub(crate) fn builtin(&self) -> Option<&builtin::MdnsImpl> {
+        matches!(self.service, MdnsService::Builtin).then_some(&self.builtin)
+    }
+
+    pub(crate) fn update(&mut self, service: MdnsService<'a>) {
+        self.service = service;
+    }
 }
 
 impl<'a> Mdns for MdnsImpl<'a> {
     fn reset(&self) {
-        match self {
-            Self::Disabled => {}
-            Self::Builtin(mdns) => mdns.reset(),
-            Self::Provided(mdns) => mdns.reset(),
+        match self.service {
+            MdnsService::Disabled => {}
+            MdnsService::Builtin => self.builtin.reset(),
+            MdnsService::Provided(mdns) => mdns.reset(),
         }
     }
 
     fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        match self {
-            Self::Disabled => Ok(()),
-            Self::Builtin(mdns) => mdns.add(service, mode),
-            Self::Provided(mdns) => mdns.add(service, mode),
+        match self.service {
+            MdnsService::Disabled => Ok(()),
+            MdnsService::Builtin => self.builtin.add(service, mode),
+            MdnsService::Provided(mdns) => mdns.add(service, mode),
         }
     }
 
     fn remove(&self, service: &str) -> Result<(), Error> {
-        match self {
-            Self::Disabled => Ok(()),
-            Self::Builtin(mdns) => mdns.remove(service),
-            Self::Provided(mdns) => mdns.remove(service),
+        match self.service {
+            MdnsService::Disabled => Ok(()),
+            MdnsService::Builtin => self.builtin.remove(service),
+            MdnsService::Provided(mdns) => mdns.remove(service),
         }
     }
 }

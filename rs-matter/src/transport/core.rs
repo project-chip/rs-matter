@@ -26,8 +26,9 @@ use embassy_time::Timer;
 use log::{debug, error, info, trace, warn};
 use pinned_init::{init, Init};
 
+use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
-use crate::mdns::MdnsImpl;
+use crate::mdns::{MdnsImpl, MdnsService};
 use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 use crate::secure_channel::status_report::StatusReport;
 use crate::tlv::TLVList;
@@ -87,32 +88,44 @@ pub struct TransportMgr<'m> {
 
 impl<'m> TransportMgr<'m> {
     #[inline(always)]
-    pub(crate) const fn new(mdns: MdnsImpl<'m>, epoch: Epoch, rand: Rand) -> Self {
+    pub(crate) const fn new(
+        service: MdnsService<'m>,
+        dev_det: &'m BasicInfoConfig<'m>,
+        matter_port: u16,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> Self {
         Self {
             rx: IfMutex::new(Packet::new()),
             tx: IfMutex::new(Packet::new()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
-            mdns,
+            mdns: MdnsImpl::new(service, dev_det, matter_port),
             rand,
         }
     }
 
-    pub(crate) fn init(mdns: MdnsImpl<'m>, epoch: Epoch, rand: Rand) -> impl Init<Self> {
+    pub(crate) fn init(
+        service: MdnsService<'m>,
+        dev_det: &'m BasicInfoConfig<'m>,
+        matter_port: u16,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> impl Init<Self> {
         init!(Self {
             rx <- IfMutex::init(Packet::init()),
             tx <- IfMutex::init(Packet::init()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
             session_mgr <- RefCell::init(SessionMgr::init(epoch, rand)),
-            mdns,
+            mdns <- MdnsImpl::init(service, dev_det, matter_port),
             rand,
         })
     }
 
-    pub(crate) fn replace_mdns(&mut self, mdns: MdnsImpl<'m>) {
-        self.mdns = mdns;
+    pub(crate) fn replace_mdns(&mut self, mdns: MdnsService<'m>) {
+        self.mdns.update(mdns);
     }
 
     // TODO
@@ -288,7 +301,7 @@ impl<'m> TransportMgr<'m> {
     {
         info!("Running Matter built-in mDNS service");
 
-        if let MdnsImpl::Builtin(mdns) = &self.mdns {
+        if let Some(mdns) = self.mdns.builtin() {
             mdns.run(
                 send,
                 recv,

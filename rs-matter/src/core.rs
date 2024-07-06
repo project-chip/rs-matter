@@ -100,7 +100,7 @@ impl<'a> Matter<'a> {
             acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
-            transport_mgr: TransportMgr::new(mdns.new_impl(dev_det, port), epoch, rand),
+            transport_mgr: TransportMgr::new(mdns, dev_det, port, epoch, rand),
             persist_notification: Notification::new(),
             epoch,
             rand,
@@ -124,7 +124,7 @@ impl<'a> Matter<'a> {
                 acl_mgr <- RefCell::init(AclMgr::init()),
                 pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
                 failsafe: RefCell::new(FailSafe::new()),
-                transport_mgr <- TransportMgr::init(mdns.new_impl(dev_det, port), epoch, rand),
+                transport_mgr <- TransportMgr::init(mdns, dev_det, port, epoch, rand),
                 persist_notification: Notification::new(),
                 epoch,
                 rand,
@@ -181,8 +181,7 @@ impl<'a> Matter<'a> {
     /// after that - while/if we still have exclusive, mutable access to the `Matter` object -
     /// replace the `MdnsService::Disabled` initial impl with another, like `MdnsService::Provided`.
     pub fn replace_mdns(&mut self, mdns: MdnsService<'a>) {
-        self.transport_mgr
-            .replace_mdns(mdns.new_impl(self.dev_det, self.port));
+        self.transport_mgr.replace_mdns(mdns);
     }
 
     /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
