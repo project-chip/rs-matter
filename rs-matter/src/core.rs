@@ -15,9 +15,8 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
-
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use pinned_init::{init, Init};
 
 use crate::{
     acl::AclMgr,
@@ -36,6 +35,8 @@ use crate::{
     },
     utils::{buf::BufferAccess, epoch::Epoch, notification::Notification, rand::Rand},
 };
+
+use crate::utils::refcell::RefCell;
 
 /* The Matter Port */
 pub const MATTER_PORT: u16 = 5540;
@@ -107,6 +108,31 @@ impl<'a> Matter<'a> {
             dev_att,
             port,
         }
+    }
+
+    pub fn init(
+        dev_det: &'a BasicInfoConfig<'a>,
+        dev_att: &'a dyn DevAttDataFetcher,
+        mdns: MdnsService<'a>,
+        epoch: Epoch,
+        rand: Rand,
+        port: u16,
+    ) -> impl Init<Self> {
+        init!(
+            Self {
+                fabric_mgr <- RefCell::init(FabricMgr::init()),
+                acl_mgr <- RefCell::init(AclMgr::init()),
+                pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
+                failsafe: RefCell::new(FailSafe::new()),
+                transport_mgr <- TransportMgr::init(mdns.new_impl(dev_det, port), epoch, rand),
+                persist_notification: Notification::new(),
+                epoch,
+                rand,
+                dev_det,
+                dev_att,
+                port,
+            }
+        )
     }
 
     pub fn initialize_transport_buffers(&self) -> Result<(), Error> {

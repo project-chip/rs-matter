@@ -19,8 +19,9 @@ use core::fmt::Write;
 use core::num::NonZeroU8;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
-use heapless::{String, Vec};
+use heapless::String;
 use log::info;
+use pinned_init::{init, Init};
 
 use crate::{
     cert::{Cert, MAX_CERT_TLV_LEN},
@@ -29,7 +30,7 @@ use crate::{
     group_keys::KeySet,
     mdns::{Mdns, ServiceMode},
     tlv::{self, FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
-    utils::writebuf::WriteBuf,
+    utils::{vec::Vec, writebuf::WriteBuf},
 };
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
@@ -64,9 +65,9 @@ pub struct Fabric {
 impl Fabric {
     pub fn new(
         key_pair: KeyPair,
-        root_ca: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
-        icac: Option<heapless::Vec<u8, { MAX_CERT_TLV_LEN }>>,
-        noc: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
+        root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
+        icac: Option<Vec<u8, { MAX_CERT_TLV_LEN }>>,
+        noc: Vec<u8, { MAX_CERT_TLV_LEN }>,
         ipk: &[u8],
         vendor_id: u16,
         label: &str,
@@ -206,6 +207,13 @@ impl FabricMgr {
         }
     }
 
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            fabrics <- FabricEntries::init(),
+            changed: false,
+        })
+    }
+
     pub fn load(&mut self, data: &[u8], mdns: &dyn Mdns) -> Result<(), Error> {
         for fabric in self.fabrics.iter().flatten() {
             mdns.remove(&fabric.mdns_service_name)?;
@@ -213,7 +221,7 @@ impl FabricMgr {
 
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
-        tlv::from_tlv(&mut self.fabrics, &root)?;
+        tlv::vec_from_tlv(&mut self.fabrics, &root)?;
 
         for fabric in self.fabrics.iter().flatten() {
             mdns.add(&fabric.mdns_service_name, ServiceMode::Commissioned)?;

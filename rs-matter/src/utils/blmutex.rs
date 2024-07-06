@@ -15,15 +15,12 @@
  *    limitations under the License.
  */
 
-//! A variation of the `embassy-sync` async mutex that only locks the mutex if a certain condition on the content of the data holds true.
-//! Check `embassy_sync::Mutex` for the original unconditional implementation.
+//! A blocking mutex implemented using the Guard pattern and using `embassy_sync::blocking_mutex::raw::RawMutex` as a synchronization primitive.
+//! Check `embassy_sync::blocking_mutex::Mutex` for the original closure-based implementation.
 use core::cell::UnsafeCell;
-use core::convert::Infallible;
 use core::ops::{Deref, DerefMut};
-use core::ptr::addr_of_mut;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use pinned_init::{init_from_closure, Init};
 
 use super::signal::Signal;
 
@@ -33,20 +30,20 @@ pub struct TryLockError;
 
 /// Async mutex with conditional locking based on the data inside the mutex.
 /// Check `embassy_sync::Mutex` for the original unconditional implementation.
-pub struct IfMutex<M, T>
+pub struct BlMutex<M, T>
 where
     M: RawMutex,
     T: ?Sized,
 {
-    state: Signal<M, bool>,
-    inner: UnsafeCell<T>,
+    raw: M,
+    data: UnsafeCell<T>,
 }
 
-unsafe impl<M: RawMutex + Send, T: ?Sized + Send> Send for IfMutex<M, T> {}
-unsafe impl<M: RawMutex + Sync, T: ?Sized + Send> Sync for IfMutex<M, T> {}
+unsafe impl<M: RawMutex + Send, T: ?Sized + Send> Send for BlMutex<M, T> {}
+unsafe impl<M: RawMutex + Sync, T: ?Sized + Send> Sync for BlMutex<M, T> {}
 
 /// Async mutex.
-impl<M, T> IfMutex<M, T>
+impl<M, T> BlMutex<M, T>
 where
     M: RawMutex,
 {
@@ -54,29 +51,13 @@ where
     #[inline(always)]
     pub const fn new(value: T) -> Self {
         Self {
-            state: Signal::<M, _>::new(false),
-            inner: UnsafeCell::new(value),
-        }
-    }
-
-    pub fn init<I: Init<T>>(value: I) -> impl Init<Self> {
-        unsafe {
-            init_from_closure::<_, Infallible>(move |slot: *mut Self| {
-                // `slot` contains uninit memory, avoid creating a reference.
-                let value_ptr: *mut T = addr_of_mut!((*slot).inner) as _;
-
-                // Initialize the value
-                value.__init(value_ptr).unwrap();
-
-                addr_of_mut!((*slot).state).write(Signal::<M, _>::new(false));
-
-                Ok(())
-            })
+            raw: M::INIT,
+            data: UnsafeCell::new(value),
         }
     }
 }
 
-impl<M, T> IfMutex<M, T>
+impl<M, T> BlMutex<M, T>
 where
     M: RawMutex,
     T: ?Sized,
@@ -84,17 +65,7 @@ where
     /// Lock the mutex.
     ///
     /// This will wait for the mutex to be unlocked if it's already locked.
-    pub async fn lock(&self) -> IfMutexGuard<'_, M, T> {
-        self.lock_if(|_| true).await
-    }
-
-    /// Lock the mutex.
-    ///
-    /// This will wait for the mutex to be unlocked if it's already locked _and_ for the provided condition on the data to become true.
-    pub async fn lock_if<F>(&self, f: F) -> IfMutexGuard<'_, M, T>
-    where
-        F: Fn(&T) -> bool,
-    {
+    pub fn lock(&self) -> BlMutexGuard<'_, M, T> {
         self.state
             .wait(|locked| {
                 // Safety: it is safe to access the unsafe cell data, because:

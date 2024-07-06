@@ -34,6 +34,7 @@ use crate::{
     utils::{epoch::Epoch, rand::Rand},
 };
 use log::{error, info};
+use pinned_init::{init, Init};
 
 struct PaseSession {
     mdns_service_name: heapless::String<16>,
@@ -56,6 +57,16 @@ impl PaseMgr {
             epoch,
             rand,
         }
+    }
+
+    pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
+        // TODO
+        init!(Self {
+            session: None,
+            timeout: None,
+            epoch,
+            rand,
+        })
     }
 
     pub fn is_pase_session_enabled(&self) -> bool {
