@@ -65,6 +65,10 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
 
+static SUBSCRIPTIONS: StaticCell<Subscriptions<3>> = StaticCell::new();
+
+static PSM: StaticCell<Psm<4096>> = StaticCell::new();
+
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
         // Increase the stack size until the example can work without stack blowups.
@@ -74,7 +78,7 @@ fn main() -> Result<(), Error> {
         // e.g., an opt-level of "0" will require a several times' larger stack.
         //
         // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(50 * 1024)
+        .stack_size(30 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -128,7 +132,9 @@ fn run() -> Result<(), Error> {
 
     let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(matter.rand()));
 
-    let subscriptions = Subscriptions::<3>::new();
+    // let subscriptions = Subscriptions::<3>::new();
+
+    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom On/Off clusters
     let dm_handler = HandlerCompat(dm_handler(&matter, &on_off));
@@ -180,8 +186,11 @@ fn run() -> Result<(), Error> {
 
     // NOTE:
     // Replace with your own persister for e.g. `no_std` environments
-    let mut psm = Psm::new(&matter, std::env::temp_dir().join("rs-matter"))?;
-    let mut persist = pin!(psm.run());
+    // let mut psm = Psm::new();
+
+    let psm = PSM.uninit().init_with(Psm::init());
+
+    let mut persist = pin!(psm.run(std::env::temp_dir().join("rs-matter"), &matter));
 
     // Combine all async tasks in a single one
     let all = select4(

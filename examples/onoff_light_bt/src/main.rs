@@ -182,8 +182,8 @@ fn run() -> Result<(), Error> {
 
     // NOTE:
     // Replace with your own persister for e.g. `no_std` environments
-    let mut psm = Psm::new(&matter, std::env::temp_dir().join("rs-matter"))?;
-    let mut persist = pin!(psm.run());
+    let mut psm: Psm<4096> = Psm::new();
+    let mut persist = pin!(psm.run(std::env::temp_dir().join("rs-matter"), &matter));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
