@@ -45,7 +45,7 @@ domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
 scopeguard = "1"
-pinned-init = "0.0.7"
+pinned-init = { version = "0.0.7", default-features = false }
 
 # crypto
 openssl = { version = "0.10", optional = true }
