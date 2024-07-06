@@ -17,13 +17,15 @@
 
 use core::cmp::min;
 
+use crate::utils::init::{init, Init};
+
 /// A ring buffer of a fixed capacity `N` using owned storage.
 #[derive(Debug)]
 pub struct RingBuf<const N: usize> {
-    buf: heapless::Vec<u8, N>,
+    buf: crate::utils::storage::Vec<u8, N>,
     start: usize,
     end: usize,
-    empty: bool,
+    non_empty: bool,
 }
 
 impl<const N: usize> Default for RingBuf<N> {
@@ -37,11 +39,21 @@ impl<const N: usize> RingBuf<N> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            buf: heapless::Vec::new(),
+            buf: crate::utils::storage::Vec::new(),
             start: 0,
             end: 0,
-            empty: true,
+            non_empty: false,
         }
+    }
+
+    /// Create an in-place initializer for the ring buffer.
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            buf <- crate::utils::storage::Vec::init(),
+            start: 0,
+            end: 0,
+            non_empty: false,
+        })
     }
 
     /// Push new data to the end of the buffer.
@@ -62,7 +74,7 @@ impl<const N: usize> RingBuf<N> {
 
             offset += len;
 
-            if !self.empty && self.start >= self.end && self.start < self.end + len {
+            if self.non_empty && self.start >= self.end && self.start < self.end + len {
                 // Dropping oldest data
                 self.start = self.end + len;
             }
@@ -71,7 +83,7 @@ impl<const N: usize> RingBuf<N> {
 
             self.wrap();
 
-            self.empty = false;
+            self.non_empty = true;
         }
 
         self.len()
@@ -88,7 +100,7 @@ impl<const N: usize> RingBuf<N> {
 
         self.buf[self.end] = data;
 
-        if !self.empty && self.start == self.end {
+        if self.non_empty && self.start == self.end {
             // Dropping oldest data
             self.start = self.end + 1;
         }
@@ -97,7 +109,7 @@ impl<const N: usize> RingBuf<N> {
 
         self.wrap();
 
-        self.empty = false;
+        self.non_empty = true;
 
         self.len()
     }
@@ -121,7 +133,7 @@ impl<const N: usize> RingBuf<N> {
     pub fn pop(&mut self, out_buf: &mut [u8]) -> usize {
         let mut offset = 0;
 
-        while offset < out_buf.len() && !self.empty {
+        while offset < out_buf.len() && self.non_empty {
             let len = min(
                 if self.start < self.end {
                     self.end
@@ -138,7 +150,7 @@ impl<const N: usize> RingBuf<N> {
             self.wrap();
 
             if self.start == self.end {
-                self.empty = true
+                self.non_empty = false
             }
 
             offset += len;
@@ -150,20 +162,20 @@ impl<const N: usize> RingBuf<N> {
     /// Return `true` when the buffer is full.
     #[inline(always)]
     pub fn is_full(&self) -> bool {
-        self.start == self.end && !self.empty
+        self.start == self.end && self.non_empty
     }
 
     /// Return `true` when the buffer is empty.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.empty
+        !self.non_empty
     }
 
     /// Return the current size of the data in the buffer.
     #[inline(always)]
     #[allow(unused)]
     pub fn len(&self) -> usize {
-        if self.empty {
+        if !self.non_empty {
             0
         } else if self.start < self.end {
             self.end - self.start
@@ -184,7 +196,7 @@ impl<const N: usize> RingBuf<N> {
     pub fn clear(&mut self) {
         self.start = 0;
         self.end = 0;
-        self.empty = true;
+        self.non_empty = false;
     }
 
     #[inline(always)]

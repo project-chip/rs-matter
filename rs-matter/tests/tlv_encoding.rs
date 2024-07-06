@@ -20,7 +20,7 @@ mod tlv_encoding_tests {
     use rs_matter::bitflags_tlv;
     use rs_matter::error::Error;
     use rs_matter::tlv::{get_root_node, FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
-    use rs_matter::utils::writebuf::WriteBuf;
+    use rs_matter::utils::storage::WriteBuf;
 
     #[derive(PartialEq, Debug, ToTLV, FromTLV)]
     struct SimpleStruct {

@@ -18,7 +18,7 @@
 use rs_matter::{
     interaction_model::{messages::ib::AttrResp, messages::msg::ReportDataMsg},
     tlv::{TLVElement, TLVList, TLVWriter, TagType, ToTLV},
-    utils::writebuf::WriteBuf,
+    utils::storage::WriteBuf,
 };
 
 /// Assert that the data received in the outbuf matches our expectations

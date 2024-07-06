@@ -19,11 +19,9 @@ use core::fmt;
 
 use log::trace;
 
-use crate::{
-    crypto::AEAD_MIC_LEN_BYTES,
-    error::Error,
-    utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
-};
+use crate::crypto::AEAD_MIC_LEN_BYTES;
+use crate::error::Error;
+use crate::utils::storage::{ParseBuf, WriteBuf};
 
 use super::{
     plain_hdr::{self, PlainHdr},

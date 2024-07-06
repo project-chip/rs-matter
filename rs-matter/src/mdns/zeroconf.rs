@@ -1,5 +1,3 @@
-use core::cell::RefCell;
-
 use std::collections::BTreeMap;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
@@ -7,10 +5,10 @@ use log::error;
 
 use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 
-use crate::{
-    data_model::cluster_basic_information::BasicInfoConfig,
-    error::{Error, ErrorCode},
-};
+use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::error::{Error, ErrorCode};
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
 
 use super::ServiceMode;
 
@@ -37,6 +35,14 @@ impl<'a> MdnsImpl<'a> {
             matter_port,
             services: RefCell::new(BTreeMap::new()),
         }
+    }
+
+    pub fn init(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> impl Init<Self> {
+        init!(Self {
+            dev_det,
+            matter_port,
+            services <- RefCell::init(BTreeMap::new()),
+        })
     }
 
     pub fn reset(&self) {

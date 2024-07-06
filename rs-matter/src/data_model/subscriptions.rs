@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
 use core::num::NonZeroU8;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -23,7 +22,9 @@ use embassy_time::Instant;
 
 use portable_atomic::{AtomicU32, Ordering};
 
-use crate::utils::notification::Notification;
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
+use crate::utils::sync::Notification;
 
 struct Subscription {
     fabric_idx: NonZeroU8,
@@ -62,7 +63,7 @@ impl Subscription {
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
 pub struct Subscriptions<const N: usize> {
     next_subscription_id: AtomicU32,
-    subscriptions: RefCell<heapless::Vec<Subscription, N>>,
+    subscriptions: RefCell<crate::utils::storage::Vec<Subscription, N>>,
     pub(crate) notification: Notification<NoopRawMutex>,
 }
 
@@ -78,9 +79,18 @@ impl<const N: usize> Subscriptions<N> {
     pub const fn new() -> Self {
         Self {
             next_subscription_id: AtomicU32::new(1),
-            subscriptions: RefCell::new(heapless::Vec::new()),
+            subscriptions: RefCell::new(crate::utils::storage::Vec::new()),
             notification: Notification::new(),
         }
+    }
+
+    /// Create an in-place initializer for the instance.
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            next_subscription_id: AtomicU32::new(1),
+            subscriptions <- RefCell::init(crate::utils::storage::Vec::init()),
+            notification: Notification::new(),
+        })
     }
 
     /// Notify the instance that some data in the data model has changed and that it should re-evaluate the subscriptions

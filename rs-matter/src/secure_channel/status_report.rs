@@ -19,7 +19,7 @@ use num_derive::FromPrimitive;
 
 use crate::{
     error::{Error, ErrorCode},
-    utils::{parsebuf::ParseBuf, writebuf::WriteBuf},
+    utils::storage::{ParseBuf, WriteBuf},
 };
 
 #[allow(dead_code)]

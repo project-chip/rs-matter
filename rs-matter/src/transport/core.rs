@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
 use core::fmt::{self, Display};
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
@@ -26,21 +25,19 @@ use embassy_time::Timer;
 
 use log::{debug, error, info, trace, warn};
 
+use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
-use crate::mdns::MdnsImpl;
+use crate::mdns::{MdnsImpl, MdnsService};
 use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 use crate::secure_channel::status_report::StatusReport;
 use crate::tlv::TLVList;
-use crate::utils::buf::BufferAccess;
-use crate::utils::{
-    epoch::Epoch,
-    ifmutex::{IfMutex, IfMutexGuard},
-    notification::Notification,
-    parsebuf::ParseBuf,
-    rand::Rand,
-    select::Coalesce,
-    writebuf::WriteBuf,
-};
+use crate::utils::cell::RefCell;
+use crate::utils::epoch::Epoch;
+use crate::utils::init::{init, Init};
+use crate::utils::rand::Rand;
+use crate::utils::select::Coalesce;
+use crate::utils::storage::{pooled::BufferAccess, ParseBuf, WriteBuf};
+use crate::utils::sync::{IfMutex, IfMutexGuard, Notification};
 use crate::{Matter, MATTER_PORT};
 
 use super::exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
@@ -86,33 +83,58 @@ pub struct TransportMgr<'m> {
 
 impl<'m> TransportMgr<'m> {
     #[inline(always)]
-    pub(crate) const fn new(mdns: MdnsImpl<'m>, epoch: Epoch, rand: Rand) -> Self {
+    pub(crate) const fn new(
+        service: MdnsService<'m>,
+        dev_det: &'m BasicInfoConfig<'m>,
+        matter_port: u16,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> Self {
         Self {
             rx: IfMutex::new(Packet::new()),
             tx: IfMutex::new(Packet::new()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
-            mdns,
+            mdns: MdnsImpl::new(service, dev_det, matter_port),
             rand,
         }
     }
 
-    pub(crate) fn replace_mdns(&mut self, mdns: MdnsImpl<'m>) {
-        self.mdns = mdns;
+    pub(crate) fn init(
+        service: MdnsService<'m>,
+        dev_det: &'m BasicInfoConfig<'m>,
+        matter_port: u16,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> impl Init<Self> {
+        init!(Self {
+            rx <- IfMutex::init(Packet::init()),
+            tx <- IfMutex::init(Packet::init()),
+            dropped: Notification::new(),
+            session_removed: Notification::new(),
+            session_mgr <- RefCell::init(SessionMgr::init(epoch, rand)),
+            mdns <- MdnsImpl::init(service, dev_det, matter_port),
+            rand,
+        })
     }
 
+    pub(crate) fn replace_mdns(&mut self, mdns: MdnsService<'m>) {
+        self.mdns.update(mdns);
+    }
+
+    // TODO
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn initialize_buffers(&self) -> Result<(), Error> {
         let mut rx = self.rx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
         let mut tx = self.tx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
 
         if rx.buf.0.is_none() {
-            rx.buf.0 = Some(alloc::boxed::Box::new(heapless::Vec::new()));
+            rx.buf.0 = Some(alloc::boxed::Box::new(crate::utils::storage::Vec::new()));
         }
 
         if tx.buf.0.is_none() {
-            tx.buf.0 = Some(alloc::boxed::Box::new(heapless::Vec::new()));
+            tx.buf.0 = Some(alloc::boxed::Box::new(crate::utils::storage::Vec::new()));
         }
 
         Ok(())
@@ -274,7 +296,7 @@ impl<'m> TransportMgr<'m> {
     {
         info!("Running Matter built-in mDNS service");
 
-        if let MdnsImpl::Builtin(mdns) = &self.mdns {
+        if let Some(mdns) = self.mdns.builtin() {
             mdns.run(
                 send,
                 recv,
@@ -1046,6 +1068,15 @@ impl<const N: usize> Packet<N> {
         }
     }
 
+    pub(crate) fn init() -> impl Init<Self> {
+        init!(Self {
+            peer: Address::new(),
+            header: PacketHdr::new(),
+            buf <- PacketBuffer::init(),
+            payload_start: 0,
+        })
+    }
+
     pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
         struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
 
@@ -1116,54 +1147,66 @@ impl<const N: usize> Display for Packet<N> {
 //
 // This type is only known and used by `TransportMgr` and the `exchange` module
 #[cfg(all(feature = "large-buffers", feature = "alloc"))]
-pub(crate) struct PacketBuffer<const N: usize>(Option<alloc::boxed::Box<heapless::Vec<u8, N>>>);
+pub(crate) struct PacketBuffer<const N: usize>(
+    Option<alloc::boxed::Box<crate::utils::storage::Vec<u8, N>>>,
+);
 
 // The buffer used inside the pair of RX and TX `Packet` instances
 // When the either of the `alloc` and `large-buffers` features is not enabled, the buffer payload is allocated inline
 //
 // This type is only known and used by `TransportMgr` and the `exchange` module
 #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
-pub(crate) struct PacketBuffer<const N: usize>(heapless::Vec<u8, N>);
+pub(crate) struct PacketBuffer<const N: usize> {
+    buffer: crate::utils::storage::Vec<u8, N>,
+}
 
 impl<const N: usize> PacketBuffer<N> {
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub const fn new() -> Self {
-        Self(None)
+        Self { buffer: None }
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
     pub const fn new() -> Self {
-        Self(heapless::Vec::new())
+        Self {
+            buffer: crate::utils::storage::Vec::new(),
+        }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            buffer <- crate::utils::storage::Vec::init(),
+        })
     }
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
-    pub fn buf_mut(&mut self) -> &mut heapless::Vec<u8, N> {
+    pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
         &mut *self
-            .0
+            .buffer
             .as_mut()
             .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
-    pub fn buf_mut(&mut self) -> &mut heapless::Vec<u8, N> {
-        &mut self.0
+    pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
+        &mut self.buffer
     }
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
-    pub fn buf_ref(&self) -> &heapless::Vec<u8, N> {
-        self.0
+    pub fn buf_ref(&self) -> crate::utils::storage::Vec<u8, N> {
+        self.buffer
             .as_ref()
             .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
-    pub fn buf_ref(&self) -> &heapless::Vec<u8, N> {
-        &self.0
+    pub fn buf_ref(&self) -> &crate::utils::storage::Vec<u8, N> {
+        &self.buffer
     }
 }
 
 impl<const N: usize> Deref for PacketBuffer<N> {
-    type Target = heapless::Vec<u8, N>;
+    type Target = crate::utils::storage::Vec<u8, N>;
 
     fn deref(&self) -> &Self::Target {
         self.buf_ref()

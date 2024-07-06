@@ -134,7 +134,12 @@ impl AccessControlCluster {
                     Attributes::Acl(_) => {
                         writer.start_array(AttrDataWriter::TAG)?;
                         acl_mgr.for_each_acl(|entry| {
-                            if !attr.fab_filter || attr.fab_idx == entry.fab_idx.get() {
+                            if !attr.fab_filter
+                                || entry
+                                    .fab_idx
+                                    .map(|fi| fi.get() == attr.fab_idx)
+                                    .unwrap_or(false)
+                            {
                                 entry.to_tlv(&mut writer, TagType::Anonymous)?;
                             }
 
@@ -184,7 +189,7 @@ impl AccessControlCluster {
                 let mut acl_entry = AclEntry::from_tlv(data)?;
                 info!("ACL  {:?}", acl_entry);
                 // Overwrite the fabric index with our accessing fabric index
-                acl_entry.fab_idx = fab_idx;
+                acl_entry.fab_idx = Some(fab_idx);
 
                 if let ListOperation::EditItem(index) = op {
                     acl_mgr.edit(*index as u8, fab_idx, acl_entry)?;
@@ -230,7 +235,7 @@ mod tests {
     use crate::data_model::system_model::access_control::Dataver;
     use crate::interaction_model::messages::ib::ListOperation;
     use crate::tlv::{get_root_node_struct, ElementType, TLVElement, TLVWriter, TagType, ToTLV};
-    use crate::utils::writebuf::WriteBuf;
+    use crate::utils::storage::WriteBuf;
 
     use super::AccessControlCluster;
 

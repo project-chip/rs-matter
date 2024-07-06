@@ -19,8 +19,7 @@ use bitflags::bitflags;
 use core::fmt;
 
 use crate::transport::plain_hdr;
-use crate::utils::parsebuf::ParseBuf;
-use crate::utils::writebuf::WriteBuf;
+use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::{crypto, error::*};
 
 use log::{trace, warn};

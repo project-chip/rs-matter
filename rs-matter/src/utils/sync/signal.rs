@@ -15,16 +15,36 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
 use core::future::poll_fn;
 use core::task::{Context, Poll};
 
-use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::waitqueue::WakerRegistration;
+
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
+
+use super::blocking::Mutex;
 
 struct State<S> {
     state: S,
     waker: WakerRegistration,
+}
+
+impl<S> State<S> {
+    const fn new(state: S) -> Self {
+        Self {
+            state,
+            waker: WakerRegistration::new(),
+        }
+    }
+
+    fn init<I: Init<S>>(state: I) -> impl Init<Self> {
+        init!(Self {
+            state <- state,
+            waker: WakerRegistration::new(),
+        })
+    }
 }
 
 /// `Signal` is an async synchonization primitive that can be viewed as a generalization of the `embassy_sync::Signal` primitive
@@ -38,18 +58,26 @@ struct State<S> {
 /// The generic nature of `Signal` allows for a wide range of use cases, including the implementation of:
 /// - the `Notification` primitive
 /// - the `IfMutex` primitive
-pub struct Signal<M, S>(Mutex<M, RefCell<State<S>>>);
+pub struct Signal<M, S> {
+    inner: Mutex<M, RefCell<State<S>>>,
+}
 
 impl<M, S> Signal<M, S>
 where
     M: RawMutex,
 {
-    /// Crate a `Signal` with the given initial state `S`.
+    /// Create a `Signal` with the given initial state `S`.
     pub const fn new(state: S) -> Self {
-        Self(Mutex::new(RefCell::new(State {
-            state,
-            waker: WakerRegistration::new(),
-        })))
+        Self {
+            inner: Mutex::new(RefCell::new(State::new(state))),
+        }
+    }
+
+    /// Create a `Signal` in-place initializer with the given initial state initializer `I`.
+    pub fn init<I: Init<S>>(state: I) -> impl Init<Self> {
+        init!(Self {
+            inner <- Mutex::init(RefCell::init(State::init(state))),
+        })
     }
 
     // Modify the state `S` and wake up the waiters if necessary.
@@ -57,7 +85,7 @@ where
     where
         F: FnOnce(&mut S) -> (bool, R),
     {
-        self.0.lock(|s| {
+        self.inner.lock(|s| {
             let mut s = s.borrow_mut();
 
             let (wake, result) = f(&mut s.state);
@@ -83,7 +111,7 @@ where
     where
         F: FnOnce(&mut S) -> Option<R>,
     {
-        self.0.lock(|s| {
+        self.inner.lock(|s| {
             let mut s = s.borrow_mut();
 
             if let Some(result) = f(&mut s.state) {

@@ -15,19 +15,21 @@
  *    limitations under the License.
  */
 
-use core::{cell::RefCell, fmt::Display, num::NonZeroU8};
+use core::{fmt::Display, num::NonZeroU8};
 
-use crate::{
-    data_model::objects::{Access, ClusterId, EndptId, Privilege},
-    error::{Error, ErrorCode},
-    fabric,
-    interaction_model::messages::GenericPath,
-    tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
-    transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC},
-    utils::writebuf::WriteBuf,
-};
 use log::error;
+
 use num_derive::FromPrimitive;
+
+use crate::data_model::objects::{Access, ClusterId, EndptId, Privilege};
+use crate::error::{Error, ErrorCode};
+use crate::fabric;
+use crate::interaction_model::messages::GenericPath;
+use crate::tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV};
+use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
+use crate::utils::storage::WriteBuf;
 
 // Matter Minimum Requirements
 pub const SUBJECTS_PER_ENTRY: usize = 4;
@@ -301,15 +303,17 @@ pub struct AclEntry {
     subjects: Subjects,
     targets: Targets,
     // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
+    // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
+    // however, it will be `None` when the entry is coming from the other peer
     #[tagval(0xFE)]
-    pub fab_idx: NonZeroU8,
+    pub fab_idx: Option<NonZeroU8>,
 }
 
 impl AclEntry {
     pub fn new(fab_idx: NonZeroU8, privilege: Privilege, auth_mode: AuthMode) -> Self {
         const INIT_SUBJECTS: Option<u64> = None;
         Self {
-            fab_idx,
+            fab_idx: Some(fab_idx),
             privilege,
             auth_mode,
             subjects: [INIT_SUBJECTS; SUBJECTS_PER_ENTRY],
@@ -368,7 +372,11 @@ impl AclEntry {
         }
 
         // true if both are true
-        allow && self.fab_idx.get() == accessor.fab_idx
+        allow
+            && self
+                .fab_idx
+                .map(|fab_idx| fab_idx.get() == accessor.fab_idx)
+                .unwrap_or(false)
     }
 
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
@@ -411,7 +419,7 @@ impl AclEntry {
 
 const MAX_ACL_ENTRIES: usize = ENTRIES_PER_FABRIC * fabric::MAX_SUPPORTED_FABRICS;
 
-type AclEntries = heapless::Vec<Option<AclEntry>, MAX_ACL_ENTRIES>;
+type AclEntries = crate::utils::storage::Vec<Option<AclEntry>, MAX_ACL_ENTRIES>;
 
 pub struct AclMgr {
     entries: AclEntries,
@@ -425,12 +433,21 @@ impl Default for AclMgr {
 }
 
 impl AclMgr {
+    /// Create a new ACL Manager
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
             entries: AclEntries::new(),
             changed: false,
         }
+    }
+
+    /// Return an in-place initializer for ACL Manager
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            entries <- AclEntries::init(),
+            changed: false,
+        })
     }
 
     pub fn erase_all(&mut self) -> Result<(), Error> {
@@ -441,13 +458,18 @@ impl AclMgr {
     }
 
     pub fn add(&mut self, entry: AclEntry) -> Result<u8, Error> {
+        let Some(fab_idx) = entry.fab_idx else {
+            // When persisting entries, the `fab_idx` should always be set
+            return Err(ErrorCode::Invalid.into());
+        };
+
         if entry.auth_mode == AuthMode::Pase {
             // Reserved for future use
             // TODO: Should be something that results in IMStatusCode::ConstraintError
             Err(ErrorCode::Invalid)?;
         }
 
-        let cnt = self.get_index_in_fabric(MAX_ACL_ENTRIES, entry.fab_idx);
+        let cnt = self.get_index_in_fabric(MAX_ACL_ENTRIES, fab_idx);
         if cnt >= ENTRIES_PER_FABRIC as u8 {
             Err(ErrorCode::NoSpace)?;
         }
@@ -455,8 +477,6 @@ impl AclMgr {
         let slot = self.entries.iter().position(|a| a.is_none());
 
         if slot.is_some() || self.entries.len() < MAX_ACL_ENTRIES {
-            let fab_idx = entry.fab_idx;
-
             let slot = if let Some(slot) = slot {
                 self.entries[slot] = Some(entry);
 
@@ -501,7 +521,7 @@ impl AclMgr {
         for entry in &mut self.entries {
             if entry
                 .as_ref()
-                .map(|e| e.fab_idx == fab_idx)
+                .map(|e| e.fab_idx == Some(fab_idx))
                 .unwrap_or(false)
             {
                 *entry = None;
@@ -565,7 +585,7 @@ impl AclMgr {
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
-        tlv::from_tlv(&mut self.entries, &root)?;
+        tlv::vec_from_tlv(&mut self.entries, &root)?;
         self.changed = false;
 
         Ok(())
@@ -606,7 +626,11 @@ impl AclMgr {
         for (curr_index, entry) in self
             .entries
             .iter_mut()
-            .filter(|e| e.as_ref().filter(|e1| e1.fab_idx == fab_idx).is_some())
+            .filter(|e| {
+                e.as_ref()
+                    .filter(|e1| e1.fab_idx == Some(fab_idx))
+                    .is_some()
+            })
             .enumerate()
         {
             if curr_index == index as usize {
@@ -625,7 +649,7 @@ impl AclMgr {
             .iter()
             .take(till_slot_index)
             .flatten()
-            .filter(|e| e.fab_idx == fab_idx)
+            .filter(|e| e.fab_idx == Some(fab_idx))
             .count() as u8
     }
 }
@@ -643,13 +667,15 @@ impl core::fmt::Display for AclMgr {
 #[cfg(test)]
 #[allow(clippy::bool_assert_comparison)]
 pub(crate) mod tests {
-    use core::{cell::RefCell, num::NonZeroU8};
+    use core::num::NonZeroU8;
 
     use crate::{
         acl::{gen_noc_cat, AccessorSubjects},
         data_model::objects::{Access, Privilege},
         interaction_model::messages::GenericPath,
     };
+
+    use crate::utils::cell::RefCell;
 
     use super::{AccessReq, Accessor, AclEntry, AclMgr, AuthMode, Target};
 

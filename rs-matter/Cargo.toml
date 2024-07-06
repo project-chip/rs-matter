@@ -44,7 +44,8 @@ critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
-scopeguard = "1"
+scopeguard = { version = "1", default-features = false }
+pinned-init = { version = "0.0.8", default-features = false }
 
 # crypto
 openssl = { version = "0.10", optional = true }
@@ -81,8 +82,9 @@ tokio-stream = { version = "0.1" }
 [dev-dependencies]
 env_logger = "0.11"
 nix = { version = "0.27", features = ["net"] }
-futures-lite = "1"
+futures-lite = "2"
 async-channel = "2"
+static_cell = "2"
 
 [[example]]
 name = "onoff_light"

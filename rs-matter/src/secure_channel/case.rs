@@ -31,7 +31,7 @@ use crate::{
         exchange::Exchange,
         session::{NocCatIds, ReservedSession, SessionMode},
     },
-    utils::{rand::Rand, writebuf::WriteBuf},
+    utils::{rand::Rand, storage::WriteBuf},
 };
 
 #[derive(Debug, Clone)]

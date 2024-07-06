@@ -32,7 +32,7 @@ use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfSt
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::epoch::Epoch;
-use crate::utils::writebuf::WriteBuf;
+use crate::utils::storage::WriteBuf;
 use crate::{attribute_enum, cmd_enter, command_enum, error::*};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
@@ -157,14 +157,14 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 
 pub struct NocData {
     pub key_pair: KeyPair,
-    pub root_ca: heapless::Vec<u8, { MAX_CERT_TLV_LEN }>,
+    pub root_ca: crate::utils::storage::Vec<u8, { MAX_CERT_TLV_LEN }>,
 }
 
 impl NocData {
     pub fn new(key_pair: KeyPair) -> Self {
         Self {
             key_pair,
-            root_ca: heapless::Vec::new(),
+            root_ca: crate::utils::storage::Vec::new(),
         }
     }
 }
@@ -327,15 +327,16 @@ impl NocCluster {
         let noc_cert = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
         info!("Received NOC as: {}", noc_cert);
 
-        let noc = heapless::Vec::from_slice(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+        let noc = crate::utils::storage::Vec::from_slice(r.noc_value.0)
+            .map_err(|_| NocStatus::InvalidNOC)?;
 
         let icac = if let Some(icac_value) = r.icac_value {
             if !icac_value.0.is_empty() {
                 let icac_cert = Cert::new(icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
                 info!("Received ICAC as: {}", icac_cert);
 
-                let icac =
-                    heapless::Vec::from_slice(icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
+                let icac = crate::utils::storage::Vec::from_slice(icac_value.0)
+                    .map_err(|_| NocStatus::InvalidNOC)?;
                 Some(icac)
             } else {
                 None
@@ -661,8 +662,8 @@ impl NocCluster {
             let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
             info!("Received Trusted Cert:{:x?}", req.str);
 
-            noc_data.root_ca =
-                heapless::Vec::from_slice(req.str.0).map_err(|_| ErrorCode::BufferTooSmall)?;
+            noc_data.root_ca = crate::utils::storage::Vec::from_slice(req.str.0)
+                .map_err(|_| ErrorCode::BufferTooSmall)?;
 
             Ok(())
         })

@@ -21,7 +21,7 @@ use crate::{
     crypto::KeyPair,
     error::{Error, ErrorCode},
     tlv::{self, FromTLV, OctetStr, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
-    utils::{epoch::MATTER_CERT_DOESNT_EXPIRE, writebuf::WriteBuf},
+    utils::{epoch::MATTER_CERT_DOESNT_EXPIRE, storage::WriteBuf},
 };
 use log::error;
 use num_derive::FromPrimitive;
@@ -857,7 +857,7 @@ mod tests {
 
     use crate::cert::Cert;
     use crate::tlv::{self, FromTLV, TLVWriter, TagType, ToTLV};
-    use crate::utils::writebuf::WriteBuf;
+    use crate::utils::storage::WriteBuf;
 
     #[test]
     fn test_asn1_encode_success() {

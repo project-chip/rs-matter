@@ -21,7 +21,7 @@ use crate::{
     error::*,
     tlv::{FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
     transport::exchange::MessageMeta,
-    utils::{epoch::Epoch, writebuf::WriteBuf},
+    utils::{epoch::Epoch, storage::WriteBuf},
 };
 use num::FromPrimitive;
 use num_derive::FromPrimitive;

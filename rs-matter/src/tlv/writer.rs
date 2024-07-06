@@ -15,9 +15,12 @@
  *    limitations under the License.
  */
 
-use super::{TagType, TAG_SHIFT_BITS, TAG_SIZE_MAP};
-use crate::{error::*, utils::writebuf::WriteBuf};
 use log::error;
+
+use crate::error::*;
+use crate::utils::storage::WriteBuf;
+
+use super::{TagType, TAG_SHIFT_BITS, TAG_SIZE_MAP};
 
 #[allow(dead_code)]
 enum WriteElementType {
@@ -273,7 +276,7 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
 #[cfg(test)]
 mod tests {
     use super::{TLVWriter, TagType};
-    use crate::utils::writebuf::WriteBuf;
+    use crate::utils::storage::WriteBuf;
 
     #[test]
     fn test_write_success() {
