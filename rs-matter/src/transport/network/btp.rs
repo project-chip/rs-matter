@@ -27,6 +27,7 @@ use embassy_time::{Duration, Instant, Timer};
 use log::trace;
 
 use context::LockError;
+use pinned_init::{init, Init};
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
@@ -65,7 +66,7 @@ pub(crate) const MAX_MTU: u16 = (MAX_BTP_SEGMENT_SIZE + GATT_HEADER_SIZE) as u16
 pub struct Btp<C, M, T> {
     gatt: T,
     context: C,
-    send_buf: IfMutex<NoopRawMutex, heapless::Vec<u8, MAX_BTP_SEGMENT_SIZE>>,
+    send_buf: IfMutex<NoopRawMutex, crate::utils::vec::Vec<u8, MAX_BTP_SEGMENT_SIZE>>,
     ack_timeout_secs: u16,
     conn_idle_timeout_secs: u16,
     _mutex: PhantomData<M>,
@@ -80,6 +81,10 @@ where
     #[inline(always)]
     pub fn new_builtin(context: C) -> Self {
         Self::new(BuiltinGattPeripheral::new(None), context)
+    }
+
+    pub fn init_builtin<I: Init<C>>(context: C) -> impl Init<Self> {
+        Self::init(BuiltinGattPeripheral::new(None), context)
     }
 }
 
@@ -111,11 +116,22 @@ where
         Self {
             gatt,
             context,
-            send_buf: IfMutex::new(heapless::Vec::new()),
+            send_buf: IfMutex::new(crate::utils::vec::Vec::new()),
             ack_timeout_secs,
             conn_idle_timeout_secs,
             _mutex: PhantomData,
         }
+    }
+
+    pub fn init<I: Init<C>>(gatt: T, context: I) -> impl Init<Self> {
+        init!(Self {
+            gatt,
+            context <- context,
+            send_buf <- IfMutex::init(crate::utils::vec::Vec::init()),
+            ack_timeout_secs: BTP_ACK_TIMEOUT_SECS,
+            conn_idle_timeout_secs: BTP_CONN_IDLE_TIMEOUT_SECS,
+            _mutex: PhantomData,
+        })
     }
 
     /// Run the BTP protocol
@@ -291,7 +307,7 @@ where
     /// in case it is used by another operation.
     async fn send_buf(
         &self,
-    ) -> impl DerefMut<Target = heapless::Vec<u8, MAX_BTP_SEGMENT_SIZE>> + '_ {
+    ) -> impl DerefMut<Target = crate::utils::vec::Vec<u8, MAX_BTP_SEGMENT_SIZE>> + '_ {
         let mut buf = self.send_buf.lock().await;
 
         // Unwrap is safe because the max size of the buffer is MAX_PDU_SIZE

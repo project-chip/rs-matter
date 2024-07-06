@@ -15,14 +15,16 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 use log::{error, info, trace, warn};
+use pinned_init::{init, Init};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::BtAddr;
+use crate::utils::blmutex::Mutex;
 use crate::utils::notification::Notification;
+use crate::utils::refcell::RefCell;
 
 use super::{session::Session, GattPeripheralEvent};
 
@@ -182,7 +184,7 @@ pub struct BtpContext<M>
 where
     M: RawMutex,
 {
-    pub(crate) sessions: Mutex<M, RefCell<heapless::Vec<Session, MAX_BTP_SESSIONS>>>,
+    pub(crate) sessions: Mutex<M, RefCell<crate::utils::vec::Vec<Session, MAX_BTP_SESSIONS>>>,
     pub(crate) handshake_notif: Notification<M>,
     pub(crate) available_notif: Notification<M>,
     pub(crate) recv_notif: Notification<M>,
@@ -207,13 +209,24 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            sessions: Mutex::new(RefCell::new(heapless::Vec::new())),
+            sessions: Mutex::new(RefCell::new(crate::utils::vec::Vec::new())),
             handshake_notif: Notification::new(),
             available_notif: Notification::new(),
             recv_notif: Notification::new(),
             ack_notif: Notification::new(),
             send_notif: Notification::new(),
         }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            sessions <- Mutex::init(RefCell::init(crate::utils::vec::Vec::init())),
+            handshake_notif: Notification::new(),
+            available_notif: Notification::new(),
+            recv_notif: Notification::new(),
+            ack_notif: Notification::new(),
+            send_notif: Notification::new(),
+        })
     }
 }
 
@@ -251,9 +264,7 @@ where
                     warn!("Too many BTP sessions, dropping a handshake request from address {address}");
                 } else {
                     // Unwrap is safe because we checked the length above
-                    sessions
-                        .push(Session::process_rx_handshake(address, data, gatt_mtu)?)
-                        .unwrap();
+                    sessions.push_init(Session::process_rx_handshake(address, data, gatt_mtu)?).unwrap();
                 }
 
                 Ok(())
