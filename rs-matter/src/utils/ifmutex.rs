@@ -18,12 +18,12 @@
 //! A variation of the `embassy-sync` async mutex that only locks the mutex if a certain condition on the content of the data holds true.
 //! Check `embassy_sync::Mutex` for the original unconditional implementation.
 use core::cell::UnsafeCell;
-use core::convert::Infallible;
 use core::ops::{Deref, DerefMut};
-use core::ptr::addr_of_mut;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use pinned_init::{init_from_closure, Init};
+use pinned_init::{init, Init};
+
+use crate::utils::init::ContainerInit;
 
 use super::signal::Signal;
 
@@ -60,19 +60,10 @@ where
     }
 
     pub fn init<I: Init<T>>(value: I) -> impl Init<Self> {
-        unsafe {
-            init_from_closure::<_, Infallible>(move |slot: *mut Self| {
-                // `slot` contains uninit memory, avoid creating a reference.
-                let value_ptr: *mut T = addr_of_mut!((*slot).inner) as _;
-
-                // Initialize the value
-                value.__init(value_ptr).unwrap();
-
-                addr_of_mut!((*slot).state).write(Signal::<M, _>::new(false));
-
-                Ok(())
-            })
-        }
+        init!(Self {
+            state: Signal::<M, _>::new(false),
+            inner <- UnsafeCell::init(value),
+        })
     }
 }
 

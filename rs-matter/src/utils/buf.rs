@@ -22,6 +22,9 @@ use core::pin::pin;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
+use pinned_init::{init, Init};
+
+use crate::utils::init::ContainerInit;
 
 use super::signal::Signal;
 
@@ -59,7 +62,7 @@ where
 /// Accessing a buffer would fail when all buffers are still used elsewhere after a wait timeout expires.
 pub struct PooledBuffers<const N: usize, M, T> {
     available: Signal<M, [bool; N]>,
-    pool: UnsafeCell<heapless::Vec<T, N>>,
+    pool: UnsafeCell<crate::utils::vec::Vec<T, N>>,
     wait_timeout_ms: u32,
 }
 
@@ -71,9 +74,17 @@ where
     pub const fn new(wait_timeout_ms: u32) -> Self {
         Self {
             available: Signal::new([true; N]),
-            pool: UnsafeCell::new(heapless::Vec::new()),
+            pool: UnsafeCell::new(crate::utils::vec::Vec::new()),
             wait_timeout_ms,
         }
+    }
+
+    pub fn init(wait_timeout_ms: u32) -> impl Init<Self> {
+        init!(Self {
+            available: Signal::new([true; N]),
+            pool <- UnsafeCell::init(crate::utils::vec::Vec::init()),
+            wait_timeout_ms,
+        })
     }
 }
 

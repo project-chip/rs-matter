@@ -1,3 +1,8 @@
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::redundant_slicing)]
+#![allow(clippy::result_unit_err)]
+#![allow(clippy::should_implement_trait)]
+
 use core::{
     cmp::Ordering,
     convert::Infallible,

@@ -1,15 +1,17 @@
 #![allow(unexpected_cfgs)]
+#![allow(clippy::should_implement_trait)]
 
 use core::cell::{Cell, UnsafeCell};
 use core::cmp::Ordering;
-use core::convert::Infallible;
 use core::fmt::{self, Debug, Display};
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Deref, DerefMut};
-use core::ptr::{addr_of_mut, NonNull};
+use core::ptr::NonNull;
 
-use pinned_init::{init_from_closure, Init};
+use pinned_init::{init, Init};
+
+use crate::utils::init::ContainerInit;
 
 /// A mutable memory location with dynamically checked borrow rules
 ///
@@ -138,20 +140,13 @@ impl<T> RefCell<T> {
     }
 
     pub fn init<I: Init<T>>(value: I) -> impl Init<Self> {
-        unsafe {
-            init_from_closure::<_, Infallible>(move |slot: *mut Self| {
-                // `slot` contains uninit memory, avoid creating a reference.
-                let value_ptr: *mut T = addr_of_mut!((*slot).value) as _;
-
-                // Initialize the value
-                value.__init(value_ptr).unwrap();
-
-                addr_of_mut!((*slot).borrow).write(Cell::new(UNUSED));
-                //addr_of_mut!((*slot).borrowed_at).write(Cell::new(None));
-
-                Ok(())
-            })
-        }
+        init!(Self {
+            value <- UnsafeCell::init(value),
+            borrow: Cell::new(UNUSED),
+            // #[cfg(feature = "debug_refcell")]
+            // borrowed_at: Cell::new(None),
+            _not_sync: PhantomData,
+        })
     }
 
     /// Consumes the `RefCell`, returning the wrapped value.
