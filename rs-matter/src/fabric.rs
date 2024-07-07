@@ -19,18 +19,21 @@ use core::fmt::Write;
 use core::num::NonZeroU8;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
-use heapless::String;
-use log::info;
-use pinned_init::{init, Init};
 
-use crate::{
-    cert::{Cert, MAX_CERT_TLV_LEN},
-    crypto::{self, hkdf_sha256, HmacSha256, KeyPair},
-    error::{Error, ErrorCode},
-    group_keys::KeySet,
-    mdns::{Mdns, ServiceMode},
-    tlv::{self, FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr},
-    utils::{vec::Vec, writebuf::WriteBuf},
+use heapless::String;
+
+use log::info;
+
+use crate::cert::{Cert, MAX_CERT_TLV_LEN};
+use crate::crypto::{self, hkdf_sha256, HmacSha256, KeyPair};
+use crate::error::{Error, ErrorCode};
+use crate::group_keys::KeySet;
+use crate::mdns::{Mdns, ServiceMode};
+use crate::tlv::{self, FromTLV, OctetStr, TLVList, TLVWriter, TagType, ToTLV, UtfStr};
+use crate::utils::{
+    init::{init, Init},
+    vec::Vec,
+    writebuf::WriteBuf,
 };
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;

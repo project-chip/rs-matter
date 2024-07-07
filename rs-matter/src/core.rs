@@ -16,27 +16,27 @@
  */
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use pinned_init::{init, Init};
 
-use crate::{
-    acl::AclMgr,
-    data_model::{
-        cluster_basic_information::BasicInfoConfig,
-        sdm::{dev_att::DevAttDataFetcher, failsafe::FailSafe},
-    },
-    error::*,
-    fabric::FabricMgr,
-    mdns::MdnsService,
-    pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
-    secure_channel::{pake::PaseMgr, spake2p::VerifierData},
-    transport::{
-        core::{PacketBufferExternalAccess, TransportMgr},
-        network::{NetworkReceive, NetworkSend},
-    },
-    utils::{buf::BufferAccess, epoch::Epoch, notification::Notification, rand::Rand},
+use crate::acl::AclMgr;
+use crate::data_model::{
+    cluster_basic_information::BasicInfoConfig,
+    sdm::{dev_att::DevAttDataFetcher, failsafe::FailSafe},
 };
-
-use crate::utils::refcell::RefCell;
+use crate::error::*;
+use crate::fabric::FabricMgr;
+use crate::mdns::MdnsService;
+use crate::pairing::{print_pairing_code_and_qr, DiscoveryCapabilities};
+use crate::secure_channel::{pake::PaseMgr, spake2p::VerifierData};
+use crate::transport::core::{PacketBufferExternalAccess, TransportMgr};
+use crate::transport::network::{NetworkReceive, NetworkSend};
+use crate::utils::{
+    buf::BufferAccess,
+    epoch::Epoch,
+    init::{init, Init},
+    notification::Notification,
+    rand::Rand,
+    refcell::RefCell,
+};
 
 /* The Matter Port */
 pub const MATTER_PORT: u16 = 5540;
@@ -66,6 +66,16 @@ pub struct Matter<'a> {
 }
 
 impl<'a> Matter<'a> {
+    /// Create a new Matter object when support for the Rust Standard Library is enabled.
+    ///
+    /// # Parameters
+    /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
+    ///   requires a set of device attestation certificates and keys. It is the responsibility of
+    ///   this object to return the device attestation details when queried upon.
+    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
+    ///   responses and queries related to the operation of the Matter stack.
+    /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[cfg(feature = "std")]
     #[inline(always)]
     pub const fn new_default(
@@ -80,12 +90,19 @@ impl<'a> Matter<'a> {
         Self::new(dev_det, dev_att, mdns, sys_epoch, sys_rand, port)
     }
 
-    /// Creates a new Matter object
+    /// Create a new Matter object
     ///
     /// # Parameters
+    /// * dev_det: An object of type [BasicInfoConfig].
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
+    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
+    ///   responses and queries related to the operation of the Matter stack.
+    /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
+    ///   "unix" time in milliseconds
+    /// * rand: A function of type [Rand]. This function is responsible for generating random data.
+    /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
@@ -110,6 +127,43 @@ impl<'a> Matter<'a> {
         }
     }
 
+    /// Create an in-place initializer for a Matter object
+    /// when support for the Rust Standard Library is enabled.
+    ///
+    /// # Parameters
+    /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
+    ///   requires a set of device attestation certificates and keys. It is the responsibility of
+    ///   this object to return the device attestation details when queried upon.
+    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
+    ///   responses and queries related to the operation of the Matter stack.
+    /// * port: The port number on which the Matter stack will listen for incoming connections.
+    #[cfg(feature = "std")]
+    pub fn init_default(
+        dev_det: &'a BasicInfoConfig<'a>,
+        dev_att: &'a dyn DevAttDataFetcher,
+        mdns: MdnsService<'a>,
+        port: u16,
+    ) -> impl Init<Self> {
+        use crate::utils::epoch::sys_epoch;
+        use crate::utils::rand::sys_rand;
+
+        Self::init(dev_det, dev_att, mdns, sys_epoch, sys_rand, port)
+    }
+
+    /// Create an in-place initializer for a Matter object
+    ///
+    /// # Parameters
+    /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
+    ///   requires a set of device attestation certificates and keys. It is the responsibility of
+    ///   this object to return the device attestation details when queried upon.
+    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
+    ///   responses and queries related to the operation of the Matter stack.
+    /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
+    ///   "unix" time in milliseconds
+    /// * rand: A function of type [Rand]. This function is responsible for generating random data.
+    /// * port: The port number on which the Matter stack will listen for incoming connections.
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_att: &'a dyn DevAttDataFetcher,

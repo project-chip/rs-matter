@@ -17,7 +17,7 @@
 
 use core::cmp::min;
 
-use pinned_init::{init, Init};
+use super::init::{init, Init};
 
 /// A ring buffer of a fixed capacity `N` using owned storage.
 #[derive(Debug)]
@@ -46,6 +46,7 @@ impl<const N: usize> RingBuf<N> {
         }
     }
 
+    /// Create an in-place initializer for the ring buffer.
     pub fn init() -> impl Init<Self> {
         init!(Self {
             buf <- crate::utils::vec::Vec::init(),

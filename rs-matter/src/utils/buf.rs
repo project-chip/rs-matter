@@ -22,10 +22,8 @@ use core::pin::pin;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
-use pinned_init::{init, Init};
 
-use crate::utils::init::ContainerInit;
-
+use super::init::{init, ContainerInit, Init};
 use super::signal::Signal;
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.
@@ -70,6 +68,10 @@ impl<const N: usize, M, T> PooledBuffers<N, M, T>
 where
     M: RawMutex,
 {
+    /// Create a new instance of `PooledBuffers`.
+    ///
+    /// `wait_timneout_ms` is the maximum time to wait for a buffer to become available
+    /// before returning `None`.
     #[inline(always)]
     pub const fn new(wait_timeout_ms: u32) -> Self {
         Self {
@@ -79,6 +81,10 @@ where
         }
     }
 
+    /// Create an in-place initializer for `PooledBuffers`.
+    ///
+    /// `wait_timneout_ms` is the maximum time to wait for a buffer to become available
+    /// before returning `None`.
     pub fn init(wait_timeout_ms: u32) -> impl Init<Self> {
         init!(Self {
             available: Signal::new([true; N]),

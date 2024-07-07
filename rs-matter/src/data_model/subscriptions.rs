@@ -20,10 +20,13 @@ use core::num::NonZeroU8;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Instant;
 
-use pinned_init::{init, Init};
 use portable_atomic::{AtomicU32, Ordering};
 
-use crate::utils::{notification::Notification, refcell::RefCell};
+use crate::utils::{
+    init::{init, Init},
+    notification::Notification,
+    refcell::RefCell,
+};
 
 struct Subscription {
     fabric_idx: NonZeroU8,
@@ -83,6 +86,7 @@ impl<const N: usize> Subscriptions<N> {
         }
     }
 
+    /// Create an in-place initializer for the instance.
     pub fn init() -> impl Init<Self> {
         init!(Self {
             next_subscription_id: AtomicU32::new(1),

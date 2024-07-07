@@ -8,17 +8,20 @@ use embassy_time::{Duration, Timer};
 
 use log::{info, warn};
 
-use pinned_init::{init, Init};
-
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{
     Address, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
     SocketAddrV6,
 };
-use crate::utils::rand::Rand;
-use crate::utils::refcell::RefCell;
-use crate::utils::{buf::BufferAccess, notification::Notification, select::Coalesce};
+use crate::utils::{
+    buf::BufferAccess,
+    init::{init, Init},
+    notification::Notification,
+    rand::Rand,
+    refcell::RefCell,
+    select::Coalesce,
+};
 
 use super::{Service, ServiceMode};
 

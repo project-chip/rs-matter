@@ -1,3 +1,24 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! A modification of `heapless::Vec` that provides the following extra features:
+//! - In-place initialization of the vec itself with `Vec::init() -> impl Init<Self>`
+//! - In-place initialization of the vec members with `Vec::push_init(init: I) -> Result<(), ()>`
+
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::redundant_slicing)]
 #![allow(clippy::result_unit_err)]
@@ -14,7 +35,7 @@ use core::{
     slice,
 };
 
-use pinned_init::{init_from_closure, Init};
+use super::init::{init_from_closure, Init};
 
 /// A fixed capacity [`Vec`](https://doc.rust-lang.org/std/vec/struct.Vec.html)
 ///
@@ -80,6 +101,7 @@ impl<T, const N: usize> Vec<T, N> {
         }
     }
 
+    /// Returns an in-place initializer for a new, empty vector.
     pub fn init() -> impl Init<Self> {
         unsafe {
             init_from_closure::<_, Infallible>(move |slot: *mut Self| {

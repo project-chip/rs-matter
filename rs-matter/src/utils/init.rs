@@ -1,12 +1,15 @@
 use core::convert::Infallible;
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 
-use pinned_init::{init_from_closure, Init};
+/// Re-export `pinned-init` because its API is very unstable currently (0.0.x)
+pub use pinned_init::*;
 
 /// A trait for retrofitting types wrapping a value with an initializer.
 ///
 /// Types that can be retrofitted this way should be `repr(transparent)`.
 pub trait ContainerInit<T> {
+    /// Create a new in-place initializer for the container
+    /// by using the given initializer for the value.
     fn init<I: Init<T>>(value: I) -> impl Init<Self>;
 }
 
@@ -29,6 +32,7 @@ impl<T> ContainerInit<T> for UnsafeCell<T> {
 /// An extension trait that allows safe initialization of
 /// `MaybeUninit<T>` memory.
 pub trait InitMaybeUninit<T> {
+    /// Initialize Self with the given in-place initializer.
     fn init_with<I: Init<T>>(&mut self, init: I) -> &mut T;
 }
 

@@ -18,11 +18,11 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use log::{error, info, trace, warn};
-use pinned_init::{init, Init};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::BtAddr;
 use crate::utils::blmutex::Mutex;
+use crate::utils::init::{init, Init};
 use crate::utils::notification::Notification;
 use crate::utils::refcell::RefCell;
 
@@ -218,6 +218,7 @@ where
         }
     }
 
+    /// Create a BTP context in-place initializer.
     pub fn init() -> impl Init<Self> {
         init!(Self {
             sessions <- Mutex::init(RefCell::init(crate::utils::vec::Vec::init())),

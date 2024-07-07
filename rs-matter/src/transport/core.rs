@@ -24,7 +24,6 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
 use log::{debug, error, info, trace, warn};
-use pinned_init::{init, Init};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
@@ -33,13 +32,14 @@ use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SE
 use crate::secure_channel::status_report::StatusReport;
 use crate::tlv::TLVList;
 use crate::utils::buf::BufferAccess;
-use crate::utils::refcell::RefCell;
 use crate::utils::{
     epoch::Epoch,
     ifmutex::{IfMutex, IfMutexGuard},
+    init::{init, Init},
     notification::Notification,
     parsebuf::ParseBuf,
     rand::Rand,
+    refcell::RefCell,
     select::Coalesce,
     writebuf::WriteBuf,
 };

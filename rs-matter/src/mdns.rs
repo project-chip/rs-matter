@@ -17,7 +17,9 @@
 
 use core::fmt::Write;
 
-use crate::{data_model::cluster_basic_information::BasicInfoConfig, error::Error};
+use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::error::Error;
+use crate::utils::init::{init, Init};
 
 #[cfg(all(feature = "std", target_os = "macos"))]
 #[path = "mdns/astro.rs"]
@@ -38,7 +40,6 @@ mod builtin;
 pub use builtin::{
     Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT, MDNS_SOCKET_BIND_ADDR,
 };
-use pinned_init::{init, Init};
 
 /// A trait representing an mDNS implementation capable of registering and de-registering Matter-specific services
 pub trait Mdns {

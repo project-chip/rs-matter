@@ -20,13 +20,13 @@ use core::num::NonZeroU8;
 use core::time::Duration;
 
 use log::{error, info, trace, warn};
-use pinned_init::{init, Init};
 
 use crate::data_model::sdm::noc::NocData;
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::epoch::Epoch;
+use crate::utils::init::{init, Init};
 use crate::utils::parsebuf::ParseBuf;
 use crate::utils::rand::Rand;
 use crate::utils::refcell::RefCell;
@@ -545,6 +545,7 @@ pub struct SessionMgr {
 }
 
 impl SessionMgr {
+    /// Create a new session manager.
     #[inline(always)]
     pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
@@ -557,6 +558,7 @@ impl SessionMgr {
         }
     }
 
+    /// Create an in-place initializer for a new session manager.
     pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
         init!(Self {
             sessions <- crate::utils::vec::Vec::init(),

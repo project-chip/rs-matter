@@ -17,20 +17,19 @@
 
 use core::{fmt::Display, num::NonZeroU8};
 
-use crate::{
-    data_model::objects::{Access, ClusterId, EndptId, Privilege},
-    error::{Error, ErrorCode},
-    fabric,
-    interaction_model::messages::GenericPath,
-    tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
-    transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC},
-    utils::writebuf::WriteBuf,
-};
 use log::error;
-use num_derive::FromPrimitive;
-use pinned_init::{init, Init};
 
+use num_derive::FromPrimitive;
+
+use crate::data_model::objects::{Access, ClusterId, EndptId, Privilege};
+use crate::error::{Error, ErrorCode};
+use crate::fabric;
+use crate::interaction_model::messages::GenericPath;
+use crate::tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV};
+use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
+use crate::utils::init::{init, Init};
 use crate::utils::refcell::RefCell;
+use crate::utils::writebuf::WriteBuf;
 
 // Matter Minimum Requirements
 pub const SUBJECTS_PER_ENTRY: usize = 4;
@@ -428,6 +427,7 @@ impl Default for AclMgr {
 }
 
 impl AclMgr {
+    /// Create a new ACL Manager
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -436,6 +436,7 @@ impl AclMgr {
         }
     }
 
+    /// Return an in-place initializer for ACL Manager
     pub fn init() -> impl Init<Self> {
         init!(Self {
             entries <- AclEntries::init(),

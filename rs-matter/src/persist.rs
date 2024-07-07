@@ -21,14 +21,15 @@ pub use fileio::*;
 pub mod fileio {
     use core::convert::Infallible;
     use core::mem::MaybeUninit;
+
     use std::fs;
     use std::io::{Read, Write};
     use std::path::Path;
 
     use log::info;
-    use pinned_init::{init, Init};
 
     use crate::error::{Error, ErrorCode};
+    use crate::utils::init::{init, Init};
     use crate::Matter;
 
     pub struct Psm<const N: usize = 4096> {
@@ -51,7 +52,7 @@ pub mod fileio {
 
         pub fn init() -> impl Init<Self> {
             init!(Self {
-                buf <- pinned_init::zeroed::<_, Infallible>(),
+                buf <- crate::utils::init::zeroed::<_, Infallible>(),
             })
         }
 

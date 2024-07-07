@@ -27,13 +27,14 @@ use embassy_time::{Duration, Instant, Timer};
 use log::trace;
 
 use context::LockError;
-use pinned_init::{init, Init};
+
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend};
 use crate::utils::ifmutex::IfMutex;
+use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
 use crate::CommissioningData;
 
@@ -123,9 +124,12 @@ where
         }
     }
 
-    pub fn init<I: Init<C>>(gatt: T, context: I) -> impl Init<Self> {
+    /// Create an in-place initializer for a BTP object with the provided
+    /// `GattPeripheral` trait in-place initializer and and with the provided BTP
+    /// `context` in-place initializer.
+    pub fn init<IT: Init<T>, IC: Init<C>>(gatt: IT, context: IC) -> impl Init<Self> {
         init!(Self {
-            gatt,
+            gatt <- gatt,
             context <- context,
             send_buf <- IfMutex::init(crate::utils::vec::Vec::init()),
             ack_timeout_secs: BTP_ACK_TIMEOUT_SECS,

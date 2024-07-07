@@ -21,13 +21,16 @@ use core::num::Wrapping;
 use embassy_time::{Duration, Instant};
 
 use log::{info, warn};
-use pinned_init::{init, Init};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::packet::{HandshakeReq, HandshakeResp};
 use crate::transport::network::btp::{GATT_HEADER_SIZE, MAX_MTU, MIN_MTU};
 use crate::transport::network::{BtAddr, MAX_RX_PACKET_SIZE};
-use crate::utils::{ringbuf::RingBuf, writebuf::WriteBuf};
+use crate::utils::{
+    init::{init, Init},
+    ringbuf::RingBuf,
+    writebuf::WriteBuf,
+};
 
 use self::packet::BtpHdr;
 
@@ -173,20 +176,7 @@ struct RecvWindow {
 }
 
 impl RecvWindow {
-    /// Initialize a new receiving window with the provided window size.
-    #[inline(always)]
-    pub const fn new(window_size: u8) -> Self {
-        Self {
-            buf: RingBuf::new(),
-            buf_messages_ct: 0,
-            level: window_size,
-            ack_level: 0,
-            ack_seq: 255,
-            received_at: Instant::MAX,
-            rem_msg_len: 0,
-        }
-    }
-
+    /// Create an in-place initializer for a receiving window with the provided window size.
     pub fn init(window_size: u8) -> impl Init<Self> {
         init!(Self {
             buf <- RingBuf::init(),
@@ -388,24 +378,7 @@ pub struct Session {
 }
 
 impl Session {
-    // /// Initialize a new BTP session with the provided address, version, MTU and window size.
-    // ///
-    // /// Initializing a session is done based on the data that had arrived in the Handshake Request message,
-    // /// written by a remote peer on the `C1` characteristic.
-    // #[inline(always)]
-    // const fn new(address: BtAddr, version: u8, mtu: u16, window_size: u8) -> Self {
-    //     Self {
-    //         address,
-    //         state: SessionState::New,
-    //         version,
-    //         mtu,
-    //         window_size,
-    //         recv_window: RecvWindow::new(window_size),
-    //         send_window: SendWindow::new(window_size),
-    //     }
-    // }
-
-    /// Return a constructor for initializing a new BTP session with the provided address, version,
+    /// Return an in-place initializer for a new BTP session with the provided address, version,
     /// MTU and window size.
     ///
     /// Initializing a session is done based on the data that had arrived in the Handshake Request message,

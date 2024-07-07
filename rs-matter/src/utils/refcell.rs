@@ -1,3 +1,26 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! A modification of the Rust `RefCell` type which provides in-place initialization
+//! via `RefCell::init`.
+//!
+//! NOTE: TEMPORARY and subject to removal once all Matter state is hidden behind
+//! a `blmutex::Mutex` in future.
+
 #![allow(unexpected_cfgs)]
 #![allow(clippy::should_implement_trait)]
 
@@ -9,9 +32,7 @@ use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-use pinned_init::{init, Init};
-
-use crate::utils::init::ContainerInit;
+use super::init::{init, ContainerInit, Init};
 
 /// A mutable memory location with dynamically checked borrow rules
 ///
@@ -139,6 +160,8 @@ impl<T> RefCell<T> {
         }
     }
 
+    /// Creates a new `RefCell` in-place initializer
+    /// by using the given value initializer.
     pub fn init<I: Init<T>>(value: I) -> impl Init<Self> {
         init!(Self {
             value <- UnsafeCell::init(value),
