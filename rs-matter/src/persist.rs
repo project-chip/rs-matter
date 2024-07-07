@@ -19,7 +19,6 @@ pub use fileio::*;
 
 #[cfg(feature = "std")]
 pub mod fileio {
-    use core::convert::Infallible;
     use core::mem::MaybeUninit;
 
     use std::fs;
@@ -52,7 +51,7 @@ pub mod fileio {
 
         pub fn init() -> impl Init<Self> {
             init!(Self {
-                buf <- crate::utils::init::zeroed::<_, Infallible>(),
+                buf <- crate::utils::init::zeroed(),
             })
         }
 
