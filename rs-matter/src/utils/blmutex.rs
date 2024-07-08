@@ -25,7 +25,7 @@ use core::cell::UnsafeCell;
 
 use embassy_sync::blocking_mutex::raw::{self, RawMutex};
 
-use crate::utils::init::{init, ContainerInit, Init};
+use crate::utils::init::{init, Init, UnsafeCellInit};
 
 /// Blocking mutex (not async)
 ///

@@ -23,7 +23,7 @@ use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer};
 
-use super::init::{init, ContainerInit, Init};
+use super::init::{init, Init, UnsafeCellInit};
 use super::signal::Signal;
 
 /// A trait for getting access to a `&mut T` buffer, potentially awaiting until a buffer becomes available.

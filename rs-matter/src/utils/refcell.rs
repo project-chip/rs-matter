@@ -32,7 +32,7 @@ use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-use super::init::{init, ContainerInit, Init};
+use super::init::{init, Init, UnsafeCellInit};
 
 /// A mutable memory location with dynamically checked borrow rules
 ///

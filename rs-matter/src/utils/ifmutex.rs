@@ -24,7 +24,7 @@ use core::ops::{Deref, DerefMut};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use super::init::{init, ContainerInit, Init};
+use super::init::{init, Init, UnsafeCellInit};
 use super::signal::Signal;
 
 /// Error returned by [`Mutex::try_lock`]
