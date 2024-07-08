@@ -9,9 +9,6 @@ members = [
 
 exclude = ["examples/*", "tools/tlv"]
 
-[patch.crates-io]
-pinned-init = { git = "https://github.com/ivmarkov/pinned-init" }
-
 [profile.release]
 opt-level = 3
 
