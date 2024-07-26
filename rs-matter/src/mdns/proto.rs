@@ -593,9 +593,9 @@ impl<'a> Service<'a> {
             let txt = Txt::from_octets(&octets).unwrap();
 
             answer.push((
-                self.service_fqdn(false).unwrap(), 
-                dns_class_with_flush(Class::IN), 
-                ttl_sec, 
+                self.service_fqdn(false).unwrap(),
+                dns_class_with_flush(Class::IN),
+                ttl_sec,
                 txt,
             ))
         }
