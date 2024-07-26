@@ -19,6 +19,13 @@ use crate::error::{Error, ErrorCode};
 
 use super::Service;
 
+/// Internet DNS class with the "Cache Flush" bit set.
+/// See https://datatracker.ietf.org/doc/html/rfc6762#section-10.2 for details.
+fn dns_class_with_flush(dns_class: Class) -> Class {
+    const RESOURCE_RECORD_CACHE_FLUSH_BIT: u16 = 0x8000;
+    Class::from_int(u16::from(dns_class) | RESOURCE_RECORD_CACHE_FLUSH_BIT)
+}
+
 impl From<ShortBuf> for Error {
     fn from(_: ShortBuf) -> Self {
         Self::new(ErrorCode::NoSpace)
@@ -417,7 +424,7 @@ impl<'a> Host<'a> {
     {
         answer.push((
             Self::host_fqdn(self.hostname, false).unwrap(),
-            Class::IN,
+            dns_class_with_flush(Class::IN),
             ttl_sec,
             A::from_octets(self.ip[0], self.ip[1], self.ip[2], self.ip[3]),
         ))
@@ -431,7 +438,7 @@ impl<'a> Host<'a> {
         if let Some(ip) = &self.ipv6 {
             answer.push((
                 Self::host_fqdn(self.hostname, false).unwrap(),
-                Class::IN,
+                dns_class_with_flush(Class::IN),
                 ttl_sec,
                 Aaaa::new((*ip).into()),
             ))
@@ -463,7 +470,7 @@ impl<'a> Service<'a> {
     {
         answer.push((
             self.service_fqdn(false).unwrap(),
-            Class::IN,
+            dns_class_with_flush(Class::IN),
             ttl_sec,
             Srv::new(0, 0, self.port, Host::host_fqdn(hostname, false).unwrap()),
         ))
@@ -489,7 +496,7 @@ impl<'a> Service<'a> {
     {
         answer.push((
             Self::dns_sd_fqdn(false).unwrap(),
-            Class::IN,
+            dns_class_with_flush(Class::IN),
             ttl_sec,
             Ptr::new(self.service_type_fqdn(false).unwrap()),
         ))
@@ -533,6 +540,9 @@ impl<'a> Service<'a> {
         R: RecordSectionBuilder<T>,
         T: Composer,
     {
+        // Don't set the flush-bit when sending this PTR record, as we're not the
+        // authority of dns_sd_fqdn: there may be answers from other devices on
+        // the network as well.
         answer.push((
             self.service_subtype_fqdn(service_subtype, false).unwrap(),
             Class::IN,
@@ -582,7 +592,12 @@ impl<'a> Service<'a> {
 
             let txt = Txt::from_octets(&octets).unwrap();
 
-            answer.push((self.service_fqdn(false).unwrap(), Class::IN, ttl_sec, txt))
+            answer.push((
+                self.service_fqdn(false).unwrap(),
+                dns_class_with_flush(Class::IN),
+                ttl_sec,
+                txt,
+            ))
         }
     }
 
