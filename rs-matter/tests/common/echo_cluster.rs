@@ -30,7 +30,6 @@ use rs_matter::{
     interaction_model::messages::ib::{attr_list_write, ListOperation},
     tlv::{TLVElement, TagType},
     transport::exchange::Exchange,
-    utils::rand::Rand,
 };
 use strum::{EnumDiscriminants, FromRepr};
 
@@ -135,9 +134,9 @@ pub struct EchoCluster {
 }
 
 impl EchoCluster {
-    pub fn new(multiplier: u8, rand: Rand) -> Self {
+    pub const fn new(multiplier: u8, data_ver: Dataver) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
+            data_ver,
             multiplier,
             att1: Cell::new(0x1234),
             att2: Cell::new(0x5678),
@@ -264,11 +263,16 @@ pub const ATTR_CUSTOM_VALUE: u32 = 0xcafebeef;
 pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
 
 impl Handler for EchoCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         EchoCluster::read(self, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(&self, _exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
         EchoCluster::write(self, attr, data)
     }
 

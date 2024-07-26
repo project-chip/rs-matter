@@ -149,6 +149,12 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             gen_comm::AttributesDiscriminants::BasicCommissioningInfo,
             dont_care.clone()
         ),
+        attr_data!(
+            0,
+            48,
+            gen_comm::AttributesDiscriminants::SupportsConcurrentConnection,
+            dont_care.clone()
+        ),
         attr_data!(0, 49, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 49, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(
@@ -201,6 +207,9 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             adm_comm::AttributesDiscriminants::WindowStatus,
             dont_care.clone()
         ),
+    ];
+
+    let part2 = vec![
         attr_data!(
             0,
             60,
@@ -213,9 +222,6 @@ fn wildcard_read_resp(part: u8) -> Vec<AttrResp<'static>> {
             adm_comm::AttributesDiscriminants::AdminVendorId,
             dont_care.clone()
         ),
-    ];
-
-    let part2 = vec![
         attr_data!(0, 62, GlobalElements::FeatureMap, dont_care.clone()),
         attr_data!(0, 62, GlobalElements::AttributeList, dont_care.clone()),
         attr_data!(

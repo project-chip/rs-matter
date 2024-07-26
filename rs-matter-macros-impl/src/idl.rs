@@ -129,13 +129,13 @@ fn enum_definition(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
     )
 }
 
-fn field_type(f: &DataType) -> TokenStream {
+fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
     if f.is_list {
         // TODO: this needs implementation
         panic!("Code generation of LIST structure field support not yet implemented.");
     }
 
-    // NOTE: f.max_length not used
+    // NOTE: f.max_length is not used (i.e. we do not limit or check string length limit)
 
     match f.name.as_str() {
         "enum8" | "int8u" | "bitmap8" => quote!(u8),
@@ -179,14 +179,16 @@ fn field_type(f: &DataType) -> TokenStream {
         "namespace" => quote!(u8),
         "tag" => quote!(u8),
 
+        // Items with lifetime. If updating this, remember to add things to
+        // [needs_lifetime]
+        "char_string" => quote!(#krate::tlv::UtfStr<'a>),
+        "long_char_string" => quote!(#krate::tlv::UtfStr<'a>),
+        "octet_string" => quote!(#krate::tlv::OctetStr<'a>),
+        "long_octet_string" => quote!(#krate::tlv::OctetStr<'a>),
+
         // Several structs and unsupported bits.
         // TODO: at least strings should be supported
-        //       strings should be UtfStr
-        //       octet_string should be OctetStr
-        //
-        // However if we use strings, we should propagate a lifetime ('a ?) to top level
-        "char_string" | "long_char_string" | "long_octet_string" | "octet_string" | "ipadr"
-        | "ipv4adr" | "ipv6adr" | "ipv6pre" | "hwadr" | "semtag" | "tod" | "date" => {
+        "ipadr" | "ipv4adr" | "ipv6adr" | "ipv6pre" | "hwadr" | "semtag" | "tod" | "date" => {
             panic!("Unsupported field type {}", f.name)
         }
 
@@ -196,6 +198,18 @@ fn field_type(f: &DataType) -> TokenStream {
             quote!(#ident)
         }
     }
+}
+
+fn needs_lifetime(f: &StructField) -> bool {
+    if f.field.data_type.is_list {
+        return true;
+    }
+
+    // TODO: partial heuristic here, we likely want to add some more things as needed
+    matches!(
+        f.field.data_type.name.as_str(),
+        "char_string" | "long_char_string" | "long_octet_string" | "octet_string"
+    )
 }
 
 fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> TokenStream {
@@ -208,11 +222,11 @@ fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> Tok
         rs_matter_data_model::ApiMaturity::Deprecated => quote!(#[doc="deprecated"]),
         _ => quote!(),
     };
+    let krate = context.rs_matter_crate.clone();
 
     let _code = Literal::u8_unsuffixed(f.field.code as u8);
-    let field_type = field_type(&f.field.data_type);
+    let field_type = field_type(&f.field.data_type, &krate);
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
-    let krate = context.rs_matter_crate.clone();
 
     let field_type = if f.is_nullable {
         quote!(#krate::tlv::Nullable<#field_type>)
@@ -244,9 +258,7 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
     let name = Ident::new(&s.id, Span::call_site());
 
     // TODO:
-    //  - add handling for array types (including no_std support), including:
-    //    string, octet_string, list (of various things like integers or structs or enums)
-    //
+    //  - add handling for array types (including no_std support)
     // Complex example:
     //
     //    struct Complex {
@@ -257,15 +269,25 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
     //      nullable int8u capacity = 4;
     //    }
 
-    // For now fields are assumed to be "simple" types as this allows passing on-off cluster
-    // at least
+    // Check if the fields themselves need a lifetime. The lifetime right now in the macro
+    // is ALWAYS 'a
+    let struct_header = if s.fields.iter().any(needs_lifetime) {
+        quote! (
+            #[tlvargs(lifetime = "'a")]
+            pub struct #name<'a>
+        )
+    } else {
+        quote!(
+            pub struct #name
+        )
+    };
 
     let fields = s.fields.iter().map(|f| struct_field_definition(f, context));
     let krate = context.rs_matter_crate.clone();
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
-        pub struct #name {
+        #struct_header {
            #(#fields),*
         }
     )
@@ -681,6 +703,102 @@ mod tests {
                         OnWithRecallGlobalScene = 65,
                         OnWithTimedOff = 66,
                     }
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn struct_fields_string() {
+        let idl = parse_idl(
+            "
+              cluster TestForStructs = 1 {
+                struct WithStringMember {
+                  char_string<16> short_string = 1;
+                  long_char_string<512> long_string = 2;
+                  optional char_string<32> opt_str = 3;
+                  optional nullable long_char_string<512> opt_nul_str = 4;
+                }
+              }
+            ",
+        );
+
+        let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
+        let context = IdlGenerateContext::new("rs_matter_crate");
+
+        let defs: TokenStream = cluster
+            .structs
+            .iter()
+            .map(|c| struct_definition(c, &context))
+            .collect();
+
+        assert_tokenstreams_eq!(
+            &defs,
+            &quote!(
+                #[derive(
+                    Debug,
+                    PartialEq,
+                    Eq,
+                    Clone,
+                    Hash,
+                    rs_matter_crate::tlv::FromTLV,
+                    rs_matter_crate::tlv::ToTLV,
+                )]
+                #[tlvargs(lifetime = "'a")]
+                pub struct WithStringMember<'a> {
+                    short_string: rs_matter_crate::tlv::UtfStr<'a>,
+                    long_string: rs_matter_crate::tlv::UtfStr<'a>,
+                    opt_str: Option<rs_matter_crate::tlv::UtfStr<'a>>,
+                    opt_nul_str:
+                        Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::UtfStr<'a>>>,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn struct_fields_octet_string() {
+        let idl = parse_idl(
+            "
+              cluster TestForStructs = 1 {
+                struct WithStringMember {
+                  octet_string<16> short_string = 1;
+                  long_octet_string<512> long_string = 2;
+                  optional octet_string<32> opt_str = 3;
+                  optional nullable long_octet_string<512> opt_nul_str = 4;
+                }
+              }
+            ",
+        );
+
+        let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
+        let context = IdlGenerateContext::new("rs_matter_crate");
+
+        let defs: TokenStream = cluster
+            .structs
+            .iter()
+            .map(|c| struct_definition(c, &context))
+            .collect();
+
+        assert_tokenstreams_eq!(
+            &defs,
+            &quote!(
+                #[derive(
+                    Debug,
+                    PartialEq,
+                    Eq,
+                    Clone,
+                    Hash,
+                    rs_matter_crate::tlv::FromTLV,
+                    rs_matter_crate::tlv::ToTLV,
+                )]
+                #[tlvargs(lifetime = "'a")]
+                pub struct WithStringMember<'a> {
+                    short_string: rs_matter_crate::tlv::OctetStr<'a>,
+                    long_string: rs_matter_crate::tlv::OctetStr<'a>,
+                    opt_str: Option<rs_matter_crate::tlv::OctetStr<'a>>,
+                    opt_nul_str:
+                        Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'a>>>,
                 }
             )
         );

@@ -28,13 +28,17 @@ pub struct WriteBuf<'a> {
 
 impl<'a> WriteBuf<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
+        Self::new_with(buf, 0, 0)
+    }
+
+    pub fn new_with(buf: &'a mut [u8], start: usize, end: usize) -> Self {
         let buf_size = buf.len();
 
         Self {
             buf,
             buf_size,
-            start: 0,
-            end: 0,
+            start,
+            end,
         }
     }
 

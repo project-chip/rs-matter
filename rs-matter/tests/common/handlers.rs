@@ -206,7 +206,8 @@ impl<'a> ImEngine<'a> {
         delay: u16,
     ) {
         let mut out = heapless::Vec::<_, 2>::new();
-        let write_req = WriteReq::new(false, input);
+        let mut write_req = WriteReq::new(false, input);
+        write_req.timed_request = Some(true);
 
         self.gen_timed_reqs_output(
             handler,

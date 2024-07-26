@@ -23,7 +23,9 @@ use crate::utils::parsebuf::ParseBuf;
 use crate::utils::writebuf::WriteBuf;
 use crate::{crypto, error::*};
 
-use log::{info, trace};
+use log::{trace, warn};
+
+use super::network::Address;
 
 bitflags! {
     #[repr(transparent)]
@@ -37,24 +39,94 @@ bitflags! {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+impl fmt::Display for ExchFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut sep = false;
+        for flag in [
+            Self::INITIATOR,
+            Self::ACK,
+            Self::RELIABLE,
+            Self::SECEX,
+            Self::VENDOR,
+        ] {
+            if self.contains(flag) {
+                if sep {
+                    write!(f, "|")?;
+                }
+
+                let str = match flag {
+                    Self::INITIATOR => "I",
+                    Self::ACK => "A",
+                    Self::RELIABLE => "R",
+                    Self::SECEX => "SX",
+                    Self::VENDOR => "V",
+                    _ => "?",
+                };
+
+                write!(f, "{}", str)?;
+                sep = true;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ProtoHdr {
     pub exch_id: u16,
-    pub exch_flags: ExchFlags,
+    exch_flags: ExchFlags,
     pub proto_id: u16,
     pub proto_opcode: u8,
-    pub proto_vendor_id: Option<u16>,
-    pub ack_msg_ctr: Option<u32>,
+    proto_vendor_id: u16,
+    ack_msg_ctr: u32,
 }
 
 impl ProtoHdr {
-    pub fn is_vendor(&self) -> bool {
-        self.exch_flags.contains(ExchFlags::VENDOR)
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            exch_id: 0,
+            exch_flags: ExchFlags::empty(),
+            proto_id: u16::MAX,
+            proto_opcode: u8::MAX,
+            proto_vendor_id: 0,
+            ack_msg_ctr: 0,
+        }
     }
 
-    pub fn set_vendor(&mut self, proto_vendor_id: u16) {
-        self.exch_flags |= ExchFlags::RELIABLE;
-        self.proto_vendor_id = Some(proto_vendor_id);
+    pub fn is_decoded(&self) -> bool {
+        // TODO: In future, consider better ways of representing a not-yet-decoded header
+        // in the packet - i.e. - `Option<ProtoHdr>` or similar
+        self.proto_id != u16::MAX && self.proto_opcode != u8::MAX
+    }
+
+    pub fn opcode<T: num::FromPrimitive>(&self) -> Result<T, Error> {
+        num::FromPrimitive::from_u8(self.proto_opcode).ok_or(ErrorCode::Invalid.into())
+    }
+
+    pub fn check_opcode<T: num::FromPrimitive + PartialEq>(&self, opcode: T) -> Result<(), Error> {
+        if self.opcode::<T>()? == opcode {
+            Ok(())
+        } else {
+            Err(ErrorCode::Invalid.into())
+        }
+    }
+
+    pub fn get_vendor(&self) -> Option<u16> {
+        self.exch_flags
+            .contains(ExchFlags::VENDOR)
+            .then_some(self.proto_vendor_id)
+    }
+
+    pub fn set_vendor(&mut self, vendor_id: Option<u16>) {
+        if let Some(vendor_id) = vendor_id {
+            self.exch_flags |= ExchFlags::VENDOR;
+            self.proto_vendor_id = vendor_id;
+        } else {
+            self.exch_flags.remove(ExchFlags::VENDOR);
+            self.proto_vendor_id = 0;
+        }
     }
 
     pub fn is_security_ext(&self) -> bool {
@@ -73,25 +145,64 @@ impl ProtoHdr {
         self.exch_flags |= ExchFlags::RELIABLE;
     }
 
-    pub fn is_ack(&self) -> bool {
-        self.exch_flags.contains(ExchFlags::ACK)
+    pub fn get_ack(&self) -> Option<u32> {
+        self.exch_flags
+            .contains(ExchFlags::ACK)
+            .then_some(self.ack_msg_ctr)
     }
 
-    pub fn get_ack_msg_ctr(&self) -> Option<u32> {
-        self.ack_msg_ctr
-    }
-
-    pub fn set_ack(&mut self, ack_msg_ctr: u32) {
-        self.exch_flags |= ExchFlags::ACK;
-        self.ack_msg_ctr = Some(ack_msg_ctr);
+    pub fn set_ack(&mut self, ack_msg_ctr: Option<u32>) {
+        if let Some(ack_msg_ctr) = ack_msg_ctr {
+            self.exch_flags |= ExchFlags::ACK;
+            self.ack_msg_ctr = ack_msg_ctr;
+        } else {
+            self.exch_flags.remove(ExchFlags::ACK);
+            self.ack_msg_ctr = 0;
+        }
     }
 
     pub fn is_initiator(&self) -> bool {
         self.exch_flags.contains(ExchFlags::INITIATOR)
     }
 
+    pub fn unset_initiator(&mut self) {
+        self.exch_flags.remove(ExchFlags::INITIATOR);
+    }
+
     pub fn set_initiator(&mut self) {
         self.exch_flags |= ExchFlags::INITIATOR;
+    }
+
+    pub fn toggle_initiator(&mut self) {
+        if self.is_initiator() {
+            self.unset_initiator();
+        } else {
+            self.set_initiator();
+        }
+    }
+
+    /// Adjusts the reliability settings (flags R and A) in the proto header
+    /// by inspecting the reliability of the network protocol itself.
+    ///
+    /// In case the protocol is reliable - yet the message has the R or A flags set -
+    /// these flags are lowered. Warnings will be logged in this case if the `rx` parameter
+    /// is set to `true` (i.e. this is an incoming message), because this situation
+    /// represents a Matter protocol violation, as per the Matter spec.
+    pub fn adjust_reliability(&mut self, rx: bool, addr: &Address) {
+        if addr.is_reliable() {
+            if rx {
+                if self.is_reliable() {
+                    warn!("Detected a reliable message over a reliable transport; reliability request will not be honored with an ACK");
+                }
+
+                if self.get_ack().is_some() {
+                    warn!("Detected an ACK counter over a reliable transport; ACK counter will be discarded");
+                }
+            }
+
+            self.unset_reliable();
+            self.set_ack(None);
+        }
     }
 
     pub fn decrypt_and_decode(
@@ -111,56 +222,65 @@ impl ProtoHdr {
         self.exch_id = parsebuf.le_u16()?;
         self.proto_id = parsebuf.le_u16()?;
 
-        info!("[decode] {} ", self);
-        if self.is_vendor() {
-            self.proto_vendor_id = Some(parsebuf.le_u16()?);
+        if self.exch_flags.contains(ExchFlags::VENDOR) {
+            self.proto_vendor_id = parsebuf.le_u16()?;
         }
-        if self.is_ack() {
-            self.ack_msg_ctr = Some(parsebuf.le_u32()?);
+        if self.exch_flags.contains(ExchFlags::ACK) {
+            self.ack_msg_ctr = parsebuf.le_u32()?;
         }
+        trace!("[decode] {}", self);
         trace!("[rx payload]: {:x?}", parsebuf.as_mut_slice());
         Ok(())
     }
 
-    pub fn encode(&mut self, resp_buf: &mut WriteBuf) -> Result<(), Error> {
-        info!("[encode] {}", self);
+    pub fn encode(&self, resp_buf: &mut WriteBuf) -> Result<(), Error> {
+        trace!("[encode] {}", self);
         resp_buf.le_u8(self.exch_flags.bits())?;
         resp_buf.le_u8(self.proto_opcode)?;
         resp_buf.le_u16(self.exch_id)?;
         resp_buf.le_u16(self.proto_id)?;
-        if self.is_vendor() {
-            resp_buf.le_u16(self.proto_vendor_id.ok_or(ErrorCode::Invalid)?)?;
+        if let Some(vendor_id) = self.get_vendor() {
+            resp_buf.le_u16(vendor_id)?;
         }
-        if self.is_ack() {
-            resp_buf.le_u32(self.ack_msg_ctr.ok_or(ErrorCode::Invalid)?)?;
+        if let Some(ack_msg_ctr) = self.get_ack() {
+            resp_buf.le_u32(ack_msg_ctr)?;
         }
         Ok(())
     }
 }
 
+impl Default for ProtoHdr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for ProtoHdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut flag_str = heapless::String::<16>::new();
-        if self.is_vendor() {
-            flag_str.push_str("V|").unwrap();
+        if !self.is_decoded() {
+            write!(f, "(encoded)")?;
+            return Ok(());
         }
-        if self.is_security_ext() {
-            flag_str.push_str("SX|").unwrap();
+
+        if !self.exch_flags.is_empty() {
+            write!(f, "{},", self.exch_flags)?;
         }
-        if self.is_reliable() {
-            flag_str.push_str("R|").unwrap();
-        }
-        if self.is_ack() {
-            flag_str.push_str("A|").unwrap();
-        }
-        if self.is_initiator() {
-            flag_str.push_str("I|").unwrap();
-        }
+
         write!(
             f,
-            "ExId: {}, Proto: {}, Opcode: {}, Flags: {}",
-            self.exch_id, self.proto_id, self.proto_opcode, flag_str
-        )
+            "EID:{:x},PROTO:{:x},OP:{:x}",
+            self.exch_id, self.proto_id, self.proto_opcode
+        )?;
+
+        if let Some(ack_msg_ctr) = self.get_ack() {
+            write!(f, ",ACTR:{:x}", ack_msg_ctr)?;
+        }
+
+        if let Some(vendor_id) = self.get_vendor() {
+            write!(f, ",VID:{:x}", vendor_id)?;
+        }
+
+        Ok(())
     }
 }
 

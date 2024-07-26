@@ -17,15 +17,15 @@
 
 use core::cell::RefCell;
 
-use super::objects::*;
-use crate::{
-    attribute_enum,
-    error::{Error, ErrorCode},
-    utils::rand::Rand,
-};
-use heapless::String;
 use rs_matter_macros::idl_import;
+
 use strum::FromRepr;
+
+use crate::attribute_enum;
+use crate::error::{Error, ErrorCode};
+use crate::transport::exchange::Exchange;
+
+use super::objects::*;
 
 idl_import!(clusters = ["BasicInformation"]);
 
@@ -135,40 +135,45 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[],
 };
 
-pub struct BasicInfoCluster<'a> {
+#[derive(Clone)]
+pub struct BasicInfoCluster {
     data_ver: Dataver,
-    cfg: &'a BasicInfoConfig<'a>,
-    node_label: RefCell<String<32>>, // Max node-label as per the spec
+    node_label: RefCell<heapless::String<32>>, // Max node-label as per the spec
 }
 
-impl<'a> BasicInfoCluster<'a> {
-    pub fn new(cfg: &'a BasicInfoConfig<'a>, rand: Rand) -> Self {
-        let node_label = RefCell::new("".try_into().unwrap());
+impl BasicInfoCluster {
+    pub const fn new(data_ver: Dataver) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
-            cfg,
-            node_label,
+            data_ver,
+            node_label: RefCell::new(heapless::String::new()),
         }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
             } else {
+                let cfg = exchange.matter().dev_det();
+
                 match attr.attr_id.try_into()? {
                     Attributes::DMRevision(codec) => codec.encode(writer, 1),
-                    Attributes::VendorName(codec) => codec.encode(writer, self.cfg.vendor_name),
-                    Attributes::VendorId(codec) => codec.encode(writer, self.cfg.vid),
-                    Attributes::ProductName(codec) => codec.encode(writer, self.cfg.product_name),
-                    Attributes::ProductId(codec) => codec.encode(writer, self.cfg.pid),
+                    Attributes::VendorName(codec) => codec.encode(writer, cfg.vendor_name),
+                    Attributes::VendorId(codec) => codec.encode(writer, cfg.vid),
+                    Attributes::ProductName(codec) => codec.encode(writer, cfg.product_name),
+                    Attributes::ProductId(codec) => codec.encode(writer, cfg.pid),
                     Attributes::NodeLabel(codec) => {
                         codec.encode(writer, self.node_label.borrow().as_str())
                     }
-                    Attributes::HwVer(codec) => codec.encode(writer, self.cfg.hw_ver),
-                    Attributes::SwVer(codec) => codec.encode(writer, self.cfg.sw_ver),
-                    Attributes::SwVerString(codec) => codec.encode(writer, self.cfg.sw_ver_str),
-                    Attributes::SerialNo(codec) => codec.encode(writer, self.cfg.serial_no),
+                    Attributes::HwVer(codec) => codec.encode(writer, cfg.hw_ver),
+                    Attributes::SwVer(codec) => codec.encode(writer, cfg.sw_ver),
+                    Attributes::SwVerString(codec) => codec.encode(writer, cfg.sw_ver_str),
+                    Attributes::SerialNo(codec) => codec.encode(writer, cfg.serial_no),
                 }
             }
         } else {
@@ -176,7 +181,12 @@ impl<'a> BasicInfoCluster<'a> {
         }
     }
 
-    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        data: AttrData,
+    ) -> Result<(), Error> {
         let data = data.with_dataver(self.data_ver.get())?;
 
         match attr.attr_id.try_into()? {
@@ -196,19 +206,24 @@ impl<'a> BasicInfoCluster<'a> {
     }
 }
 
-impl<'a> Handler for BasicInfoCluster<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        BasicInfoCluster::read(self, attr, encoder)
+impl Handler for BasicInfoCluster {
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        BasicInfoCluster::read(self, exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        BasicInfoCluster::write(self, attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        BasicInfoCluster::write(self, exchange, attr, data)
     }
 }
 
-impl<'a> NonBlockingHandler for BasicInfoCluster<'a> {}
+impl NonBlockingHandler for BasicInfoCluster {}
 
-impl<'a> ChangeNotifier<()> for BasicInfoCluster<'a> {
+impl ChangeNotifier<()> for BasicInfoCluster {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }

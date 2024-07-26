@@ -15,29 +15,25 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
-
-use crate::data_model::objects::*;
-use crate::data_model::sdm::failsafe::FailSafe;
-use crate::tlv::{FromTLV, TLVElement, ToTLV, UtfStr};
-use crate::transport::exchange::Exchange;
-use crate::utils::rand::Rand;
-use crate::{attribute_enum, cmd_enter};
-use crate::{command_enum, error::*};
 use log::info;
+
+use rs_matter_macros::idl_import;
+
 use strum::{EnumDiscriminants, FromRepr};
 
-#[derive(Clone, Copy)]
-#[allow(dead_code)]
-enum CommissioningError {
-    Ok = 0,
-    ErrValueOutsideRange = 1,
-    ErrInvalidAuth = 2,
-    ErrNotCommissioning = 3,
-    ErrBusyWithOtherAdmin = 4,
-}
+use crate::data_model::objects::*;
+use crate::tlv::{FromTLV, TLVElement, ToTLV, UtfStr};
+use crate::transport::exchange::Exchange;
+use crate::transport::session::SessionMode;
+use crate::{attribute_enum, cmd_enter};
+use crate::{command_enum, error::*};
 
-pub const ID: u32 = 0x0030;
+idl_import!(clusters = ["GeneralCommissioning"]);
+
+pub use general_commissioning::Commands;
+pub use general_commissioning::CommissioningErrorEnum;
+pub use general_commissioning::RegulatoryLocationTypeEnum;
+pub use general_commissioning::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u16)]
@@ -46,17 +42,10 @@ pub enum Attributes {
     BasicCommissioningInfo(()) = 1,
     RegConfig(AttrType<u8>) = 2,
     LocationCapability(AttrType<u8>) = 3,
+    SupportsConcurrentConnection(AttrType<bool>) = 4,
 }
 
 attribute_enum!(Attributes);
-
-#[derive(FromRepr)]
-#[repr(u32)]
-pub enum Commands {
-    ArmFailsafe = 0x00,
-    SetRegulatoryConfig = 0x02,
-    CommissioningComplete = 0x04,
-}
 
 command_enum!(Commands);
 
@@ -72,12 +61,6 @@ pub enum RespCommands {
 struct CommonResponse<'a> {
     error_code: u8,
     debug_txt: UtfStr<'a>,
-}
-
-pub enum RegLocationType {
-    Indoor = 0,
-    Outdoor = 1,
-    IndoorOutdoor = 2,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -106,9 +89,14 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::RV,
             Quality::FIXED,
         ),
+        Attribute::new(
+            AttributesDiscriminants::SupportsConcurrentConnection as u16,
+            Access::RV,
+            Quality::FIXED,
+        ),
     ],
     commands: &[
-        Commands::ArmFailsafe as _,
+        Commands::ArmFailSafe as _,
         Commands::SetRegulatoryConfig as _,
         Commands::CommissioningComplete as _,
     ],
@@ -120,36 +108,54 @@ struct FailSafeParams {
     bread_crumb: u64,
 }
 
-#[derive(ToTLV)]
-struct BasicCommissioningInfo {
-    expiry_len: u16,
-    max_cmltv_failsafe_secs: u16,
+#[derive(FromTLV, ToTLV, Debug, Clone)]
+pub struct BasicCommissioningInfo {
+    pub expiry_len: u16,
+    pub max_cmltv_failsafe_secs: u16,
 }
 
-pub struct GenCommCluster<'a> {
+impl BasicCommissioningInfo {
+    pub const fn new() -> Self {
+        // TODO: Arch-Specific
+        Self {
+            expiry_len: 120,
+            max_cmltv_failsafe_secs: 120,
+        }
+    }
+}
+
+impl Default for BasicCommissioningInfo {
+    fn default() -> Self {
+        BasicCommissioningInfo::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GenCommCluster {
     data_ver: Dataver,
     basic_comm_info: BasicCommissioningInfo,
-    failsafe: &'a RefCell<FailSafe>,
+    supports_concurrent_connection: bool,
 }
 
-impl<'a> GenCommCluster<'a> {
-    pub fn new(failsafe: &'a RefCell<FailSafe>, rand: Rand) -> Self {
+impl GenCommCluster {
+    pub const fn new(
+        data_ver: Dataver,
+        basic_comm_info: BasicCommissioningInfo,
+        supports_concurrent_connection: bool,
+    ) -> Self {
         Self {
-            data_ver: Dataver::new(rand),
-            failsafe,
-            // TODO: Arch-Specific
-            basic_comm_info: BasicCommissioningInfo {
-                expiry_len: 120,
-                max_cmltv_failsafe_secs: 120,
-            },
+            data_ver,
+            basic_comm_info,
+            supports_concurrent_connection,
         }
     }
 
-    pub fn failsafe(&self) -> &RefCell<FailSafe> {
-        self.failsafe
-    }
-
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -158,16 +164,19 @@ impl<'a> GenCommCluster<'a> {
                     Attributes::BreadCrumb(codec) => codec.encode(writer, 0),
                     // TODO: Arch-Specific
                     Attributes::RegConfig(codec) => {
-                        codec.encode(writer, RegLocationType::IndoorOutdoor as _)
+                        codec.encode(writer, RegulatoryLocationTypeEnum::IndoorOutdoor as _)
                     }
                     // TODO: Arch-Specific
                     Attributes::LocationCapability(codec) => {
-                        codec.encode(writer, RegLocationType::IndoorOutdoor as _)
+                        codec.encode(writer, RegulatoryLocationTypeEnum::IndoorOutdoor as _)
                     }
                     Attributes::BasicCommissioningInfo(_) => {
                         self.basic_comm_info
                             .to_tlv(&mut writer, AttrDataWriter::TAG)?;
                         writer.complete()
+                    }
+                    Attributes::SupportsConcurrentConnection(codec) => {
+                        codec.encode(writer, self.supports_concurrent_connection)
                     }
                 }
             }
@@ -184,7 +193,7 @@ impl<'a> GenCommCluster<'a> {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::ArmFailsafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
+            Commands::ArmFailSafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
             Commands::SetRegulatoryConfig => {
                 self.handle_command_setregulatoryconfig(exchange, data, encoder)?
             }
@@ -208,7 +217,8 @@ impl<'a> GenCommCluster<'a> {
 
         let p = FailSafeParams::from_tlv(data)?;
 
-        let status = if self
+        let status = if exchange
+            .matter()
             .failsafe
             .borrow_mut()
             .arm(
@@ -217,9 +227,9 @@ impl<'a> GenCommCluster<'a> {
             )
             .is_err()
         {
-            CommissioningError::ErrBusyWithOtherAdmin as u8
+            CommissioningErrorEnum::BusyWithOtherAdmin as u8
         } else {
-            CommissioningError::Ok as u8
+            CommissioningErrorEnum::OK as u8
         };
 
         let cmd_data = CommonResponse {
@@ -266,25 +276,25 @@ impl<'a> GenCommCluster<'a> {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Commissioning Complete");
-        let mut status: u8 = CommissioningError::Ok as u8;
+        let mut status: u8 = CommissioningErrorEnum::OK as u8;
 
         // Has to be a Case Session
-        if exchange
-            .with_session(|sess| Ok(sess.get_local_fabric_idx()))?
-            .is_none()
+        if !exchange
+            .with_session(|sess| Ok(matches!(sess.get_session_mode(), SessionMode::Case { .. })))?
         {
-            status = CommissioningError::ErrInvalidAuth as u8;
+            status = CommissioningErrorEnum::InvalidAuthentication as u8;
         }
 
         // AddNOC or UpdateNOC must have happened, and that too for the same fabric
         // scope that is for this session
-        if self
+        if exchange
+            .matter()
             .failsafe
             .borrow_mut()
             .disarm(exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))?)
             .is_err()
         {
-            status = CommissioningError::ErrInvalidAuth as u8;
+            status = CommissioningErrorEnum::InvalidAuthentication as u8;
         }
 
         let cmd_data = CommonResponse {
@@ -300,9 +310,14 @@ impl<'a> GenCommCluster<'a> {
     }
 }
 
-impl<'a> Handler for GenCommCluster<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        GenCommCluster::read(self, attr, encoder)
+impl Handler for GenCommCluster {
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        GenCommCluster::read(self, exchange, attr, encoder)
     }
 
     fn invoke(
@@ -316,9 +331,9 @@ impl<'a> Handler for GenCommCluster<'a> {
     }
 }
 
-impl<'a> NonBlockingHandler for GenCommCluster<'a> {}
+impl NonBlockingHandler for GenCommCluster {}
 
-impl<'a> ChangeNotifier<()> for GenCommCluster<'a> {
+impl ChangeNotifier<()> for GenCommCluster {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }

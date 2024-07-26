@@ -15,79 +15,248 @@
  *    limitations under the License.
  */
 
-use core::borrow::Borrow;
-use core::mem::MaybeUninit;
+use core::cell::RefCell;
+use core::fmt::{self, Display};
+use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
-use embassy_futures::select::{select, select_slice, Either};
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, channel::Channel};
-use embassy_time::{Duration, Timer};
+use embassy_futures::select::{select, select3};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_time::Timer;
 
-use log::{error, info, warn};
+use log::{debug, error, info, trace, warn};
 
-use crate::interaction_model::core::IMStatusCode;
-use crate::mdns::Mdns;
-use crate::secure_channel::common::SCStatusCodes;
-use crate::secure_channel::status_report::{create_status_report, GeneralCode};
+use crate::error::{Error, ErrorCode};
+use crate::mdns::MdnsImpl;
+use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
+use crate::secure_channel::status_report::StatusReport;
+use crate::tlv::TLVList;
 use crate::utils::buf::BufferAccess;
-use crate::utils::select::Notification;
-use crate::{
-    alloc,
-    data_model::{core::DataModel, objects::DataModelHandler},
-    error::{Error, ErrorCode},
-    interaction_model::core::PROTO_ID_INTERACTION_MODEL,
-    secure_channel::{
-        common::{OpCode, PROTO_ID_SECURE_CHANNEL},
-        core::SecureChannel,
-    },
-    transport::packet::Packet,
-    utils::select::EitherUnwrap,
-    CommissioningData, Matter, MATTER_PORT,
+use crate::utils::{
+    epoch::Epoch,
+    ifmutex::{IfMutex, IfMutexGuard},
+    notification::Notification,
+    parsebuf::ParseBuf,
+    rand::Rand,
+    select::Coalesce,
+    writebuf::WriteBuf,
 };
+use crate::{Matter, MATTER_PORT};
 
-use super::{
-    exchange::{
-        Exchange, ExchangeCtr, ExchangeCtx, ExchangeId, ExchangeState, Role, SessionId,
-        MAX_EXCHANGES,
-    },
-    mrp::ReliableMessage,
-    network::{Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6},
-    packet::{MAX_RX_BUF_SIZE, MAX_RX_STATUS_BUF_SIZE, MAX_TX_BUF_SIZE},
+use super::exchange::{Exchange, ExchangeId, ExchangeState, MessageMeta, ResponderState, Role};
+use super::network::{
+    self, Address, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV6,
 };
+use super::packet::PacketHdr;
+use super::proto_hdr::ProtoHdr;
+use super::session::{Session, SessionMgr};
+
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+extern crate alloc;
 
 pub const MATTER_SOCKET_BIND_ADDR: SocketAddr =
     SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MATTER_PORT, 0, 0));
 
-type TxBuf = MaybeUninit<[u8; MAX_TX_BUF_SIZE]>;
-type RxBuf = MaybeUninit<[u8; MAX_RX_BUF_SIZE]>;
-type SxBuf = MaybeUninit<[u8; MAX_RX_STATUS_BUF_SIZE]>;
+const ACCEPT_TIMEOUT_MS: u64 = 1000;
 
-pub struct PacketBuffers {
-    tx: [TxBuf; MAX_EXCHANGES],
-    rx: [RxBuf; MAX_EXCHANGES],
-    sx: [SxBuf; MAX_EXCHANGES + 1],
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+pub(crate) const MAX_RX_BUF_SIZE: usize = network::MAX_RX_LARGE_PACKET_SIZE;
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+pub(crate) const MAX_TX_BUF_SIZE: usize = network::MAX_TX_LARGE_PACKET_SIZE;
+
+#[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+pub(crate) const MAX_RX_BUF_SIZE: usize = network::MAX_RX_PACKET_SIZE;
+#[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+pub(crate) const MAX_TX_BUF_SIZE: usize = network::MAX_TX_PACKET_SIZE;
+
+/// Represents the transport layer of a `Matter` instance.
+/// Each `Matter` instance has exactly one `TransportMgr` instance.
+///
+/// To the outside world, the transport layer is only visible and usable via the notion of `Exchange`.
+pub struct TransportMgr<'m> {
+    pub(crate) rx: IfMutex<NoopRawMutex, Packet<MAX_RX_BUF_SIZE>>,
+    pub(crate) tx: IfMutex<NoopRawMutex, Packet<MAX_TX_BUF_SIZE>>,
+    pub(crate) dropped: Notification<NoopRawMutex>,
+    pub(crate) session_removed: Notification<NoopRawMutex>,
+    pub session_mgr: RefCell<SessionMgr>, // For testing
+    pub(crate) mdns: MdnsImpl<'m>,
+    #[allow(dead_code)]
+    rand: Rand,
 }
 
-impl PacketBuffers {
-    const TX_ELEM: TxBuf = MaybeUninit::uninit();
-    const RX_ELEM: RxBuf = MaybeUninit::uninit();
-    const SX_ELEM: SxBuf = MaybeUninit::uninit();
-
-    const TX_INIT: [TxBuf; MAX_EXCHANGES] = [Self::TX_ELEM; MAX_EXCHANGES];
-    const RX_INIT: [RxBuf; MAX_EXCHANGES] = [Self::RX_ELEM; MAX_EXCHANGES];
-    const SX_INIT: [SxBuf; MAX_EXCHANGES + 1] = [Self::SX_ELEM; MAX_EXCHANGES + 1];
-
+impl<'m> TransportMgr<'m> {
     #[inline(always)]
-    pub const fn new() -> Self {
+    pub(crate) const fn new(mdns: MdnsImpl<'m>, epoch: Epoch, rand: Rand) -> Self {
         Self {
-            tx: Self::TX_INIT,
-            rx: Self::RX_INIT,
-            sx: Self::SX_INIT,
+            rx: IfMutex::new(Packet::new()),
+            tx: IfMutex::new(Packet::new()),
+            dropped: Notification::new(),
+            session_removed: Notification::new(),
+            session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
+            mdns,
+            rand,
         }
     }
-}
 
-impl<'a> Matter<'a> {
+    pub(crate) fn replace_mdns(&mut self, mdns: MdnsImpl<'m>) {
+        self.mdns = mdns;
+    }
+
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn initialize_buffers(&self) -> Result<(), Error> {
+        let mut rx = self.rx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
+        let mut tx = self.tx.try_lock().map_err(|_| ErrorCode::InvalidState)?;
+
+        if rx.buf.0.is_none() {
+            rx.buf.0 = Some(alloc::boxed::Box::new(heapless::Vec::new()));
+        }
+
+        if tx.buf.0.is_none() {
+            tx.buf.0 = Some(alloc::boxed::Box::new(heapless::Vec::new()));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+    pub fn initialize_buffers(&self) -> Result<(), Error> {
+        // No-op, as buffers are allocated inline
+        Ok(())
+    }
+
+    /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
+    /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
+    pub fn reset(&self) -> Result<(), Error> {
+        self.session_mgr.borrow_mut().reset();
+        self.rx
+            .try_lock()
+            .map_err(|_| ErrorCode::InvalidState)?
+            .buf
+            .clear();
+        self.tx
+            .try_lock()
+            .map_err(|_| ErrorCode::InvalidState)?
+            .buf
+            .clear();
+
+        Ok(())
+    }
+
+    pub(crate) async fn initiate<'a>(
+        &'a self,
+        matter: &'a Matter<'a>,
+        fabric_idx: u8,
+        peer_node_id: u64,
+        secure: bool,
+    ) -> Result<Exchange<'_>, Error> {
+        // TODO: Future: once we have mDNS lookups in place
+        // create a new session if no suitable one is found
+
+        let session_id = {
+            // (block necessary, or else we end up re-borrowing `SessionMgr` as mut twice)
+
+            let mut session_mgr = self.session_mgr.borrow_mut();
+
+            session_mgr
+                .get_for_node(fabric_idx, peer_node_id, secure)
+                .ok_or(ErrorCode::NoSession)?
+                .id
+        };
+
+        self.initiate_for_session(matter, session_id)
+    }
+
+    pub(crate) fn initiate_for_session<'a>(
+        &'a self,
+        matter: &'a Matter<'a>,
+        session_id: u32,
+    ) -> Result<Exchange<'_>, Error> {
+        let mut session_mgr = self.session_mgr.borrow_mut();
+
+        session_mgr.get(session_id).ok_or(ErrorCode::NoSession)?;
+
+        let exch_id = session_mgr.get_next_exch_id();
+
+        // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
+        // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
+        // we don't have a session in the first place
+        let session = session_mgr.get(session_id).unwrap();
+
+        let exch_index = session
+            .add_exch(exch_id, Role::Initiator(Default::default()))
+            .ok_or(ErrorCode::NoSpaceExchanges)?;
+
+        let id = ExchangeId::new(session.id, exch_index);
+
+        info!("Exchange {}: Initiated", id.display(session));
+
+        Ok(Exchange::new(id, matter))
+    }
+
+    pub(crate) async fn accept_if<'a, F>(
+        &'a self,
+        matter: &'a Matter<'a>,
+        mut f: F,
+    ) -> Result<Exchange<'_>, Error>
+    where
+        F: FnMut(&Session, &ExchangeState, &Packet<MAX_RX_BUF_SIZE>) -> bool,
+    {
+        let exchange = self
+            .with_locked(&self.rx, |packet| {
+                let mut session_mgr = self.session_mgr.borrow_mut();
+
+                let session = session_mgr.get_for_rx(&packet.peer, &packet.header.plain)?;
+
+                let exch_index = session.get_exch_for_rx(&packet.header.proto)?;
+
+                let matches = {
+                    // `unwrap` is safe because the transport code is single threaded, and since we don't `await`
+                    // after computing `exch_index` no code can remove the exchange from the session
+                    let exch = session.exchanges[exch_index].as_ref().unwrap();
+
+                    matches!(exch.role, Role::Responder(ResponderState::AcceptPending))
+                        && f(session, exch, packet)
+                };
+
+                if !matches {
+                    return None;
+                }
+
+                // `unwrap` is safe because the transport code is single threaded, and since we don't `await`
+                // after computing `exch_index` no code can remove the exchange from the session
+                let exch = session.exchanges[exch_index].as_mut().unwrap();
+
+                exch.role = Role::Responder(ResponderState::Owned);
+
+                let id = ExchangeId::new(session.id, exch_index);
+
+                info!("Exchange {}: Accepted", id.display(session));
+
+                let exchange = Exchange::new(id, matter);
+
+                Some(exchange)
+            })
+            .await;
+
+        Ok(exchange)
+    }
+
+    pub async fn run<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        info!("Running Matter transport");
+
+        let send = IfMutex::new(send);
+
+        let mut rx = pin!(self.process_rx(recv, &send));
+        let mut tx = pin!(self.process_tx(&send));
+        let mut orphaned = pin!(self.process_orphaned());
+
+        select3(&mut rx, &mut tx, &mut orphaned).coalesce().await
+    }
+
     #[cfg(not(all(
         feature = "std",
         any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
@@ -96,687 +265,1001 @@ impl<'a> Matter<'a> {
         &self,
         send: S,
         recv: R,
-        host: crate::mdns::Host<'_>,
+        host: &crate::mdns::Host<'_>,
         interface: Option<u32>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
     {
-        use crate::mdns::MdnsImpl;
-
         info!("Running Matter built-in mDNS service");
 
         if let MdnsImpl::Builtin(mdns) = &self.mdns {
-            mdns.run(send, recv, &self.tx_buf, &self.rx_buf, host, interface)
-                .await
+            mdns.run(
+                send,
+                recv,
+                &PacketBufferExternalAccess(&self.tx),
+                &PacketBufferExternalAccess(&self.rx),
+                host,
+                interface,
+                self.rand,
+            )
+            .await
         } else {
             Err(ErrorCode::MdnsError.into())
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn run<H, S, R>(
-        &self,
-        send: S,
-        recv: R,
-        buffers: &mut PacketBuffers,
-        dev_comm: CommissioningData,
-        handler: &H,
-    ) -> Result<(), Error>
-    where
-        H: DataModelHandler,
-        S: NetworkSend,
-        R: NetworkReceive,
-    {
-        info!("Running Matter transport");
-
-        {
-            let mut recv_buf = self.rx_buf.get().await;
-
-            if self.start_comissioning(dev_comm, &mut recv_buf)? {
-                info!("Comissioning started");
-            }
-        }
-
-        let construction_notification = Notification::new();
-
-        let mut rx = pin!(self.handle_rx(recv, buffers, &construction_notification, handler));
-        let mut tx = pin!(self.handle_tx(send));
-
-        select(&mut rx, &mut tx).await.unwrap()
+    /// Return a reference to the transport RX buffer.
+    ///
+    /// Useful when external code (like i.e. a user-provided mDNS implementation)
+    /// needs an RX buffer.
+    pub fn rx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
+        PacketBufferExternalAccess(&self.rx)
     }
 
-    #[inline(always)]
-    async fn handle_rx<H, R>(
-        &self,
-        recv: R,
-        buffers: &mut PacketBuffers,
-        construction_notification: &Notification,
-        handler: &H,
-    ) -> Result<(), Error>
-    where
-        H: DataModelHandler,
-        R: NetworkReceive,
-    {
-        info!("Creating queue for {} exchanges", 1);
-
-        let channel = Channel::<NoopRawMutex, _, 1>::new();
-
-        info!("Creating {} handlers", MAX_EXCHANGES);
-        let mut handlers = heapless::Vec::<_, MAX_EXCHANGES>::new();
-
-        info!("Handlers size: {}", core::mem::size_of_val(&handlers));
-
-        // Unsafely allow mutable aliasing in the packet pools by different indices
-        let pools: *mut PacketBuffers = buffers;
-
-        for index in 0..MAX_EXCHANGES {
-            let channel = &channel;
-            let handler_id = index;
-
-            let pools = unsafe { pools.as_mut() }.unwrap();
-
-            let tx_buf = unsafe { pools.tx[handler_id].assume_init_mut() };
-            let rx_buf = unsafe { pools.rx[handler_id].assume_init_mut() };
-            let sx_buf = unsafe { pools.sx[handler_id].assume_init_mut() };
-
-            handlers
-                .push(self.exchange_handler(tx_buf, rx_buf, sx_buf, handler_id, channel, handler))
-                .map_err(|_| ())
-                .unwrap();
-        }
-
-        let mut rx = pin!(self.handle_rx_multiplex(
-            recv,
-            unsafe { buffers.sx[MAX_EXCHANGES].assume_init_mut() },
-            construction_notification,
-            &channel,
-        ));
-
-        let result = select(&mut rx, select_slice(&mut handlers)).await;
-
-        if let Either::First(result) = result {
-            if let Err(e) = &result {
-                error!("Exitting RX loop due to an error: {:?}", e);
-            }
-
-            result?;
-        }
-
-        Ok(())
+    /// Return a reference to the transport TX buffer.
+    ///
+    /// Useful when external code (like i.e. a user-provided mDNS implementation)
+    /// needs a TX buffer.
+    pub fn tx_buffer(&self) -> impl BufferAccess<[u8]> + '_ {
+        PacketBufferExternalAccess(&self.tx)
     }
 
-    #[inline(always)]
-    pub async fn handle_tx<S>(&self, mut send: S) -> Result<(), Error>
+    pub(crate) async fn get_if<'a, F, const N: usize>(
+        &'a self,
+        packet_mutex: &'a IfMutex<NoopRawMutex, Packet<N>>,
+        f: F,
+    ) -> PacketAccess<'a, N>
+    where
+        F: Fn(&Packet<N>) -> bool,
+    {
+        PacketAccess(packet_mutex.lock_if(f).await, false)
+    }
+
+    async fn with_locked<'a, F, R, T>(
+        &'a self,
+        packet_mutex: &'a IfMutex<NoopRawMutex, T>,
+        f: F,
+    ) -> R
+    where
+        F: FnMut(&mut T) -> Option<R>,
+    {
+        packet_mutex.with(f).await
+    }
+
+    async fn process_tx<S>(&self, send: &IfMutex<NoopRawMutex, S>) -> Result<(), Error>
     where
         S: NetworkSend,
     {
         loop {
-            loop {
-                {
-                    let mut send_buf = self.tx_buf.get().await;
+            debug!("Waiting for outgoing packet");
 
-                    let mut tx = alloc!(Packet::new_tx(&mut send_buf));
+            let mut tx = self.get_if(&self.tx, |packet| !packet.buf.is_empty()).await;
+            tx.clear_on_drop(true);
 
-                    if self.pull_tx(&mut tx)? {
-                        let addr = tx.peer;
-
-                        let start = tx.get_writebuf()?.get_start();
-                        let end = tx.get_writebuf()?.get_tail();
-
-                        send.send_to(&send_buf[start..end], addr).await?;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            self.wait_tx().await?;
+            Self::netw_send(send, tx.peer, &tx.buf[tx.payload_start..], false).await?;
         }
     }
 
-    #[inline(always)]
-    pub async fn handle_rx_multiplex<'t, 'e, const N: usize, R>(
-        &'t self,
-        mut receiver: R,
-        sts_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
-        construction_notification: &'e Notification,
-        channel: &Channel<NoopRawMutex, ExchangeCtr<'e>, N>,
+    async fn process_rx<R, S>(
+        &self,
+        mut recv: R,
+        send: &IfMutex<NoopRawMutex, S>,
     ) -> Result<(), Error>
     where
         R: NetworkReceive,
-        't: 'e,
+        S: NetworkSend,
     {
-        let mut sts_tx = alloc!(Packet::new_tx(sts_buf));
-
         loop {
-            info!("Transport: waiting for incoming packets");
+            debug!("Waiting for incoming packet");
 
-            receiver.wait_available().await?;
+            recv.wait_available().await?;
 
-            {
-                let mut recv_buf = self.rx_buf.get().await;
+            let mut rx = self.get_if(&self.rx, |packet| packet.buf.is_empty()).await;
+            rx.clear_on_drop(true); // In case of error, or if the future is dropped
 
-                let (len, remote) = receiver.recv_from(&mut recv_buf).await?;
+            // TODO: Resizing might be a bit expensive with large buffers
+            // Resizing to `MAX_RX_BUF_SIZE` is always safe because the size of the `buf` heapless vec `MAX_RX_BUF_SIZE`
+            rx.buf.resize_default(MAX_RX_BUF_SIZE).unwrap();
 
-                let mut rx = alloc!(Packet::new_rx(&mut recv_buf[..len]));
-                rx.peer = remote;
+            let (len, peer) = Self::netw_recv(&mut recv, &mut rx.buf).await?;
 
-                if let Some(exchange_ctr) = self
-                    .process_rx(construction_notification, &mut rx, &mut sts_tx)
-                    .await?
-                {
-                    let exchange_id = exchange_ctr.id().clone();
+            rx.peer = peer;
+            rx.buf.truncate(len);
+            rx.payload_start = 0;
 
-                    info!("Transport: got new exchange: {:?}", exchange_id);
-
-                    channel.send(exchange_ctr).await;
-                    info!("Transport: exchange sent");
-
-                    self.wait_construction(construction_notification, &rx, &exchange_id)
-                        .await?;
-
-                    info!("Transport: exchange started");
+            match self.handle_rx_packet(&mut rx, send).await {
+                Ok(true) => {
+                    // Leave the packet in place for accepting by responders
+                    rx.clear_on_drop(false);
+                }
+                Ok(false) => {
+                    // Drop the packet, as no further processing is necessary
+                }
+                Err(e) => {
+                    // Drop the packet and report the unexpected error
+                    error!("UNEXPECTED RX ERROR: {e:?}");
                 }
             }
         }
-
-        #[allow(unreachable_code)]
-        Ok::<_, Error>(())
     }
 
-    #[inline(always)]
-    pub async fn exchange_handler<const N: usize, H>(
-        &self,
-        tx_buf: &mut [u8; MAX_TX_BUF_SIZE],
-        rx_buf: &mut [u8; MAX_RX_BUF_SIZE],
-        sx_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
-        handler_id: impl core::fmt::Display,
-        channel: &Channel<NoopRawMutex, ExchangeCtr<'_>, N>,
-        handler: &H,
-    ) -> Result<(), Error>
-    where
-        H: DataModelHandler,
-    {
+    async fn process_orphaned(&self) -> Result<(), Error> {
+        let mut rx_accept_timeout = pin!(self.process_accept_timeout_rx());
+        let mut rx_orphaned = pin!(self.process_orphaned_rx());
+        let mut exch_dropped = pin!(self.process_dropped_exchanges());
+
+        select3(&mut rx_accept_timeout, &mut rx_orphaned, &mut exch_dropped)
+            .coalesce()
+            .await
+    }
+
+    async fn process_accept_timeout_rx(&self) -> Result<(), Error> {
         loop {
-            let exchange_ctr: ExchangeCtr<'_> = channel.receive().await;
+            trace!("Waiting for accept timeout");
 
-            info!(
-                "Handler {}: Got exchange {:?}",
-                handler_id,
-                exchange_ctr.id()
-            );
+            let mut accept_timeout = pin!(self.with_locked(&self.rx, |packet| {
+                self.handle_accept_timeout_rx_packet(packet).then_some(())
+            }));
 
-            let result = self
-                .handle_exchange(tx_buf, rx_buf, sx_buf, exchange_ctr, handler)
-                .await;
+            let mut timer = pin!(Timer::after(embassy_time::Duration::from_millis(50)));
 
-            if let Err(err) = result {
-                warn!(
-                    "Handler {}: Exchange closed because of error: {:?}",
-                    handler_id, err
-                );
-            } else {
-                info!("Handler {}: Exchange completed", handler_id);
-            }
+            select(&mut accept_timeout, &mut timer).await;
         }
     }
 
-    #[inline(always)]
-    pub async fn handle_exchange<H>(
-        &self,
-        tx_buf: &mut [u8; MAX_TX_BUF_SIZE],
-        rx_buf: &mut [u8; MAX_RX_BUF_SIZE],
-        sx_buf: &mut [u8; MAX_RX_STATUS_BUF_SIZE],
-        exchange_ctr: ExchangeCtr<'_>,
-        handler: &H,
-    ) -> Result<(), Error>
-    where
-        H: DataModelHandler,
-    {
-        let mut tx = alloc!(Packet::new_tx(tx_buf.as_mut()));
-        let mut rx = alloc!(Packet::new_rx(rx_buf.as_mut()));
+    async fn process_orphaned_rx(&self) -> Result<(), Error> {
+        loop {
+            info!("Waiting for orphaned RX packets");
 
-        let mut exchange = alloc!(exchange_ctr.get(&mut rx).await?);
-
-        match rx.get_proto_id() {
-            PROTO_ID_SECURE_CHANNEL => {
-                let sc = SecureChannel::new();
-
-                sc.handle(&mut exchange, &mut rx, &mut tx).await?;
-
-                self.notify_changed();
-            }
-            PROTO_ID_INTERACTION_MODEL => {
-                let dm = DataModel::new(handler);
-
-                let mut rx_status = alloc!(Packet::new_rx(sx_buf));
-
-                dm.handle(&mut exchange, &mut rx, &mut tx, &mut rx_status)
-                    .await?;
-
-                self.notify_changed();
-            }
-            other => {
-                error!("Unknown Proto-ID: {}", other);
-            }
+            self.with_locked(&self.rx, |packet| {
+                self.handle_orphaned_rx_packet(packet).then_some(())
+            })
+            .await;
         }
-
-        Ok(())
     }
 
-    pub fn reset_transport(&self) {
-        self.exchanges.borrow_mut().clear();
-        self.session_mgr.borrow_mut().reset();
-        self.mdns.reset();
-    }
+    async fn process_dropped_exchanges(&self) -> Result<(), Error> {
+        loop {
+            trace!("Waiting for dropped exchanges");
 
-    pub async fn process_rx<'r>(
-        &'r self,
-        construction_notification: &'r Notification,
-        src_rx: &mut Packet<'_>,
-        sts_tx: &mut Packet<'_>,
-    ) -> Result<Option<ExchangeCtr<'r>>, Error> {
-        src_rx.plain_hdr_decode()?;
+            let mut tx = self.get_if(&self.tx, |packet| packet.buf.is_empty()).await;
+            tx.clear_on_drop(true); // In case of error, or if the future is dropped
 
-        self.purge()?;
-
-        let (exchange_index, new) = loop {
-            let result = self.assign_exchange(&mut self.exchanges.borrow_mut(), src_rx);
-
-            match result {
-                Err(e) => match e.code() {
-                    ErrorCode::Duplicate => {
-                        self.send_notification.signal(());
-                        return Ok(None);
-                    }
-                    // TODO: NoSession, NoExchange and others
-                    ErrorCode::NoSpaceSessions => self.evict_session(sts_tx).await?,
-                    ErrorCode::NoSpaceExchanges => {
-                        self.send_busy(src_rx, sts_tx).await?;
-                        return Ok(None);
-                    }
-                    _ => break Err(e),
-                },
-                other => break other,
-            }
-        }?;
-
-        let mut exchanges = self.exchanges.borrow_mut();
-        let ctx = &mut exchanges[exchange_index];
-
-        src_rx.log("Got packet");
-
-        if src_rx.proto.is_ack() {
-            if new {
-                Err(ErrorCode::Invalid)?;
-            } else {
-                let state = &mut ctx.state;
-
-                match state {
-                    ExchangeState::ExchangeRecv {
-                        tx_acknowledged, ..
-                    } => {
-                        *tx_acknowledged = true;
-                    }
-                    ExchangeState::CompleteAcknowledge { notification, .. } => {
-                        unsafe { notification.as_ref() }.unwrap().signal(());
-                        ctx.state = ExchangeState::Closed;
-                    }
-                    _ => {
-                        // TODO: Error handling
-                        todo!()
-                    }
+            let wait = match self.handle_dropped_exchange(&mut tx) {
+                Ok(wait) => {
+                    tx.clear_on_drop(false);
+                    wait
                 }
-
-                self.notify_changed();
-            }
-        }
-
-        if new {
-            let constructor = ExchangeCtr {
-                exchange: Exchange {
-                    id: ctx.id.clone(),
-                    matter: self,
-                    notification: Notification::new(),
-                },
-                construction_notification,
+                Err(e) => {
+                    error!("UNEXPECTED RX ERROR: {e:?}");
+                    false
+                }
             };
 
-            self.notify_changed();
+            drop(tx);
 
-            Ok(Some(constructor))
-        } else if src_rx.proto.proto_id == PROTO_ID_SECURE_CHANNEL
-            && src_rx.proto.proto_opcode == OpCode::MRPStandAloneAck as u8
-        {
-            // Standalone ack, do nothing
-            Ok(None)
-        } else {
-            let state = &mut ctx.state;
+            if wait {
+                let mut timeout = pin!(Timer::after(embassy_time::Duration::from_millis(100)));
+                let mut wait = pin!(self.dropped.wait());
 
-            match state {
-                ExchangeState::ExchangeRecv {
-                    rx, notification, ..
-                } => {
-                    // TODO: Handle Busy status codes
-
-                    let rx = unsafe { rx.as_mut() }.unwrap();
-                    rx.load(src_rx)?;
-
-                    unsafe { notification.as_ref() }.unwrap().signal(());
-                    *state = ExchangeState::Active;
-                }
-                _ => {
-                    // TODO: Error handling
-                    todo!()
-                }
+                select(&mut timeout, &mut wait).await;
             }
-
-            self.notify_changed();
-
-            Ok(None)
         }
     }
 
-    pub async fn wait_construction(
+    async fn handle_rx_packet<const N: usize, S>(
         &self,
-        construction_notification: &Notification,
-        src_rx: &Packet<'_>,
-        exchange_id: &ExchangeId,
-    ) -> Result<(), Error> {
-        construction_notification.wait().await;
-
-        let mut exchanges = self.exchanges.borrow_mut();
-
-        let ctx = ExchangeCtx::get(&mut exchanges, exchange_id).unwrap();
-
-        let state = &mut ctx.state;
-
-        match state {
-            ExchangeState::Construction { rx, notification } => {
-                let rx = unsafe { rx.as_mut() }.unwrap();
-                rx.load(src_rx)?;
-
-                unsafe { notification.as_ref() }.unwrap().signal(());
-                *state = ExchangeState::Active;
-            }
-            _ => unreachable!(),
-        }
-
-        Ok(())
-    }
-
-    pub async fn wait_tx(&self) -> Result<(), Error> {
-        select(
-            self.send_notification.wait(),
-            Timer::after(Duration::from_millis(100)),
-        )
-        .await;
-
-        Ok(())
-    }
-
-    pub fn pull_tx(&self, dest_tx: &mut Packet) -> Result<bool, Error> {
-        self.purge()?;
-
-        let mut ephemeral = self.ephemeral.borrow_mut();
-        let mut exchanges = self.exchanges.borrow_mut();
-
-        self.pull_tx_exchanges(ephemeral.iter_mut().chain(exchanges.iter_mut()), dest_tx)
-    }
-
-    fn pull_tx_exchanges<'i, I>(
-        &self,
-        mut exchanges: I,
-        dest_tx: &mut Packet,
+        packet: &mut Packet<N>,
+        send: &IfMutex<NoopRawMutex, S>,
     ) -> Result<bool, Error>
     where
-        I: Iterator<Item = &'i mut ExchangeCtx>,
+        S: NetworkSend,
     {
-        let ctx = exchanges.find(|ctx| {
-            matches!(
-                &ctx.state,
-                ExchangeState::Acknowledge { .. }
-                    | ExchangeState::ExchangeSend { .. }
-                    // | ExchangeState::ExchangeRecv {
-                    //     tx_acknowledged: false,
-                    //     ..
-                    // }
-                    | ExchangeState::Complete { .. } // | ExchangeState::CompleteAcknowledge { .. }
-            ) || ctx.mrp.is_ack_ready(*self.borrow())
-        });
+        let result = self.decode_packet(packet);
+        match result {
+            Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
+                if !packet.peer.is_reliable() {
+                    info!("\n>>>>> {packet}\n => Duplicate, sending ACK");
 
-        if let Some(ctx) = ctx {
-            self.notify_changed();
+                    {
+                        let mut session_mgr = self.session_mgr.borrow_mut();
+                        let epoch = session_mgr.epoch;
 
-            let state = &mut ctx.state;
+                        // `unwrap` is safe because we know we have a session.
+                        // If we didn't have a session, the error code would've been `NoSession`
+                        //
+                        // Also, since the transport code is single threaded, and since we don't `await`
+                        // after decoding the packet, no code can the session
+                        let session = session_mgr
+                            .get_for_rx(&packet.peer, &packet.header.plain)
+                            .unwrap();
 
-            let send = match state {
-                ExchangeState::Acknowledge { notification } => {
-                    ReliableMessage::prepare_ack(ctx.id.id, dest_tx);
+                        let ack = packet.header.plain.ctr;
 
-                    unsafe { notification.as_ref() }.unwrap().signal(());
-                    *state = ExchangeState::Active;
+                        packet.header.proto.toggle_initiator();
+                        packet.header.proto.set_ack(Some(ack));
 
-                    true
-                }
-                ExchangeState::ExchangeSend {
-                    tx,
-                    rx,
-                    notification,
-                } => {
-                    let tx = unsafe { tx.as_ref() }.unwrap();
-                    dest_tx.load(tx)?;
-
-                    *state = ExchangeState::ExchangeRecv {
-                        _tx: tx,
-                        tx_acknowledged: false,
-                        rx: *rx,
-                        notification: *notification,
-                    };
-
-                    true
-                }
-                // ExchangeState::ExchangeRecv { .. } => {
-                //     // TODO: Re-send the tx package if due
-                //     false
-                // }
-                ExchangeState::Complete { tx, notification } => {
-                    let tx = unsafe { tx.as_ref() }.unwrap();
-                    dest_tx.load(tx)?;
-
-                    if dest_tx.is_reliable() {
-                        *state = ExchangeState::CompleteAcknowledge {
-                            _tx: tx as *const _,
-                            notification: *notification,
-                        };
-                    } else {
-                        unsafe { notification.as_ref() }.unwrap().signal(());
-                        ctx.state = ExchangeState::Closed;
+                        self.encode_packet(packet, Some(session), None, epoch, |_| {
+                            Ok(Some(OpCode::MRPStandAloneAck.into()))
+                        })?;
                     }
 
-                    true
+                    Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
+                        .await?;
+                } else {
+                    info!("\n>>>>> {packet}\n => Duplicate, discarding");
                 }
-                // ExchangeState::CompleteAcknowledge { .. } => {
-                //     // TODO: Re-send the tx package if due
-                //     false
-                // }
-                _ => {
-                    ReliableMessage::prepare_ack(ctx.id.id, dest_tx);
-                    true
+            }
+            Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
+                if !packet.header.plain.is_encrypted()
+                    && MessageMeta::from(&packet.header.proto).is_new_session()
+                {
+                    warn!("\n>>>>> {packet}\n => No space for a new unencrypted session, sending Busy");
+
+                    let ack = packet.header.plain.ctr;
+
+                    packet.header.proto.toggle_initiator();
+                    packet.header.proto.set_ack(Some(ack));
+
+                    self.encode_packet(
+                        packet,
+                        None,
+                        None,
+                        self.session_mgr.borrow().epoch,
+                        |wb| sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01]),
+                    )?;
+
+                    Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
+                        .await?;
+
+                    if self.encode_evict_some_session(packet)? {
+                        Self::netw_send(
+                            send,
+                            packet.peer,
+                            &packet.buf[packet.payload_start..],
+                            true,
+                        )
+                        .await?;
+                    }
+                } else {
+                    error!("\n>>>>> {packet}\n => No space for a new encrypted session, dropping");
                 }
-            };
+            }
+            Err(e) if matches!(e.code(), ErrorCode::NoSpaceExchanges) => {
+                // TODO: Before closing the session, try to take other measures:
+                // - For CASESigma1 & PBKDFParamRequest - send Busy instead
+                // - For Interaction Model interactions that do need an ACK - send IM Busy,
+                //   wait for ACK and retransmit without releasing the RX buffer, potentially
+                //   blocking all other interactions
 
-            if send {
-                dest_tx.log("Sending packet");
-                self.notify_changed();
+                error!("\n>>>>> {packet}\n => No space for a new exchange, closing session");
 
-                return Ok(true);
+                {
+                    let mut session_mgr = self.session_mgr.borrow_mut();
+
+                    // `unwrap` is safe because we know we have a session.
+                    // If we didn't have a session, the error code would've been `NoSession`
+                    //
+                    // Also, since the transport code is single threaded, and since we don't `await`
+                    // after decoding the packet, no code can the session
+                    let session_id = session_mgr
+                        .get_for_rx(&packet.peer, &packet.header.plain)
+                        .unwrap()
+                        .id;
+
+                    packet.header.proto.exch_id = session_mgr.get_next_exch_id();
+                    packet.header.proto.set_initiator();
+
+                    // See above why `unwrap` is safe
+                    let mut session = session_mgr.remove(session_id).unwrap();
+                    self.session_removed.notify();
+
+                    self.encode_packet(
+                        packet,
+                        Some(&mut session),
+                        None,
+                        session_mgr.epoch,
+                        |wb| sc_write(wb, SCStatusCodes::CloseSession, &[]),
+                    )?;
+                }
+
+                Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
+                    .await?;
+            }
+            Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
+                warn!("\n>>>>> {packet}\n => No valid exchange found, dropping");
+            }
+            Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
+                warn!("\n>>>>> {packet}\n => No valid session found, dropping");
+            }
+            Err(e) => {
+                error!("\n>>>>> {packet}\n => Error ({e:?}), dropping");
+            }
+            Ok(new_exchange) => {
+                let meta = MessageMeta::from(&packet.header.proto);
+
+                if meta.is_standalone_ack() {
+                    // No need to propagate this further
+                    info!("\n>>>>> {packet}\n => Standalone Ack, dropping");
+                } else if meta.is_sc_status()
+                    && matches!(
+                        Self::is_close_session(&mut packet.buf[packet.payload_start..]),
+                        Ok(true)
+                    )
+                {
+                    warn!("\n>>>>> {packet}\n => Close session received, removing this session");
+
+                    let mut session_mgr = self.session_mgr.borrow_mut();
+                    if let Some(session_id) = session_mgr
+                        .get_for_rx(&packet.peer, &packet.header.plain)
+                        .map(|sess| sess.id)
+                    {
+                        session_mgr.remove(session_id);
+                        self.session_removed.notify();
+                    }
+                } else {
+                    info!(
+                        "\n>>>>> {packet}\n => Processing{}",
+                        if new_exchange { " (new exchange)" } else { "" }
+                    );
+
+                    debug!(
+                        "{}",
+                        Packet::<0>::display_payload(
+                            &packet.header.proto,
+                            &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..]
+                        )
+                    );
+
+                    return Ok(true);
+                }
             }
         }
 
         Ok(false)
     }
 
-    fn purge(&self) -> Result<(), Error> {
-        loop {
-            let mut exchanges = self.exchanges.borrow_mut();
-
-            if let Some(index) = exchanges.iter_mut().enumerate().find_map(|(index, ctx)| {
-                matches!(ctx.state, ExchangeState::Closed).then_some(index)
-            }) {
-                exchanges.swap_remove(index);
-            } else {
-                break;
-            }
+    fn handle_accept_timeout_rx_packet<const N: usize>(&self, packet: &mut Packet<N>) -> bool {
+        if packet.buf.is_empty() {
+            return false;
         }
 
-        Ok(())
+        let mut session_mgr = self.session_mgr.borrow_mut();
+        let epoch = session_mgr.epoch;
+
+        let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
+            return false;
+        };
+
+        let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
+            return false;
+        };
+
+        // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
+        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+
+        if !matches!(
+            exchange.role,
+            Role::Responder(ResponderState::AcceptPending)
+        ) || !exchange.mrp.has_rx_timed_out(ACCEPT_TIMEOUT_MS, epoch)
+        {
+            return false;
+        }
+
+        warn!("\n----- {packet}\n => Accept timeout, marking exchange as dropped");
+
+        exchange.role = Role::Responder(ResponderState::Dropped);
+        packet.buf.clear();
+        self.dropped.notify();
+
+        true
     }
 
-    pub(crate) async fn evict_session(&self, tx: &mut Packet<'_>) -> Result<(), Error> {
-        let sess_index = self.session_mgr.borrow().get_session_for_eviction();
-        if let Some(sess_index) = sess_index {
-            let ctx = {
-                create_status_report(
-                    tx,
-                    GeneralCode::Success,
-                    PROTO_ID_SECURE_CHANNEL as _,
-                    SCStatusCodes::CloseSession as _,
-                    None,
-                )?;
+    fn handle_orphaned_rx_packet<const N: usize>(&self, packet: &mut Packet<N>) -> bool {
+        if packet.buf.is_empty() {
+            return false;
+        }
 
-                let mut session_mgr = self.session_mgr.borrow_mut();
-                let session_id = session_mgr.mut_by_index(sess_index).unwrap().id();
-                warn!("Evicting session: {:?}", session_id);
+        let mut session_mgr = self.session_mgr.borrow_mut();
 
-                let ctx = ExchangeCtx::prep_ephemeral(session_id, &mut session_mgr, None, tx)?;
+        let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
+            warn!("\n----- {packet}\n => No session, dropping");
 
-                session_mgr.remove(sess_index);
+            packet.buf.clear();
+            return true;
+        };
 
-                ctx
-            };
+        let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
+            warn!("\n----- {packet}\n => No exchange, dropping");
 
-            self.send_ephemeral(ctx, tx).await
+            packet.buf.clear();
+            return true;
+        };
+
+        // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
+        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+
+        if exchange.role.is_dropped_state() {
+            warn!(
+                "\n----- {packet}\n => Owned by orphaned dropped {}, dropping packet",
+                ExchangeId::new(session.id, exch_index)
+            );
+
+            packet.buf.clear();
+            return true;
+        }
+
+        false
+    }
+
+    fn handle_dropped_exchange<const N: usize>(
+        &self,
+        packet: &mut Packet<N>,
+    ) -> Result<bool, Error> {
+        let mut session_mgr = self.session_mgr.borrow_mut();
+
+        let exch = session_mgr
+            .get_exch(|_, exch| exch.role.is_dropped_state() && exch.mrp.is_retrans_pending())
+            .map(|(sess, exch_index)| (sess.id, exch_index, true))
+            .or_else(|| {
+                session_mgr
+                    .get_exch(|_, exch| {
+                        exch.role.is_dropped_state() && !exch.mrp.is_retrans_pending()
+                    })
+                    .map(|(sess, exch_index)| (sess.id, exch_index, false))
+            });
+
+        let Some((session_id, exch_index, close_session)) = exch else {
+            return Ok(exch.is_none());
+        };
+
+        let exchange_id = ExchangeId::new(session_id, exch_index);
+
+        if close_session {
+            // Found a dropped exchange which has an incomplete (re)transmission
+            // Close the whole session
+
+            error!(
+                "Dropped exchange {}: Closing session because the exchange cannot be closed cleanly",
+                exchange_id.display(session_mgr.get(session_id).unwrap()) // Session exists or else we wouldn't be here
+            );
+
+            self.encode_evict_session(packet, &mut session_mgr, session_id)?;
+        } else {
+            // Found a dropped exchange which has no outstanding (re)transmission
+            // Send a standalone ACK if necessary and then close it
+
+            let epoch = session_mgr.epoch;
+
+            // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
+            let session = session_mgr.get(session_id).unwrap();
+            // Ditto
+            let exchange = session.exchanges[exch_index].as_mut().unwrap();
+
+            if exchange.mrp.is_ack_pending() {
+                self.encode_packet(packet, Some(session), Some(exch_index), epoch, |_| {
+                    Ok(Some(OpCode::MRPStandAloneAck.into()))
+                })?;
+            }
+
+            warn!("Dropped exchange {}: Closed", exchange_id.display(session));
+            session.exchanges[exch_index] = None;
+        }
+
+        Ok(exch.is_none())
+    }
+
+    pub(crate) async fn evict_some_session(&self) -> Result<(), Error> {
+        let mut tx = self.get_if(&self.tx, |packet| packet.buf.is_empty()).await;
+        tx.clear_on_drop(true); // By default, if an error occurs
+
+        let evicted = self.encode_evict_some_session(&mut tx)?;
+
+        if evicted {
+            // Send it
+            tx.clear_on_drop(false);
+
+            Ok(())
         } else {
             Err(ErrorCode::NoSpaceSessions.into())
         }
     }
 
-    async fn send_busy(&self, rx: &Packet<'_>, tx: &mut Packet<'_>) -> Result<(), Error> {
-        warn!("Sending Busy as all exchanges are occupied");
+    fn decode_packet<const N: usize>(&self, packet: &mut Packet<N>) -> Result<bool, Error> {
+        packet.header.reset();
 
-        create_status_report(
-            tx,
-            GeneralCode::Busy,
-            rx.get_proto_id() as _,
-            if rx.get_proto_id() == PROTO_ID_SECURE_CHANNEL {
-                SCStatusCodes::Busy as _
-            } else {
-                IMStatusCode::Busy as _
-            },
-            None, // TODO: ms
-        )?;
+        let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
+        packet.header.plain.decode(&mut pb)?;
 
-        let ctx = ExchangeCtx::prep_ephemeral(
-            SessionId::load(rx),
-            &mut self.session_mgr.borrow_mut(),
-            Some(rx),
-            tx,
-        )?;
+        let mut session_mgr = self.session_mgr.borrow_mut();
+        let epoch = session_mgr.epoch;
 
-        self.send_ephemeral(ctx, tx).await
-    }
-
-    async fn send_ephemeral(&self, mut ctx: ExchangeCtx, tx: &mut Packet<'_>) -> Result<(), Error> {
-        let _guard = self.ephemeral_mutex.lock().await;
-
-        let notification = Notification::new();
-
-        let tx: &'static mut Packet<'static> = unsafe { core::mem::transmute(tx) };
-
-        ctx.state = ExchangeState::Complete {
-            tx,
-            notification: &notification,
+        let set_payload = |packet: &mut Packet<N>, (start, end)| {
+            packet.payload_start = start;
+            packet.buf.truncate(end);
         };
 
-        *self.ephemeral.borrow_mut() = Some(ctx);
+        if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
+            // Found existing session: decode, indicate packet payload slice and process further
 
-        self.send_notification.signal(());
+            let payload_range = session.decode_remaining(&mut packet.header, pb)?;
+            set_payload(packet, payload_range);
 
-        notification.wait().await;
+            return session.post_recv(&packet.header, epoch);
+        }
 
-        *self.ephemeral.borrow_mut() = None;
+        // No existing session: we either have to create one, or return an error
+
+        let mut error_code = ErrorCode::NoSession;
+
+        if !packet.header.plain.is_encrypted() {
+            // Unencrypted packets can be decoded without a session, and we need to anyway do that
+            // in order to determine (based on proto hdr data) whether to create a new session or not
+            packet.header.decode_remaining(&mut pb, 0, None)?;
+            packet.header.proto.adjust_reliability(true, &packet.peer);
+
+            let payload_range = pb.slice_range();
+            set_payload(packet, payload_range);
+
+            if MessageMeta::from(&packet.header.proto).is_new_session() {
+                // As per spec, new unencrypted sessions are only created for
+                // `PBKDFParamRequest` or `CASESigma1` unencrypted messages
+
+                if let Some(session) =
+                    session_mgr.add(false, packet.peer, packet.header.plain.get_src_nodeid())
+                {
+                    // Session created successfully: decode, indicate packet payload slice and process further
+                    return session.post_recv(&packet.header, epoch);
+                } else {
+                    // We tried to create a new PASE session, but there was no space
+                    error_code = ErrorCode::NoSpaceSessions;
+                }
+            }
+        } else {
+            // Packet cannot be decoded, set packet payload to empty
+            set_payload(packet, (0, 0));
+        }
+
+        Err(error_code.into())
+    }
+
+    fn encode_packet<const N: usize, F>(
+        &self,
+        packet: &mut Packet<N>,
+        mut session: Option<&mut Session>,
+        exchange_index: Option<usize>,
+        epoch: Epoch,
+        payload_writer: F,
+    ) -> Result<(), Error>
+    where
+        F: FnOnce(&mut WriteBuf) -> Result<Option<MessageMeta>, Error>,
+    {
+        // TODO: Resizing might be a bit expensive with large buffers
+        // Resizing to `N` is always safe because it is a responsibility of the caller to ensure that N is <= `MAX_RX_BUF_SIZE`,
+        // which is the size of `buf` heapless vec
+        packet.buf.resize_default(N).unwrap();
+
+        let mut wb = WriteBuf::new(&mut packet.buf);
+        wb.reserve(PacketHdr::HDR_RESERVE)?;
+
+        let Some(meta) = payload_writer(&mut wb)? else {
+            packet.buf.clear();
+            return Ok(());
+        };
+
+        meta.set_into(&mut packet.header.proto);
+
+        let retransmission = if let Some(session) = &mut session {
+            packet.header.plain = Default::default();
+
+            let (peer, retransmission) =
+                session.pre_send(exchange_index, &mut packet.header, epoch)?;
+
+            packet.peer = peer;
+
+            retransmission
+        } else {
+            if packet.header.plain.is_encrypted()
+                || packet.header.plain.get_src_nodeid().is_none()
+                || packet.header.proto.is_reliable()
+            {
+                // We can encode packets without a session only when they are unencrypted and do not need a retransmission
+                Err(ErrorCode::NoSession)?;
+            }
+
+            let src_nodeid = packet.header.plain.get_src_nodeid();
+
+            packet.header.plain = Default::default();
+
+            packet.header.plain.sess_id = 0;
+            packet.header.plain.ctr = 1;
+            packet.header.plain.set_src_nodeid(None);
+            packet.header.plain.set_dst_unicast_nodeid(src_nodeid);
+
+            packet.header.proto.unset_initiator();
+            packet.header.proto.adjust_reliability(false, &packet.peer);
+
+            false
+        };
+
+        info!(
+            "\n<<<<< {}\n => {} (system)",
+            Packet::<0>::display(&packet.peer, &packet.header),
+            if retransmission {
+                "Re-sending"
+            } else {
+                "Sending"
+            }
+        );
+
+        debug!(
+            "{}",
+            Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
+        );
+
+        if let Some(session) = session {
+            session.encode(&packet.header, &mut wb)?;
+        } else {
+            packet.header.encode(&mut wb, 0, None)?;
+        }
+
+        let range = (wb.get_start(), wb.get_tail());
+
+        packet.payload_start = range.0;
+        packet.buf.truncate(range.1);
 
         Ok(())
     }
 
-    fn assign_exchange(
+    fn encode_evict_some_session<const N: usize>(
         &self,
-        exchanges: &mut heapless::Vec<ExchangeCtx, MAX_EXCHANGES>,
-        rx: &mut Packet<'_>,
-    ) -> Result<(usize, bool), Error> {
-        // Get the session
-
+        packet: &mut Packet<N>,
+    ) -> Result<bool, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
+        let id = session_mgr.get_session_for_eviction().map(|sess| sess.id);
+        if let Some(id) = id {
+            self.encode_evict_session(packet, &mut session_mgr, id)?;
 
-        let sess_index = session_mgr.post_recv(rx)?;
-        let session = session_mgr.mut_by_index(sess_index).unwrap();
+            Ok(true)
+        } else {
+            error!("All sessions have active exchanges, cannot evict any session");
 
-        // Decrypt the message
-        session.recv(self.epoch, rx)?;
-
-        // Get the exchange
-        let (exchange_index, new) = Self::register(
-            exchanges,
-            ExchangeId::load(rx),
-            Role::complementary(rx.proto.is_initiator()),
-            // We create a new exchange, only if the peer is the initiator
-            rx.proto.is_initiator(),
-        )?;
-
-        // Message Reliability Protocol
-        exchanges[exchange_index].mrp.recv(rx, self.epoch)?;
-
-        Ok((exchange_index, new))
+            Ok(false)
+        }
     }
 
-    fn register(
-        exchanges: &mut heapless::Vec<ExchangeCtx, MAX_EXCHANGES>,
-        id: ExchangeId,
-        role: Role,
-        create_new: bool,
-    ) -> Result<(usize, bool), Error> {
-        let exchange_index = exchanges
-            .iter_mut()
-            .enumerate()
-            .find_map(|(index, exchange)| (exchange.id == id).then_some(index));
+    fn encode_evict_session<const N: usize>(
+        &self,
+        packet: &mut Packet<N>,
+        session_mgr: &mut SessionMgr,
+        id: u32,
+    ) -> Result<(), Error> {
+        packet.header.proto.exch_id = session_mgr.get_next_exch_id();
+        packet.header.proto.set_initiator();
 
-        if let Some(exchange_index) = exchange_index {
-            let exchange = &mut exchanges[exchange_index];
-            if exchange.role == role {
-                Ok((exchange_index, false))
-            } else {
-                Err(ErrorCode::NoExchange.into())
+        // It is a responsibility of the caller to ensure that this method is called with a valid session ID
+        let mut session = session_mgr.remove(id).unwrap();
+        self.session_removed.notify();
+
+        info!(
+            "Evicting session {} [SID:{:x},RSID:{:x}]",
+            session.id,
+            session.get_local_sess_id(),
+            session.get_peer_sess_id()
+        );
+
+        self.encode_packet(packet, Some(&mut session), None, session_mgr.epoch, |wb| {
+            sc_write(wb, SCStatusCodes::CloseSession, &[])
+        })?;
+
+        Ok(())
+    }
+
+    fn is_close_session(payload: &mut [u8]) -> Result<bool, Error> {
+        let mut pb = ParseBuf::new(payload);
+        let report = StatusReport::read(&mut pb)?;
+
+        let close_session = report.proto_id == PROTO_ID_SECURE_CHANNEL as _
+            && report.proto_code == SCStatusCodes::CloseSession as u16;
+
+        Ok(close_session)
+    }
+
+    async fn netw_recv<R>(mut recv: R, buf: &mut [u8]) -> Result<(usize, Address), Error>
+    where
+        R: NetworkReceive,
+    {
+        match recv.recv_from(buf).await {
+            Ok((len, addr)) => {
+                debug!("\n>>>>> {} {}B:\n{:02x?}", addr, len, &buf[..len]);
+
+                Ok((len, addr))
             }
-        } else if create_new {
-            info!("Creating new exchange: {:?}", id);
+            Err(e) => {
+                error!("FAILED network recv: {e:?}");
 
-            let exchange = ExchangeCtx {
-                id,
-                role,
-                mrp: ReliableMessage::new(),
-                state: ExchangeState::Active,
-            };
-
-            exchanges
-                .push(exchange)
-                .map_err(|_| ErrorCode::NoSpaceExchanges)?;
-
-            Ok((exchanges.len() - 1, true))
-        } else {
-            Err(ErrorCode::NoExchange.into())
+                Err(e)
+            }
         }
+    }
+
+    async fn netw_send<S>(
+        send: &IfMutex<NoopRawMutex, S>,
+        peer: Address,
+        data: &[u8],
+        system: bool,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+    {
+        match send.lock().await.send_to(data, peer).await {
+            Ok(_) => {
+                debug!(
+                    "\n<<<<< {} {}B{}: {:02x?}",
+                    peer,
+                    data.len(),
+                    if system { " (system)" } else { "" },
+                    data
+                );
+
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "\n<<<<< {} {}B{} !FAILED!: {e:?}: {:02x?}",
+                    peer,
+                    data.len(),
+                    if system { " (system)" } else { "" },
+                    data
+                );
+
+                // Do not return an error as that would unroll the main `rs-matter` loop
+                // and sending errors are normal and can happen for various reasons
+                // TODO: Provide the error as a feedback to the packet creator instead, in the mutex data
+                Ok(())
+            }
+        }
+    }
+}
+
+// The internal representation of a packet in the transport layer.
+// There are only two such packets - RX and TX.
+//
+// This type is only known and used by `TransportMgr` and the `exchange` module
+pub(crate) struct Packet<const N: usize> {
+    pub(crate) peer: Address,
+    pub(crate) header: PacketHdr,
+    pub(crate) buf: PacketBuffer<N>,
+    pub(crate) payload_start: usize,
+}
+
+impl<const N: usize> Packet<N> {
+    #[inline(always)]
+    pub(crate) const fn new() -> Self {
+        Self {
+            peer: Address::new(),
+            header: PacketHdr::new(),
+            buf: PacketBuffer::new(),
+            payload_start: 0,
+        }
+    }
+
+    pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
+        struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
+
+        impl<'a> Display for PacketInfo<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                Packet::<0>::fmt(f, self.0, self.1)
+            }
+        }
+
+        PacketInfo(peer, header)
+    }
+
+    pub fn display_payload<'a>(proto: &'a ProtoHdr, buf: &'a [u8]) -> impl Display + 'a {
+        struct PacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
+
+        impl<'a> Display for PacketInfo<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                Packet::<0>::fmt_payload(f, self.0, self.1)
+            }
+        }
+
+        PacketInfo(proto, buf)
+    }
+
+    fn fmt(f: &mut fmt::Formatter<'_>, peer: &Address, header: &PacketHdr) -> fmt::Result {
+        write!(f, "{peer} {header}")?;
+
+        if header.proto.is_decoded() {
+            let meta = MessageMeta::from(&header.proto);
+
+            write!(f, "\n{meta}")?;
+        }
+
+        Ok(())
+    }
+
+    fn fmt_payload(f: &mut fmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) -> fmt::Result {
+        let meta = MessageMeta::from(proto);
+
+        write!(f, "{meta}")?;
+
+        if meta.is_tlv() {
+            write!(
+                f,
+                "; TLV:\n----------------\n{}\n----------------\n",
+                TLVList::new(buf)
+            )?;
+        } else {
+            write!(
+                f,
+                "; Payload:\n----------------\n{:02x?}\n----------------\n",
+                buf
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<const N: usize> Display for Packet<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Self::fmt(f, &self.peer, &self.header)
+    }
+}
+
+// The buffer used inside the pair of RX and TX `Packet` instances
+// When the `alloc` and `large-buffers` features are enabled, the buffer payload is allocated on the heap
+//
+// This type is only known and used by `TransportMgr` and the `exchange` module
+#[cfg(all(feature = "large-buffers", feature = "alloc"))]
+pub(crate) struct PacketBuffer<const N: usize>(Option<alloc::boxed::Box<heapless::Vec<u8, N>>>);
+
+// The buffer used inside the pair of RX and TX `Packet` instances
+// When the either of the `alloc` and `large-buffers` features is not enabled, the buffer payload is allocated inline
+//
+// This type is only known and used by `TransportMgr` and the `exchange` module
+#[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+pub(crate) struct PacketBuffer<const N: usize>(heapless::Vec<u8, N>);
+
+impl<const N: usize> PacketBuffer<N> {
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+    pub const fn new() -> Self {
+        Self(heapless::Vec::new())
+    }
+
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn buf_mut(&mut self) -> &mut heapless::Vec<u8, N> {
+        &mut *self
+            .0
+            .as_mut()
+            .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+    pub fn buf_mut(&mut self) -> &mut heapless::Vec<u8, N> {
+        &mut self.0
+    }
+
+    #[cfg(all(feature = "large-buffers", feature = "alloc"))]
+    pub fn buf_ref(&self) -> &heapless::Vec<u8, N> {
+        self.0
+            .as_ref()
+            .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
+    }
+
+    #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
+    pub fn buf_ref(&self) -> &heapless::Vec<u8, N> {
+        &self.0
+    }
+}
+
+impl<const N: usize> Deref for PacketBuffer<N> {
+    type Target = heapless::Vec<u8, N>;
+
+    fn deref(&self) -> &Self::Target {
+        self.buf_ref()
+    }
+}
+
+impl<const N: usize> DerefMut for PacketBuffer<N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buf_mut()
+    }
+}
+
+// Represents the fact that either `TransportMgr` or some `Exchange` instace has an exclusive access to the
+// RX or TX packet of the transport layer.
+//
+// At any point in time, either the `TransportMgr` singleton, or exactly one `Exchange` instance, or nobody
+// holds a lock on the RX or TX packet. This is enforced by protecting the packets with an `IfMutex` asynchronous mutex.
+//
+// This type is only known and used by `TransportMgr` and the `exchange` module
+pub(crate) struct PacketAccess<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>, bool);
+
+impl<'a, const N: usize> PacketAccess<'a, N> {
+    pub fn clear_on_drop(&mut self, clear: bool) {
+        self.1 = clear;
+    }
+}
+
+impl<'a, const N: usize> Deref for PacketAccess<'a, N> {
+    type Target = Packet<N>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, const N: usize> DerefMut for PacketAccess<'a, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a, const N: usize> Drop for PacketAccess<'a, N> {
+    fn drop(&mut self) {
+        if self.1 {
+            self.buf.clear();
+        }
+    }
+}
+
+impl<'a, const N: usize> Display for PacketAccess<'a, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+// Allows other code in `rs-matter` to (ab)use the packet buffers of the transport layer
+// in case it needs temporary access to a `&mut [u8]`-shaped memory
+//
+// Used by the builtin mDNS responder, as well as by the QR code generator
+pub(crate) struct PacketBufferExternalAccess<'a, const N: usize>(
+    pub(crate) &'a IfMutex<NoopRawMutex, Packet<N>>,
+);
+
+impl<'a, const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'a, N> {
+    type Buffer<'b> = ExternalPacketBuffer<'b, N> where Self: 'b;
+
+    async fn get(&self) -> Option<ExternalPacketBuffer<'_, N>> {
+        let mut packet = self.0.lock_if(|packet| packet.buf.is_empty()).await;
+
+        // TODO: Resizing might be a bit expensive with large buffers
+        // Resizing to `N` is always safe because the size of `buf` heapless vec is `N`
+        packet.buf.resize_default(N).unwrap();
+
+        Some(ExternalPacketBuffer(packet))
+    }
+}
+
+// Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8]` buffer.
+pub struct ExternalPacketBuffer<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>);
+
+impl<'a, const N: usize> Deref for ExternalPacketBuffer<'a, N> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.buf
+    }
+}
+
+impl<'a, const N: usize> DerefMut for ExternalPacketBuffer<'a, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.buf
+    }
+}
+
+impl<'a, const N: usize> Drop for ExternalPacketBuffer<'a, N> {
+    fn drop(&mut self) {
+        self.0.buf.clear();
     }
 }

@@ -14,16 +14,16 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use crate::{
-    attribute_enum, cmd_enter, command_enum,
-    data_model::objects::*,
-    error::{Error, ErrorCode},
-    tlv::TLVElement,
-    transport::exchange::Exchange,
-    utils::rand::Rand,
-};
+
 use log::info;
+
 use strum::{EnumDiscriminants, FromRepr};
+
+use crate::data_model::objects::*;
+use crate::error::{Error, ErrorCode};
+use crate::tlv::TLVElement;
+use crate::transport::exchange::Exchange;
+use crate::{attribute_enum, cmd_enter, command_enum};
 
 pub const ID: u32 = 0x0033;
 
@@ -70,18 +70,22 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[CommandsDiscriminants::TestEventTrigger as _],
 };
 
+#[derive(Debug, Clone)]
 pub struct GenDiagCluster {
     data_ver: Dataver,
 }
 
 impl GenDiagCluster {
-    pub fn new(rand: Rand) -> Self {
-        Self {
-            data_ver: Dataver::new(rand),
-        }
+    pub const fn new(data_ver: Dataver) -> Self {
+        Self { data_ver }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -96,7 +100,12 @@ impl GenDiagCluster {
         }
     }
 
-    pub fn write(&self, _attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(
+        &self,
+        _exchange: &Exchange,
+        _attr: &AttrDetails,
+        data: AttrData,
+    ) -> Result<(), Error> {
         let _data = data.with_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
@@ -124,12 +133,17 @@ impl GenDiagCluster {
 }
 
 impl Handler for GenDiagCluster {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        GenDiagCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        GenDiagCluster::read(self, exchange, attr, encoder)
     }
 
-    fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        GenDiagCluster::write(self, attr, data)
+    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+        GenDiagCluster::write(self, exchange, attr, data)
     }
 
     fn invoke(

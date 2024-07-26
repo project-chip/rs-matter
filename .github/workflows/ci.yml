@@ -29,6 +29,9 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy, rust-src
 
+      - name: Install libdbus
+        run: sudo apt-get install -y libdbus-1-dev
+
       - name: Checkout
         uses: actions/checkout@v3
 

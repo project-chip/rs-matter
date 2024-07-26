@@ -91,7 +91,20 @@ macro_rules! fromtlv_for {
     };
 }
 
+macro_rules! fromtlv_for_nonzero {
+    ($($t:ident:$n:ty)*) => {
+        $(
+            impl<'a> FromTLV<'a> for $n {
+                fn from_tlv(t: &TLVElement) -> Result<Self, Error> {
+                    <$n>::new(t.$t()?).ok_or_else(|| ErrorCode::Invalid.into())
+                }
+            }
+        )*
+    };
+}
+
 fromtlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
+fromtlv_for_nonzero!(i8:core::num::NonZeroI8 u8:core::num::NonZeroU8 i16:core::num::NonZeroI16 u16:core::num::NonZeroU16 i32:core::num::NonZeroI32 u32:core::num::NonZeroU32 i64:core::num::NonZeroI64 u64:core::num::NonZeroU64);
 
 pub trait ToTLV {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error>;
@@ -112,6 +125,18 @@ macro_rules! totlv_for {
             impl ToTLV for $t {
                 fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
                     tw.$t(tag, *self)
+                }
+            }
+        )*
+    };
+}
+
+macro_rules! totlv_for_nonzero {
+    ($($t:ident:$n:ty)*) => {
+        $(
+            impl ToTLV for $n {
+                fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+                    tw.$t(tag, self.get())
                 }
             }
         )*
@@ -140,6 +165,7 @@ impl<'a, T: ToTLV> ToTLV for &'a [T] {
 
 // Generate ToTLV for standard data types
 totlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
+totlv_for_nonzero!(i8:core::num::NonZeroI8 u8:core::num::NonZeroU8 i16:core::num::NonZeroI16 u16:core::num::NonZeroU16 i32:core::num::NonZeroI32 u32:core::num::NonZeroU32 i64:core::num::NonZeroI64 u64:core::num::NonZeroU64);
 
 // We define a few common data types that will be required here
 //
@@ -151,7 +177,7 @@ totlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
 // - TLVArray: Is an array of entries, with reference within the original list
 
 /// Implements UTFString from the spec
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Default, Hash, Eq)]
 pub struct UtfStr<'a>(pub &'a [u8]);
 
 impl<'a> UtfStr<'a> {
@@ -177,7 +203,7 @@ impl<'a> FromTLV<'a> for UtfStr<'a> {
 }
 
 /// Implements OctetString from the spec
-#[derive(Debug, Copy, Clone, PartialEq, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Default, Hash, Eq)]
 pub struct OctetStr<'a>(pub &'a [u8]);
 
 impl<'a> OctetStr<'a> {

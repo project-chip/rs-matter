@@ -125,6 +125,7 @@ pub struct AttrDataEncoder<'a, 'b, 'c> {
 
 impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
     pub async fn handle_read<T: DataModelHandler>(
+        exchange: &Exchange<'_>,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
@@ -133,7 +134,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
             Ok(attr) => {
                 let encoder = AttrDataEncoder::new(attr, tw);
 
-                let result = handler.read(attr, encoder).await;
+                let result = handler.read(exchange, attr, encoder).await;
                 match result {
                     Ok(()) => None,
                     Err(e) => {
@@ -156,13 +157,16 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
     }
 
     pub async fn handle_write<T: DataModelHandler>(
+        exchange: &Exchange<'_>,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((attr, data)) => {
-                let result = handler.write(attr, AttrData::new(attr.dataver, data)).await;
+                let result = handler
+                    .write(exchange, attr, AttrData::new(attr.dataver, data))
+                    .await;
                 match result {
                     Ok(()) => attr.status(IMStatusCode::Success)?,
                     Err(error) => attr.status(error.into())?,

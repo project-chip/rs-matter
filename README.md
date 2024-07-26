@@ -23,7 +23,7 @@ $ cargo run --example onoff_light --features async-io
 
 ## Test
 
-With the `chip-tool` (the current tool for testing Matter) use the Ethernet commissioning mechanism:
+With the [`chip-tool` (the current tool for testing Matter)](https://github.com/project-chip/connectedhomeip/blob/master/examples/chip-tool/README.md) use the Ethernet commissioning mechanism:
 
 ```
 $ chip-tool pairing code 12344321 <Pairing-Code>

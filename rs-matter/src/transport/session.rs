@@ -15,49 +15,67 @@
  *    limitations under the License.
  */
 
-use crate::data_model::sdm::noc::NocData;
-use crate::utils::epoch::Epoch;
-use crate::utils::rand::Rand;
+use core::cell::RefCell;
 use core::fmt;
+use core::num::NonZeroU8;
 use core::time::Duration;
 
-use crate::{error::*, transport::plain_hdr};
-use log::info;
+use log::{error, info, trace, warn};
+
+use crate::data_model::sdm::noc::NocData;
+use crate::error::*;
+use crate::transport::exchange::ExchangeId;
+use crate::transport::mrp::ReliableMessage;
+use crate::utils::epoch::Epoch;
+use crate::utils::parsebuf::ParseBuf;
+use crate::utils::rand::Rand;
+use crate::utils::writebuf::WriteBuf;
+use crate::Matter;
 
 use super::dedup::RxCtrState;
-use super::exchange::SessionId;
-use super::{network::Address, packet::Packet};
+use super::exchange::{ExchangeState, MessageMeta, Role};
+use super::mrp::RetransEntry;
+use super::network::Address;
+use super::packet::PacketHdr;
+use super::plain_hdr::PlainHdr;
+use super::proto_hdr::ProtoHdr;
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
 const MATTER_AES128_KEY_SIZE: usize = 16;
 
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct CaseDetails {
-    pub fab_idx: u8,
-    pub cat_ids: NocCatIds,
-}
-
-impl CaseDetails {
-    pub fn new(fab_idx: u8, cat_ids: &NocCatIds) -> Self {
-        Self {
-            fab_idx,
-            cat_ids: *cat_ids,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum SessionMode {
     // The Case session will capture the local fabric index
-    Case(CaseDetails),
-    Pase,
+    // and the local fabric index
+    Case {
+        fab_idx: NonZeroU8,
+        cat_ids: NocCatIds,
+    },
+    // The Pase session always starts with a fabric index of 0
+    // (i.e. no fabric) but will be upgraded to the actual fabric index
+    // once AddNOC or UpdateNOC is received
+    Pase {
+        fab_idx: u8,
+    },
     #[default]
     PlainText,
 }
 
+impl SessionMode {
+    pub fn fab_idx(&self) -> u8 {
+        match self {
+            SessionMode::Case { fab_idx, .. } => fab_idx.get(),
+            SessionMode::Pase { fab_idx, .. } => *fab_idx,
+            SessionMode::PlainText => 0,
+        }
+    }
+}
+
 pub struct Session {
+    // Internal ID which is guaranteeed to be unique accross all sessions and not change when sessions are added/removed
+    pub(crate) id: u32,
     peer_addr: Address,
     local_nodeid: u64,
     peer_nodeid: Option<u64>,
@@ -72,50 +90,23 @@ pub struct Session {
     rx_ctr_state: RxCtrState,
     mode: SessionMode,
     data: Option<NocData>,
+    pub(crate) exchanges: heapless::Vec<Option<ExchangeState>, MAX_EXCHANGES>,
     last_use: Duration,
+    reserved: bool,
 }
-
-#[derive(Debug)]
-pub struct CloneData {
-    pub dec_key: [u8; MATTER_AES128_KEY_SIZE],
-    pub enc_key: [u8; MATTER_AES128_KEY_SIZE],
-    pub att_challenge: [u8; MATTER_AES128_KEY_SIZE],
-    local_sess_id: u16,
-    peer_sess_id: u16,
-    local_nodeid: u64,
-    peer_nodeid: u64,
-    peer_addr: Address,
-    mode: SessionMode,
-}
-
-impl CloneData {
-    pub fn new(
-        local_nodeid: u64,
-        peer_nodeid: u64,
-        peer_sess_id: u16,
-        local_sess_id: u16,
-        peer_addr: Address,
-        mode: SessionMode,
-    ) -> CloneData {
-        CloneData {
-            dec_key: [0; MATTER_AES128_KEY_SIZE],
-            enc_key: [0; MATTER_AES128_KEY_SIZE],
-            att_challenge: [0; MATTER_AES128_KEY_SIZE],
-            local_nodeid,
-            peer_nodeid,
-            peer_addr,
-            peer_sess_id,
-            local_sess_id,
-            mode,
-        }
-    }
-}
-
-const MATTER_MSG_CTR_RANGE: u32 = 0x0fffffff;
 
 impl Session {
-    pub fn new(peer_addr: Address, peer_nodeid: Option<u64>, epoch: Epoch, rand: Rand) -> Self {
+    pub fn new(
+        id: u32,
+        reserved: bool,
+        peer_addr: Address,
+        peer_nodeid: Option<u64>,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> Self {
         Self {
+            id,
+            reserved,
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
@@ -128,35 +119,8 @@ impl Session {
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
             data: None,
+            exchanges: heapless::Vec::new(),
             last_use: epoch(),
-        }
-    }
-
-    // A new encrypted session always clones from a previous 'new' session
-    pub fn clone(clone_from: &CloneData, epoch: Epoch, rand: Rand) -> Session {
-        Session {
-            peer_addr: clone_from.peer_addr,
-            local_nodeid: clone_from.local_nodeid,
-            peer_nodeid: Some(clone_from.peer_nodeid),
-            dec_key: clone_from.dec_key,
-            enc_key: clone_from.enc_key,
-            att_challenge: clone_from.att_challenge,
-            local_sess_id: clone_from.local_sess_id,
-            peer_sess_id: clone_from.peer_sess_id,
-            msg_ctr: Self::rand_msg_ctr(rand),
-            rx_ctr_state: RxCtrState::new(0),
-            mode: clone_from.mode.clone(),
-            data: None,
-            last_use: epoch(),
-        }
-    }
-
-    pub fn id(&self) -> SessionId {
-        SessionId {
-            id: self.local_sess_id,
-            peer_addr: self.peer_addr,
-            peer_nodeid: self.peer_nodeid,
-            is_encrypted: self.is_encrypted(),
         }
     }
 
@@ -195,7 +159,7 @@ impl Session {
 
     pub fn is_encrypted(&self) -> bool {
         match self.mode {
-            SessionMode::Case(_) | SessionMode::Pase => true,
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => true,
             SessionMode::PlainText => false,
         }
     }
@@ -204,25 +168,15 @@ impl Session {
         self.peer_nodeid
     }
 
-    pub fn get_peer_cat_ids(&self) -> Option<&NocCatIds> {
-        match &self.mode {
-            SessionMode::Case(a) => Some(&a.cat_ids),
-            _ => None,
-        }
-    }
-
-    pub fn get_local_fabric_idx(&self) -> Option<u8> {
-        match &self.mode {
-            SessionMode::Case(a) => Some(a.fab_idx),
-            _ => None,
-        }
+    pub fn get_local_fabric_idx(&self) -> u8 {
+        self.mode.fab_idx()
     }
 
     pub fn get_session_mode(&self) -> &SessionMode {
         &self.mode
     }
 
-    pub fn get_msg_ctr(&mut self) -> u32 {
+    fn get_msg_ctr(&mut self) -> u32 {
         let ctr = self.msg_ctr;
         self.msg_ctr += 1;
         ctr
@@ -230,14 +184,14 @@ impl Session {
 
     pub fn get_dec_key(&self) -> Option<&[u8]> {
         match self.mode {
-            SessionMode::Case(_) | SessionMode::Pase => Some(&self.dec_key),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.dec_key),
             SessionMode::PlainText => None,
         }
     }
 
     pub fn get_enc_key(&self) -> Option<&[u8]> {
         match self.mode {
-            SessionMode::Case(_) | SessionMode::Pase => Some(&self.enc_key),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.enc_key),
             SessionMode::PlainText => None,
         }
     }
@@ -246,36 +200,227 @@ impl Session {
         &self.att_challenge
     }
 
-    pub fn recv(&mut self, epoch: Epoch, rx: &mut Packet) -> Result<(), Error> {
-        self.last_use = epoch();
-        rx.proto_decode(self.peer_nodeid.unwrap_or_default(), self.get_dec_key())
+    pub(crate) fn is_for_node(&self, fabric_idx: u8, peer_node_id: u64, secure: bool) -> bool {
+        self.get_local_fabric_idx() == fabric_idx
+            && self.peer_nodeid == Some(peer_node_id)
+            && self.is_encrypted() == secure
+            && !self.reserved
     }
 
-    pub fn pre_send(&mut self, tx: &mut Packet) -> Result<(), Error> {
-        tx.plain.sess_id = self.get_peer_sess_id();
-        tx.plain.ctr = self.get_msg_ctr();
-        if self.is_encrypted() {
-            tx.plain.sess_type = plain_hdr::SessionType::Encrypted;
+    pub(crate) fn is_for_rx(&self, rx_peer: &Address, rx_plain: &PlainHdr) -> bool {
+        let nodeid_matches = self.peer_nodeid.is_none()
+            || rx_plain.get_src_nodeid().is_none()
+            || self.peer_nodeid == rx_plain.get_src_nodeid();
+
+        nodeid_matches
+            && self.local_sess_id == rx_plain.sess_id
+            && self.peer_addr == *rx_peer
+            && self.is_encrypted() == rx_plain.is_encrypted()
+            && !self.reserved
+    }
+
+    pub fn upgrade_fabric_idx(&mut self, fabric_idx: NonZeroU8) -> Result<(), Error> {
+        if let SessionMode::Pase { fab_idx } = &mut self.mode {
+            if *fab_idx == 0 {
+                *fab_idx = fabric_idx.get();
+            } else {
+                // Upgrading a PASE session can happen only once
+                Err(ErrorCode::Invalid)?;
+            }
+        } else {
+            // CASE sessions are not upgradeable, as per spec
+            // And for plain text sessions - we shoudn't even get here in the first place
+            Err(ErrorCode::Invalid)?;
         }
+
         Ok(())
     }
 
-    pub(crate) fn send(&mut self, epoch: Epoch, tx: &mut Packet) -> Result<(), Error> {
-        self.last_use = epoch();
+    /// Update the session state with the data in the received packet headers.
+    ///
+    /// Return `true` if a new exchange was created, and `false` otherwise.
+    pub(crate) fn post_recv(&mut self, rx_header: &PacketHdr, epoch: Epoch) -> Result<bool, Error> {
+        if !self
+            .rx_ctr_state
+            .post_recv(rx_header.plain.ctr, self.is_encrypted())
+        {
+            Err(ErrorCode::Duplicate)?;
+        }
 
-        tx.proto_encode(
-            self.peer_addr,
-            self.peer_nodeid,
-            self.local_nodeid,
-            self.mode == SessionMode::PlainText,
-            self.get_enc_key(),
-        )
+        let exch_index = self.get_exch_for_rx(&rx_header.proto);
+        if let Some(exch_index) = exch_index {
+            let exch = self.exchanges[exch_index].as_mut().unwrap();
+
+            exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
+
+            Ok(false)
+        } else {
+            if !rx_header.proto.is_initiator()
+                || !MessageMeta::from(&rx_header.proto).is_new_exchange()
+            {
+                // Do not create a new exchange if the peer is not an initiator, or if
+                // the packet is NOT a candidate for a new exchange
+                // (i.e. it is a standalone ACK or a SC status response)
+                Err(ErrorCode::NoExchange)?;
+            }
+
+            if let Some(exch_index) =
+                self.add_exch(rx_header.proto.exch_id, Role::Responder(Default::default()))
+            {
+                // unwrap is safe as we just created the exchange
+                let exch = self.exchanges[exch_index].as_mut().unwrap();
+
+                exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
+
+                Ok(true)
+            } else {
+                Err(ErrorCode::NoSpaceExchanges)?
+            }
+        }
+    }
+
+    pub(crate) fn pre_send(
+        &mut self,
+        exch_index: Option<usize>,
+        tx_header: &mut PacketHdr,
+        epoch: Epoch,
+    ) -> Result<(Address, bool), Error> {
+        let ctr = if let Some(exchange_index) = exch_index {
+            let exchange = self.exchanges[exchange_index].as_mut().unwrap();
+            exchange.mrp.retrans.as_ref().map(RetransEntry::get_msg_ctr)
+        } else {
+            None
+        };
+
+        let retransmission = ctr.is_some();
+
+        tx_header.plain.sess_id = self.get_peer_sess_id();
+        tx_header.plain.ctr = ctr.unwrap_or_else(|| self.get_msg_ctr());
+        tx_header.plain.set_src_nodeid(None);
+        tx_header.plain.set_dst_unicast_nodeid(
+            (self.mode == SessionMode::PlainText)
+                .then_some(self.peer_nodeid)
+                .flatten(),
+        );
+
+        tx_header.proto.adjust_reliability(false, &self.peer_addr);
+
+        if let Some(exchange_index) = exch_index {
+            let exchange = self.exchanges[exchange_index].as_mut().unwrap();
+
+            exchange.pre_send(&tx_header.plain, &mut tx_header.proto, epoch)?;
+        }
+
+        Ok((self.peer_addr, retransmission))
+    }
+
+    /// Decode the remaining part of the packet after the plain header and then consume the `ParseBuf`
+    /// instance as it no longer would be necessary.
+    ///
+    /// Returns the range of the decoded packet payload
+    pub(crate) fn decode_remaining(
+        &self,
+        rx_header: &mut PacketHdr,
+        mut pb: ParseBuf,
+    ) -> Result<(usize, usize), Error> {
+        rx_header.decode_remaining(
+            &mut pb,
+            self.peer_nodeid.unwrap_or_default(),
+            self.get_dec_key(),
+        )?;
+
+        rx_header.proto.adjust_reliability(true, &self.peer_addr);
+
+        Ok(pb.slice_range())
+    }
+
+    pub(crate) fn encode(&self, tx: &PacketHdr, wb: &mut WriteBuf) -> Result<(), Error> {
+        tx.encode(wb, self.local_nodeid, self.get_enc_key())
+    }
+
+    fn update_last_used(&mut self, epoch: Epoch) {
+        self.last_use = epoch();
     }
 
     fn rand_msg_ctr(rand: Rand) -> u32 {
         let mut buf = [0; 4];
         rand(&mut buf);
         u32::from_be_bytes(buf) & MATTER_MSG_CTR_RANGE
+    }
+
+    pub(crate) fn get_exch_for_rx(&self, rx_proto: &ProtoHdr) -> Option<usize> {
+        self.exchanges
+            .iter()
+            .enumerate()
+            .filter(|(_, exch)| {
+                exch.as_ref()
+                    .map(|exch| exch.is_for_rx(rx_proto))
+                    .unwrap_or(false)
+            })
+            .map(|(index, _)| index)
+            .next()
+    }
+
+    pub(crate) fn add_exch(&mut self, exch_id: u16, role: Role) -> Option<usize> {
+        let exch_state = Some(ExchangeState {
+            exch_id,
+            role,
+            mrp: ReliableMessage::new(),
+        });
+
+        let exch_index = if self.exchanges.len() < MAX_EXCHANGES {
+            let _ = self.exchanges.push(exch_state);
+
+            self.exchanges.len() - 1
+        } else {
+            let index = self.exchanges.iter().position(Option::is_none);
+
+            if let Some(index) = index {
+                self.exchanges[index] = exch_state;
+
+                index
+            } else {
+                error!(
+                    "Too many exchanges for session {} [SID:{:x},RSID:{:x}]; exchange creation failed",
+                    self.id,
+                    self.get_local_sess_id(),
+                    self.get_peer_sess_id()
+                );
+
+                return None;
+            }
+        };
+
+        let exch_id = ExchangeId::new(self.id, exch_index);
+
+        info!("New exchange: {} :: {:?}", exch_id.display(self), role);
+
+        Some(exch_index)
+    }
+
+    pub(crate) fn remove_exch(&mut self, index: usize) -> bool {
+        let exchange = self.exchanges[index].as_mut().unwrap();
+        let exchange_id = ExchangeId::new(self.id, index);
+
+        if exchange.mrp.is_retrans_pending() {
+            exchange.role.set_dropped_state();
+            error!("Exchange {}: A packet is still (re)transmitted! Marking as dropped, but session will be closed", exchange_id.display(self));
+
+            false
+        } else if exchange.mrp.is_ack_pending() {
+            exchange.role.set_dropped_state();
+            warn!(
+                "Exchange {}: Pending ACK. Marking as dropped",
+                exchange_id.display(self)
+            );
+
+            false
+        } else {
+            trace!("Exchange {}: Dropped cleanly", exchange_id.display(self));
+            self.exchanges[index] = None;
+
+            true
+        }
     }
 }
 
@@ -295,11 +440,105 @@ impl fmt::Display for Session {
     }
 }
 
-pub const MAX_SESSIONS: usize = 16;
+pub struct ReservedSession<'a> {
+    id: u32,
+    session_mgr: &'a RefCell<SessionMgr>,
+    complete: bool,
+}
+
+impl<'a> ReservedSession<'a> {
+    pub fn reserve_now(matter: &'a Matter<'a>) -> Result<Self, Error> {
+        let mut mgr = matter.transport_mgr.session_mgr.borrow_mut();
+
+        let id = mgr
+            .add(true, Address::new(), None)
+            .ok_or(ErrorCode::NoSpaceSessions)?
+            .id;
+
+        Ok(Self {
+            id,
+            session_mgr: &matter.transport_mgr.session_mgr,
+            complete: false,
+        })
+    }
+
+    pub async fn reserve(matter: &'a Matter<'a>) -> Result<ReservedSession<'_>, Error> {
+        let session = Self::reserve_now(matter);
+
+        if let Ok(session) = session {
+            Ok(session)
+        } else {
+            matter.transport_mgr.evict_some_session().await?;
+
+            Self::reserve_now(matter)
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(
+        &mut self,
+        local_nodeid: u64,
+        peer_nodeid: u64,
+        peer_sessid: u16,
+        local_sessid: u16,
+        peer_addr: Address,
+        mode: SessionMode,
+        dec_key: Option<&[u8]>,
+        enc_key: Option<&[u8]>,
+        att_challenge: Option<&[u8]>,
+    ) -> Result<(), Error> {
+        let mut mgr = self.session_mgr.borrow_mut();
+        let session = mgr.get(self.id).ok_or(ErrorCode::NoSession)?;
+
+        session.local_nodeid = local_nodeid;
+        session.peer_nodeid = Some(peer_nodeid);
+        session.peer_sess_id = peer_sessid;
+        session.local_sess_id = local_sessid;
+        session.peer_addr = peer_addr;
+        session.mode = mode;
+
+        if let Some(dec_key) = dec_key {
+            session.dec_key.copy_from_slice(dec_key);
+        }
+
+        if let Some(enc_key) = enc_key {
+            session.enc_key.copy_from_slice(enc_key);
+        }
+
+        if let Some(att_challenge) = att_challenge {
+            session.att_challenge.copy_from_slice(att_challenge);
+        }
+
+        Ok(())
+    }
+
+    pub fn complete(mut self) {
+        self.complete = true;
+    }
+}
+
+impl<'a> Drop for ReservedSession<'a> {
+    fn drop(&mut self) {
+        if self.complete {
+            let mut session_mgr = self.session_mgr.borrow_mut();
+            let session = session_mgr.get(self.id).unwrap();
+            session.reserved = false;
+        } else {
+            self.session_mgr.borrow_mut().remove(self.id);
+        }
+    }
+}
+
+const MAX_SESSIONS: usize = 16;
+const MAX_EXCHANGES: usize = 5;
+
+const MATTER_MSG_CTR_RANGE: u32 = 0x0fffffff;
 
 pub struct SessionMgr {
+    next_sess_unique_id: u32,
     next_sess_id: u16,
-    sessions: heapless::Vec<Option<Session>, MAX_SESSIONS>,
+    next_exch_id: u16,
+    sessions: heapless::Vec<Session, MAX_SESSIONS>,
     pub(crate) epoch: Epoch,
     pub(crate) rand: Rand,
 }
@@ -309,7 +548,9 @@ impl SessionMgr {
     pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
             sessions: heapless::Vec::new(),
+            next_sess_unique_id: 0,
             next_sess_id: 1,
+            next_exch_id: 1,
             epoch,
             rand,
         }
@@ -318,10 +559,7 @@ impl SessionMgr {
     pub fn reset(&mut self) {
         self.sessions.clear();
         self.next_sess_id = 1;
-    }
-
-    pub fn mut_by_index(&mut self, index: usize) -> Option<&mut Session> {
-        self.sessions.get_mut(index).and_then(Option::as_mut)
+        self.next_exch_id = 1;
     }
 
     pub fn get_next_sess_id(&mut self) -> u16 {
@@ -336,153 +574,191 @@ impl SessionMgr {
             }
 
             // Ensure the currently selected id doesn't match any existing session
-            if self.sessions.iter().all(|sess| {
-                sess.as_ref()
-                    .map(|sess| sess.get_local_sess_id() != next_sess_id)
-                    .unwrap_or(true)
-            }) {
+            if self
+                .sessions
+                .iter()
+                .all(|sess| sess.get_local_sess_id() != next_sess_id)
+            {
                 break;
             }
         }
         next_sess_id
     }
 
-    pub fn get_session_for_eviction(&self) -> Option<usize> {
-        if self.sessions.len() == MAX_SESSIONS && self.get_empty_slot().is_none() {
-            Some(self.get_lru())
+    pub fn get_next_exch_id(&mut self) -> u16 {
+        let mut next_exch_id: u16;
+        loop {
+            next_exch_id = self.next_exch_id;
+
+            // Increment next exch id
+            self.next_exch_id = self.next_exch_id.overflowing_add(1).0;
+            if self.next_exch_id == 0 {
+                self.next_exch_id = 1;
+            }
+
+            // Ensure the currently selected id doesn't match any existing exchange
+            if self
+                .sessions
+                .iter()
+                .flat_map(|sess| sess.exchanges.iter())
+                .filter_map(|exch| exch.as_ref())
+                .all(|exch| {
+                    !matches!(exch.role, Role::Responder(_)) || exch.exch_id != next_exch_id
+                })
+            {
+                break;
+            }
+        }
+        next_exch_id
+    }
+
+    pub fn get_session_for_eviction(&mut self) -> Option<&mut Session> {
+        let mut lru_index = None;
+        let mut lru_ts = (self.epoch)();
+        for (i, s) in self.sessions.iter().enumerate() {
+            if s.last_use < lru_ts && !s.reserved && s.exchanges.iter().all(Option::is_none) {
+                lru_ts = s.last_use;
+                lru_index = Some(i);
+            }
+        }
+
+        lru_index.map(|index| &mut self.sessions[index])
+    }
+
+    pub fn add(
+        &mut self,
+        reserved: bool,
+        peer_addr: Address,
+        peer_nodeid: Option<u64>,
+    ) -> Option<&mut Session> {
+        let session_id = self.next_sess_unique_id;
+
+        self.next_sess_unique_id += 1;
+        if self.next_sess_unique_id > 0x0fff_ffff {
+            // Reserve the upper 4 bits for the exchange index
+            self.next_sess_unique_id = 0;
+        }
+
+        let session = Session::new(
+            session_id,
+            reserved,
+            peer_addr,
+            peer_nodeid,
+            self.epoch,
+            self.rand,
+        );
+
+        self.sessions.push(session).ok()?;
+
+        Some(self.sessions.last_mut().unwrap())
+    }
+
+    /// This assumes that the higher layer has taken care of doing anything required
+    /// as per the spec before the session is removed
+    pub fn remove(&mut self, id: u32) -> Option<Session> {
+        if let Some(index) = self.sessions.iter().position(|sess| sess.id == id) {
+            Some(self.sessions.swap_remove(index))
         } else {
             None
         }
     }
 
-    fn get_empty_slot(&self) -> Option<usize> {
-        self.sessions.iter().position(|x| x.is_none())
-    }
-
-    fn get_lru(&self) -> usize {
-        let mut lru_index = 0;
-        let mut lru_ts = (self.epoch)();
-        for (i, s) in self.sessions.iter().enumerate() {
-            if let Some(s) = s {
-                if s.last_use < lru_ts {
-                    lru_ts = s.last_use;
-                    lru_index = i;
-                }
-            }
-        }
-        lru_index
-    }
-
-    pub fn add(&mut self, peer_addr: Address, peer_nodeid: Option<u64>) -> Result<usize, Error> {
-        let session = Session::new(peer_addr, peer_nodeid, self.epoch, self.rand);
-        self.add_session(session)
-    }
-
     /// This assumes that the higher layer has taken care of doing anything required
-    /// as per the spec before the session is erased
-    pub fn remove(&mut self, idx: usize) {
-        self.sessions[idx] = None;
-    }
+    /// as per the spec before the sessions are removed
+    pub fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8) {
+        loop {
+            let Some(index) = self
+                .sessions
+                .iter()
+                .position(|sess| sess.get_local_fabric_idx() == fabric_idx.get())
+            else {
+                break;
+            };
 
-    /// We could have returned a SessionHandle here. But the borrow checker doesn't support
-    /// non-lexical lifetimes. This makes it harder for the caller of this function to take
-    /// action in the error return path
-    fn add_session(&mut self, session: Session) -> Result<usize, Error> {
-        if let Some(index) = self.get_empty_slot() {
-            self.sessions[index] = Some(session);
-            Ok(index)
-        } else if self.sessions.len() < MAX_SESSIONS {
-            self.sessions
-                .push(Some(session))
-                .map_err(|_| ErrorCode::NoSpaceSessions)
-                .unwrap();
-
-            Ok(self.sessions.len() - 1)
-        } else {
-            Err(ErrorCode::NoSpaceSessions.into())
+            self.sessions.swap_remove(index);
         }
     }
 
-    pub fn clone_session(&mut self, clone_data: &CloneData) -> Result<usize, Error> {
-        let session = Session::clone(clone_data, self.epoch, self.rand);
-        self.add_session(session)
+    pub fn get(&mut self, id: u32) -> Option<&mut Session> {
+        let mut session = self.sessions.iter_mut().find(|sess| sess.id == id);
+
+        if let Some(session) = session.as_mut() {
+            session.update_last_used(self.epoch);
+        }
+
+        session
     }
 
-    pub fn get(
-        &self,
-        sess_id: u16,
-        peer_addr: Address,
-        peer_nodeid: Option<u64>,
-        is_encrypted: bool,
-    ) -> Option<usize> {
-        self.sessions.iter().position(|x| {
-            if let Some(x) = x {
-                let mut nodeid_matches = true;
-                if x.peer_nodeid.is_some() && peer_nodeid.is_some() && x.peer_nodeid != peer_nodeid
-                {
-                    nodeid_matches = false;
-                }
-                x.local_sess_id == sess_id
-                    && x.peer_addr == peer_addr
-                    && x.is_encrypted() == is_encrypted
-                    && nodeid_matches
-            } else {
-                false
-            }
-        })
-    }
-
-    pub fn get_or_add(
+    pub(crate) fn get_for_node(
         &mut self,
-        sess_id: u16,
-        peer_addr: Address,
-        peer_nodeid: Option<u64>,
-        is_encrypted: bool,
-    ) -> Result<usize, Error> {
-        if let Some(index) = self.get(sess_id, peer_addr, peer_nodeid, is_encrypted) {
-            Ok(index)
-        } else if sess_id == 0 && !is_encrypted {
-            // We must create a new session for this case
-            info!("Creating new session");
-            self.add(peer_addr, peer_nodeid)
-        } else {
-            Err(ErrorCode::NotFound.into())
+        fabric_idx: u8,
+        peer_node_id: u64,
+        secure: bool,
+    ) -> Option<&mut Session> {
+        let mut session = self
+            .sessions
+            .iter_mut()
+            .find(|sess| sess.is_for_node(fabric_idx, peer_node_id, secure));
+
+        if let Some(session) = session.as_mut() {
+            session.update_last_used(self.epoch);
         }
+
+        session
     }
 
-    // We will try to get a session for this Packet. If no session exists, we will try to add one
-    // If the session list is full we will return a None
-    pub fn post_recv(&mut self, rx: &Packet) -> Result<usize, Error> {
-        let sess_index = self.get_or_add(
-            rx.plain.sess_id,
-            rx.peer,
-            rx.plain.get_src_u64(),
-            rx.plain.is_encrypted(),
-        )?;
+    pub(crate) fn get_for_rx(
+        &mut self,
+        rx_peer: &Address,
+        rx_plain: &PlainHdr,
+    ) -> Option<&mut Session> {
+        let mut session = self
+            .sessions
+            .iter_mut()
+            .find(|sess| sess.is_for_rx(rx_peer, rx_plain));
 
-        let session = self.sessions[sess_index].as_mut().unwrap();
-        let is_encrypted = session.is_encrypted();
-        let duplicate = session.rx_ctr_state.recv(rx.plain.ctr, is_encrypted);
-        if duplicate {
-            info!("Dropping duplicate packet");
-            Err(ErrorCode::Duplicate.into())
-        } else {
-            Ok(sess_index)
+        if let Some(session) = session.as_mut() {
+            session.update_last_used(self.epoch);
         }
+
+        session
     }
 
-    pub fn send(&mut self, sess_idx: usize, tx: &mut Packet) -> Result<(), Error> {
-        self.sessions[sess_idx]
-            .as_mut()
-            .ok_or(ErrorCode::NoSession)?
-            .send(self.epoch, tx)
+    pub(crate) fn get_exch<F>(&mut self, f: F) -> Option<(&mut Session, usize)>
+    where
+        F: Fn(&Session, &ExchangeState) -> bool,
+    {
+        let exch = self
+            .sessions
+            .iter()
+            .flat_map(|sess| {
+                sess.exchanges
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(exch_index, exch)| {
+                        exch.as_ref().map(|exch| (sess, exch, exch_index))
+                    })
+            })
+            .filter(|(sess, exch, _)| f(sess, exch))
+            .map(|(sess, _, exch_index)| (sess.id, exch_index))
+            .next();
+
+        if let Some((id, exch_index)) = exch {
+            let epoch = self.epoch;
+            let session = self.get(id).unwrap();
+            session.update_last_used(epoch);
+
+            Some((session, exch_index))
+        } else {
+            None
+        }
     }
 }
 
 impl fmt::Display for SessionMgr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "{{[")?;
-        for s in self.sessions.iter().flatten() {
+        for s in &self.sessions {
             writeln!(f, "{{ {}, }},", s)?;
         }
         write!(f, "], next_sess_id: {}", self.next_sess_id)?;
@@ -503,13 +779,11 @@ mod tests {
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
         let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
-        let sess_idx = sm.add(Address::default(), None).unwrap();
-        let sess = sm.mut_by_index(sess_idx).unwrap();
+        let sess = sm.add(false, Address::default(), None).unwrap();
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         assert_eq!(sm.get_next_sess_id(), 3);
-        let sess_idx = sm.add(Address::default(), None).unwrap();
-        let sess = sm.mut_by_index(sess_idx).unwrap();
+        let sess = sm.add(false, Address::default(), None).unwrap();
         sess.set_local_sess_id(4);
         assert_eq!(sm.get_next_sess_id(), 5);
     }
@@ -517,8 +791,7 @@ mod tests {
     #[test]
     fn test_next_sess_id_overflows() {
         let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
-        let sess_idx = sm.add(Address::default(), None).unwrap();
-        let sess = sm.mut_by_index(sess_idx).unwrap();
+        let sess = sm.add(false, Address::default(), None).unwrap();
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         sm.next_sess_id = 65534;

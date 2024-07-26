@@ -18,7 +18,7 @@
 use crate::error::{Error, ErrorCode};
 
 use byteorder::{ByteOrder, LittleEndian};
-use core::fmt;
+use core::fmt::{self, Display};
 use log::{error, info};
 
 use super::{TagType, MAX_TAG_INDEX, TAG_MASK, TAG_SHIFT_BITS, TAG_SIZE_MAP, TYPE_MASK};
@@ -30,6 +30,64 @@ pub struct TLVList<'a> {
 impl<'a> TLVList<'a> {
     pub fn new(buf: &'a [u8]) -> TLVList<'a> {
         TLVList { buf }
+    }
+}
+
+impl<'a> Display for TLVList<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let tlvlist = self;
+
+        const MAX_DEPTH: usize = 9;
+        const SPACE_BUF: &str = "                                ";
+
+        let space: [&str; MAX_DEPTH] = [
+            &SPACE_BUF[0..0],
+            &SPACE_BUF[0..4],
+            &SPACE_BUF[0..8],
+            &SPACE_BUF[0..12],
+            &SPACE_BUF[0..16],
+            &SPACE_BUF[0..20],
+            &SPACE_BUF[0..24],
+            &SPACE_BUF[0..28],
+            &SPACE_BUF[0..32],
+        ];
+
+        let mut stack: [char; MAX_DEPTH] = [' '; MAX_DEPTH];
+        let mut index = 0_usize;
+        let iter = tlvlist.iter();
+        for a in iter {
+            match a.element_type {
+                ElementType::Struct(_) => {
+                    if index < MAX_DEPTH {
+                        writeln!(f, "{}{}", space[index], a)?;
+                        stack[index] = '}';
+                        index += 1;
+                    } else {
+                        writeln!(f, "<<Too Deep>>")?;
+                    }
+                }
+                ElementType::Array(_) | ElementType::List(_) => {
+                    if index < MAX_DEPTH {
+                        writeln!(f, "{}{}", space[index], a)?;
+                        stack[index] = ']';
+                        index += 1;
+                    } else {
+                        writeln!(f, "<<Too Deep>>")?;
+                    }
+                }
+                ElementType::EndCnt => {
+                    if index > 0 {
+                        index -= 1;
+                        writeln!(f, "{}{}", space[index], stack[index])?;
+                    } else {
+                        writeln!(f, "<<Incorrect TLV List>>")?;
+                    }
+                }
+                _ => writeln!(f, "{}{}", space[index], a)?,
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -722,57 +780,7 @@ pub fn get_root_node_list(b: &[u8]) -> Result<TLVElement, Error> {
 }
 
 pub fn print_tlv_list(b: &[u8]) {
-    let tlvlist = TLVList::new(b);
-
-    const MAX_DEPTH: usize = 9;
-    info!("TLV list:");
-    let space_buf = "                                ";
-    let space: [&str; MAX_DEPTH] = [
-        &space_buf[0..0],
-        &space_buf[0..4],
-        &space_buf[0..8],
-        &space_buf[0..12],
-        &space_buf[0..16],
-        &space_buf[0..20],
-        &space_buf[0..24],
-        &space_buf[0..28],
-        &space_buf[0..32],
-    ];
-    let mut stack: [char; MAX_DEPTH] = [' '; MAX_DEPTH];
-    let mut index = 0_usize;
-    let iter = tlvlist.iter();
-    for a in iter {
-        match a.element_type {
-            ElementType::Struct(_) => {
-                if index < MAX_DEPTH {
-                    info!("{}{}", space[index], a);
-                    stack[index] = '}';
-                    index += 1;
-                } else {
-                    error!("Too Deep");
-                }
-            }
-            ElementType::Array(_) | ElementType::List(_) => {
-                if index < MAX_DEPTH {
-                    info!("{}{}", space[index], a);
-                    stack[index] = ']';
-                    index += 1;
-                } else {
-                    error!("Too Deep");
-                }
-            }
-            ElementType::EndCnt => {
-                if index > 0 {
-                    index -= 1;
-                    info!("{}{}", space[index], stack[index]);
-                } else {
-                    error!("Incorrect TLV List");
-                }
-            }
-            _ => info!("{}{}", space[index], a),
-        }
-    }
-    info!("---------");
+    info!("TLV list:\n{}\n---------", TLVList::new(b));
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@
  */
 
 use core::fmt::Write;
+use core::num::NonZeroU8;
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use heapless::{String, Vec};
@@ -43,7 +44,7 @@ pub struct FabricDescriptor<'a> {
     label: UtfStr<'a>,
     // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
     #[tagval(0xFE)]
-    pub fab_idx: Option<u8>,
+    pub fab_idx: NonZeroU8,
 }
 
 #[derive(Debug, ToTLV, FromTLV)]
@@ -165,7 +166,7 @@ impl Fabric {
 
     pub fn get_fabric_desc<'a>(
         &'a self,
-        fab_idx: u8,
+        fab_idx: NonZeroU8,
         root_ca_cert: &'a Cert,
     ) -> Result<FabricDescriptor<'a>, Error> {
         let desc = FabricDescriptor {
@@ -174,7 +175,7 @@ impl Fabric {
             fabric_id: self.fabric_id,
             node_id: self.node_id,
             label: UtfStr(self.label.as_bytes()),
-            fab_idx: Some(fab_idx),
+            fab_idx,
         };
 
         Ok(desc)
@@ -188,6 +189,12 @@ type FabricEntries = Vec<Option<Fabric>, MAX_SUPPORTED_FABRICS>;
 pub struct FabricMgr {
     fabrics: FabricEntries,
     changed: bool,
+}
+
+impl Default for FabricMgr {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FabricMgr {
@@ -240,8 +247,14 @@ impl FabricMgr {
         self.changed
     }
 
-    pub fn add(&mut self, f: Fabric, mdns: &dyn Mdns) -> Result<u8, Error> {
-        let slot = self.fabrics.iter().position(|x| x.is_none());
+    pub fn add(&mut self, f: Fabric, mdns: &dyn Mdns) -> Result<NonZeroU8, Error> {
+        // Do not re-use slots (if possible) because currently we use the
+        // position of the fabric in the array as a `fabric_index` as per the Matter Core spec
+        // TODO: In future introduce a new field in Fabric to store the fabric index, as
+        // we do for session indexes.
+        let slot = (self.fabrics.len() == MAX_SUPPORTED_FABRICS)
+            .then(|| self.fabrics.iter().position(|x| x.is_none()))
+            .flatten();
 
         if slot.is_some() || self.fabrics.len() < MAX_SUPPORTED_FABRICS {
             mdns.add(&f.mdns_service_name, ServiceMode::Commissioned)?;
@@ -250,23 +263,25 @@ impl FabricMgr {
             if let Some(index) = slot {
                 self.fabrics[index] = Some(f);
 
-                Ok((index + 1) as u8)
+                // Unwrapping is safe because we explicitly add + 1 here
+                Ok(NonZeroU8::new(index as u8 + 1).unwrap())
             } else {
                 self.fabrics
                     .push(Some(f))
                     .map_err(|_| ErrorCode::NoSpace)
                     .unwrap();
 
-                Ok(self.fabrics.len() as u8)
+                // Unwrapping is safe because we just added the entry
+                Ok(NonZeroU8::new(self.fabrics.len() as u8).unwrap())
             }
         } else {
             Err(ErrorCode::NoSpace.into())
         }
     }
 
-    pub fn remove(&mut self, fab_idx: u8, mdns: &dyn Mdns) -> Result<(), Error> {
-        if fab_idx > 0 && fab_idx as usize <= self.fabrics.len() {
-            if let Some(f) = self.fabrics[(fab_idx - 1) as usize].take() {
+    pub fn remove(&mut self, fab_idx: NonZeroU8, mdns: &dyn Mdns) -> Result<(), Error> {
+        if fab_idx.get() as usize <= self.fabrics.len() {
+            if let Some(f) = self.fabrics[(fab_idx.get() - 1) as usize].take() {
                 mdns.remove(&f.mdns_service_name)?;
                 self.changed = true;
                 Ok(())
@@ -278,23 +293,20 @@ impl FabricMgr {
         }
     }
 
-    pub fn match_dest_id(&self, random: &[u8], target: &[u8]) -> Result<usize, Error> {
+    pub fn match_dest_id(&self, random: &[u8], target: &[u8]) -> Result<NonZeroU8, Error> {
         for (index, fabric) in self.fabrics.iter().enumerate() {
             if let Some(fabric) = fabric {
                 if fabric.match_dest_id(random, target).is_ok() {
-                    return Ok(index + 1);
+                    // Unwrapping is safe because we explicitly add + 1 here
+                    return Ok(NonZeroU8::new(index as u8 + 1).unwrap());
                 }
             }
         }
         Err(ErrorCode::NotFound.into())
     }
 
-    pub fn get_fabric(&self, idx: usize) -> Result<Option<&Fabric>, Error> {
-        if idx == 0 {
-            Ok(None)
-        } else {
-            Ok(self.fabrics[idx - 1].as_ref())
-        }
+    pub fn get_fabric(&self, idx: NonZeroU8) -> Option<&Fabric> {
+        self.fabrics[idx.get() as usize - 1].as_ref()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -308,17 +320,17 @@ impl FabricMgr {
     // Parameters to T are the Fabric and its Fabric Index
     pub fn for_each<T>(&self, mut f: T) -> Result<(), Error>
     where
-        T: FnMut(&Fabric, u8) -> Result<(), Error>,
+        T: FnMut(&Fabric, NonZeroU8) -> Result<(), Error>,
     {
         for (index, fabric) in self.fabrics.iter().enumerate() {
             if let Some(fabric) = fabric {
-                f(fabric, (index + 1) as u8)?;
+                f(fabric, NonZeroU8::new(index as u8 + 1).unwrap())?;
             }
         }
         Ok(())
     }
 
-    pub fn set_label(&mut self, index: u8, label: &str) -> Result<(), Error> {
+    pub fn set_label(&mut self, index: NonZeroU8, label: &str) -> Result<(), Error> {
         if !label.is_empty()
             && self
                 .fabrics
@@ -329,7 +341,7 @@ impl FabricMgr {
             return Err(ErrorCode::Invalid.into());
         }
 
-        let index = (index - 1) as usize;
+        let index = (index.get() - 1) as usize;
         if let Some(fabric) = &mut self.fabrics[index] {
             fabric.label = label.try_into().unwrap();
             self.changed = true;

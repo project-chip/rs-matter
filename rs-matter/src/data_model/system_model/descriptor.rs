@@ -15,13 +15,15 @@
  *    limitations under the License.
  */
 
+use core::fmt::Debug;
+
 use strum::FromRepr;
 
 use crate::attribute_enum;
 use crate::data_model::objects::*;
 use crate::error::Error;
 use crate::tlv::{TLVWriter, TagType, ToTLV};
-use crate::utils::rand::Rand;
+use crate::transport::exchange::Exchange;
 
 pub const ID: u32 = 0x001D;
 
@@ -51,6 +53,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     commands: &[],
 };
 
+#[derive(Debug)]
 struct StandardPartsMatcher;
 
 impl PartsMatcher for StandardPartsMatcher {
@@ -59,6 +62,7 @@ impl PartsMatcher for StandardPartsMatcher {
     }
 }
 
+#[derive(Debug)]
 struct AggregatorPartsMatcher;
 
 impl PartsMatcher for AggregatorPartsMatcher {
@@ -67,7 +71,7 @@ impl PartsMatcher for AggregatorPartsMatcher {
     }
 }
 
-pub trait PartsMatcher {
+pub trait PartsMatcher: Debug {
     fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool;
 }
 
@@ -89,30 +93,36 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct DescriptorCluster<'a> {
-    matcher: &'a dyn PartsMatcher,
     data_ver: Dataver,
+    matcher: &'a dyn PartsMatcher,
 }
 
 impl DescriptorCluster<'static> {
-    pub fn new(rand: Rand) -> Self {
-        Self::new_matching(&StandardPartsMatcher, rand)
+    pub const fn new(data_ver: Dataver) -> Self {
+        Self::new_matching(data_ver, &StandardPartsMatcher)
     }
 
-    pub fn new_aggregator(rand: Rand) -> Self {
-        Self::new_matching(&AggregatorPartsMatcher, rand)
+    pub const fn new_aggregator(data_ver: Dataver) -> Self {
+        Self::new_matching(data_ver, &AggregatorPartsMatcher)
     }
 }
 
 impl<'a> DescriptorCluster<'a> {
-    pub fn new_matching(matcher: &'a dyn PartsMatcher, rand: Rand) -> DescriptorCluster<'a> {
-        Self {
-            matcher,
-            data_ver: Dataver::new(rand),
-        }
+    pub const fn new_matching(
+        data_ver: Dataver,
+        matcher: &'a dyn PartsMatcher,
+    ) -> DescriptorCluster<'a> {
+        Self { data_ver, matcher }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -230,8 +240,13 @@ impl<'a> DescriptorCluster<'a> {
 }
 
 impl<'a> Handler for DescriptorCluster<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        DescriptorCluster::read(self, attr, encoder)
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        DescriptorCluster::read(self, exchange, attr, encoder)
     }
 }
 

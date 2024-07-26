@@ -16,31 +16,38 @@
  */
 
 use core::cell::Cell;
+use core::num::Wrapping;
 
 use crate::utils::rand::Rand;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Dataver {
-    ver: Cell<u32>,
+    ver: Cell<Wrapping<u32>>,
     changed: Cell<bool>,
 }
 
 impl Dataver {
-    pub fn new(rand: Rand) -> Self {
-        let mut buf = [0; 4];
-        rand(&mut buf);
+    pub fn new_rand(rand: Rand) -> Self {
+        let mut bytes = [0; 4];
 
+        rand(&mut bytes);
+
+        Self::new(u32::from_le_bytes(bytes))
+    }
+
+    pub const fn new(initial: u32) -> Self {
         Self {
-            ver: Cell::new(u32::from_be_bytes(buf)),
+            ver: Cell::new(Wrapping(initial)),
             changed: Cell::new(false),
         }
     }
 
     pub fn get(&self) -> u32 {
-        self.ver.get()
+        self.ver.get().0
     }
 
     pub fn changed(&self) -> u32 {
-        self.ver.set(self.ver.get().overflowing_add(1).0);
+        self.ver.set(self.ver.get() + Wrapping(1));
         self.changed.set(true);
 
         self.get()

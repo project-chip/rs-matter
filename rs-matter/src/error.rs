@@ -35,6 +35,7 @@ pub enum ErrorCode {
     DataVersionMismatch,
     Crypto,
     TLSStack,
+    BtpError,
     MdnsError,
     NoCommand,
     NoEndpoint,
@@ -48,8 +49,8 @@ pub enum ErrorCode {
     NoSpace,
     NoSpaceExchanges,
     NoSpaceSessions,
-    NoSpaceAckTable,
-    NoSpaceRetransTable,
+    TxTimeout,
+    RxTimeout,
     NoTagFound,
     NotFound,
     PacketPoolExhaust,
@@ -60,6 +61,7 @@ pub enum ErrorCode {
     InvalidData,
     InvalidKeyLength,
     InvalidOpcode,
+    InvalidProto,
     InvalidPeerAddr,
     // Invalid Auth Key in the Matter Certificate
     InvalidAuthKey,
@@ -199,6 +201,23 @@ impl From<mbedtls::Error> for Error {
 impl From<ccm::aead::Error> for Error {
     fn from(_e: ccm::aead::Error) -> Self {
         Self::new(ErrorCode::Crypto)
+    }
+}
+
+#[cfg(all(feature = "std", target_os = "linux", not(feature = "backtrace")))]
+impl From<bluer::Error> for Error {
+    fn from(e: bluer::Error) -> Self {
+        // Log the error given that we lose all context from the
+        // original error here
+        ::log::error!("Error in BTP: {e}");
+        Self::new(ErrorCode::BtpError)
+    }
+}
+
+#[cfg(all(feature = "std", target_os = "linux", feature = "backtrace"))]
+impl From<bluer::Error> for Error {
+    fn from(e: bluer::Error) -> Self {
+        Self::new_with_details(ErrorCode::BtpError, Box::new(e))
     }
 }
 

@@ -24,3 +24,4 @@ pub mod general_diagnostics;
 pub mod group_key_management;
 pub mod noc;
 pub mod nw_commissioning;
+pub mod wifi_nw_diagnostics;

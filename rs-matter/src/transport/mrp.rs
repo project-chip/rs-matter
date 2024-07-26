@@ -15,146 +15,226 @@
  *    limitations under the License.
  */
 
+use log::{error, warn};
+
+use crate::error::*;
 use crate::utils::epoch::Epoch;
-use core::time::Duration;
 
-use crate::{error::*, secure_channel, transport::packet::Packet};
-use log::error;
+use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
-// 200 ms
-const MRP_STANDALONE_ACK_TIMEOUT: u64 = 200;
+//const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
+const MRP_BASE_RETRY_INTERVAL_MS: u64 = 200; // TODO: Un-hardcode for Sleepy vs Active devices
+const MRP_MAX_TRANSMISSIONS: usize = 10;
+const MRP_BACKOFF_THRESHOLD: usize = 3;
+const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
+                                               //const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25
+                                               //const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10);  // 1.1
 
 #[derive(Debug)]
 pub struct RetransEntry {
     // The msg counter that we are waiting to be acknowledged
     msg_ctr: u32,
-    // This will additionally have retransmission count and periods once we implement it
+    sent_at_ms: u64,
+    counter: usize,
 }
 
 impl RetransEntry {
-    pub fn new(msg_ctr: u32) -> Self {
-        Self { msg_ctr }
+    pub fn new(msg_ctr: u32, epoch: Epoch) -> Self {
+        Self {
+            msg_ctr,
+            sent_at_ms: epoch().as_millis() as u64,
+            counter: 0,
+        }
     }
 
     pub fn get_msg_ctr(&self) -> u32 {
         self.msg_ctr
+    }
+
+    pub fn is_due(&self, epoch: Epoch) -> bool {
+        self.sent_at_ms
+            .checked_add(self.delay_ms())
+            .map(|d| d <= epoch().as_millis() as u64)
+            .unwrap_or(true)
+    }
+
+    /// Return how much to delay before (re)transmitting the message
+    /// based on the number of re-transmissions so far
+    pub fn delay_ms(&self) -> u64 {
+        Self::delay_ms_counter(self.counter)
+    }
+
+    /// Maximum delay before giving up on retransmitting the message
+    pub fn max_delay_ms() -> u64 {
+        Self::delay_ms_counter(MRP_MAX_TRANSMISSIONS)
+    }
+
+    /// Return how much to delay before (re)transmitting the message
+    /// based on the provided number of re-transmissions so far
+    pub fn delay_ms_counter(counter: usize) -> u64 {
+        let mut delay = MRP_BASE_RETRY_INTERVAL_MS;
+
+        if counter >= MRP_BACKOFF_THRESHOLD {
+            for _ in 0..counter - MRP_BACKOFF_THRESHOLD {
+                delay = delay * MRP_BACKOFF_BASE.0 / MRP_BACKOFF_BASE.1;
+            }
+        }
+
+        delay
+    }
+
+    pub fn pre_send(&mut self, ctr: u32) -> Result<(), Error> {
+        if self.msg_ctr == ctr {
+            if self.counter < MRP_MAX_TRANSMISSIONS {
+                self.counter += 1;
+                Ok(())
+            } else {
+                Err(ErrorCode::TxTimeout.into())
+            }
+        } else {
+            // This indicates there was some existing entry for same sess-id/exch-id, which shouldn't happen
+            panic!("Previous retrans entry for this exchange already exists");
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AckEntry {
     // The msg counter that we should acknowledge
-    msg_ctr: u32,
-    // The max time after which this entry must be ACK
-    ack_timeout: Duration,
+    pub(crate) msg_ctr: u32,
+    // Whether the message was acknowledged at least once
+    pub(crate) acknowledged: bool,
 }
 
 impl AckEntry {
-    pub fn new(msg_ctr: u32, epoch: Epoch) -> Result<Self, Error> {
-        if let Some(ack_timeout) =
-            epoch().checked_add(Duration::from_millis(MRP_STANDALONE_ACK_TIMEOUT))
-        {
-            Ok(Self {
-                msg_ctr,
-                ack_timeout,
-            })
-        } else {
-            Err(ErrorCode::Invalid.into())
-        }
+    pub fn new(msg_ctr: u32) -> Result<Self, Error> {
+        Ok(Self {
+            msg_ctr,
+            acknowledged: false,
+        })
     }
 
     pub fn get_msg_ctr(&self) -> u32 {
         self.msg_ctr
     }
-
-    pub fn has_timed_out(&self, epoch: Epoch) -> bool {
-        self.ack_timeout > epoch()
-    }
 }
 
 #[derive(Default, Debug)]
 pub struct ReliableMessage {
-    retrans: Option<RetransEntry>,
-    ack: Option<AckEntry>,
+    pub(crate) retrans: Option<RetransEntry>,
+    pub(crate) ack: Option<AckEntry>,
+    pub(crate) received_at_ms: Option<u64>,
 }
 
 impl ReliableMessage {
     pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
+        Default::default()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.retrans.is_none() && self.ack.is_none()
+    pub fn is_retrans_pending(&self) -> bool {
+        self.retrans.is_some()
     }
 
-    // Check any pending acknowledgements / retransmissions and take action
-    pub fn is_ack_ready(&self, epoch: Epoch) -> bool {
-        // Acknowledgements
-        if let Some(ack_entry) = &self.ack {
-            ack_entry.has_timed_out(epoch)
-        } else {
-            false
-        }
+    pub fn is_ack_pending(&self) -> bool {
+        self.ack
+            .as_ref()
+            .map(|ack| !ack.acknowledged)
+            .unwrap_or(false)
     }
 
-    pub fn prepare_ack(_exch_id: u16, proto_tx: &mut Packet) {
-        secure_channel::common::create_mrp_standalone_ack(proto_tx);
+    pub fn has_rx_timed_out(&self, timeout_ms: u64, epoch: Epoch) -> bool {
+        self.received_at_ms
+            .and_then(|received_at_ms| {
+                received_at_ms
+                    .checked_add(timeout_ms)
+                    .map(|d| d <= epoch().as_millis() as u64)
+            })
+            .unwrap_or(false)
     }
 
-    pub fn pre_send(&mut self, proto_tx: &mut Packet) -> Result<(), Error> {
+    pub fn pre_send(
+        &mut self,
+        tx_plain: &PlainHdr,
+        tx_proto: &mut ProtoHdr,
+        epoch: Epoch,
+    ) -> Result<(), Error> {
         // Check if any acknowledgements are pending for this exchange,
-
-        // if so, piggy back in the encoded header here
-        if let Some(ack_entry) = &self.ack {
-            // Ack Entry exists, set ACK bit and remove from table
-            proto_tx.proto.set_ack(ack_entry.get_msg_ctr());
-            self.ack = None;
+        if let Some(ack) = &mut self.ack {
+            // if so, piggy back in the encoded header here
+            tx_proto.set_ack(Some(ack.get_msg_ctr()));
+            ack.acknowledged = true;
         }
 
-        if !proto_tx.is_reliable() {
-            return Ok(());
+        if tx_proto.is_reliable() {
+            if let Some(retrans) = &mut self.retrans {
+                if retrans.pre_send(tx_plain.ctr).is_err() {
+                    // Too many retransmissions, give up
+                    error!("Packet {tx_plain}{tx_proto}: Too many retransmissions. Giving up");
+
+                    self.retrans = None;
+                    self.ack = None;
+                }
+            } else {
+                self.retrans = Some(RetransEntry::new(tx_plain.ctr, epoch));
+            }
         }
 
-        if self.retrans.is_some() {
-            // This indicates there was some existing entry for same sess-id/exch-id, which shouldnt happen
-            error!("Previous retrans entry for this exchange already exists");
-            Err(ErrorCode::Invalid)?;
-        }
+        self.received_at_ms = None;
 
-        self.retrans = Some(RetransEntry::new(proto_tx.plain.ctr));
         Ok(())
     }
 
-    /* A note about Message ACKs, it is a bit asymmetric in the sense that:
-     * -  there can be only one pending ACK per exchange (so this is per-exchange)
-     * -  there can be only one pending retransmission per exchange (so this is per-exchange)
-     * -  duplicate detection should happen per session (obviously), so that part is per-session
-     */
-    pub fn recv(&mut self, proto_rx: &Packet, epoch: Epoch) -> Result<(), Error> {
-        if proto_rx.proto.is_ack() {
+    /// This method will update the state of the rentransmission and ACK tables
+    /// with the data from the incoming packet.
+    ///
+    /// The method will return `Ok` if the message needs to be processed by the
+    /// exchange layer, and an error if it needs to be dropped.
+    ///
+    /// A note about Message ACKs, it is a bit asymmetric in the sense that:
+    /// - there can be only one pending ACK per exchange (so this is per-exchange)
+    /// - there can be only one pending retransmission per exchange (so this is per-exchange)
+    /// - duplicate detection should happen per session (obviously), so that part is per-session
+    pub fn post_recv(
+        &mut self,
+        rx_plain: &PlainHdr,
+        rx_proto: &ProtoHdr,
+        epoch: Epoch,
+    ) -> Result<(), Error> {
+        if let Some(ack_msg_ctr) = rx_proto.get_ack() {
             // Handle received Acks
-            let ack_msg_ctr = proto_rx.proto.get_ack_msg_ctr().ok_or(ErrorCode::Invalid)?;
             if let Some(entry) = &self.retrans {
                 if entry.get_msg_ctr() != ack_msg_ctr {
-                    // TODO: XXX Fix this
-                    error!("Mismatch in retrans-table's msg counter and received msg counter: received {}, expected {}. This is expected for the timebeing", ack_msg_ctr, entry.get_msg_ctr());
+                    warn!("Mismatch in retrans-table's msg counter and received msg counter: received {:x}, expected {:x}.", ack_msg_ctr, entry.msg_ctr);
+
+                    // This can actually happen on a noisy channel, where we've just sent a reply to a message
+                    // - yet - the other side is still retransmitting the original message and thus acknowledging
+                    // an earlier counter we've sent.
+
+                    // In this case, we should ignore the ACK and not process this message any further, as it is
+                    // a duplicate.
+                    Err(ErrorCode::Duplicate)?;
                 }
+
                 self.retrans = None;
+                self.ack = None;
             }
         }
 
-        if proto_rx.proto.is_reliable() {
-            if self.ack.is_some() {
+        if rx_proto.is_reliable() {
+            if let Some(ack) = &self.ack {
                 // This indicates there was some existing entry for same sess-id/exch-id, which shouldnt happen
                 // TODO: As per the spec if this happens, we need to send out the previous ACK and note this new ACK
-                error!("Previous ACK entry for this exchange already exists");
-                Err(ErrorCode::Invalid)?;
+                error!(
+                    "Previous ACK entry {:x} for this exchange already exists",
+                    ack.get_msg_ctr()
+                );
             }
 
-            self.ack = Some(AckEntry::new(proto_rx.plain.ctr, epoch)?);
+            self.ack = Some(AckEntry::new(rx_plain.ctr)?);
         }
+
+        self.received_at_ms = Some(epoch().as_millis() as u64);
+
         Ok(())
     }
 }

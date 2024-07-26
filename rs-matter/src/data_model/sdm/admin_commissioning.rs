@@ -15,20 +15,18 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use log::info;
+
+use num_derive::FromPrimitive;
+
+use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
-use crate::mdns::Mdns;
-use crate::secure_channel::pake::PaseMgr;
 use crate::secure_channel::spake2p::VerifierData;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
-use crate::utils::rand::Rand;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
-use log::info;
-use num_derive::FromPrimitive;
-use strum::{EnumDiscriminants, FromRepr};
 
 pub const ID: u32 = 0x003C;
 
@@ -98,22 +96,22 @@ pub struct OpenCommWindowReq<'a> {
     salt: OctetStr<'a>,
 }
 
-pub struct AdminCommCluster<'a> {
+#[derive(Debug, Clone)]
+pub struct AdminCommCluster {
     data_ver: Dataver,
-    pase_mgr: &'a RefCell<PaseMgr>,
-    mdns: &'a dyn Mdns,
 }
 
-impl<'a> AdminCommCluster<'a> {
-    pub fn new(pase_mgr: &'a RefCell<PaseMgr>, mdns: &'a dyn Mdns, rand: Rand) -> Self {
-        Self {
-            data_ver: Dataver::new(rand),
-            pase_mgr,
-            mdns,
-        }
+impl AdminCommCluster {
+    pub const fn new(data_ver: Dataver) -> Self {
+        Self { data_ver }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -133,13 +131,14 @@ impl<'a> AdminCommCluster<'a> {
 
     pub fn invoke(
         &self,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         _encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::OpenCommWindow => self.handle_command_opencomm_win(data)?,
-            Commands::RevokeComm => self.handle_command_revokecomm_win(data)?,
+            Commands::OpenCommWindow => self.handle_command_opencomm_win(exchange, data)?,
+            Commands::RevokeComm => self.handle_command_revokecomm_win(exchange, data)?,
             _ => Err(ErrorCode::CommandNotFound)?,
         }
 
@@ -148,20 +147,38 @@ impl<'a> AdminCommCluster<'a> {
         Ok(())
     }
 
-    fn handle_command_opencomm_win(&self, data: &TLVElement) -> Result<(), Error> {
+    fn handle_command_opencomm_win(
+        &self,
+        exchange: &Exchange,
+        data: &TLVElement,
+    ) -> Result<(), Error> {
         cmd_enter!("Open Commissioning Window");
         let req = OpenCommWindowReq::from_tlv(data)?;
         let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
-        self.pase_mgr
+        exchange
+            .matter()
+            .pase_mgr
             .borrow_mut()
-            .enable_pase_session(verifier, req.discriminator, self.mdns)?;
+            .enable_pase_session(
+                verifier,
+                req.discriminator,
+                &exchange.matter().transport_mgr.mdns,
+            )?;
 
         Ok(())
     }
 
-    fn handle_command_revokecomm_win(&self, _data: &TLVElement) -> Result<(), Error> {
+    fn handle_command_revokecomm_win(
+        &self,
+        exchange: &Exchange,
+        _data: &TLVElement,
+    ) -> Result<(), Error> {
         cmd_enter!("Revoke Commissioning Window");
-        self.pase_mgr.borrow_mut().disable_pase_session(self.mdns)?;
+        exchange
+            .matter()
+            .pase_mgr
+            .borrow_mut()
+            .disable_pase_session(&exchange.matter().transport_mgr.mdns)?;
 
         // TODO: Send status code if no commissioning window is open
 
@@ -169,25 +186,30 @@ impl<'a> AdminCommCluster<'a> {
     }
 }
 
-impl<'a> Handler for AdminCommCluster<'a> {
-    fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
-        AdminCommCluster::read(self, attr, encoder)
+impl Handler for AdminCommCluster {
+    fn read(
+        &self,
+        exchange: &Exchange,
+        attr: &AttrDetails,
+        encoder: AttrDataEncoder,
+    ) -> Result<(), Error> {
+        AdminCommCluster::read(self, exchange, attr, encoder)
     }
 
     fn invoke(
         &self,
-        _exchange: &Exchange,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
-        AdminCommCluster::invoke(self, cmd, data, encoder)
+        AdminCommCluster::invoke(self, exchange, cmd, data, encoder)
     }
 }
 
-impl<'a> NonBlockingHandler for AdminCommCluster<'a> {}
+impl NonBlockingHandler for AdminCommCluster {}
 
-impl<'a> ChangeNotifier<()> for AdminCommCluster<'a> {
+impl ChangeNotifier<()> for AdminCommCluster {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }

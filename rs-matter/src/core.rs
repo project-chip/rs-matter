@@ -15,9 +15,9 @@
  *    limitations under the License.
  */
 
-use core::{borrow::Borrow, cell::RefCell};
+use core::cell::RefCell;
 
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::{
     acl::AclMgr,
@@ -27,21 +27,21 @@ use crate::{
     },
     error::*,
     fabric::FabricMgr,
-    mdns::{Mdns, MdnsImpl, MdnsService},
+    mdns::MdnsService,
     pairing::{print_pairing_code_and_qr, DiscoveryCapabilities},
     secure_channel::{pake::PaseMgr, spake2p::VerifierData},
     transport::{
-        exchange::{ExchangeCtx, MAX_EXCHANGES},
-        packet::{MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE},
-        session::SessionMgr,
+        core::{PacketBufferExternalAccess, TransportMgr},
+        network::{NetworkReceive, NetworkSend},
     },
-    utils::{buf::BufferAccessImpl, epoch::Epoch, rand::Rand, select::Notification},
+    utils::{buf::BufferAccess, epoch::Epoch, notification::Notification, rand::Rand},
 };
 
 /* The Matter Port */
 pub const MATTER_PORT: u16 = 5540;
 
 /// Device Commissioning Data
+#[derive(Debug, Clone)]
 pub struct CommissioningData {
     /// The data like password or verifier that is required to authenticate
     pub verifier: VerifierData,
@@ -55,20 +55,13 @@ pub struct Matter<'a> {
     pub acl_mgr: RefCell<AclMgr>, // Public for tests
     pub(crate) pase_mgr: RefCell<PaseMgr>,
     pub(crate) failsafe: RefCell<FailSafe>,
-    persist_notification: Notification,
-    pub(crate) send_notification: Notification,
-    pub(crate) mdns: MdnsImpl<'a>,
-    pub(crate) tx_buf: BufferAccessImpl<MAX_RX_BUF_SIZE>,
-    pub(crate) rx_buf: BufferAccessImpl<MAX_TX_BUF_SIZE>,
-    pub(crate) epoch: Epoch,
-    pub(crate) rand: Rand,
+    pub transport_mgr: TransportMgr<'a>, // Public for tests
+    persist_notification: Notification<NoopRawMutex>,
+    epoch: Epoch,
+    rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_att: &'a dyn DevAttDataFetcher,
-    pub(crate) port: u16,
-    pub(crate) exchanges: RefCell<heapless::Vec<ExchangeCtx, MAX_EXCHANGES>>,
-    pub(crate) ephemeral: RefCell<Option<ExchangeCtx>>,
-    pub(crate) ephemeral_mutex: Mutex<NoopRawMutex, ()>,
-    pub session_mgr: RefCell<SessionMgr>, // Public for tests
+    port: u16,
 }
 
 impl<'a> Matter<'a> {
@@ -90,8 +83,8 @@ impl<'a> Matter<'a> {
     ///
     /// # Parameters
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
-    /// requires a set of device attestation certificates and keys. It is the responsibility of
-    /// this object to return the device attestation details when queried upon.
+    ///   requires a set of device attestation certificates and keys. It is the responsibility of
+    ///   this object to return the device attestation details when queried upon.
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
@@ -106,21 +99,18 @@ impl<'a> Matter<'a> {
             acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new()),
+            transport_mgr: TransportMgr::new(mdns.new_impl(dev_det, port), epoch, rand),
             persist_notification: Notification::new(),
-            send_notification: Notification::new(),
-            mdns: mdns.new_impl(dev_det, port),
-            rx_buf: BufferAccessImpl::new(),
-            tx_buf: BufferAccessImpl::new(),
             epoch,
             rand,
             dev_det,
             dev_att,
             port,
-            exchanges: RefCell::new(heapless::Vec::new()),
-            ephemeral: RefCell::new(None),
-            ephemeral_mutex: Mutex::new(()),
-            session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
         }
+    }
+
+    pub fn initialize_transport_buffers(&self) -> Result<(), Error> {
+        self.transport_mgr.initialize_buffers()
     }
 
     pub fn dev_det(&self) -> &BasicInfoConfig<'_> {
@@ -135,8 +125,43 @@ impl<'a> Matter<'a> {
         self.port
     }
 
+    pub fn rand(&self) -> Rand {
+        self.rand
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    /// A utility method to replace the initial mDNS implementation with another one.
+    ///
+    /// Useful in particular with `MdnsService::Provided`, where the user would still like
+    /// to create the `Matter` instance in a const-context, as in e.g.:
+    /// `const MATTER: Matter<'static> = Matter::new(...);`
+    ///
+    /// The above const-creation is incompatible with `MdnsService::Provided` which carries a
+    /// `&dyn Mdns` pointer, which cannot be initialized from within a const context with anything
+    /// else than a `const`. (At least not yet - there is an unstable nightly Rust feature for that).
+    ///
+    /// The solution is to const-construct the `Matter` object with `MdnsService::Disabled`, and
+    /// after that - while/if we still have exclusive, mutable access to the `Matter` object -
+    /// replace the `MdnsService::Disabled` initial impl with another, like `MdnsService::Provided`.
+    pub fn replace_mdns(&mut self, mdns: MdnsService<'a>) {
+        self.transport_mgr
+            .replace_mdns(mdns.new_impl(self.dev_det, self.port));
+    }
+
+    /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
+    ///
+    /// Reasoning and use-cases explained in the documentation of `replace_mdns`.
+    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DevAttDataFetcher) {
+        self.dev_att = dev_att;
+    }
+
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr.borrow_mut().load(data, &self.mdns)
+        self.fabric_mgr
+            .borrow_mut()
+            .load(data, &self.transport_mgr.mdns)
     }
 
     pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
@@ -155,24 +180,35 @@ impl<'a> Matter<'a> {
         self.acl_mgr.borrow().is_changed() || self.fabric_mgr.borrow().is_changed()
     }
 
-    pub fn start_comissioning(
+    /// Return `true` if there is at least one commissioned fabric
+    //
+    // TODO:
+    // The implementation of this method needs to change in future,
+    // because the current implementation does not really track whether
+    // `CommissioningComplete` had been actually received for the fabric.
+    //
+    // The fabric is created once we receive `AddNoc`, but that's just
+    // not enough. The fabric should NOT be considered commissioned until
+    // after we receive `CommissioningComplete` on behalf of a Case session
+    // for the fabric in question.
+    pub fn is_commissioned(&self) -> bool {
+        self.fabric_mgr.borrow().used_count() > 0
+    }
+
+    fn start_comissioning(
         &self,
         dev_comm: CommissioningData,
+        discovery_capabilities: DiscoveryCapabilities,
         buf: &mut [u8],
     ) -> Result<bool, Error> {
         if !self.pase_mgr.borrow().is_pase_session_enabled() && self.fabric_mgr.borrow().is_empty()
         {
-            print_pairing_code_and_qr(
-                self.dev_det,
-                &dev_comm,
-                DiscoveryCapabilities::default(),
-                buf,
-            )?;
+            print_pairing_code_and_qr(self.dev_det, &dev_comm, discovery_capabilities, buf)?;
 
             self.pase_mgr.borrow_mut().enable_pase_session(
                 dev_comm.verifier,
                 dev_comm.discriminator,
-                &self.mdns,
+                &self.transport_mgr.mdns,
             )?;
 
             Ok(true)
@@ -181,67 +217,70 @@ impl<'a> Matter<'a> {
         }
     }
 
+    /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
+    /// NOTE: User should be careful _not_ to call this method while the transport layer and/or the built-in mDNS is running.
+    pub fn reset_transport(&self) -> Result<(), Error> {
+        self.transport_mgr.reset()
+    }
+
+    pub async fn run<S, R>(
+        &self,
+        send: S,
+        recv: R,
+        dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        if let Some((dev_comm, discovery_caps)) = dev_comm {
+            let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
+            let mut buf = buf_access.get().await.ok_or(ErrorCode::NoSpace)?;
+
+            self.start_comissioning(dev_comm, discovery_caps, &mut buf)?;
+        }
+
+        self.transport_mgr.run(send, recv).await
+    }
+
+    #[cfg(not(all(
+        feature = "std",
+        any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
+    )))]
+    pub async fn run_builtin_mdns<S, R>(
+        &self,
+        send: S,
+        recv: R,
+        host: &crate::mdns::Host<'_>,
+        interface: Option<u32>,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        self.transport_mgr
+            .run_builtin_mdns(send, recv, host, interface)
+            .await
+    }
+
+    /// Notify that the ACLs or Fabrics _might_ have changed
+    /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs or Fabrics.
+    ///
+    /// The default IM and SC handlers (`DataModel` and `SecureChannel`) do call this method after processing the messages.
+    ///
+    /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub fn notify_changed(&self) {
         if self.is_changed() {
-            self.persist_notification.signal(());
+            self.persist_notification.notify();
         }
     }
 
+    /// A hook for user persistence code to wait for potential changes in ACLs and/or Fabrics.
+    /// Once this future resolves, user code is supposed to inspect ACLs and Fabrics for changes, and
+    /// if there are changes, persist them.
+    ///
+    /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub async fn wait_changed(&self) {
         self.persist_notification.wait().await
-    }
-}
-
-impl<'a> Borrow<RefCell<FabricMgr>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<FabricMgr> {
-        &self.fabric_mgr
-    }
-}
-
-impl<'a> Borrow<RefCell<AclMgr>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<AclMgr> {
-        &self.acl_mgr
-    }
-}
-
-impl<'a> Borrow<RefCell<PaseMgr>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<PaseMgr> {
-        &self.pase_mgr
-    }
-}
-
-impl<'a> Borrow<RefCell<FailSafe>> for Matter<'a> {
-    fn borrow(&self) -> &RefCell<FailSafe> {
-        &self.failsafe
-    }
-}
-
-impl<'a> Borrow<BasicInfoConfig<'a>> for Matter<'a> {
-    fn borrow(&self) -> &BasicInfoConfig<'a> {
-        self.dev_det
-    }
-}
-
-impl<'a> Borrow<dyn DevAttDataFetcher + 'a> for Matter<'a> {
-    fn borrow(&self) -> &(dyn DevAttDataFetcher + 'a) {
-        self.dev_att
-    }
-}
-
-impl<'a> Borrow<dyn Mdns + 'a> for Matter<'a> {
-    fn borrow(&self) -> &(dyn Mdns + 'a) {
-        &self.mdns
-    }
-}
-
-impl<'a> Borrow<Epoch> for Matter<'a> {
-    fn borrow(&self) -> &Epoch {
-        &self.epoch
-    }
-}
-
-impl<'a> Borrow<Rand> for Matter<'a> {
-    fn borrow(&self) -> &Rand {
-        &self.rand
     }
 }

@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.77"
+rust-version = "1.78"
 
 [features]
 default = ["os", "mbedtls"]
@@ -20,13 +20,13 @@ alloc = []
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
+large-buffers = [] # TCP support
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
 bitflags = { version =  "2.5", default-features = false } # TODO: Update to 2.x
 byteorder = { version = "1.5", default-features = false }
 heapless = "0.8"
-heapless07 = { package = "heapless", version = "0.7" } # Necessary for domain 0.9
 num = { version = "0.4", default-features = false }
 num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
@@ -39,12 +39,12 @@ time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-time = "0.3"
-embassy-sync = "0.5"
+embassy-sync = "0.6"
 critical-section = "1.1"
-domain = { version = "0.9", default-features = false, features = ["heapless"] }
-octseq = { version = "0.3", default-features = false }
+domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
+scopeguard = "1"
 
 # crypto
 openssl = { version = "0.10", optional = true }
@@ -67,22 +67,32 @@ x509-cert = { version = "0.2", default-features = false, features = ["pem"], opt
 # STD
 rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }
 async-io = { version = "2", optional = true, default-features = false }
+async-compat = { version = "0.2", optional = true, default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = { version = "0.3" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zeroconf = { version = "0.12", optional = true }
+bluer = { version = "0.17", features = ["bluetoothd"] }
+tokio = { version = "1" }
+tokio-stream = { version = "0.1" }
 
 [dev-dependencies]
 env_logger = "0.11"
 nix = { version = "0.27", features = ["net"] }
 futures-lite = "1"
+async-channel = "2"
 
 [[example]]
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
 required-features = ["std", "async-io"]
+
+[[example]]
+name = "onoff_light_bt"
+path = "../examples/onoff_light_bt/src/main.rs"
+required-features = ["std", "async-io", "async-compat"]
 
 # [[example]]
 # name = "speaker"
