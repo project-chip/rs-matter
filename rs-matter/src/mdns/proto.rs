@@ -23,7 +23,7 @@ use super::Service;
 /// See https://datatracker.ietf.org/doc/html/rfc6762#section-10.2 for details.
 fn dns_class_with_flush(dns_class: Class) -> Class {
     const RESOURCE_RECORD_CACHE_FLUSH_BIT: u16 = 0x8000;
-    Class::Int(u16::from(dns_class) | RESOURCE_RECORD_CACHE_FLUSH_BIT)
+    Class::from_int(u16::from(dns_class) | RESOURCE_RECORD_CACHE_FLUSH_BIT)
 }
 
 impl From<ShortBuf> for Error {
