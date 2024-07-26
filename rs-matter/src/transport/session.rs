@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
 use core::fmt;
 use core::num::NonZeroU8;
 use core::time::Duration;
@@ -27,8 +26,10 @@ use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::epoch::Epoch;
+use crate::utils::init::{init, Init};
 use crate::utils::parsebuf::ParseBuf;
 use crate::utils::rand::Rand;
+use crate::utils::refcell::RefCell;
 use crate::utils::writebuf::WriteBuf;
 use crate::Matter;
 
@@ -538,22 +539,35 @@ pub struct SessionMgr {
     next_sess_unique_id: u32,
     next_sess_id: u16,
     next_exch_id: u16,
-    sessions: heapless::Vec<Session, MAX_SESSIONS>,
+    sessions: crate::utils::vec::Vec<Session, MAX_SESSIONS>,
     pub(crate) epoch: Epoch,
     pub(crate) rand: Rand,
 }
 
 impl SessionMgr {
+    /// Create a new session manager.
     #[inline(always)]
     pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
-            sessions: heapless::Vec::new(),
+            sessions: crate::utils::vec::Vec::new(),
             next_sess_unique_id: 0,
             next_sess_id: 1,
             next_exch_id: 1,
             epoch,
             rand,
         }
+    }
+
+    /// Create an in-place initializer for a new session manager.
+    pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
+        init!(Self {
+            sessions <- crate::utils::vec::Vec::init(),
+            next_sess_unique_id: 0,
+            next_sess_id: 1,
+            next_exch_id: 1,
+            epoch,
+            rand,
+        })
     }
 
     pub fn reset(&mut self) {

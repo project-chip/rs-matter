@@ -79,6 +79,24 @@ pub fn from_tlv<'a, T: FromTLV<'a>, const N: usize>(
     Ok(())
 }
 
+pub fn vec_from_tlv<'a, T: FromTLV<'a>, const N: usize>(
+    vec: &mut crate::utils::vec::Vec<T, N>,
+    t: &TLVElement<'a>,
+) -> Result<(), Error> {
+    vec.clear();
+
+    t.confirm_array()?;
+
+    if let Some(tlv_iter) = t.enter() {
+        for element in tlv_iter {
+            vec.push(T::from_tlv(&element)?)
+                .map_err(|_| ErrorCode::NoSpace)?;
+        }
+    }
+
+    Ok(())
+}
+
 macro_rules! fromtlv_for {
     ($($t:ident)*) => {
         $(
@@ -232,6 +250,19 @@ impl<const N: usize> FromTLV<'_> for heapless::Vec<u8, N> {
 }
 
 impl<const N: usize> ToTLV for heapless::Vec<u8, N> {
+    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
+        tw.str16(tag, self.as_slice())
+    }
+}
+
+/// Implements the Owned version of Octet String
+impl<const N: usize> FromTLV<'_> for crate::utils::vec::Vec<u8, N> {
+    fn from_tlv(t: &TLVElement) -> Result<crate::utils::vec::Vec<u8, N>, Error> {
+        crate::utils::vec::Vec::from_slice(t.slice()?).map_err(|_| ErrorCode::NoSpace.into())
+    }
+}
+
+impl<const N: usize> ToTLV for crate::utils::vec::Vec<u8, N> {
     fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
         tw.str16(tag, self.as_slice())
     }

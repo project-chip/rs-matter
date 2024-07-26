@@ -16,6 +16,7 @@
  */
 
 use core::iter::once;
+use core::ptr::addr_of_mut;
 
 use alloc::sync::Arc;
 
@@ -40,7 +41,13 @@ use crate::transport::network::btp::MIN_MTU;
 use crate::{
     error::{Error, ErrorCode},
     transport::network::{btp::context::MAX_BTP_SESSIONS, BtAddr},
-    utils::{ifmutex::IfMutex, select::Coalesce, signal::Signal, std_mutex::StdRawMutex},
+    utils::{
+        ifmutex::IfMutex,
+        init::{init_from_closure, Init},
+        select::Coalesce,
+        signal::Signal,
+        std_mutex::StdRawMutex,
+    },
 };
 
 use super::{AdvData, GattPeripheral, GattPeripheralEvent};
@@ -61,6 +68,16 @@ struct GattState {
     notifiers_listen_allowed: Signal<StdRawMutex, bool>,
 }
 
+impl GattState {
+    pub fn new(adapter_name: Option<&str>) -> Self {
+        Self {
+            adapter_name: adapter_name.map(|name| name.into()),
+            notifiers: IfMutex::new(heapless::Vec::new()),
+            notifiers_listen_allowed: Signal::new(true),
+        }
+    }
+}
+
 /// Implements the `GattPeripheral` trait using the BlueZ GATT stack.
 #[derive(Clone)]
 pub struct BluerGattPeripheral(Arc<GattState>);
@@ -74,11 +91,23 @@ impl Default for BluerGattPeripheral {
 impl BluerGattPeripheral {
     /// Create a new instance.
     pub fn new(adapter_name: Option<&str>) -> Self {
-        Self(Arc::new(GattState {
-            adapter_name: adapter_name.map(|name| name.into()),
-            notifiers: IfMutex::new(heapless::Vec::new()),
-            notifiers_listen_allowed: Signal::new(true),
-        }))
+        Self(Arc::new(GattState::new(adapter_name)))
+    }
+
+    /// Create an in-place initializer for the peripheral.
+    pub fn init(adapter_name: Option<&str>) -> impl Init<Self> {
+        let adapter_name = adapter_name.map(|name| name.to_owned());
+
+        // We can't (yet) use `pinned-init`'s `InPlaceInit` as it relies on unstable Rust features.
+        // Not so important specifically for this BlueZ implementation because it is STD-only
+        // and Linux-only, and there's plenty of stack space on Linux.
+        unsafe {
+            init_from_closure(move |slot: *mut BluerGattPeripheral| {
+                addr_of_mut!((*slot).0).write(Arc::new(GattState::new(adapter_name.as_deref())));
+
+                Ok(())
+            })
+        }
     }
 
     /// Runs the GATT peripheral service.

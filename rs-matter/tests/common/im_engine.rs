@@ -295,7 +295,7 @@ impl<'a> ImEngine<'a> {
                 ADDR,
                 SessionMode::Case {
                     fab_idx: NonZeroU8::new(1).unwrap(),
-                    cat_ids: cat_ids.clone(),
+                    cat_ids: *cat_ids,
                 },
                 None,
                 None,

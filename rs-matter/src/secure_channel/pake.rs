@@ -17,23 +17,25 @@
 
 use core::{fmt::Write, time::Duration};
 
-use super::{
-    common::SCStatusCodes,
-    spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES},
-};
-use crate::{
-    crypto,
-    error::{Error, ErrorCode},
-    mdns::{Mdns, ServiceMode},
-    secure_channel::common::{complete_with_status, OpCode},
-    tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType, ToTLV},
-    transport::{
-        exchange::{Exchange, ExchangeId},
-        session::{ReservedSession, SessionMode},
-    },
-    utils::{epoch::Epoch, rand::Rand},
-};
 use log::{error, info};
+
+use crate::crypto;
+use crate::error::{Error, ErrorCode};
+use crate::mdns::{Mdns, ServiceMode};
+use crate::secure_channel::common::{complete_with_status, OpCode};
+use crate::tlv::{self, get_root_node_struct, FromTLV, OctetStr, TLVWriter, TagType, ToTLV};
+use crate::transport::{
+    exchange::{Exchange, ExchangeId},
+    session::{ReservedSession, SessionMode},
+};
+use crate::utils::{
+    epoch::Epoch,
+    init::{init, Init},
+    rand::Rand,
+};
+
+use super::common::SCStatusCodes;
+use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
 struct PaseSession {
     mdns_service_name: heapless::String<16>,
@@ -56,6 +58,17 @@ impl PaseMgr {
             epoch,
             rand,
         }
+    }
+
+    pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
+        // TODO: Optimize in future because `PaseSession` is
+        // relatively large and we are creating it using stack moves.
+        init!(Self {
+            session: None,
+            timeout: None,
+            epoch,
+            rand,
+        })
     }
 
     pub fn is_pase_session_enabled(&self) -> bool {

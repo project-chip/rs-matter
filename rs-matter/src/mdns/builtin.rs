@@ -1,4 +1,3 @@
-use core::cell::RefCell;
 use core::net::IpAddr;
 use core::pin::pin;
 
@@ -6,6 +5,7 @@ use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
+
 use log::{info, warn};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
@@ -14,8 +14,14 @@ use crate::transport::network::{
     Address, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
     SocketAddrV6,
 };
-use crate::utils::rand::Rand;
-use crate::utils::{buf::BufferAccess, notification::Notification, select::Coalesce};
+use crate::utils::{
+    buf::BufferAccess,
+    init::{init, Init},
+    notification::Notification,
+    rand::Rand,
+    refcell::RefCell,
+    select::Coalesce,
+};
 
 use super::{Service, ServiceMode};
 
@@ -37,7 +43,7 @@ pub const MDNS_PORT: u16 = 5353;
 pub struct MdnsImpl<'a> {
     dev_det: &'a BasicInfoConfig<'a>,
     matter_port: u16,
-    services: RefCell<heapless::Vec<(heapless::String<40>, ServiceMode), 4>>,
+    services: RefCell<crate::utils::vec::Vec<(heapless::String<40>, ServiceMode), 4>>,
     notification: Notification<NoopRawMutex>,
 }
 
@@ -47,9 +53,18 @@ impl<'a> MdnsImpl<'a> {
         Self {
             dev_det,
             matter_port,
-            services: RefCell::new(heapless::Vec::new()),
+            services: RefCell::new(crate::utils::vec::Vec::new()),
             notification: Notification::new(),
         }
+    }
+
+    pub fn init(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> impl Init<Self> {
+        init!(Self {
+            dev_det,
+            matter_port,
+            services <- RefCell::init(crate::utils::vec::Vec::init()),
+            notification: Notification::new(),
+        })
     }
 
     pub fn reset(&self) {
@@ -136,11 +151,11 @@ impl<'a> MdnsImpl<'a> {
 
             select(&mut notification, &mut timeout).await;
 
-            for addr in core::iter::once(SocketAddr::V4(SocketAddrV4::new(
-                MDNS_IPV4_BROADCAST_ADDR,
-                MDNS_PORT,
-            )))
-            .chain(
+            for addr in Iterator::chain(
+                core::iter::once(SocketAddr::V4(SocketAddrV4::new(
+                    MDNS_IPV4_BROADCAST_ADDR,
+                    MDNS_PORT,
+                ))),
                 interface
                     .map(|interface| {
                         SocketAddr::V6(SocketAddrV6::new(
