@@ -301,15 +301,17 @@ pub struct AclEntry {
     subjects: Subjects,
     targets: Targets,
     // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
+    // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
+    // however, it will be `None` when the entry is coming from the other peer
     #[tagval(0xFE)]
-    pub fab_idx: NonZeroU8,
+    pub fab_idx: Option<NonZeroU8>,
 }
 
 impl AclEntry {
     pub fn new(fab_idx: NonZeroU8, privilege: Privilege, auth_mode: AuthMode) -> Self {
         const INIT_SUBJECTS: Option<u64> = None;
         Self {
-            fab_idx,
+            fab_idx: Some(fab_idx),
             privilege,
             auth_mode,
             subjects: [INIT_SUBJECTS; SUBJECTS_PER_ENTRY],
@@ -368,7 +370,11 @@ impl AclEntry {
         }
 
         // true if both are true
-        allow && self.fab_idx.get() == accessor.fab_idx
+        allow
+            && self
+                .fab_idx
+                .map(|fab_idx| fab_idx.get() == accessor.fab_idx)
+                .unwrap_or(false)
     }
 
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
@@ -441,13 +447,18 @@ impl AclMgr {
     }
 
     pub fn add(&mut self, entry: AclEntry) -> Result<u8, Error> {
+        let Some(fab_idx) = entry.fab_idx else {
+            // When persisting entries, the `fab_idx` should always be set
+            return Err(ErrorCode::Invalid.into());
+        };
+
         if entry.auth_mode == AuthMode::Pase {
             // Reserved for future use
             // TODO: Should be something that results in IMStatusCode::ConstraintError
             Err(ErrorCode::Invalid)?;
         }
 
-        let cnt = self.get_index_in_fabric(MAX_ACL_ENTRIES, entry.fab_idx);
+        let cnt = self.get_index_in_fabric(MAX_ACL_ENTRIES, fab_idx);
         if cnt >= ENTRIES_PER_FABRIC as u8 {
             Err(ErrorCode::NoSpace)?;
         }
@@ -455,8 +466,6 @@ impl AclMgr {
         let slot = self.entries.iter().position(|a| a.is_none());
 
         if slot.is_some() || self.entries.len() < MAX_ACL_ENTRIES {
-            let fab_idx = entry.fab_idx;
-
             let slot = if let Some(slot) = slot {
                 self.entries[slot] = Some(entry);
 
@@ -501,7 +510,7 @@ impl AclMgr {
         for entry in &mut self.entries {
             if entry
                 .as_ref()
-                .map(|e| e.fab_idx == fab_idx)
+                .map(|e| e.fab_idx == Some(fab_idx))
                 .unwrap_or(false)
             {
                 *entry = None;
@@ -606,7 +615,11 @@ impl AclMgr {
         for (curr_index, entry) in self
             .entries
             .iter_mut()
-            .filter(|e| e.as_ref().filter(|e1| e1.fab_idx == fab_idx).is_some())
+            .filter(|e| {
+                e.as_ref()
+                    .filter(|e1| e1.fab_idx == Some(fab_idx))
+                    .is_some()
+            })
             .enumerate()
         {
             if curr_index == index as usize {
@@ -625,7 +638,7 @@ impl AclMgr {
             .iter()
             .take(till_slot_index)
             .flatten()
-            .filter(|e| e.fab_idx == fab_idx)
+            .filter(|e| e.fab_idx == Some(fab_idx))
             .count() as u8
     }
 }
