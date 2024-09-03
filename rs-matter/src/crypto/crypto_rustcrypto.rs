@@ -16,6 +16,7 @@
  */
 
 use core::convert::{TryFrom, TryInto};
+use core::mem::MaybeUninit;
 
 use aes::Aes128;
 use alloc::vec;
@@ -43,7 +44,7 @@ use x509_cert::{
 use crate::{
     error::{Error, ErrorCode},
     secure_channel::crypto_rustcrypto::RandRngCore,
-    utils::rand::Rand,
+    utils::{init::InitMaybeUninit, rand::Rand},
 };
 
 type HmacSha256I = hmac::Hmac<sha2::Sha256>;
@@ -182,8 +183,9 @@ impl KeyPair {
             .try_into()
             .unwrap(),
         )]);
-        let mut pubkey = [0; 65];
-        self.get_public_key(&mut pubkey).unwrap();
+        let mut pubkey = MaybeUninit::<[u8; 65]>::uninit(); // TODO MEDIUM BUFFER
+        let pubkey = pubkey.init_zeroed();
+        self.get_public_key(pubkey).unwrap();
         let info = x509_cert::request::CertReqInfo {
             version: x509_cert::request::Version::V1,
             subject,
@@ -200,7 +202,7 @@ impl KeyPair {
                         .unwrap(),
                     ),
                 },
-                subject_public_key: BitString::from_bytes(&pubkey).unwrap(),
+                subject_public_key: BitString::from_bytes(&*pubkey).unwrap(),
             },
             attributes: Default::default(),
         };

@@ -24,7 +24,7 @@ use log::{error, info};
 use crate::acl::{self, AclEntry, AclMgr};
 use crate::data_model::objects::*;
 use crate::interaction_model::messages::ib::{attr_list_write, ListOperation};
-use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::{attribute_enum, error::*};
 
@@ -132,7 +132,7 @@ impl AccessControlCluster {
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::Acl(_) => {
-                        writer.start_array(AttrDataWriter::TAG)?;
+                        writer.start_array(&AttrDataWriter::TAG)?;
                         acl_mgr.for_each_acl(|entry| {
                             if !attr.fab_filter
                                 || entry
@@ -140,7 +140,7 @@ impl AccessControlCluster {
                                     .map(|fi| fi.get() == attr.fab_idx)
                                     .unwrap_or(false)
                             {
-                                entry.to_tlv(&mut writer, TagType::Anonymous)?;
+                                entry.to_tlv(&TLVTag::Anonymous, &mut *writer)?;
                             }
 
                             Ok(())
@@ -151,7 +151,7 @@ impl AccessControlCluster {
                     }
                     Attributes::Extension(_) => {
                         // Empty for now
-                        writer.start_array(AttrDataWriter::TAG)?;
+                        writer.start_array(&AttrDataWriter::TAG)?;
                         writer.end_container()?;
 
                         writer.complete()
@@ -234,7 +234,10 @@ mod tests {
     use crate::data_model::objects::{AttrDataEncoder, AttrDetails, Node, Privilege};
     use crate::data_model::system_model::access_control::Dataver;
     use crate::interaction_model::messages::ib::ListOperation;
-    use crate::tlv::{get_root_node_struct, ElementType, TLVElement, TLVWriter, TagType, ToTLV};
+    use crate::tlv::{
+        get_root_node_struct, TLVControl, TLVElement, TLVTag, TLVTagType, TLVValueType, TLVWriter,
+        ToTLV,
+    };
     use crate::utils::storage::WriteBuf;
 
     use super::AccessControlCluster;
@@ -252,7 +255,7 @@ mod tests {
         let acl = AccessControlCluster::new(Dataver::new(0));
 
         let new = AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case);
-        new.to_tlv(&mut tw, TagType::Anonymous).unwrap();
+        new.to_tlv(&TLVTag::Anonymous, &mut tw).unwrap();
         let data = get_root_node_struct(writebuf.as_slice()).unwrap();
 
         // Test, ACL has fabric index 2, but the accessing fabric is 1
@@ -289,7 +292,7 @@ mod tests {
         let acl = AccessControlCluster::new(Dataver::new(0));
 
         let new = AclEntry::new(FAB_2, Privilege::VIEW, AuthMode::Case);
-        new.to_tlv(&mut tw, TagType::Anonymous).unwrap();
+        new.to_tlv(&TLVTag::Anonymous, &mut tw).unwrap();
         let data = get_root_node_struct(writebuf.as_slice()).unwrap();
 
         // Test, Edit Fabric 2's index 1 - with accessing fabring as 2 - allow
@@ -324,7 +327,8 @@ mod tests {
         }
         let acl = AccessControlCluster::new(Dataver::new(0));
         // data is don't-care actually
-        let data = TLVElement::new(TagType::Anonymous, ElementType::True);
+        let data = &[TLVControl::new(TLVTagType::Anonymous, TLVValueType::Null).as_raw()];
+        let data = TLVElement::new(data.as_slice());
 
         // Test , Delete Fabric 1's index 0
         let result = acl.write_acl_attr(&mut acl_mgr, &ListOperation::DeleteItem(0), &data, FAB_1);

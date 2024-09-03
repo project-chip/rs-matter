@@ -53,11 +53,11 @@ impl SecureChannel {
 
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
-                let mut spake2p = alloc!(Spake2P::new());
+                let mut spake2p = alloc!(Spake2P::new()); // TODO LARGE BUFFER
                 Pake::new().handle(exchange, &mut spake2p).await
             }
             OpCode::CASESigma1 => {
-                let mut case_session = alloc!(CaseSession::new());
+                let mut case_session = alloc!(CaseSession::new()); // TODO LARGE BUFFER
                 Case::new().handle(exchange, &mut case_session).await
             }
             opcode => {

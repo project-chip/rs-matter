@@ -30,7 +30,7 @@ use rs_matter::data_model::sdm::nw_commissioning::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::Status;
-use rs_matter::tlv::{FromTLV, OctetStr, TLVElement};
+use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::sync::Notification;
 
@@ -70,7 +70,7 @@ impl<'a> WifiNwCommCluster<'a> {
         match attr.attr_id.try_into()? {
             Attributes::MaxNetworks => AttrType::<u8>::new().encode(writer, 1_u8),
             Attributes::Networks => {
-                writer.start_array(AttrDataWriter::TAG)?;
+                writer.start_array(&AttrDataWriter::TAG)?;
 
                 writer.end_container()?;
                 writer.complete()
@@ -79,9 +79,7 @@ impl<'a> WifiNwCommCluster<'a> {
             Attributes::ConnectMaxTimeSecs => AttrType::new().encode(writer, 60_u8),
             Attributes::InterfaceEnabled => AttrType::new().encode(writer, true),
             Attributes::LastNetworkingStatus => AttrType::new().encode(writer, 0_u8),
-            Attributes::LastNetworkID => {
-                AttrType::new().encode(writer, OctetStr("ssid".as_bytes()))
-            }
+            Attributes::LastNetworkID => AttrType::new().encode(writer, Octets("ssid".as_bytes())),
             Attributes::LastConnectErrorValue => AttrType::new().encode(writer, 0),
         }
     }

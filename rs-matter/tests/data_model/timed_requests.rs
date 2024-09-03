@@ -15,47 +15,36 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
-    data_model::objects::EncodeValue,
-    interaction_model::{
-        core::IMStatusCode,
-        messages::ib::{AttrData, AttrPath, AttrStatus},
-        messages::{ib::CmdData, ib::CmdPath, GenericPath},
-    },
-    tlv::TLVWriter,
-};
+use rs_matter::interaction_model::core::{IMStatusCode, OpCode, PROTO_ID_INTERACTION_MODEL};
+use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
+use rs_matter::interaction_model::messages::msg::{StatusResp, TimedReq};
+use rs_matter::interaction_model::messages::GenericPath;
+use rs_matter::transport::exchange::MessageMeta;
 
-use crate::{
-    common::{
-        commands::*,
-        echo_cluster,
-        handlers::{TimedInvResponse, WriteResponse},
-        im_engine::ImEngine,
-        init_env_logger,
-    },
-    echo_req, echo_resp,
+use crate::common::e2e::im::attributes::TestAttrData;
+use crate::common::e2e::im::{
+    echo_cluster, ReplyProcessor, TestInvReq, TestInvResp, TestWriteReq, TestWriteResp,
 };
+use crate::common::e2e::test::E2eTest;
+use crate::common::e2e::tlv::TLVTest;
+use crate::common::e2e::ImEngine;
+use crate::common::init_env_logger;
+use crate::{echo_req, echo_resp};
 
 #[test]
 fn test_timed_write_fail_and_success() {
+    // - 2 Timed Attr Write Transactions should fail due to timeout mismatch
     // - 1 Timed Attr Write Transaction should fail due to timeout
     // - 1 Timed Attr Write Transaction should succeed
     let val0 = 10;
     init_env_logger();
-    let attr_data0 = |tag, t: &mut TLVWriter| {
-        let _ = t.u16(tag, val0);
-    };
 
     let ep_att = GenericPath::new(
         None,
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let input = &[AttrData::new(
-        None,
-        AttrPath::new(&ep_att),
-        EncodeValue::Closure(&attr_data0),
-    )];
+    let input = &[TestAttrData::new(None, AttrPath::new(&ep_att), &val0 as _)];
 
     let ep0_att = GenericPath::new(
         Some(0),
@@ -73,20 +62,134 @@ fn test_timed_write_fail_and_success() {
         AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
     ];
 
-    // Test with incorrect handling
-    ImEngine::timed_write_reqs(input, &WriteResponse::TransactionError, 100, 500);
-
-    // Test with correct handling
     let im = ImEngine::new_default();
     let handler = im.handler();
     im.add_default_acl();
-    im.handle_timed_write_reqs(
+
+    // Test with timeout mismatch (timeout not set, but the following write req is timed)
+    im.test_one(
         &handler,
-        input,
-        &WriteResponse::TransactionSuccess(expected),
-        400,
-        0,
+        TLVTest {
+            delay_ms: None,
+            input_meta: MessageMeta {
+                proto_id: PROTO_ID_INTERACTION_MODEL,
+                proto_opcode: OpCode::WriteRequest as _,
+                reliable: true,
+            },
+            input_payload: TestWriteReq {
+                timed_request: Some(true),
+                ..TestWriteReq::reqs(input)
+            },
+            expected_meta: MessageMeta {
+                proto_id: PROTO_ID_INTERACTION_MODEL,
+                proto_opcode: OpCode::StatusResponse as _,
+                reliable: true,
+            },
+            expected_payload: StatusResp {
+                status: IMStatusCode::TimedRequestMisMatch,
+            },
+            process_reply: ReplyProcessor::none,
+        },
     );
+
+    // Test with timeout mismatch (timeout set, but the write req is not timed)
+    im.test_all(
+        &handler,
+        [
+            &TLVTest {
+                delay_ms: Some(100),
+                ..TLVTest::timed(
+                    TimedReq { timeout: 1 },
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    ReplyProcessor::none,
+                )
+            } as &dyn E2eTest,
+            &TLVTest {
+                delay_ms: None,
+                input_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::WriteRequest as _,
+                    reliable: true,
+                },
+                input_payload: TestWriteReq::reqs(input),
+                expected_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::StatusResponse as _,
+                    reliable: true,
+                },
+                expected_payload: StatusResp {
+                    status: IMStatusCode::TimedRequestMisMatch,
+                },
+                process_reply: ReplyProcessor::none,
+            },
+        ],
+    );
+
+    // Test with incorrect handling
+    im.test_all(
+        &handler,
+        [
+            &TLVTest {
+                delay_ms: Some(100),
+                ..TLVTest::timed(
+                    TimedReq { timeout: 1 },
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    ReplyProcessor::none,
+                )
+            } as &dyn E2eTest,
+            &TLVTest {
+                delay_ms: None,
+                input_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::WriteRequest as _,
+                    reliable: true,
+                },
+                input_payload: TestWriteReq {
+                    timed_request: Some(true),
+                    ..TestWriteReq::reqs(input)
+                },
+                expected_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::StatusResponse as _,
+                    reliable: true,
+                },
+                expected_payload: StatusResp {
+                    status: IMStatusCode::Timeout,
+                },
+                process_reply: ReplyProcessor::none,
+            },
+        ],
+    );
+
+    // Test with correct handling
+    im.test_all(
+        &handler,
+        [
+            &TLVTest {
+                delay_ms: None,
+                ..TLVTest::timed(
+                    TimedReq { timeout: 500 },
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    ReplyProcessor::none,
+                )
+            } as &dyn E2eTest,
+            &TLVTest::write(
+                TestWriteReq {
+                    timed_request: Some(true),
+                    ..TestWriteReq::reqs(input)
+                },
+                TestWriteResp::resp(expected),
+                ReplyProcessor::none,
+            ),
+        ],
+    );
+
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 }
 
@@ -97,50 +200,155 @@ fn test_timed_cmd_success() {
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
     let expected = &[echo_resp!(0, 10), echo_resp!(1, 30)];
-    ImEngine::timed_commands(
-        input,
-        &TimedInvResponse::TransactionSuccess(expected),
-        2000,
-        0,
-        true,
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+    im.add_default_acl();
+
+    // Test with correct handling
+    im.test_all(
+        &handler,
+        [
+            &TLVTest {
+                delay_ms: None,
+                ..TLVTest::timed(
+                    TimedReq { timeout: 2000 },
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    ReplyProcessor::none,
+                )
+            } as &dyn E2eTest,
+            &TLVTest::invoke(
+                TestInvReq {
+                    timed_request: Some(true),
+                    ..TestInvReq::reqs(input)
+                },
+                TestInvResp::resp(expected),
+                ReplyProcessor::none,
+            ),
+        ],
     );
 }
 
 #[test]
 fn test_timed_cmd_timeout() {
-    // A timed request that is executed after t imeout
+    // A timed request that is executed after a timeout
     init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    ImEngine::timed_commands(
-        input,
-        &TimedInvResponse::TransactionError(IMStatusCode::Timeout),
-        100,
-        500,
-        true,
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+    im.add_default_acl();
+
+    im.test_all(
+        &handler,
+        [
+            &TLVTest {
+                delay_ms: Some(500),
+                ..TLVTest::timed(
+                    TimedReq { timeout: 1 },
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    ReplyProcessor::none,
+                )
+            } as &dyn E2eTest,
+            &TLVTest {
+                delay_ms: None,
+                input_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::InvokeRequest as _,
+                    reliable: true,
+                },
+                input_payload: TestInvReq {
+                    timed_request: Some(true),
+                    ..TestInvReq::reqs(input)
+                },
+                expected_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::StatusResponse as _,
+                    reliable: true,
+                },
+                expected_payload: StatusResp {
+                    status: IMStatusCode::Timeout,
+                },
+                process_reply: ReplyProcessor::none,
+            },
+        ],
     );
 }
 
 #[test]
-fn test_timed_cmd_timedout_mismatch() {
+fn test_timed_cmd_timeout_mismatch() {
     // A timed request with timeout mismatch
     init_env_logger();
 
     let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    ImEngine::timed_commands(
-        input,
-        &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
-        2000,
-        0,
-        false,
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+    im.add_default_acl();
+
+    // Test with timeout mismatch (timeout not set, but the following write req is timed)
+    im.test_one(
+        &handler,
+        TLVTest {
+            delay_ms: None,
+            input_meta: MessageMeta {
+                proto_id: PROTO_ID_INTERACTION_MODEL,
+                proto_opcode: OpCode::InvokeRequest as _,
+                reliable: true,
+            },
+            input_payload: TestInvReq {
+                timed_request: Some(true),
+                ..TestInvReq::reqs(input)
+            },
+            expected_meta: MessageMeta {
+                proto_id: PROTO_ID_INTERACTION_MODEL,
+                proto_opcode: OpCode::StatusResponse as _,
+                reliable: true,
+            },
+            expected_payload: StatusResp {
+                status: IMStatusCode::TimedRequestMisMatch,
+            },
+            process_reply: ReplyProcessor::none,
+        },
     );
 
-    let input = &[echo_req!(0, 5), echo_req!(1, 10)];
-    ImEngine::timed_commands(
-        input,
-        &TimedInvResponse::TransactionError(IMStatusCode::TimedRequestMisMatch),
-        0,
-        0,
-        true,
+    // Test with timeout mismatch (timeout set, but the following write req is timed)
+    im.test_all(
+        &handler,
+        [
+            &TLVTest {
+                delay_ms: None,
+                ..TLVTest::timed(
+                    TimedReq { timeout: 1 },
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    ReplyProcessor::none,
+                )
+            } as &dyn E2eTest,
+            &TLVTest {
+                delay_ms: None,
+                input_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::InvokeRequest as _,
+                    reliable: true,
+                },
+                input_payload: TestInvReq::reqs(input),
+                expected_meta: MessageMeta {
+                    proto_id: PROTO_ID_INTERACTION_MODEL,
+                    proto_opcode: OpCode::StatusResponse as _,
+                    reliable: true,
+                },
+                expected_payload: StatusResp {
+                    status: IMStatusCode::TimedRequestMisMatch,
+                },
+                process_reply: ReplyProcessor::none,
+            },
+        ],
     );
 }

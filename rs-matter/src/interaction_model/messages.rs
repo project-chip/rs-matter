@@ -32,7 +32,11 @@ pub struct GenericPath {
 }
 
 impl GenericPath {
-    pub fn new(endpoint: Option<EndptId>, cluster: Option<ClusterId>, leaf: Option<u32>) -> Self {
+    pub const fn new(
+        endpoint: Option<EndptId>,
+        cluster: Option<ClusterId>,
+        leaf: Option<u32>,
+    ) -> Self {
         Self {
             endpoint,
             cluster,
@@ -66,9 +70,12 @@ impl GenericPath {
 
 pub mod msg {
 
+    use core::fmt;
+
     use crate::{
+        error::Error,
         interaction_model::core::IMStatusCode,
-        tlv::{FromTLV, TLVArray, ToTLV},
+        tlv::{FromTLV, TLVArray, TLVElement, ToTLV},
     };
 
     use super::ib::{
@@ -76,42 +83,83 @@ pub mod msg {
         EventPath,
     };
 
-    #[derive(Debug, Default, FromTLV, ToTLV)]
+    #[derive(Debug, Default, Clone, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct SubscribeReq<'a> {
         pub keep_subs: bool,
         pub min_int_floor: u16,
         pub max_int_ceil: u16,
         pub attr_requests: Option<TLVArray<'a, AttrPath>>,
-        event_requests: Option<TLVArray<'a, EventPath>>,
-        event_filters: Option<TLVArray<'a, EventFilter>>,
+        pub event_requests: Option<TLVArray<'a, EventPath>>,
+        pub event_filters: Option<TLVArray<'a, EventFilter>>,
         // The Context Tags are discontiguous for some reason
-        _dummy: Option<bool>,
+        pub _dummy: Option<bool>,
         pub fabric_filtered: bool,
         pub dataver_filters: Option<TLVArray<'a, DataVersionFilter>>,
     }
 
-    impl<'a> SubscribeReq<'a> {
-        pub fn new(fabric_filtered: bool, min_int_floor: u16, max_int_ceil: u16) -> Self {
-            Self {
-                fabric_filtered,
-                min_int_floor,
-                max_int_ceil,
-                ..Default::default()
-            }
+    #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct SubscribeReqRef<'a>(TLVElement<'a>);
+
+    impl<'a> SubscribeReqRef<'a> {
+        pub const fn new(element: TLVElement<'a>) -> Self {
+            Self(element)
         }
 
-        pub fn set_attr_requests(mut self, requests: &'a [AttrPath]) -> Self {
-            self.attr_requests = Some(TLVArray::new(requests));
-            self
+        pub fn keep_subs(&self) -> Result<bool, Error> {
+            self.0.r#struct()?.find_ctx(0)?.bool()
+        }
+
+        pub fn min_int_floor(&self) -> Result<u16, Error> {
+            self.0.r#struct()?.find_ctx(1)?.u16()
+        }
+
+        pub fn max_int_ceil(&self) -> Result<u16, Error> {
+            self.0.r#struct()?.find_ctx(2)?.u16()
+        }
+
+        pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(3)?)
+        }
+
+        pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)
+        }
+
+        pub fn event_filters(&self) -> Result<Option<TLVArray<'a, EventFilter>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(5)?)
+        }
+
+        pub fn fabric_filtered(&self) -> Result<bool, Error> {
+            self.0.r#struct()?.find_ctx(7)?.bool()
+        }
+
+        pub fn dataver_filters(&self) -> Result<Option<TLVArray<'a, DataVersionFilter>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(8)?)
         }
     }
 
-    #[derive(Debug, FromTLV, ToTLV)]
+    impl fmt::Debug for SubscribeReqRef<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("SubscribeReqRef")
+                .field("keep_subs", &self.keep_subs())
+                .field("min_int_floor", &self.min_int_floor())
+                .field("max_int_ceil", &self.max_int_ceil())
+                .field("attr_requests", &self.attr_requests())
+                .field("event_requests", &self.event_requests())
+                .field("event_filters", &self.event_filters())
+                .field("fabric_filtered", &self.fabric_filtered())
+                .field("dataver_filters", &self.dataver_filters())
+                .finish()
+        }
+    }
+
+    #[derive(Debug, Default, Clone, FromTLV, ToTLV)]
     pub struct SubscribeResp {
         pub subs_id: u32,
         // The Context Tags are discontiguous for some reason
-        _dummy: Option<u32>,
+        pub _dummy: Option<u32>,
         pub max_int: u16,
     }
 
@@ -125,12 +173,12 @@ pub mod msg {
         }
     }
 
-    #[derive(FromTLV, ToTLV, Debug)]
+    #[derive(Debug, Clone, FromTLV, ToTLV)]
     pub struct TimedReq {
         pub timeout: u16,
     }
 
-    #[derive(FromTLV, ToTLV)]
+    #[derive(Debug, Clone, FromTLV, ToTLV)]
     pub struct StatusResp {
         pub status: IMStatusCode,
     }
@@ -141,7 +189,7 @@ pub mod msg {
         InvokeRequests = 2,
     }
 
-    #[derive(FromTLV, ToTLV, Debug)]
+    #[derive(Debug, Default, Clone, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct InvReq<'a> {
         pub suppress_response: Option<bool>,
@@ -149,45 +197,129 @@ pub mod msg {
         pub inv_requests: Option<TLVArray<'a, CmdData<'a>>>,
     }
 
+    #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct InvReqRef<'a>(TLVElement<'a>);
+
+    impl<'a> InvReqRef<'a> {
+        pub const fn new(element: TLVElement<'a>) -> Self {
+            Self(element)
+        }
+
+        pub fn suppress_response(&self) -> Result<bool, Error> {
+            self.0
+                .r#struct()?
+                .find_ctx(0)?
+                .non_empty()
+                .map(|t| t.bool())
+                .unwrap_or(Ok(false))
+        }
+
+        pub fn timed_request(&self) -> Result<bool, Error> {
+            self.0
+                .r#struct()?
+                .find_ctx(1)?
+                .non_empty()
+                .map(|t| t.bool())
+                .unwrap_or(Ok(false))
+        }
+
+        pub fn inv_requests(&self) -> Result<Option<TLVArray<'a, CmdData<'a>>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?)
+        }
+    }
+
+    impl fmt::Debug for InvReqRef<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("InvReqRef")
+                .field("suppress_response", &self.suppress_response())
+                .field("timed_request", &self.timed_request())
+                .field("inv_requests", &self.inv_requests())
+                .finish()
+        }
+    }
+
     #[derive(FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
     pub struct InvResp<'a> {
         pub suppress_response: Option<bool>,
-        pub inv_responses: Option<TLVArray<'a, ib::InvResp<'a>>>,
+        pub inv_responses: Option<TLVArray<'a, ib::CmdResp<'a>>>,
     }
 
     // This enum is helpful when we are constructing the response
     // step by step in incremental manner
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[repr(u8)]
     pub enum InvRespTag {
         SupressResponse = 0,
         InvokeResponses = 1,
     }
 
-    #[derive(Default, ToTLV, FromTLV, Debug)]
+    #[derive(Debug, Default, Clone, ToTLV, FromTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct ReadReq<'a> {
         pub attr_requests: Option<TLVArray<'a, AttrPath>>,
-        event_requests: Option<TLVArray<'a, EventPath>>,
-        event_filters: Option<TLVArray<'a, EventFilter>>,
+        pub event_requests: Option<TLVArray<'a, EventPath>>,
+        pub event_filters: Option<TLVArray<'a, EventFilter>>,
         pub fabric_filtered: bool,
         pub dataver_filters: Option<TLVArray<'a, DataVersionFilter>>,
     }
 
-    impl<'a> ReadReq<'a> {
-        pub fn new(fabric_filtered: bool) -> Self {
-            Self {
-                fabric_filtered,
-                ..Default::default()
-            }
+    #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct ReadReqRef<'a>(TLVElement<'a>);
+
+    impl<'a> ReadReqRef<'a> {
+        pub const fn new(element: TLVElement<'a>) -> Self {
+            Self(element)
         }
 
-        pub fn set_attr_requests(mut self, requests: &'a [AttrPath]) -> Self {
-            self.attr_requests = Some(TLVArray::new(requests));
-            self
+        pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(0)?)
+        }
+
+        pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(1)?)
+        }
+
+        pub fn event_filters(&self) -> Result<Option<TLVArray<'a, EventFilter>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(2)?)
+        }
+
+        pub fn fabric_filtered(&self) -> Result<bool, Error> {
+            self.0.r#struct()?.find_ctx(3)?.bool()
+        }
+
+        pub fn dataver_filters(&self) -> Result<Option<TLVArray<'a, DataVersionFilter>>, Error> {
+            Option::from_tlv(&self.0.r#struct()?.find_ctx(4)?)
         }
     }
 
-    #[derive(FromTLV, ToTLV, Debug)]
+    impl fmt::Debug for ReadReqRef<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("ReadReqRef")
+                .field("attr_requests", &self.attr_requests())
+                .field("event_requests", &self.event_requests())
+                .field("event_filters", &self.event_filters())
+                .field("fabric_filtered", &self.fabric_filtered())
+                .field("dataver_filters", &self.dataver_filters())
+                .finish()
+        }
+    }
+
+    // This enum is helpful when we are constructing the request
+    // step by step in incremental manner
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[repr(u8)]
+    pub enum ReadReqTag {
+        AttrRequests = 0,
+        EventRequests = 1,
+        EventFilters = 2,
+        FabricFiltered = 3,
+        DataVersionFilters = 4,
+    }
+
+    #[derive(Debug, Clone, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct WriteReq<'a> {
         pub supress_response: Option<bool>,
@@ -196,18 +328,66 @@ pub mod msg {
         pub more_chunked: Option<bool>,
     }
 
-    impl<'a> WriteReq<'a> {
-        pub fn new(supress_response: bool, write_requests: &'a [AttrData<'a>]) -> Self {
-            let mut w = Self {
-                supress_response: None,
-                write_requests: TLVArray::new(write_requests),
-                timed_request: None,
-                more_chunked: None,
-            };
-            if supress_response {
-                w.supress_response = Some(true);
-            }
-            w
+    // This enum is helpful when we are constructing the request
+    // step by step in incremental manner
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[repr(u8)]
+    pub enum WriteReqTag {
+        SuppressResponse = 0,
+        TimedRequest = 1,
+        WriteRequests = 2,
+        MoreChunked = 3,
+    }
+
+    #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
+    #[tlvargs(lifetime = "'a")]
+    pub struct WriteReqRef<'a>(TLVElement<'a>);
+
+    impl<'a> WriteReqRef<'a> {
+        pub const fn new(element: TLVElement<'a>) -> Self {
+            Self(element)
+        }
+
+        pub fn supress_response(&self) -> Result<bool, Error> {
+            self.0
+                .r#struct()?
+                .find_ctx(0)?
+                .non_empty()
+                .map(|t| t.bool())
+                .unwrap_or(Ok(false))
+        }
+
+        pub fn timed_request(&self) -> Result<bool, Error> {
+            self.0
+                .r#struct()?
+                .find_ctx(1)?
+                .non_empty()
+                .map(|t| t.bool())
+                .unwrap_or(Ok(false))
+        }
+
+        pub fn write_requests(&self) -> Result<TLVArray<'a, AttrData>, Error> {
+            TLVArray::new(self.0.r#struct()?.find_ctx(2)?)
+        }
+
+        pub fn more_chunked(&self) -> Result<bool, Error> {
+            self.0
+                .r#struct()?
+                .find_ctx(3)?
+                .non_empty()
+                .map(|t| t.bool())
+                .unwrap_or(Ok(false))
+        }
+    }
+
+    impl fmt::Debug for WriteReqRef<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("WriteReqRef")
+                .field("supress_response", &self.supress_response())
+                .field("timed_request", &self.timed_request())
+                .field("write_requests", &self.write_requests())
+                .field("more_chunked", &self.more_chunked())
+                .finish()
         }
     }
 
@@ -247,10 +427,10 @@ pub mod ib {
     use core::fmt::Debug;
 
     use crate::{
-        data_model::objects::{AttrDetails, AttrId, ClusterId, CmdId, EncodeValue, EndptId},
+        data_model::objects::{AttrDetails, AttrId, ClusterId, CmdId, EndptId},
         error::{Error, ErrorCode},
         interaction_model::core::IMStatusCode,
-        tlv::{FromTLV, Nullable, TLVElement, TLVWriter, TagType, ToTLV},
+        tlv::{FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV, TLV},
     };
     use log::error;
 
@@ -259,12 +439,12 @@ pub mod ib {
     // Command Response
     #[derive(Clone, FromTLV, ToTLV, Debug)]
     #[tlvargs(lifetime = "'a")]
-    pub enum InvResp<'a> {
+    pub enum CmdResp<'a> {
         Cmd(CmdData<'a>),
         Status(CmdStatus),
     }
 
-    impl<'a> InvResp<'a> {
+    impl<'a> CmdResp<'a> {
         pub fn status_new(cmd_path: CmdPath, status: IMStatusCode, cluster_status: u16) -> Self {
             Self::Status(CmdStatus {
                 path: cmd_path,
@@ -273,18 +453,18 @@ pub mod ib {
         }
     }
 
-    impl<'a> From<CmdData<'a>> for InvResp<'a> {
+    impl<'a> From<CmdData<'a>> for CmdResp<'a> {
         fn from(value: CmdData<'a>) -> Self {
             Self::Cmd(value)
         }
     }
 
-    pub enum InvRespTag {
+    pub enum CmdRespTag {
         Cmd = 0,
         Status = 1,
     }
 
-    impl<'a> From<CmdStatus> for InvResp<'a> {
+    impl<'a> From<CmdStatus> for CmdResp<'a> {
         fn from(value: CmdStatus) -> Self {
             Self::Status(value)
         }
@@ -312,11 +492,11 @@ pub mod ib {
     #[tlvargs(lifetime = "'a")]
     pub struct CmdData<'a> {
         pub path: CmdPath,
-        pub data: EncodeValue<'a>,
+        pub data: TLVElement<'a>,
     }
 
     impl<'a> CmdData<'a> {
-        pub fn new(path: CmdPath, data: EncodeValue<'a>) -> Self {
+        pub const fn new(path: CmdPath, data: TLVElement<'a>) -> Self {
             Self { path, data }
         }
     }
@@ -327,7 +507,7 @@ pub mod ib {
     }
 
     // Status
-    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
     pub struct Status {
         pub status: IMStatusCode,
         pub cluster_status: u16,
@@ -379,16 +559,16 @@ pub mod ib {
     }
 
     // Attribute Data
-    #[derive(Clone, PartialEq, FromTLV, ToTLV, Debug)]
+    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
     #[tlvargs(lifetime = "'a")]
     pub struct AttrData<'a> {
         pub data_ver: Option<u32>,
         pub path: AttrPath,
-        pub data: EncodeValue<'a>,
+        pub data: TLVElement<'a>,
     }
 
     impl<'a> AttrData<'a> {
-        pub fn new(data_ver: Option<u32>, path: AttrPath, data: EncodeValue<'a>) -> Self {
+        pub fn new(data_ver: Option<u32>, path: AttrPath, data: TLVElement<'a>) -> Self {
             Self {
                 data_ver,
                 path,
@@ -421,7 +601,7 @@ pub mod ib {
     where
         F: FnMut(ListOperation, &TLVElement) -> Result<(), Error>,
     {
-        if let Some(Nullable::NotNull(index)) = attr.list_index {
+        if let Some(Some(index)) = attr.list_index.map(Into::into) {
             // If list index is valid,
             //    - this is a modify item or delete item operation
             if data.null().is_ok() {
@@ -430,15 +610,14 @@ pub mod ib {
             } else {
                 f(ListOperation::EditItem(index), data)
             }
-        } else if data.confirm_array().is_ok() {
+        } else if let Ok(array) = data.array() {
             // If data is list, this is either Delete List or OverWrite List operation
             // in either case, we have to first delete the whole list
             f(ListOperation::DeleteList, data)?;
             // Now the data must be a list, that should be added item by item
 
-            let container = data.enter().ok_or(ErrorCode::Invalid)?;
-            for d in container {
-                f(ListOperation::AddItem, &d)?;
+            for d in array.iter() {
+                f(ListOperation::AddItem, &d?)?;
             }
             Ok(())
         } else {
@@ -447,7 +626,7 @@ pub mod ib {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
     pub struct AttrStatus {
         path: AttrPath,
         status: Status,
@@ -463,7 +642,7 @@ pub mod ib {
     }
 
     // Attribute Path
-    #[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
+    #[derive(Default, Clone, Debug, PartialEq, Eq, Hash, FromTLV, ToTLV)]
     #[tlvargs(datatype = "list")]
     pub struct AttrPath {
         pub tag_compression: Option<bool>,
@@ -475,12 +654,18 @@ pub mod ib {
     }
 
     impl AttrPath {
-        pub fn new(path: &GenericPath) -> Self {
+        pub const fn new(path: &GenericPath) -> Self {
             Self {
                 endpoint: path.endpoint,
                 cluster: path.cluster,
-                attr: path.leaf.map(|x| x as u16),
-                ..Default::default()
+                attr: if let Some(leaf) = path.leaf {
+                    Some(leaf as u16)
+                } else {
+                    None
+                },
+                tag_compression: None,
+                node: None,
+                list_index: None,
             }
         }
 
@@ -541,8 +726,12 @@ pub mod ib {
     }
 
     impl ToTLV for CmdPath {
-        fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-            self.path.to_tlv(tw, tag_type)
+        fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+            self.path.to_tlv(tag, tw)
+        }
+
+        fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+            self.path.tlv_iter(tag)
         }
     }
 

@@ -17,22 +17,22 @@
 
 //! This module contains the logic for generating the pairing code and the QR code for easy pairing.
 
+use log::info;
+
+use qr::no_optional_data;
+use verhoeff::Verhoeff;
+
+use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::error::Error;
+use crate::secure_channel::spake2p::VerifierOption;
+use crate::CommissioningData;
+
+use self::code::{compute_pairing_code, pretty_print_pairing_code};
+use self::qr::{compute_qr_code_text, print_qr_code};
+
 pub mod code;
 pub mod qr;
 pub mod vendor_identifiers;
-
-use log::info;
-use verhoeff::Verhoeff;
-
-use crate::{
-    codec::base38, data_model::cluster_basic_information::BasicInfoConfig, error::Error,
-    secure_channel::spake2p::VerifierOption, CommissioningData,
-};
-
-use self::{
-    code::{compute_pairing_code, pretty_print_pairing_code},
-    qr::{compute_qr_code_text, print_qr_code},
-};
 
 // TODO: Rework as a `bitflags!` enum
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -90,10 +90,17 @@ pub fn print_pairing_code_and_qr(
     buf: &mut [u8],
 ) -> Result<(), Error> {
     let pairing_code = compute_pairing_code(comm_data);
+
     pretty_print_pairing_code(&pairing_code);
 
-    let (qr_code, remaining_buf) =
-        compute_qr_code_text(dev_det, comm_data, discovery_capabilities, &[], buf)?;
+    let (qr_code, remaining_buf) = compute_qr_code_text(
+        dev_det,
+        comm_data,
+        discovery_capabilities,
+        no_optional_data,
+        buf,
+    )?;
+
     print_qr_code(qr_code, remaining_buf)?;
 
     Ok(())

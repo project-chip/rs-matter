@@ -19,6 +19,7 @@ use crate::{
     crypto::{self, SYMM_KEY_LEN_BYTES},
     error::{Error, ErrorCode},
     tlv::{FromTLV, ToTLV},
+    utils::init::{init, zeroed, Init},
 };
 
 type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
@@ -30,6 +31,20 @@ pub struct KeySet {
 }
 
 impl KeySet {
+    pub const fn new0() -> Self {
+        Self {
+            epoch_key: [0; SYMM_KEY_LEN_BYTES],
+            op_key: [0; SYMM_KEY_LEN_BYTES],
+        }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            epoch_key <- zeroed(),
+            op_key <- zeroed(),
+        })
+    }
+
     pub fn new(epoch_key: &[u8], compressed_id: &[u8]) -> Result<Self, Error> {
         let mut ks = KeySet::default();
         KeySet::op_key_from_ipk(epoch_key, compressed_id, &mut ks.op_key)?;

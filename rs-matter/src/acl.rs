@@ -25,7 +25,9 @@ use crate::data_model::objects::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::fabric;
 use crate::interaction_model::messages::GenericPath;
-use crate::tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV};
+use crate::tlv::{
+    EitherIter, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, TLVWriter, ToTLV, TLV,
+};
 use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -57,14 +59,17 @@ impl FromTLV<'_> for AuthMode {
 }
 
 impl ToTLV for AuthMode {
-    fn to_tlv(
-        &self,
-        tw: &mut crate::tlv::TLVWriter,
-        tag: crate::tlv::TagType,
-    ) -> Result<(), Error> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         match self {
             AuthMode::Invalid => Ok(()),
             _ => tw.u8(tag, *self as u8),
+        }
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+        match self {
+            AuthMode::Invalid => EitherIter::First(core::iter::empty()),
+            _ => EitherIter::Second(TLV::u8(tag, *self as u8).into_tlv_iter()),
         }
     }
 }
@@ -291,7 +296,7 @@ type Targets = Nullable<[Option<Target>; TARGETS_PER_ENTRY]>;
 impl Targets {
     fn init_notnull() -> Self {
         const INIT_TARGETS: Option<Target> = None;
-        Nullable::NotNull([INIT_TARGETS; TARGETS_PER_ENTRY])
+        Nullable::some([INIT_TARGETS; TARGETS_PER_ENTRY])
     }
 }
 
@@ -336,19 +341,18 @@ impl AclEntry {
     }
 
     pub fn add_target(&mut self, target: Target) -> Result<(), Error> {
-        if self.targets.is_null() {
+        if self.targets.is_none() {
             self.targets = Targets::init_notnull();
         }
         let index = self
             .targets
             .as_ref()
-            .notnull()
             .unwrap()
             .iter()
             .position(|s| s.is_none())
             .ok_or(ErrorCode::NoSpace)?;
 
-        self.targets.as_mut().notnull().unwrap()[index] = Some(target);
+        self.targets.as_mut().unwrap()[index] = Some(target);
 
         Ok(())
     }
@@ -382,7 +386,7 @@ impl AclEntry {
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
         let mut allow = false;
         let mut entries_exist = false;
-        match self.targets.as_ref().notnull() {
+        match self.targets.as_ref() {
             None => allow = true, // Allow if targets are NULL
             Some(targets) => {
                 for t in targets.iter().flatten() {
@@ -583,9 +587,18 @@ impl AclMgr {
     }
 
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
-        let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
+        let entries = TLVElement::new(data).array()?.iter();
 
-        tlv::vec_from_tlv(&mut self.entries, &root)?;
+        self.entries.clear();
+
+        for entry in entries {
+            let entry = entry?;
+
+            self.entries
+                .push(Option::<AclEntry>::from_tlv(&entry)?)
+                .map_err(|_| ErrorCode::NoSpace)?;
+        }
+
         self.changed = false;
 
         Ok(())
@@ -597,7 +610,7 @@ impl AclMgr {
             let mut tw = TLVWriter::new(&mut wb);
             self.entries
                 .as_slice()
-                .to_tlv(&mut tw, TagType::Anonymous)?;
+                .to_tlv(&TLVTag::Anonymous, &mut tw)?;
 
             self.changed = false;
 

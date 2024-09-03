@@ -22,7 +22,8 @@ use strum::FromRepr;
 use crate::attribute_enum;
 use crate::data_model::objects::*;
 use crate::error::Error;
-use crate::tlv::{TLVWriter, TagType, ToTLV};
+use crate::tlv::TLVTag;
+use crate::tlv::{TLVWrite, TLVWriter, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 
 pub const ID: u32 = 0x001D;
@@ -132,7 +133,7 @@ impl<'a> DescriptorCluster<'a> {
                         self.encode_devtype_list(
                             attr.node,
                             attr.endpoint_id,
-                            AttrDataWriter::TAG,
+                            &AttrDataWriter::TAG,
                             &mut writer,
                         )?;
                         writer.complete()
@@ -141,7 +142,7 @@ impl<'a> DescriptorCluster<'a> {
                         self.encode_server_list(
                             attr.node,
                             attr.endpoint_id,
-                            AttrDataWriter::TAG,
+                            &AttrDataWriter::TAG,
                             &mut writer,
                         )?;
                         writer.complete()
@@ -150,7 +151,7 @@ impl<'a> DescriptorCluster<'a> {
                         self.encode_parts_list(
                             attr.node,
                             attr.endpoint_id,
-                            AttrDataWriter::TAG,
+                            &AttrDataWriter::TAG,
                             &mut writer,
                         )?;
                         writer.complete()
@@ -159,7 +160,7 @@ impl<'a> DescriptorCluster<'a> {
                         self.encode_client_list(
                             attr.node,
                             attr.endpoint_id,
-                            AttrDataWriter::TAG,
+                            &AttrDataWriter::TAG,
                             &mut writer,
                         )?;
                         writer.complete()
@@ -175,14 +176,14 @@ impl<'a> DescriptorCluster<'a> {
         &self,
         node: &Node,
         endpoint_id: u16,
-        tag: TagType,
+        tag: &TLVTag,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
         tw.start_array(tag)?;
         for endpoint in node.endpoints {
             if endpoint.id == endpoint_id {
                 let dev_type = endpoint.device_type;
-                dev_type.to_tlv(tw, TagType::Anonymous)?;
+                dev_type.to_tlv(&TagType::Anonymous, &mut *tw)?;
             }
         }
 
@@ -193,14 +194,14 @@ impl<'a> DescriptorCluster<'a> {
         &self,
         node: &Node,
         endpoint_id: u16,
-        tag: TagType,
+        tag: &TLVTag,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
         tw.start_array(tag)?;
         for endpoint in node.endpoints {
             if endpoint.id == endpoint_id {
                 for cluster in endpoint.clusters {
-                    tw.u32(TagType::Anonymous, cluster.id as _)?;
+                    tw.u32(&TLVTag::Anonymous, cluster.id as _)?;
                 }
             }
         }
@@ -212,14 +213,14 @@ impl<'a> DescriptorCluster<'a> {
         &self,
         node: &Node,
         endpoint_id: u16,
-        tag: TagType,
+        tag: &TLVTag,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
         tw.start_array(tag)?;
 
         for endpoint in node.endpoints {
             if self.matcher.describe(endpoint_id, endpoint.id) {
-                tw.u16(TagType::Anonymous, endpoint.id)?;
+                tw.u16(&TLVTag::Anonymous, endpoint.id)?;
             }
         }
 
@@ -230,7 +231,7 @@ impl<'a> DescriptorCluster<'a> {
         &self,
         _node: &Node,
         _endpoint_id: u16,
-        tag: TagType,
+        tag: &TLVTag,
         tw: &mut TLVWriter,
     ) -> Result<(), Error> {
         // No Clients supported

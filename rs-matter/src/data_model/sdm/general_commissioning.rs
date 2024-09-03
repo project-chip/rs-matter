@@ -22,7 +22,7 @@ use rs_matter_macros::idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
-use crate::tlv::{FromTLV, TLVElement, ToTLV, UtfStr};
+use crate::tlv::{FromTLV, TLVElement, ToTLV, Utf8Str};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::{attribute_enum, cmd_enter};
@@ -60,7 +60,7 @@ pub enum RespCommands {
 #[tlvargs(lifetime = "'a")]
 struct CommonResponse<'a> {
     error_code: u8,
-    debug_txt: UtfStr<'a>,
+    debug_txt: Utf8Str<'a>,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -172,7 +172,7 @@ impl GenCommCluster {
                     }
                     Attributes::BasicCommissioningInfo(_) => {
                         self.basic_comm_info
-                            .to_tlv(&mut writer, AttrDataWriter::TAG)?;
+                            .to_tlv(&AttrDataWriter::TAG, &mut *writer)?;
                         writer.complete()
                     }
                     Attributes::SupportsConcurrentConnection(codec) => {
@@ -234,7 +234,7 @@ impl GenCommCluster {
 
         let cmd_data = CommonResponse {
             error_code: status,
-            debug_txt: UtfStr::new(b""),
+            debug_txt: "",
         };
 
         encoder
@@ -252,15 +252,17 @@ impl GenCommCluster {
     ) -> Result<(), Error> {
         cmd_enter!("Set Regulatory Config");
         let country_code = data
-            .find_tag(1)
+            .r#struct()
             .map_err(|_| ErrorCode::InvalidCommand)?
-            .slice()
+            .find_ctx(1)
+            .map_err(|_| ErrorCode::InvalidCommand)?
+            .utf8()
             .map_err(|_| ErrorCode::InvalidCommand)?;
-        info!("Received country code: {:?}", country_code);
+        info!("Received country code: {}", country_code);
 
         let cmd_data = CommonResponse {
             error_code: 0,
-            debug_txt: UtfStr::new(b""),
+            debug_txt: "",
         };
 
         encoder
@@ -299,7 +301,7 @@ impl GenCommCluster {
 
         let cmd_data = CommonResponse {
             error_code: status,
-            debug_txt: UtfStr::new(b""),
+            debug_txt: "",
         };
 
         encoder

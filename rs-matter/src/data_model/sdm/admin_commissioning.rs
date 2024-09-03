@@ -118,10 +118,8 @@ impl AdminCommCluster {
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::WindowStatus(codec) => codec.encode(writer, 1),
-                    Attributes::AdminVendorId(codec) => codec.encode(writer, Nullable::NotNull(1)),
-                    Attributes::AdminFabricIndex(codec) => {
-                        codec.encode(writer, Nullable::NotNull(1))
-                    }
+                    Attributes::AdminVendorId(codec) => codec.encode(writer, Nullable::some(1)),
+                    Attributes::AdminFabricIndex(codec) => codec.encode(writer, Nullable::some(1)),
                 }
             }
         } else {

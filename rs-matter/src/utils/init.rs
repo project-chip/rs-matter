@@ -77,7 +77,16 @@ pub trait InitMaybeUninit<T> {
         self.try_init_with(init).unwrap()
     }
 
+    /// Try to initialize Self with the given fallible in-place initializer.
     fn try_init_with<I: Init<T, E>, E>(&mut self, init: I) -> Result<&mut T, E>;
+
+    /// Initialize Self with all-zeroes
+    fn init_zeroed(&mut self) -> &mut T
+    where
+        T: Zeroable,
+    {
+        self.init_with(pinned_init::zeroed())
+    }
 }
 
 impl<T> InitMaybeUninit<T> for MaybeUninit<T> {

@@ -14,9 +14,13 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
+
+use core::mem::MaybeUninit;
+
 use crate::{
     error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVWriter, TagType, ToTLV},
+    tlv::{FromTLV, TLVTag, TLVWrite, ToTLV, TLV},
+    utils::init::InitMaybeUninit,
 };
 
 pub const SYMM_KEY_LEN_BITS: usize = 128;
@@ -67,32 +71,40 @@ impl<'a> FromTLV<'a> for KeyPair {
     where
         Self: Sized,
     {
-        t.confirm_array()?.enter();
+        let array = t.array()?;
+        let mut iter = array.iter();
 
-        if let Some(mut array) = t.enter() {
-            let pub_key = array.next().ok_or(ErrorCode::Invalid)?.slice()?;
-            let priv_key = array.next().ok_or(ErrorCode::Invalid)?.slice()?;
+        let pub_key = iter.next().ok_or(ErrorCode::Invalid)??.str()?;
+        let priv_key = iter.next().ok_or(ErrorCode::Invalid)??.str()?;
 
-            KeyPair::new_from_components(pub_key, priv_key)
-        } else {
-            Err(ErrorCode::Invalid.into())
-        }
+        KeyPair::new_from_components(pub_key, priv_key)
     }
 }
 
 impl ToTLV for KeyPair {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag: TagType) -> Result<(), Error> {
-        let mut buf = [0; 1024]; // TODO
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        let mut pubkey_buf = MaybeUninit::<[u8; EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+        let pubkey_buf = pubkey_buf.init_zeroed();
+
+        let mut privkey_buf = MaybeUninit::<[u8; BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+        let privkey_buf = privkey_buf.init_zeroed();
+
+        let pubkey_len = self.get_public_key(pubkey_buf)?;
+        let privkey_len = self.get_private_key(privkey_buf)?;
 
         tw.start_array(tag)?;
 
-        let size = self.get_public_key(&mut buf)?;
-        tw.str16(TagType::Anonymous, &buf[..size])?;
-
-        let size = self.get_private_key(&mut buf)?;
-        tw.str16(TagType::Anonymous, &buf[..size])?;
+        tw.str(&TLVTag::Anonymous, &pubkey_buf[..pubkey_len])?;
+        tw.str(&TLVTag::Anonymous, &privkey_buf[..privkey_len])?;
 
         tw.end_container()
+    }
+
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+        unimplemented!("Not implemented for `KeyPair`");
+
+        #[allow(unreachable_code)]
+        core::iter::empty()
     }
 }
 
