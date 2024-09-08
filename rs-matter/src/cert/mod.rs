@@ -805,14 +805,14 @@ impl<'a> CertVerifier<'a> {
         let asn1 = &asn1[..len];
 
         let k = KeyPair::new_from_public(parent.get_pubkey())?;
-        k.verify_msg(asn1, self.cert.get_signature()).map_err(|e| {
-            error!(
-                "Error in signature verification of certificate: {:x?} by {:x?}",
-                self.cert.get_subject_key_id(),
-                parent.get_subject_key_id()
-            );
-            e
-        })?;
+        k.verify_msg(asn1, self.cert.get_signature())
+            .inspect_err(|e| {
+                error!(
+                    "Error {e} in signature verification of certificate: {:x?} by {:x?}",
+                    self.cert.get_subject_key_id(),
+                    parent.get_subject_key_id()
+                );
+            })?;
 
         // TODO: other validation checks
         Ok(CertVerifier::new(parent))
