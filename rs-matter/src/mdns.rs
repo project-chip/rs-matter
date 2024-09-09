@@ -221,6 +221,7 @@ impl ServiceMode {
                     service_subtypes: &[
                         &Self::get_long_service_subtype(*discriminator),
                         &Self::get_short_service_type(*discriminator),
+                        "_CM",
                     ],
                     txt_kvs,
                 })
