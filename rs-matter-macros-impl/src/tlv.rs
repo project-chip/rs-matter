@@ -4,7 +4,8 @@ use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::meta::ParseNestedMeta;
 use syn::parse::ParseStream;
-use syn::{DeriveInput, Lifetime, LitInt, LitStr, Type};
+use syn::token::{Gt, Lt};
+use syn::{DeriveInput, Lifetime, LifetimeParam, LitInt, LitStr, Type};
 
 #[derive(PartialEq, Debug)]
 struct TlvArgs {
@@ -13,6 +14,7 @@ struct TlvArgs {
     datatype: String,
     unordered: bool,
     lifetime: syn::Lifetime,
+    lifetime_explicit: bool,
 }
 
 impl Default for TlvArgs {
@@ -23,6 +25,7 @@ impl Default for TlvArgs {
             datatype: "struct".to_string(),
             unordered: false,
             lifetime: Lifetime::new("'_", Span::call_site()),
+            lifetime_explicit: false,
         }
     }
 }
@@ -37,6 +40,7 @@ impl TlvArgs {
         } else if meta.path.is_ident("lifetime") {
             self.lifetime =
                 Lifetime::new(&meta.value()?.parse::<LitStr>()?.value(), Span::call_site());
+            self.lifetime_explicit = true;
         } else if meta.path.is_ident("datatype") {
             self.datatype = meta.value()?.parse::<LitStr>()?.value();
         } else if meta.path.is_ident("unordered") {
@@ -511,7 +515,31 @@ fn gen_fromtlv_for_struct_named(
     generics: &syn::Generics,
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
-    let lifetime = tlvargs.lifetime;
+
+    let (lifetime, impl_generics) = if tlvargs.lifetime_explicit {
+        (tlvargs.lifetime, generics.clone())
+    } else {
+        // The `'_` default lifetime from tlvargs won't do.
+        // We need a named lifetime that has to be part of the `impl<>` block.
+
+        let lifetime = Lifetime::new("'__from_tlv", Span::call_site());
+
+        let mut impl_generics = generics.clone();
+
+        if impl_generics.gt_token.is_none() {
+            impl_generics.gt_token = Some(Gt::default());
+            impl_generics.lt_token = Some(Lt::default());
+        }
+
+        impl_generics
+            .params
+            .push(syn::GenericParam::Lifetime(LifetimeParam::new(
+                lifetime.clone(),
+            )));
+
+        (lifetime, impl_generics)
+    };
+
     let datatype = format_ident!("r#{}", tlvargs.datatype);
 
     let mut idents = Vec::new();
@@ -538,7 +566,7 @@ fn gen_fromtlv_for_struct_named(
     let seq_method = format_ident!("{}_ctx", if tlvargs.unordered { "find" } else { "scan" });
 
     quote! {
-        impl #generics #krate::tlv::FromTLV<#lifetime> for #struct_name #generics {
+        impl #impl_generics #krate::tlv::FromTLV<#lifetime> for #struct_name #generics {
             fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
                 #[allow(unused_mut)]
                 let mut seq = element.#datatype()?;
@@ -548,9 +576,23 @@ fn gen_fromtlv_for_struct_named(
                     )*
                 })
             }
+
+            fn init_from_tlv(element: #krate::tlv::TLVElement<#lifetime>) -> impl #krate::utils::init::Init<Self, #krate::error::Error> {
+                #krate::utils::init::into_init(move || {
+                    #[allow(unused_mut)]
+                    let mut seq = element.#datatype()?;
+
+                    let init = #krate::utils::init::try_init!(Self {
+                        #(#idents <- #types::init_from_tlv(seq.#seq_method(#tags)?),
+                        )*
+                    }? #krate::error::Error);
+
+                    Ok(init)
+                })
+            }
         }
 
-        impl #generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #struct_name #generics {
+        impl #impl_generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #struct_name #generics {
             type Error = #krate::error::Error;
 
             fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
@@ -900,9 +942,9 @@ mod tests {
         assert_tokenstreams_eq!(
             &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
-                impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestS {
+                impl<'__from_tlv> rs_matter_maybe_renamed::tlv::FromTLV<'__from_tlv> for TestS {
                     fn from_tlv(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
                         #[allow(unused_mut)]
                         let mut seq = element.r#struct()?;
@@ -911,16 +953,39 @@ mod tests {
                             field1: u8::from_tlv(&seq.scan_ctx(0u8)?)?,
                             field2: u32::from_tlv(&seq.scan_ctx(1u8)?)?,
                             field_opt: Option::from_tlv(&seq.scan_ctx(2u8)?)?,
-                            field_null: rs_matter_maybe_renamed::tlv::Nullable::from_tlv(&seq.scan_ctx(3u8)?)?,
+                            field_null: rs_matter_maybe_renamed::tlv::Nullable::from_tlv(
+                                &seq.scan_ctx(3u8)?,
+                            )?,
+                        })
+                    }
+
+                    fn init_from_tlv(
+                        element: rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
+                    ) -> impl rs_matter_maybe_renamed::utils::init::Init<
+                        Self,
+                        rs_matter_maybe_renamed::error::Error,
+                    > {
+                        rs_matter_maybe_renamed::utils::init::into_init(move || {
+                            #[allow(unused_mut)]
+                            let mut seq = element.r#struct()?;
+
+                            let init = rs_matter_maybe_renamed::utils::init::try_init!(Self {
+                                field1 <- u8::init_from_tlv(seq.scan_ctx(0u8)?),
+                                field2 <- u32::init_from_tlv(seq.scan_ctx(1u8)?),
+                                field_opt <- Option::init_from_tlv(seq.scan_ctx(2u8)?),
+                                field_null <- rs_matter_maybe_renamed::tlv::Nullable::init_from_tlv(seq.scan_ctx(3u8)?),
+                            }? rs_matter_maybe_renamed::error::Error);
+
+                            Ok(init)
                         })
                     }
                 }
 
-                impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestS {
+                impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestS {
                     type Error = rs_matter_maybe_renamed::error::Error;
 
                     fn try_from(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, Self::Error> {
                         use rs_matter_maybe_renamed::tlv::FromTLV;
                         Self::from_tlv(element)

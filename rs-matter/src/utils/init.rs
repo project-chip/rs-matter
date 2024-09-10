@@ -21,6 +21,14 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 /// Re-export `pinned-init` because its API is very unstable currently (0.0.x)
 pub use pinned_init::*;
 
+/// Convert a closure returning `Result<impl Init<T, E>, E>` into an `Init<T, E>`.
+pub fn into_init<F, T, E, I: Init<T, E>>(f: F) -> impl Init<T, E>
+where
+    F: FnOnce() -> Result<I, E>,
+{
+    unsafe { init_from_closure(move |slot| f()?.__init(slot)) }
+}
+
 /// An extension trait for converting `Init<T, Infallible>` to a fallible `Init<T, E>`.
 /// Useful when chaining an infallible initializer with a fallible chained initialization function.
 pub trait IntoFallibleInit<T>: Init<T, Infallible> {

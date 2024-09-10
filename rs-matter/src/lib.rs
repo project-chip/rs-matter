@@ -71,6 +71,7 @@
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(async_fn_in_trait)]
+#![recursion_limit = "256"]
 
 pub mod acl;
 pub mod cert;
