@@ -52,7 +52,7 @@ pub enum OperNwType {
 pub const fn endpoint(id: EndptId, op_nw_type: OperNwType) -> Endpoint<'static> {
     Endpoint {
         id,
-        device_type: super::device_types::DEV_TYPE_ROOT_NODE,
+        device_types: &[super::device_types::DEV_TYPE_ROOT_NODE],
         clusters: clusters(op_nw_type),
     }
 }

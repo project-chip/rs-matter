@@ -244,7 +244,7 @@ const NODE: Node<'static> = Node {
         root_endpoint::endpoint(0, root_endpoint::OperNwType::Wifi),
         Endpoint {
             id: 1,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

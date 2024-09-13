@@ -182,8 +182,9 @@ impl<'a> DescriptorCluster<'a> {
         tw.start_array(tag)?;
         for endpoint in node.endpoints {
             if endpoint.id == endpoint_id {
-                let dev_type = endpoint.device_type;
-                dev_type.to_tlv(&TagType::Anonymous, &mut *tw)?;
+                for dev_type in endpoint.device_types {
+                    dev_type.to_tlv(&TagType::Anonymous, &mut *tw)?;
+                }
             }
         }
 
