@@ -15,28 +15,14 @@
  *    limitations under the License.
  */
 
-#![cfg(feature = "std")]
+pub use parsebuf::*;
+pub use ringbuf::*;
+pub use vec::*;
+pub use writebuf::*;
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
+pub mod pooled;
 
-/// An `embassy-sync` `RawMutex` implementation using `std::sync::Mutex`.
-/// TODO: Upstream into `embassy-sync` itself.
-#[derive(Default)]
-pub struct StdRawMutex(std::sync::Mutex<()>);
-
-impl StdRawMutex {
-    pub const fn new() -> Self {
-        Self(std::sync::Mutex::new(()))
-    }
-}
-
-unsafe impl RawMutex for StdRawMutex {
-    #[allow(clippy::declare_interior_mutable_const)]
-    const INIT: Self = StdRawMutex(std::sync::Mutex::new(()));
-
-    fn lock<R>(&self, f: impl FnOnce() -> R) -> R {
-        let _guard = self.0.lock().unwrap();
-
-        f()
-    }
-}
+mod parsebuf;
+mod ringbuf;
+mod vec;
+mod writebuf;

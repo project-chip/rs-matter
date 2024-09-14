@@ -26,7 +26,7 @@ use embassy_time::{Instant, Timer};
 use log::{debug, error, info, warn};
 
 use crate::interaction_model::messages::ib::AttrStatus;
-use crate::utils::buf::BufferAccess;
+use crate::utils::storage::pooled::BufferAccess;
 use crate::{error::*, Matter};
 
 use crate::interaction_model::core::{
@@ -39,7 +39,7 @@ use crate::interaction_model::messages::msg::{
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, TLVWriter, TagType};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
-use crate::utils::writebuf::WriteBuf;
+use crate::utils::storage::WriteBuf;
 
 use super::objects::*;
 use super::subscriptions::Subscriptions;

@@ -26,7 +26,8 @@ use alloc::{vec, vec::Vec};
 use embassy_futures::block_on;
 
 use crate::secure_channel::spake2p::VerifierData;
-use crate::utils::{rand::sys_rand, std_mutex::StdRawMutex};
+use crate::utils::rand::sys_rand;
+use crate::utils::sync::blocking::raw::StdRawMutex;
 
 use super::*;
 

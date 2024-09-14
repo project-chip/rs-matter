@@ -19,7 +19,7 @@ use num_derive::FromPrimitive;
 
 use crate::error::Error;
 use crate::transport::exchange::{Exchange, MessageMeta};
-use crate::utils::writebuf::WriteBuf;
+use crate::utils::storage::WriteBuf;
 
 use super::status_report::{GeneralCode, StatusReport};
 

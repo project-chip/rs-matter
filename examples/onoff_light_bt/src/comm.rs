@@ -32,7 +32,7 @@ use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::Status;
 use rs_matter::tlv::{FromTLV, OctetStr, TLVElement};
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::utils::notification::Notification;
+use rs_matter::utils::sync::Notification;
 
 /// A _fake_ cluster implementing the Matter Network Commissioning Cluster
 /// for managing WiFi networks.

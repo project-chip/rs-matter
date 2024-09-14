@@ -27,13 +27,15 @@ use embassy_time::{Duration, Instant, Timer};
 use log::trace;
 
 use context::LockError;
+
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend};
-use crate::utils::ifmutex::IfMutex;
+use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
+use crate::utils::sync::IfMutex;
 use crate::CommissioningData;
 
 pub use context::{BtpContext, MAX_BTP_SESSIONS};
@@ -65,7 +67,7 @@ pub(crate) const MAX_MTU: u16 = (MAX_BTP_SEGMENT_SIZE + GATT_HEADER_SIZE) as u16
 pub struct Btp<C, M, T> {
     gatt: T,
     context: C,
-    send_buf: IfMutex<NoopRawMutex, heapless::Vec<u8, MAX_BTP_SEGMENT_SIZE>>,
+    send_buf: IfMutex<NoopRawMutex, crate::utils::storage::Vec<u8, MAX_BTP_SEGMENT_SIZE>>,
     ack_timeout_secs: u16,
     conn_idle_timeout_secs: u16,
     _mutex: PhantomData<M>,
@@ -80,6 +82,10 @@ where
     #[inline(always)]
     pub fn new_builtin(context: C) -> Self {
         Self::new(BuiltinGattPeripheral::new(None), context)
+    }
+
+    pub fn init_builtin<I: Init<C>>(context: C) -> impl Init<Self> {
+        Self::init(BuiltinGattPeripheral::new(None), context)
     }
 }
 
@@ -111,11 +117,25 @@ where
         Self {
             gatt,
             context,
-            send_buf: IfMutex::new(heapless::Vec::new()),
+            send_buf: IfMutex::new(crate::utils::storage::Vec::new()),
             ack_timeout_secs,
             conn_idle_timeout_secs,
             _mutex: PhantomData,
         }
+    }
+
+    /// Create an in-place initializer for a BTP object with the provided
+    /// `GattPeripheral` trait in-place initializer and and with the provided BTP
+    /// `context` in-place initializer.
+    pub fn init<IT: Init<T>, IC: Init<C>>(gatt: IT, context: IC) -> impl Init<Self> {
+        init!(Self {
+            gatt <- gatt,
+            context <- context,
+            send_buf <- IfMutex::init(crate::utils::storage::Vec::init()),
+            ack_timeout_secs: BTP_ACK_TIMEOUT_SECS,
+            conn_idle_timeout_secs: BTP_CONN_IDLE_TIMEOUT_SECS,
+            _mutex: PhantomData,
+        })
     }
 
     /// Run the BTP protocol
@@ -291,7 +311,7 @@ where
     /// in case it is used by another operation.
     async fn send_buf(
         &self,
-    ) -> impl DerefMut<Target = heapless::Vec<u8, MAX_BTP_SEGMENT_SIZE>> + '_ {
+    ) -> impl DerefMut<Target = crate::utils::storage::Vec<u8, MAX_BTP_SEGMENT_SIZE>> + '_ {
         let mut buf = self.send_buf.lock().await;
 
         // Unwrap is safe because the max size of the buffer is MAX_PDU_SIZE

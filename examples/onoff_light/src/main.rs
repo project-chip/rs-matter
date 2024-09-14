@@ -39,11 +39,35 @@ use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
-use rs_matter::utils::buf::PooledBuffers;
+use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
+use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::MATTER_PORT;
+use static_cell::StaticCell;
 
 mod dev_att;
+
+static DEV_DET: BasicInfoConfig = BasicInfoConfig {
+    vid: 0xFFF1,
+    pid: 0x8000,
+    hw_ver: 2,
+    sw_ver: 1,
+    sw_ver_str: "1",
+    serial_no: "aabbccdd",
+    device_name: "OnOff Light",
+    product_name: "Light123",
+    vendor_name: "Vendor PQR",
+};
+
+static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
+
+static MATTER: StaticCell<Matter> = StaticCell::new();
+
+static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
+
+static SUBSCRIPTIONS: StaticCell<Subscriptions<3>> = StaticCell::new();
+
+static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
@@ -54,7 +78,7 @@ fn main() -> Result<(), Error> {
         // e.g., an opt-level of "0" will require a several times' larger stack.
         //
         // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(95 * 1024)
+        .stack_size(65 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -72,36 +96,22 @@ fn run() -> Result<(), Error> {
         core::mem::size_of::<PooledBuffers<10, NoopRawMutex, IMBuffer>>()
     );
 
-    let dev_det = BasicInfoConfig {
-        vid: 0xFFF1,
-        pid: 0x8000,
-        hw_ver: 2,
-        sw_ver: 1,
-        sw_ver_str: "1",
-        serial_no: "aabbccdd",
-        device_name: "OnOff Light",
-        product_name: "Light123",
-        vendor_name: "Vendor PQR",
-    };
-
-    let dev_att = dev_att::HardCodedDevAtt::new();
-
-    let matter = Matter::new(
-        &dev_det,
-        &dev_att,
+    let matter = MATTER.uninit().init_with(Matter::init(
+        &DEV_DET,
+        &DEV_ATT,
         // NOTE:
         // For `no_std` environments, provide your own epoch and rand functions here
         MdnsService::Builtin,
         rs_matter::utils::epoch::sys_epoch,
         rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
-    );
+    ));
 
     matter.initialize_transport_buffers()?;
 
     info!("Matter initialized");
 
-    let buffers = PooledBuffers::<10, NoopRawMutex, _>::new(0);
+    let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
     info!("IM buffers initialized");
 
@@ -109,14 +119,14 @@ fn run() -> Result<(), Error> {
 
     let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(matter.rand()));
 
-    let subscriptions = Subscriptions::<3>::new();
+    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom On/Off clusters
     let dm_handler = HandlerCompat(dm_handler(&matter, &on_off));
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+    let responder = DefaultResponder::new(&matter, buffers, &subscriptions, dm_handler);
     info!(
         "Responder memory: Responder={}B, Runner={}B",
         core::mem::size_of_val(&responder),
@@ -161,8 +171,10 @@ fn run() -> Result<(), Error> {
 
     // NOTE:
     // Replace with your own persister for e.g. `no_std` environments
-    let mut psm = Psm::new(&matter, std::env::temp_dir().join("rs-matter"))?;
-    let mut persist = pin!(psm.run());
+
+    let psm = PSM.uninit().init_with(Psm::init());
+
+    let mut persist = pin!(psm.run(std::env::temp_dir().join("rs-matter"), &matter));
 
     // Combine all async tasks in a single one
     let all = select4(

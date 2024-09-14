@@ -27,7 +27,8 @@ use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
 use crate::interaction_model::{self, core::PROTO_ID_INTERACTION_MODEL};
 use crate::secure_channel::{self, common::PROTO_ID_SECURE_CHANNEL};
-use crate::utils::{epoch::Epoch, writebuf::WriteBuf};
+use crate::utils::epoch::Epoch;
+use crate::utils::storage::WriteBuf;
 use crate::Matter;
 
 use super::core::{Packet, PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};

@@ -22,7 +22,7 @@ use bitflags::bitflags;
 use log::trace;
 
 use crate::error::{Error, ErrorCode};
-use crate::utils::writebuf::WriteBuf;
+use crate::utils::storage::WriteBuf;
 
 bitflags! {
     /// Models the flags in the BTP header.

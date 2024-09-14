@@ -26,7 +26,8 @@ use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::packet::{HandshakeReq, HandshakeResp};
 use crate::transport::network::btp::{GATT_HEADER_SIZE, MAX_MTU, MIN_MTU};
 use crate::transport::network::{BtAddr, MAX_RX_PACKET_SIZE};
-use crate::utils::{ringbuf::RingBuf, writebuf::WriteBuf};
+use crate::utils::init::{init, Init};
+use crate::utils::storage::{RingBuf, WriteBuf};
 
 use self::packet::BtpHdr;
 
@@ -172,18 +173,17 @@ struct RecvWindow {
 }
 
 impl RecvWindow {
-    /// Initialize a new receiving window with the provided window size.
-    #[inline(always)]
-    pub const fn new(window_size: u8) -> Self {
-        Self {
-            buf: RingBuf::new(),
+    /// Create an in-place initializer for a receiving window with the provided window size.
+    pub fn init(window_size: u8) -> impl Init<Self> {
+        init!(Self {
+            buf <- RingBuf::init(),
             buf_messages_ct: 0,
             level: window_size,
             ack_level: 0,
             ack_seq: 255,
             received_at: Instant::MAX,
             rem_msg_len: 0,
-        }
+        })
     }
 
     /// Process an incoming BTP segment, updating the state of the window accordingly.
@@ -375,21 +375,21 @@ pub struct Session {
 }
 
 impl Session {
-    /// Initialize a new BTP session with the provided address, version, MTU and window size.
+    /// Return an in-place initializer for a new BTP session with the provided address, version,
+    /// MTU and window size.
     ///
     /// Initializing a session is done based on the data that had arrived in the Handshake Request message,
     /// written by a remote peer on the `C1` characteristic.
-    #[inline(always)]
-    const fn new(address: BtAddr, version: u8, mtu: u16, window_size: u8) -> Self {
-        Self {
+    fn init(address: BtAddr, version: u8, mtu: u16, window_size: u8) -> impl Init<Self> {
+        init!(Self {
             address,
             state: SessionState::New,
             version,
             mtu,
             window_size,
-            recv_window: RecvWindow::new(window_size),
+            recv_window <- RecvWindow::init(window_size),
             send_window: SendWindow::new(window_size),
-        }
+        })
     }
 
     /// Return the address of the remote peer.
@@ -495,7 +495,7 @@ impl Session {
         address: BtAddr,
         data: &[u8],
         gatt_mtu: Option<u16>,
-    ) -> Result<Self, Error> {
+    ) -> Result<impl Init<Self>, Error> {
         let mut iter = data.iter();
 
         let hdr = BtpHdr::from((&mut iter).copied())?;
@@ -537,7 +537,7 @@ impl Session {
 
         info!("\n>>>>> (BTP IO) {address} [{hdr}]\nHANDSHAKE REQ {req:?}\nSelected version: {version}, MTU: {mtu}, window size: {window_size}");
 
-        Ok(Self::new(address, version, mtu, window_size))
+        Ok(Self::init(address, version, mtu, window_size))
     }
 
     /// Process an incoming BTP segment of a regular data or ACK type, updating the state of the session accordingly.

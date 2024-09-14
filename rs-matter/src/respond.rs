@@ -31,8 +31,8 @@ use crate::interaction_model::core::PROTO_ID_INTERACTION_MODEL;
 use crate::secure_channel::busy::BusySecureChannel;
 use crate::secure_channel::core::SecureChannel;
 use crate::transport::exchange::Exchange;
-use crate::utils::buf::BufferAccess;
 use crate::utils::select::Coalesce;
+use crate::utils::storage::pooled::BufferAccess;
 use crate::Matter;
 
 /// Send a busy response if - after that many ms - the exchange

@@ -18,8 +18,7 @@
 use core::fmt;
 
 use crate::error::*;
-use crate::utils::parsebuf::ParseBuf;
-use crate::utils::writebuf::WriteBuf;
+use crate::utils::storage::{ParseBuf, WriteBuf};
 use bitflags::bitflags;
 use log::trace;
 

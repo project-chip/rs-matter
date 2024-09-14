@@ -15,12 +15,16 @@
  *    limitations under the License.
  */
 
-//! A variation of the `embassy-sync` async mutex that only locks the mutex if a certain condition on the content of the data holds true.
+//! A variation of the `embassy-sync` async mutex that only locks the mutex if a certain
+//! condition on the content of the data holds true.
 //! Check `embassy_sync::Mutex` for the original unconditional implementation.
+
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
+
+use crate::utils::init::{init, Init, UnsafeCellInit};
 
 use super::signal::Signal;
 
@@ -54,6 +58,14 @@ where
             state: Signal::<M, _>::new(false),
             inner: UnsafeCell::new(value),
         }
+    }
+
+    /// Creates a mutex in-place initializer with the given value initializer.
+    pub fn init<I: Init<T>>(value: I) -> impl Init<Self> {
+        init!(Self {
+            state: Signal::<M, _>::new(false),
+            inner <- UnsafeCell::init(value),
+        })
     }
 }
 

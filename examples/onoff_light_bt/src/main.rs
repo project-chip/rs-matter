@@ -62,10 +62,9 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
-use rs_matter::utils::buf::PooledBuffers;
-use rs_matter::utils::notification::Notification;
 use rs_matter::utils::select::Coalesce;
-use rs_matter::utils::std_mutex::StdRawMutex;
+use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::utils::sync::{blocking::raw::StdRawMutex, Notification};
 use rs_matter::MATTER_PORT;
 
 mod comm;
@@ -182,8 +181,8 @@ fn run() -> Result<(), Error> {
 
     // NOTE:
     // Replace with your own persister for e.g. `no_std` environments
-    let mut psm = Psm::new(&matter, std::env::temp_dir().join("rs-matter"))?;
-    let mut persist = pin!(psm.run());
+    let mut psm: Psm<4096> = Psm::new();
+    let mut persist = pin!(psm.run(std::env::temp_dir().join("rs-matter"), &matter));
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first

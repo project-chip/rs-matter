@@ -120,7 +120,7 @@ impl<'a> ParseBuf<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::parsebuf::*;
+    use crate::utils::storage::ParseBuf;
 
     #[test]
     fn test_parse_with_success() {

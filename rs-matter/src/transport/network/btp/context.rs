@@ -15,14 +15,16 @@
  *    limitations under the License.
  */
 
-use core::cell::RefCell;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use embassy_sync::blocking_mutex::{raw::RawMutex, Mutex};
 use log::{error, info, trace, warn};
 
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::BtAddr;
-use crate::utils::notification::Notification;
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init, IntoFallibleInit};
+use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::Notification;
 
 use super::{session::Session, GattPeripheralEvent};
 
@@ -182,7 +184,7 @@ pub struct BtpContext<M>
 where
     M: RawMutex,
 {
-    pub(crate) sessions: Mutex<M, RefCell<heapless::Vec<Session, MAX_BTP_SESSIONS>>>,
+    pub(crate) sessions: Mutex<M, RefCell<crate::utils::storage::Vec<Session, MAX_BTP_SESSIONS>>>,
     pub(crate) handshake_notif: Notification<M>,
     pub(crate) available_notif: Notification<M>,
     pub(crate) recv_notif: Notification<M>,
@@ -207,13 +209,25 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            sessions: Mutex::new(RefCell::new(heapless::Vec::new())),
+            sessions: Mutex::new(RefCell::new(crate::utils::storage::Vec::new())),
             handshake_notif: Notification::new(),
             available_notif: Notification::new(),
             recv_notif: Notification::new(),
             ack_notif: Notification::new(),
             send_notif: Notification::new(),
         }
+    }
+
+    /// Create a BTP context in-place initializer.
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            sessions <- Mutex::init(RefCell::init(crate::utils::storage::Vec::init())),
+            handshake_notif: Notification::new(),
+            available_notif: Notification::new(),
+            recv_notif: Notification::new(),
+            ack_notif: Notification::new(),
+            send_notif: Notification::new(),
+        })
     }
 }
 
@@ -251,9 +265,11 @@ where
                     warn!("Too many BTP sessions, dropping a handshake request from address {address}");
                 } else {
                     // Unwrap is safe because we checked the length above
-                    sessions
-                        .push(Session::process_rx_handshake(address, data, gatt_mtu)?)
-                        .unwrap();
+                    sessions.push_init(
+                        Session::process_rx_handshake(address, data, gatt_mtu)?.into_fallible::<Error>(),
+                        || ErrorCode::NoSpace.into(),
+                    )
+                    .unwrap();
                 }
 
                 Ok(())

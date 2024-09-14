@@ -20,7 +20,7 @@ use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 use crate::{
     error::ErrorCode,
     tlv::{ElementType, TLVElement, TLVWriter, TagType, ToTLV},
-    utils::writebuf::WriteBuf,
+    utils::storage::WriteBuf,
 };
 
 use super::{

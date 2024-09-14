@@ -213,7 +213,7 @@ impl<'a> WriteBuf<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::writebuf::*;
+    use crate::utils::storage::WriteBuf;
 
     #[test]
     fn test_append_le_with_success() {

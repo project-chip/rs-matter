@@ -235,7 +235,7 @@ mod tests {
     use crate::data_model::system_model::access_control::Dataver;
     use crate::interaction_model::messages::ib::ListOperation;
     use crate::tlv::{get_root_node_struct, ElementType, TLVElement, TLVWriter, TagType, ToTLV};
-    use crate::utils::writebuf::WriteBuf;
+    use crate::utils::storage::WriteBuf;
 
     use super::AccessControlCluster;
 

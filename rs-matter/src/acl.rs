@@ -15,19 +15,21 @@
  *    limitations under the License.
  */
 
-use core::{cell::RefCell, fmt::Display, num::NonZeroU8};
+use core::{fmt::Display, num::NonZeroU8};
 
-use crate::{
-    data_model::objects::{Access, ClusterId, EndptId, Privilege},
-    error::{Error, ErrorCode},
-    fabric,
-    interaction_model::messages::GenericPath,
-    tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV},
-    transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC},
-    utils::writebuf::WriteBuf,
-};
 use log::error;
+
 use num_derive::FromPrimitive;
+
+use crate::data_model::objects::{Access, ClusterId, EndptId, Privilege};
+use crate::error::{Error, ErrorCode};
+use crate::fabric;
+use crate::interaction_model::messages::GenericPath;
+use crate::tlv::{self, FromTLV, Nullable, TLVElement, TLVList, TLVWriter, TagType, ToTLV};
+use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
+use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
+use crate::utils::storage::WriteBuf;
 
 // Matter Minimum Requirements
 pub const SUBJECTS_PER_ENTRY: usize = 4;
@@ -417,7 +419,7 @@ impl AclEntry {
 
 const MAX_ACL_ENTRIES: usize = ENTRIES_PER_FABRIC * fabric::MAX_SUPPORTED_FABRICS;
 
-type AclEntries = heapless::Vec<Option<AclEntry>, MAX_ACL_ENTRIES>;
+type AclEntries = crate::utils::storage::Vec<Option<AclEntry>, MAX_ACL_ENTRIES>;
 
 pub struct AclMgr {
     entries: AclEntries,
@@ -431,12 +433,21 @@ impl Default for AclMgr {
 }
 
 impl AclMgr {
+    /// Create a new ACL Manager
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
             entries: AclEntries::new(),
             changed: false,
         }
+    }
+
+    /// Return an in-place initializer for ACL Manager
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            entries <- AclEntries::init(),
+            changed: false,
+        })
     }
 
     pub fn erase_all(&mut self) -> Result<(), Error> {
@@ -574,7 +585,7 @@ impl AclMgr {
     pub fn load(&mut self, data: &[u8]) -> Result<(), Error> {
         let root = TLVList::new(data).iter().next().ok_or(ErrorCode::Invalid)?;
 
-        tlv::from_tlv(&mut self.entries, &root)?;
+        tlv::vec_from_tlv(&mut self.entries, &root)?;
         self.changed = false;
 
         Ok(())
@@ -656,13 +667,15 @@ impl core::fmt::Display for AclMgr {
 #[cfg(test)]
 #[allow(clippy::bool_assert_comparison)]
 pub(crate) mod tests {
-    use core::{cell::RefCell, num::NonZeroU8};
+    use core::num::NonZeroU8;
 
     use crate::{
         acl::{gen_noc_cat, AccessorSubjects},
         data_model::objects::{Access, Privilege},
         interaction_model::messages::GenericPath,
     };
+
+    use crate::utils::cell::RefCell;
 
     use super::{AccessReq, Accessor, AclEntry, AclMgr, AuthMode, Target};
 

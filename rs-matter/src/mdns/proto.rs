@@ -1064,7 +1064,7 @@ mod tests {
                             assert_eq!(t, str);
                         }
 
-                        while let Some(t) = txt.next() {
+                        for t in txt {
                             if !t.is_empty() {
                                 panic!("Unexpected TXT string {:?} for {}", t, expected.owner);
                             }

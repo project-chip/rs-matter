@@ -19,58 +19,96 @@ pub use fileio::*;
 
 #[cfg(feature = "std")]
 pub mod fileio {
+    use core::mem::MaybeUninit;
+
     use std::fs;
     use std::io::{Read, Write};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use log::info;
 
     use crate::error::{Error, ErrorCode};
+    use crate::utils::init::{init, Init};
     use crate::Matter;
 
-    pub struct Psm<'a> {
-        matter: &'a Matter<'a>,
-        dir: PathBuf,
-        buf: [u8; 4096],
+    pub struct Psm<const N: usize = 4096> {
+        buf: MaybeUninit<[u8; N]>,
     }
 
-    impl<'a> Psm<'a> {
+    impl<const N: usize> Default for Psm<N> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<const N: usize> Psm<N> {
         #[inline(always)]
-        pub fn new(matter: &'a Matter<'a>, dir: PathBuf) -> Result<Self, Error> {
-            fs::create_dir_all(&dir)?;
+        pub const fn new() -> Self {
+            Self {
+                buf: MaybeUninit::uninit(),
+            }
+        }
 
-            info!("Persisting from/to {}", dir.display());
+        pub fn init() -> impl Init<Self> {
+            init!(Self {
+                buf <- crate::utils::init::zeroed(),
+            })
+        }
 
-            let mut buf = [0; 4096];
+        pub fn load(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
+            fs::create_dir_all(dir)?;
 
-            if let Some(data) = Self::load(&dir, "acls", &mut buf)? {
+            if let Some(data) = Self::load_key(dir, "acls", unsafe { self.buf.assume_init_mut() })?
+            {
                 matter.load_acls(data)?;
             }
 
-            if let Some(data) = Self::load(&dir, "fabrics", &mut buf)? {
+            if let Some(data) =
+                Self::load_key(dir, "fabrics", unsafe { self.buf.assume_init_mut() })?
+            {
                 matter.load_fabrics(data)?;
             }
 
-            Ok(Self { matter, dir, buf })
+            Ok(())
         }
 
-        pub async fn run(&mut self) -> Result<(), Error> {
-            loop {
-                self.matter.wait_changed().await;
+        pub fn store(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
+            if matter.is_changed() {
+                fs::create_dir_all(dir)?;
 
-                if self.matter.is_changed() {
-                    if let Some(data) = self.matter.store_acls(&mut self.buf)? {
-                        Self::store(&self.dir, "acls", data)?;
-                    }
-
-                    if let Some(data) = self.matter.store_fabrics(&mut self.buf)? {
-                        Self::store(&self.dir, "fabrics", data)?;
-                    }
+                if let Some(data) = matter.store_acls(unsafe { self.buf.assume_init_mut() })? {
+                    Self::store_key(dir, "acls", data)?;
                 }
+
+                if let Some(data) = matter.store_fabrics(unsafe { self.buf.assume_init_mut() })? {
+                    Self::store_key(dir, "fabrics", data)?;
+                }
+            }
+
+            Ok(())
+        }
+
+        pub async fn run<P: AsRef<Path>>(
+            &mut self,
+            dir: P,
+            matter: &Matter<'_>,
+        ) -> Result<(), Error> {
+            let dir = dir.as_ref();
+
+            self.load(dir, matter)?;
+
+            loop {
+                matter.wait_changed().await;
+
+                self.store(dir, matter)?;
             }
         }
 
-        fn load<'b>(dir: &Path, key: &str, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        fn load_key<'b>(
+            dir: &Path,
+            key: &str,
+            buf: &'b mut [u8],
+        ) -> Result<Option<&'b [u8]>, Error> {
             let path = dir.join(key);
 
             match fs::File::open(path) {
@@ -101,7 +139,7 @@ pub mod fileio {
             }
         }
 
-        fn store(dir: &Path, key: &str, data: &[u8]) -> Result<(), Error> {
+        fn store_key(dir: &Path, key: &str, data: &[u8]) -> Result<(), Error> {
             let path = dir.join(key);
 
             let mut file = fs::File::create(path)?;
