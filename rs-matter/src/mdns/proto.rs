@@ -586,7 +586,7 @@ impl<'a> Service<'a> {
             for (k, v) in self.txt_kvs {
                 octets.append_slice(&[(k.len() + v.len() + 1) as u8])?;
                 octets.append_slice(k.as_bytes())?;
-                octets.append_slice(&[b'='])?;
+                octets.append_slice(b"=")?;
                 octets.append_slice(v.as_bytes())?;
             }
 

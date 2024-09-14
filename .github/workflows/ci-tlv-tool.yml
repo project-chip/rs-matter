@@ -43,7 +43,7 @@ jobs:
         working-directory: tools/tlv
 
       - name: Archive artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: tlv
           path: tools/tlv/target/debug/tlv
