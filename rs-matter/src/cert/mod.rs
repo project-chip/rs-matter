@@ -666,7 +666,7 @@ impl<'a> CertRef<'a> {
         Ok(authority.is_some())
     }
 
-    fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
+    pub fn as_asn1(&self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut w = ASN1Writer::new(buf);
         self.encode(&mut w)?;
         Ok(w.as_slice().len())
