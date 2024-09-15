@@ -22,7 +22,6 @@ use num_derive::FromPrimitive;
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
-use crate::secure_channel::spake2p::VerifierData;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
 use crate::{attribute_enum, cmd_enter};
@@ -81,7 +80,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     ],
     commands: &[
         Commands::OpenCommWindow as _,
-        // Commands::OpenBasicCommWindow as _,
+        Commands::OpenBasicCommWindow as _,
         Commands::RevokeComm as _,
     ],
 };
@@ -89,11 +88,16 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 #[derive(FromTLV)]
 #[tlvargs(lifetime = "'a")]
 pub struct OpenCommWindowReq<'a> {
-    _timeout: u16,
+    timeout: u16,
     verifier: OctetStr<'a>,
     discriminator: u16,
     iterations: u32,
     salt: OctetStr<'a>,
+}
+
+#[derive(FromTLV)]
+pub struct OpenBasicCommWindowReq {
+    timeout: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -136,8 +140,10 @@ impl AdminCommCluster {
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
             Commands::OpenCommWindow => self.handle_command_opencomm_win(exchange, data)?,
+            Commands::OpenBasicCommWindow => {
+                self.handle_command_open_basic_comm_win(exchange, data)?
+            }
             Commands::RevokeComm => self.handle_command_revokecomm_win(exchange, data)?,
-            _ => Err(ErrorCode::CommandNotFound)?,
         }
 
         self.data_ver.changed();
@@ -152,18 +158,35 @@ impl AdminCommCluster {
     ) -> Result<(), Error> {
         cmd_enter!("Open Commissioning Window");
         let req = OpenCommWindowReq::from_tlv(data)?;
-        let verifier = VerifierData::new(req.verifier.0, req.iterations, req.salt.0);
+
+        exchange.matter().pase_mgr.borrow_mut().enable_pase_session(
+            req.verifier.0,
+            req.salt.0,
+            req.iterations,
+            req.discriminator,
+            req.timeout,
+            &exchange.matter().transport_mgr.mdns,
+        )
+    }
+
+    fn handle_command_open_basic_comm_win(
+        &self,
+        exchange: &Exchange,
+        data: &TLVElement,
+    ) -> Result<(), Error> {
+        cmd_enter!("Open Basic Commissioning Window");
+        let req = OpenBasicCommWindowReq::from_tlv(data)?;
+
         exchange
             .matter()
             .pase_mgr
             .borrow_mut()
-            .enable_pase_session(
-                verifier,
-                req.discriminator,
+            .enable_basic_pase_session(
+                exchange.matter().dev_comm().password,
+                exchange.matter().dev_comm().discriminator,
+                req.timeout,
                 &exchange.matter().transport_mgr.mdns,
-            )?;
-
-        Ok(())
+            )
     }
 
     fn handle_command_revokecomm_win(

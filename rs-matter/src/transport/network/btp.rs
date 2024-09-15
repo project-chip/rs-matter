@@ -36,7 +36,6 @@ use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend};
 use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
 use crate::utils::sync::IfMutex;
-use crate::CommissioningData;
 
 pub use context::{BtpContext, MAX_BTP_SESSIONS};
 pub use gatt::*;
@@ -149,9 +148,9 @@ where
         &'a self,
         service_name: &'a str,
         dev_det: &BasicInfoConfig<'_>,
-        dev_comm: &CommissioningData,
+        discriminator: u16,
     ) -> impl Future<Output = Result<(), Error>> + 'a {
-        let adv_data = AdvData::new(dev_det, dev_comm);
+        let adv_data = AdvData::new(dev_det, discriminator);
 
         let context = self.context.clone();
 

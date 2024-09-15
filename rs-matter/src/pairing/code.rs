@@ -19,20 +19,23 @@ use core::fmt::Write;
 
 use super::*;
 
-pub fn compute_pairing_code(comm_data: &CommissioningData) -> heapless::String<32> {
+pub fn compute_pairing_code(comm_data: &BasicCommData) -> heapless::String<32> {
     // 0: no Vendor ID and Product ID present in Manual Pairing Code
     const VID_PID_PRESENT: u8 = 0;
 
-    let passwd = passwd_from_comm_data(comm_data);
-    let CommissioningData { discriminator, .. } = comm_data;
+    let BasicCommData {
+        password,
+        discriminator,
+        ..
+    } = comm_data;
 
     let mut digits = heapless::String::<32>::new();
     write!(
         &mut digits,
         "{}{:0>5}{:0>4}",
         (VID_PID_PRESENT << 2) | (discriminator >> 10) as u8,
-        ((discriminator & 0x300) << 6) | (passwd & 0x3FFF) as u16,
-        passwd >> 14
+        ((discriminator & 0x300) << 6) | (*password & 0x3FFF) as u16,
+        *password >> 14
     )
     .unwrap();
 
@@ -62,19 +65,18 @@ pub(super) fn pretty_print_pairing_code(pairing_code: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{secure_channel::spake2p::VerifierData, utils::rand::dummy_rand};
 
     #[test]
     fn can_compute_pairing_code() {
-        let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(123456, dummy_rand),
+        let comm_data = BasicCommData {
+            password: 123456,
             discriminator: 250,
         };
         let pairing_code = compute_pairing_code(&comm_data);
         assert_eq!(pairing_code, "00876800071");
 
-        let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(34567890, dummy_rand),
+        let comm_data = BasicCommData {
+            password: 34567890,
             discriminator: 2976,
         };
         let pairing_code = compute_pairing_code(&comm_data);

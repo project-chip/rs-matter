@@ -25,7 +25,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use log::info;
 
-use rs_matter::core::{CommissioningData, Matter};
+use rs_matter::core::{BasicCommData, Matter, MATTER_PORT};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::cluster_on_off;
 use rs_matter::data_model::core::IMBuffer;
@@ -36,21 +36,21 @@ use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::data_model::system_model::descriptor;
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
+use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::secure_channel::spake2p::VerifierData;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::MATTER_PORT;
+
 use static_cell::StaticCell;
 
 mod dev_att;
 
 static DEV_DET: BasicInfoConfig = BasicInfoConfig {
     vid: 0xFFF1,
-    pid: 0x8000,
+    pid: 0x8001,
     hw_ver: 2,
     sw_ver: 1,
     sw_ver_str: "1",
@@ -58,6 +58,11 @@ static DEV_DET: BasicInfoConfig = BasicInfoConfig {
     device_name: "OnOff Light",
     product_name: "Light123",
     vendor_name: "Vendor PQR",
+};
+
+static DEV_COMM: BasicCommData = BasicCommData {
+    password: 20202021,
+    discriminator: 3840,
 };
 
 static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
@@ -100,6 +105,7 @@ fn run() -> Result<(), Error> {
 
     let matter = MATTER.uninit().init_with(Matter::init(
         &DEV_DET,
+        DEV_COMM,
         &DEV_ATT,
         // NOTE:
         // For `no_std` environments, provide your own epoch and rand functions here
@@ -159,35 +165,13 @@ fn run() -> Result<(), Error> {
     // Run the Matter and mDNS transports
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(
-            &socket,
-            &socket,
-            Some((
-                CommissioningData {
-                    // TODO: Hard-coded for now
-                    verifier: VerifierData::new_with_pw(123456, matter.rand()),
-                    discriminator: 250,
-                },
-                Default::default(),
-            )),
-        )),
+        core::mem::size_of_val(&matter.run(&socket, &socket, DiscoveryCapabilities::IP)),
         core::mem::size_of_val(&run_mdns(&matter))
     );
 
     let mut mdns = pin!(run_mdns(&matter));
 
-    let mut transport = pin!(matter.run(
-        &socket,
-        &socket,
-        Some((
-            CommissioningData {
-                // TODO: Hard-coded for now
-                verifier: VerifierData::new_with_pw(123456, matter.rand()),
-                discriminator: 250,
-            },
-            Default::default(),
-        )),
-    ));
+    let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
 
     // NOTE:
     // Replace with your own persister for e.g. `no_std` environments
@@ -199,7 +183,11 @@ fn run() -> Result<(), Error> {
         core::mem::size_of_val(&psm.run(std::env::temp_dir().join("rs-matter"), &matter))
     );
 
-    let mut persist = pin!(psm.run(std::env::temp_dir().join("rs-matter"), &matter));
+    let dir = std::env::temp_dir().join("rs-matter");
+
+    psm.load(&dir, &matter)?;
+
+    let mut persist = pin!(psm.run(dir, &matter));
 
     // Combine all async tasks in a single one
     let all = select4(

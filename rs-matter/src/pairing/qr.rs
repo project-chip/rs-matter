@@ -60,7 +60,7 @@ pub struct QrSetupPayload<'data, T> {
     flow_type: CommissionningFlowType,
     discovery_capabilities: DiscoveryCapabilities,
     dev_det: &'data BasicInfoConfig<'data>,
-    comm_data: &'data CommissioningData,
+    comm_data: &'data BasicCommData,
     // The data written by the optional data provider must be ordered by the tag of each TLV element in ascending order.
     optional_data: T,
 }
@@ -73,7 +73,7 @@ where
     /// `optional_data` should be ordered by tag number in ascending order.
     pub fn new(
         dev_det: &'data BasicInfoConfig,
-        comm_data: &'data CommissioningData,
+        comm_data: &'data BasicCommData,
         discovery_capabilities: DiscoveryCapabilities,
         optional_data: T,
     ) -> Self {
@@ -90,18 +90,16 @@ where
     }
 
     pub fn is_valid(&self) -> bool {
-        let passwd = passwd_from_comm_data(self.comm_data);
-
         // 3-bit value specifying the QR code payload version.
         if self.version >= 1 << VERSION_FIELD_LENGTH_IN_BITS {
             return false;
         }
 
-        if !self.discovery_capabilities.has_value() {
+        if self.discovery_capabilities.is_empty() {
             return false;
         }
 
-        if passwd >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
+        if self.comm_data.password >= 1 << SETUP_PINCODE_FIELD_LENGTH_IN_BITS {
             return false;
         }
 
@@ -114,9 +112,7 @@ where
             return false;
         }
 
-        let passwd = passwd_from_comm_data(self.comm_data);
-
-        if !Self::is_valid_setup_pin(passwd) {
+        if !Self::is_valid_setup_pin(self.comm_data.password) {
             return false;
         }
 
@@ -229,8 +225,6 @@ where
     }
 
     fn emit_all_bits(&self) -> impl Iterator<Item = Result<bool, Error>> + '_ {
-        let passwd = passwd_from_comm_data(self.comm_data);
-
         Self::emit_bits(self.version as _, VERSION_FIELD_LENGTH_IN_BITS)
             .chain(Self::emit_bits(
                 self.dev_det.vid as _,
@@ -245,7 +239,7 @@ where
                 COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
-                self.discovery_capabilities.as_bits() as _,
+                self.discovery_capabilities.bits() as _,
                 RENDEZVOUS_INFO_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
@@ -253,7 +247,7 @@ where
                 PAYLOAD_DISCRIMINATOR_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
-                passwd as _,
+                self.comm_data.password as _,
                 SETUP_PINCODE_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(0, PADDING_FIELD_LENGTH_IN_BITS))
@@ -521,7 +515,7 @@ pub fn compute_qr_code_version(qr_code_text: &str) -> u8 {
 
 pub fn compute_qr_code_text<'a, T, I>(
     dev_det: &BasicInfoConfig,
-    comm_data: &CommissioningData,
+    comm_data: &BasicCommData,
     discovery_capabilities: DiscoveryCapabilities,
     optional_data: T,
     buf: &'a mut [u8],
@@ -545,14 +539,13 @@ pub fn no_optional_data() -> Empty<Result<u8, Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{secure_channel::spake2p::VerifierData, utils::rand::dummy_rand};
 
     #[test]
     fn can_base38_encode() {
         const QR_CODE: &str = "MT:YNJV7VSC00CMVH7SR00";
 
-        let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(34567890, dummy_rand),
+        let comm_data = BasicCommData {
+            password: 34567890,
             discriminator: 2976,
         };
         let dev_det = BasicInfoConfig {
@@ -561,7 +554,7 @@ mod tests {
             ..Default::default()
         };
 
-        let disc_cap = DiscoveryCapabilities::new(false, true, false);
+        let disc_cap = DiscoveryCapabilities::BLE;
         let qr_code_data =
             QrSetupPayload::<NoOptionalData>::new(&dev_det, &comm_data, disc_cap, no_optional_data);
         let mut buf = [0; 1024];
@@ -576,8 +569,8 @@ mod tests {
     fn can_base38_encode_with_vendor_data() {
         const QR_CODE: &str = "MT:-24J0AFN00KA064IJ3P0IXZB0DK5N1K8SQ1RYCU1-A40";
 
-        let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(20202021, dummy_rand),
+        let comm_data = BasicCommData {
+            password: 20202021,
             discriminator: 3840,
         };
         let dev_det = BasicInfoConfig {
@@ -587,7 +580,7 @@ mod tests {
             ..Default::default()
         };
 
-        let disc_cap = DiscoveryCapabilities::new(true, false, false);
+        let disc_cap = DiscoveryCapabilities::IP;
         let qr_code_data =
             QrSetupPayload::<NoOptionalData>::new(&dev_det, &comm_data, disc_cap, no_optional_data);
         let mut buf = [0; 1024];
@@ -608,8 +601,8 @@ mod tests {
         const OPTIONAL_DEFAULT_INT_TAG: u8 = 0x83; // Vendor "test" tag
         const OPTIONAL_DEFAULT_INT_VALUE: i32 = 65550;
 
-        let comm_data = CommissioningData {
-            verifier: VerifierData::new_with_pw(20202021, dummy_rand),
+        let comm_data = BasicCommData {
+            password: 20202021,
             discriminator: 3840,
         };
         let dev_det = BasicInfoConfig {
@@ -619,7 +612,7 @@ mod tests {
             ..Default::default()
         };
 
-        let disc_cap = DiscoveryCapabilities::new(true, false, false);
+        let disc_cap = DiscoveryCapabilities::IP;
         let optional_data = || {
             TLV::utf8(
                 TLVTag::Context(OPTIONAL_DEFAULT_STRING_TAG),

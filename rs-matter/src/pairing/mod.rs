@@ -17,15 +17,17 @@
 
 //! This module contains the logic for generating the pairing code and the QR code for easy pairing.
 
+use bitflags::bitflags;
+
 use log::info;
 
 use qr::no_optional_data;
+
 use verhoeff::Verhoeff;
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::Error;
-use crate::secure_channel::spake2p::VerifierOption;
-use crate::CommissioningData;
+use crate::BasicCommData;
 
 use self::code::{compute_pairing_code, pretty_print_pairing_code};
 use self::qr::{compute_qr_code_text, print_qr_code};
@@ -34,58 +36,26 @@ pub mod code;
 pub mod qr;
 pub mod vendor_identifiers;
 
-// TODO: Rework as a `bitflags!` enum
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct DiscoveryCapabilities {
-    on_ip_network: bool,
-    ble: bool,
-    soft_access_point: bool,
-}
-
-impl DiscoveryCapabilities {
-    pub const fn new(on_ip_network: bool, ble: bool, soft_access_point: bool) -> Self {
-        Self {
-            on_ip_network,
-            ble,
-            soft_access_point,
-        }
-    }
-
-    pub fn has_value(&self) -> bool {
-        self.on_ip_network || self.ble || self.soft_access_point
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct DiscoveryCapabilities: u8 {
+        const SOFT_AP = 0x01;
+        const BLE = 0x02;
+        const IP = 0x04;
     }
 }
 
 impl Default for DiscoveryCapabilities {
     fn default() -> Self {
-        DiscoveryCapabilities {
-            on_ip_network: true,
-            ble: false,
-            soft_access_point: false,
-        }
-    }
-}
-
-impl DiscoveryCapabilities {
-    fn as_bits(&self) -> u8 {
-        let mut bits = 0;
-        if self.soft_access_point {
-            bits |= 1 << 0;
-        }
-        if self.ble {
-            bits |= 1 << 1;
-        }
-        if self.on_ip_network {
-            bits |= 1 << 2;
-        }
-        bits
+        Self::IP
     }
 }
 
 /// Prepares and prints the pairing code and the QR code for easy pairing.
 pub fn print_pairing_code_and_qr(
     dev_det: &BasicInfoConfig,
-    comm_data: &CommissioningData,
+    comm_data: &BasicCommData,
     discovery_capabilities: DiscoveryCapabilities,
     buf: &mut [u8],
 ) -> Result<(), Error> {
@@ -104,12 +74,4 @@ pub fn print_pairing_code_and_qr(
     print_qr_code(qr_code, remaining_buf)?;
 
     Ok(())
-}
-
-fn passwd_from_comm_data(comm_data: &CommissioningData) -> u32 {
-    // todo: should this be part of the comm_data implementation?
-    match comm_data.verifier.data {
-        VerifierOption::Password(pwd) => pwd,
-        VerifierOption::Verifier(_) => 0,
-    }
 }

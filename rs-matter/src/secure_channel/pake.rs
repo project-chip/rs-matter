@@ -24,15 +24,12 @@ use crate::error::{Error, ErrorCode};
 use crate::mdns::{Mdns, ServiceMode};
 use crate::secure_channel::common::{complete_with_status, OpCode};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
-use crate::transport::{
-    exchange::{Exchange, ExchangeId},
-    session::{ReservedSession, SessionMode},
-};
-use crate::utils::{
-    epoch::Epoch,
-    init::{init, Init},
-    rand::Rand,
-};
+use crate::transport::exchange::{Exchange, ExchangeId};
+use crate::transport::session::{ReservedSession, SessionMode};
+use crate::utils::epoch::Epoch;
+use crate::utils::init::{init, try_init, Init};
+use crate::utils::maybe::Maybe;
+use crate::utils::rand::Rand;
 
 use super::common::SCStatusCodes;
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
@@ -42,8 +39,40 @@ struct PaseSession {
     verifier: VerifierData,
 }
 
+impl PaseSession {
+    fn init_with_pw(password: u32, rand: Rand) -> impl Init<Self> {
+        init!(Self {
+            mdns_service_name: heapless::String::new(),
+            verifier <- VerifierData::init_with_pw(password, rand),
+        })
+    }
+
+    fn init<'a>(verifier: &'a [u8], salt: &'a [u8], count: u32) -> impl Init<Self, Error> + 'a {
+        try_init!(Self {
+            mdns_service_name: heapless::String::new(),
+            verifier <- VerifierData::init(verifier, salt, count),
+        }? Error)
+    }
+
+    fn add_mdns(&mut self, discriminator: u16, rand: Rand, mdns: &dyn Mdns) -> Result<(), Error> {
+        let mut buf = [0; 8];
+        (rand)(&mut buf);
+        let num = u64::from_be_bytes(buf);
+
+        self.mdns_service_name.clear();
+        write!(&mut self.mdns_service_name, "{:016X}", num).unwrap();
+
+        mdns.add(
+            &self.mdns_service_name,
+            ServiceMode::Commissionable(discriminator),
+        )?;
+
+        Ok(())
+    }
+}
+
 pub struct PaseMgr {
-    session: Option<PaseSession>,
+    session: Maybe<PaseSession>,
     timeout: Option<Timeout>,
     epoch: Epoch,
     rand: Rand,
@@ -53,7 +82,7 @@ impl PaseMgr {
     #[inline(always)]
     pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
-            session: None,
+            session: Maybe::none(),
             timeout: None,
             epoch,
             rand,
@@ -61,10 +90,8 @@ impl PaseMgr {
     }
 
     pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
-        // TODO: Optimize in future because `PaseSession` is
-        // relatively large and we are creating it using stack moves.
         init!(Self {
-            session: None,
+            session <- Maybe::init_none(),
             timeout: None,
             epoch,
             rand,
@@ -75,30 +102,48 @@ impl PaseMgr {
         self.session.is_some()
     }
 
-    pub fn enable_pase_session(
+    pub fn enable_basic_pase_session(
         &mut self,
-        verifier: VerifierData,
+        password: u32,
         discriminator: u16,
+        _timeout_secs: u16,
         mdns: &dyn Mdns,
     ) -> Result<(), Error> {
-        let mut buf = [0; 8];
-        (self.rand)(&mut buf);
-        let num = u64::from_be_bytes(buf);
+        if self.session.is_some() {
+            Err(ErrorCode::Invalid)?;
+        }
 
-        let mut mdns_service_name = heapless::String::<16>::new();
-        write!(&mut mdns_service_name, "{:016X}", num).unwrap();
+        self.session
+            .reinit(Maybe::init_some(PaseSession::init_with_pw(
+                password, self.rand,
+            )));
 
-        mdns.add(
-            &mdns_service_name,
-            ServiceMode::Commissionable(discriminator),
-        )?;
+        // Can't fail as we just initialized the session
+        let session = self.session.as_mut().unwrap();
 
-        self.session = Some(PaseSession {
-            mdns_service_name,
-            verifier,
-        });
+        session.add_mdns(discriminator, self.rand, mdns)
+    }
 
-        Ok(())
+    pub fn enable_pase_session(
+        &mut self,
+        verifier: &[u8],
+        salt: &[u8],
+        count: u32,
+        discriminator: u16,
+        _timeout_secs: u16,
+        mdns: &dyn Mdns,
+    ) -> Result<(), Error> {
+        if self.session.is_some() {
+            Err(ErrorCode::Invalid)?;
+        }
+
+        self.session
+            .try_reinit(Maybe::init_some(PaseSession::init(verifier, salt, count)))?;
+
+        // Can't fail as we just initialized the session
+        let session = self.session.as_mut().unwrap();
+
+        session.add_mdns(discriminator, self.rand, mdns)
     }
 
     pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<bool, Error> {
@@ -110,7 +155,7 @@ impl PaseMgr {
             false
         };
 
-        self.session = None;
+        self.session.clear();
 
         Ok(disabled)
     }
@@ -122,8 +167,7 @@ impl PaseMgr {
 // handles Spake2+ specific stuff.
 
 const PASE_DISCARD_TIMEOUT_SECS: Duration = Duration::from_secs(60);
-
-const SPAKE2_SESSION_KEYS_INFO: [u8; 11] = *b"SessionKeys";
+const SPAKE2_SESSION_KEYS_INFO: &[u8] = b"SessionKeys";
 
 struct Timeout {
     start_time: Duration,
@@ -204,7 +248,7 @@ impl Pake {
             // Get the keys
             let ke = ke.ok_or(ErrorCode::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
-            crypto::hkdf_sha256(&[], ke, &SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+            crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
                 .map_err(|_x| ErrorCode::NoSpace)?;
 
             // Create a session

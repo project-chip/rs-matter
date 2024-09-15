@@ -25,7 +25,7 @@ use crate::error::*;
 use crate::fabric::FabricMgr;
 use crate::mdns::MdnsService;
 use crate::pairing::{print_pairing_code_and_qr, DiscoveryCapabilities};
-use crate::secure_channel::{pake::PaseMgr, spake2p::VerifierData};
+use crate::secure_channel::pake::PaseMgr;
 use crate::transport::core::{PacketBufferExternalAccess, TransportMgr};
 use crate::transport::network::{NetworkReceive, NetworkSend};
 use crate::utils::cell::RefCell;
@@ -38,11 +38,12 @@ use crate::utils::sync::Notification;
 /* The Matter Port */
 pub const MATTER_PORT: u16 = 5540;
 
-/// Device Commissioning Data
-#[derive(Debug, Clone)]
-pub struct CommissioningData {
-    /// The data like password or verifier that is required to authenticate
-    pub verifier: VerifierData,
+/// Device basic commissioning data
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct BasicCommData {
+    /// The password which is necessary to authenticate the device in either
+    /// initial commissioning, or when the basic commissioning window is opened
+    pub password: u32,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
 }
@@ -57,6 +58,7 @@ pub struct Matter<'a> {
     epoch: Epoch,
     rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
+    dev_comm: BasicCommData,
     dev_att: &'a dyn DevAttDataFetcher,
     port: u16,
 }
@@ -66,6 +68,8 @@ impl<'a> Matter<'a> {
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
+    ///   data required for the device.
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
@@ -76,6 +80,7 @@ impl<'a> Matter<'a> {
     #[inline(always)]
     pub const fn new_default(
         dev_det: &'a BasicInfoConfig<'a>,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
         mdns: MdnsService<'a>,
         port: u16,
@@ -83,13 +88,15 @@ impl<'a> Matter<'a> {
         use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
 
-        Self::new(dev_det, dev_att, mdns, sys_epoch, sys_rand, port)
+        Self::new(dev_det, dev_comm, dev_att, mdns, sys_epoch, sys_rand, port)
     }
 
     /// Create a new Matter object
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
+    ///   data required for the device.
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
@@ -102,6 +109,7 @@ impl<'a> Matter<'a> {
     #[inline(always)]
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
         mdns: MdnsService<'a>,
         epoch: Epoch,
@@ -117,6 +125,7 @@ impl<'a> Matter<'a> {
             epoch,
             rand,
             dev_det,
+            dev_comm,
             dev_att,
             port,
         }
@@ -127,6 +136,8 @@ impl<'a> Matter<'a> {
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
+    ///   data required for the device.
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
@@ -136,6 +147,7 @@ impl<'a> Matter<'a> {
     #[cfg(feature = "std")]
     pub fn init_default(
         dev_det: &'a BasicInfoConfig<'a>,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
         mdns: MdnsService<'a>,
         port: u16,
@@ -143,13 +155,15 @@ impl<'a> Matter<'a> {
         use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
 
-        Self::init(dev_det, dev_att, mdns, sys_epoch, sys_rand, port)
+        Self::init(dev_det, dev_comm, dev_att, mdns, sys_epoch, sys_rand, port)
     }
 
     /// Create an in-place initializer for a Matter object
     ///
     /// # Parameters
     /// * dev_det: An object of type [BasicInfoConfig].
+    /// * dev_comm: An object of type [BasicCommData]. This object contains the basic commissioning
+    ///   data required for the device.
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
@@ -161,6 +175,7 @@ impl<'a> Matter<'a> {
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
+        dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
         mdns: MdnsService<'a>,
         epoch: Epoch,
@@ -177,6 +192,7 @@ impl<'a> Matter<'a> {
                 epoch,
                 rand,
                 dev_det,
+                dev_comm,
                 dev_att,
                 port,
             }
@@ -193,6 +209,10 @@ impl<'a> Matter<'a> {
 
     pub fn dev_att(&self) -> &dyn DevAttDataFetcher {
         self.dev_att
+    }
+
+    pub fn dev_comm(&self) -> &BasicCommData {
+        &self.dev_comm
     }
 
     pub fn port(&self) -> u16 {
@@ -268,27 +288,69 @@ impl<'a> Matter<'a> {
         self.fabric_mgr.borrow().iter().count() > 0
     }
 
-    fn start_comissioning(
+    /// Enable basic commissioning by setting up a PASE session and printing the pairing code and QR code.
+    ///
+    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code
+    /// or if the PASE session could not be set up (due to another PASE session already being active, for example).
+    ///
+    /// Parameters:
+    /// * `discovery_capabilities`: The discovery capabilities of the device (IP, BLE or Soft-AP)
+    /// * `timeout_secs`: The timeout in seconds for the basic commissioning session
+    pub async fn enable_basic_commissioning(
         &self,
-        dev_comm: CommissioningData,
         discovery_capabilities: DiscoveryCapabilities,
-        buf: &mut [u8],
-    ) -> Result<bool, Error> {
-        if !self.pase_mgr.borrow().is_pase_session_enabled()
-            && self.fabric_mgr.borrow().iter().count() == 0
-        {
-            print_pairing_code_and_qr(self.dev_det, &dev_comm, discovery_capabilities, buf)?;
+        timeout_secs: u16,
+    ) -> Result<(), Error> {
+        let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
+        let mut buf = buf_access.get().await.ok_or(ErrorCode::NoSpace)?;
 
-            self.pase_mgr.borrow_mut().enable_pase_session(
-                dev_comm.verifier,
-                dev_comm.discriminator,
-                &self.transport_mgr.mdns,
-            )?;
+        self.pase_mgr.borrow_mut().enable_basic_pase_session(
+            self.dev_comm.password,
+            self.dev_comm.discriminator,
+            timeout_secs,
+            &self.transport_mgr.mdns,
+        )?;
 
-            Ok(true)
-        } else {
-            Ok(false)
+        print_pairing_code_and_qr(
+            self.dev_det,
+            &self.dev_comm,
+            discovery_capabilities,
+            &mut buf,
+        )?;
+
+        Ok(())
+    }
+
+    /// Disable the basic commissioning session
+    ///
+    /// The method will return Ok(false) if there is no active PASE session to disable.
+    pub fn disable_commissioning(&self) -> Result<bool, Error> {
+        self.pase_mgr
+            .borrow_mut()
+            .disable_pase_session(&self.transport_mgr.mdns)
+    }
+
+    /// Run the transport layer
+    ///
+    /// Enables basic commissioning if the device is not commissioned
+    /// Note that the fabrics should be loaded by the PSM before calling this method
+    /// or else commissioning will be always enabled.
+    pub async fn run<S, R>(
+        &self,
+        send: S,
+        recv: R,
+        discovery_capabilities: DiscoveryCapabilities,
+    ) -> Result<(), Error>
+    where
+        S: NetworkSend,
+        R: NetworkReceive,
+    {
+        if !self.is_commissioned() {
+            self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
+                .await?;
         }
+
+        self.run_transport(send, recv).await
     }
 
     /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -297,23 +359,12 @@ impl<'a> Matter<'a> {
         self.transport_mgr.reset()
     }
 
-    pub async fn run<S, R>(
-        &self,
-        send: S,
-        recv: R,
-        dev_comm: Option<(CommissioningData, DiscoveryCapabilities)>,
-    ) -> Result<(), Error>
+    /// Run the transport layer
+    pub async fn run_transport<S, R>(&self, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
     {
-        if let Some((dev_comm, discovery_caps)) = dev_comm {
-            let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
-            let mut buf = buf_access.get().await.ok_or(ErrorCode::NoSpace)?;
-
-            self.start_comissioning(dev_comm, discovery_caps, &mut buf)?;
-        }
-
         self.transport_mgr.run(send, recv).await
     }
 

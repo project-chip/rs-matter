@@ -41,7 +41,7 @@ use rs_matter::transport::network::{
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{Matter, MATTER_PORT};
+use rs_matter::{BasicCommData, Matter, MATTER_PORT};
 
 pub mod im;
 pub mod test;
@@ -83,6 +83,11 @@ impl E2eRunner {
         device_name: "E2E",
         product_name: "E2E",
         vendor_name: "E2E",
+    };
+
+    const BASIC_COMM: BasicCommData = BasicCommData {
+        password: 0,
+        discriminator: 0,
     };
 
     /// The ID of the local Matter instance
@@ -213,6 +218,7 @@ impl E2eRunner {
 
         let matter = Matter::new(
             &Self::BASIC_INFO,
+            Self::BASIC_COMM,
             &E2eDummyDevAtt,
             MdnsService::Disabled,
             epoch,
