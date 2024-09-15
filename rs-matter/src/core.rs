@@ -326,14 +326,15 @@ impl<'a> Matter<'a> {
         send: S,
         recv: R,
         host: &crate::mdns::Host<'_>,
-        interface: Option<u32>,
+        ipv4_interface: Option<core::net::Ipv4Addr>,
+        ipv6_interface: Option<u32>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
     {
         self.transport_mgr
-            .run_builtin_mdns(send, recv, host, interface)
+            .run_builtin_mdns(send, recv, host, ipv4_interface, ipv6_interface)
             .await
     }
 

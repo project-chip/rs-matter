@@ -115,7 +115,8 @@ impl<'a> MdnsImpl<'a> {
         tx_buf: SB,
         rx_buf: RB,
         host: &Host<'_>,
-        interface: Option<u32>,
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
         rand: Rand,
     ) -> Result<(), Error>
     where
@@ -126,8 +127,18 @@ impl<'a> MdnsImpl<'a> {
     {
         let send = Mutex::<NoopRawMutex, _>::new(send);
 
-        let mut broadcast = pin!(self.broadcast(&send, &tx_buf, host, interface));
-        let mut respond = pin!(self.respond(&send, recv, &tx_buf, &rx_buf, host, interface, rand));
+        let mut broadcast =
+            pin!(self.broadcast(&send, &tx_buf, host, ipv4_interface, ipv6_interface));
+        let mut respond = pin!(self.respond(
+            &send,
+            recv,
+            &tx_buf,
+            &rx_buf,
+            host,
+            ipv4_interface,
+            ipv6_interface,
+            rand
+        ));
 
         select(&mut broadcast, &mut respond).coalesce().await
     }
@@ -137,7 +148,8 @@ impl<'a> MdnsImpl<'a> {
         send: &Mutex<impl RawMutex, S>,
         buffer: B,
         host: &Host<'_>,
-        interface: Option<u32>,
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -150,11 +162,10 @@ impl<'a> MdnsImpl<'a> {
             select(&mut notification, &mut timeout).await;
 
             for addr in Iterator::chain(
-                core::iter::once(SocketAddr::V4(SocketAddrV4::new(
-                    MDNS_IPV4_BROADCAST_ADDR,
-                    MDNS_PORT,
-                ))),
-                interface
+                ipv4_interface
+                    .map(|_| SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT)))
+                    .into_iter(),
+                ipv6_interface
                     .map(|interface| {
                         SocketAddr::V6(SocketAddrV6::new(
                             MDNS_IPV6_BROADCAST_ADDR,
@@ -186,7 +197,8 @@ impl<'a> MdnsImpl<'a> {
         tx_buf: SB,
         rx_buf: RB,
         host: &Host<'_>,
-        interface: Option<u32>,
+        ipv4_interface: Option<Ipv4Addr>,
+        ipv6_interface: Option<u32>,
         rand: Rand,
     ) -> Result<(), Error>
     where
@@ -220,12 +232,11 @@ impl<'a> MdnsImpl<'a> {
                         .unwrap_or(true);
 
                     let reply_addr = if ipv4 {
-                        Some(SocketAddr::V4(SocketAddrV4::new(
-                            MDNS_IPV4_BROADCAST_ADDR,
-                            MDNS_PORT,
-                        )))
+                        ipv4_interface.map(|_| {
+                            SocketAddr::V4(SocketAddrV4::new(MDNS_IPV4_BROADCAST_ADDR, MDNS_PORT))
+                        })
                     } else {
-                        interface.map(|interface| {
+                        ipv6_interface.map(|interface| {
                             SocketAddr::V6(SocketAddrV6::new(
                                 MDNS_IPV6_BROADCAST_ADDR,
                                 MDNS_PORT,

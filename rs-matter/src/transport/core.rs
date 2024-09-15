@@ -288,7 +288,8 @@ impl<'m> TransportMgr<'m> {
         send: S,
         recv: R,
         host: &crate::mdns::Host<'_>,
-        interface: Option<u32>,
+        ipv4_interface: Option<core::net::Ipv4Addr>,
+        ipv6_interface: Option<u32>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
@@ -303,7 +304,8 @@ impl<'m> TransportMgr<'m> {
                 &PacketBufferExternalAccess(&self.tx),
                 &PacketBufferExternalAccess(&self.rx),
                 host,
-                interface,
+                ipv4_interface,
+                ipv6_interface,
                 self.rand,
             )
             .await
