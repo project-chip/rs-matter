@@ -314,7 +314,9 @@ pub enum CommissionningFlowType {
 }
 
 pub fn print_qr_code(qr_code_text: &str, buf: &mut [u8]) -> Result<(), Error> {
-    info!("QR Code Text: {}", qr_code_text);
+    // Do not remove this logging line or change its formatting.
+    // C++ E2E tests rely on this log line to grep the QR code
+    info!("SetupQRCode: [{}]", qr_code_text);
 
     let (tmp_buf, out_buf) = buf.split_at_mut(buf.len() / 2);
 
