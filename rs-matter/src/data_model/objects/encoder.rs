@@ -15,107 +15,24 @@
  *    limitations under the License.
  */
 
-use core::fmt::{Debug, Formatter};
+use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
 use crate::interaction_model::core::IMStatusCode;
 use crate::interaction_model::messages::ib::{
-    AttrPath, AttrResp, AttrStatus, CmdDataTag, CmdPath, CmdStatus, InvResp, InvRespTag,
+    AttrPath, AttrResp, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus,
 };
-use crate::tlv::UtfStr;
+use crate::tlv::TLVTag;
 use crate::transport::exchange::Exchange;
 use crate::{
     error::{Error, ErrorCode},
     interaction_model::messages::ib::{AttrDataTag, AttrRespTag},
-    tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV},
+    tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV},
 };
 use log::error;
 
 use super::{AttrDetails, CmdDetails, DataModelHandler};
-
-// TODO: Should this return an IMStatusCode Error? But if yes, the higher layer
-// may have already started encoding the 'success' headers, we might not want to manage
-// the tw.rewind() in that case, if we add this support
-pub type EncodeValueGen<'a> = &'a dyn Fn(TagType, &mut TLVWriter);
-
-#[derive(Clone)]
-/// A structure for encoding various types of values
-pub enum EncodeValue<'a> {
-    /// This indicates a value that is dynamically generated. This variant
-    /// is typically used in the transmit/to-tlv path where we want to encode a value at
-    /// run time
-    Closure(EncodeValueGen<'a>),
-    /// This indicates a value that is in the TLVElement form. this variant is
-    /// typically used in the receive/from-tlv path where we don't want to decode the
-    /// full value but it can be done at the time of its usage
-    Tlv(TLVElement<'a>),
-    /// This indicates a static value. This variant is typically used in the transmit/
-    /// to-tlv path
-    Value(&'a dyn ToTLV),
-}
-
-impl<'a> EncodeValue<'a> {
-    pub fn unwrap_tlv(self) -> Option<TLVElement<'a>> {
-        match self {
-            EncodeValue::Tlv(t) => Some(t),
-            _ => None,
-        }
-    }
-}
-
-impl<'a> PartialEq for EncodeValue<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            EncodeValue::Closure(_) => {
-                error!("PartialEq not yet supported");
-                false
-            }
-            EncodeValue::Tlv(a) => {
-                if let EncodeValue::Tlv(b) = other {
-                    a == b
-                } else {
-                    false
-                }
-            }
-            // Just claim false for now
-            EncodeValue::Value(_) => {
-                error!("PartialEq not yet supported");
-                false
-            }
-        }
-    }
-}
-
-impl<'a> Debug for EncodeValue<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), core::fmt::Error> {
-        match self {
-            EncodeValue::Closure(_) => write!(f, "Contains closure"),
-            EncodeValue::Tlv(t) => write!(f, "{:?}", t),
-            EncodeValue::Value(_) => write!(f, "Contains EncodeValue"),
-        }?;
-        Ok(())
-    }
-}
-
-impl<'a> ToTLV for EncodeValue<'a> {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        match self {
-            EncodeValue::Closure(f) => {
-                (f)(tag_type, tw);
-                Ok(())
-            }
-            EncodeValue::Tlv(_) => panic!("This looks invalid"),
-            EncodeValue::Value(v) => v.to_tlv(tw, tag_type),
-        }
-    }
-}
-
-impl<'a> FromTLV<'a> for EncodeValue<'a> {
-    fn from_tlv(data: &TLVElement<'a>) -> Result<Self, Error> {
-        Ok(EncodeValue::Tlv(data.clone()))
-    }
-}
 
 pub struct AttrDataEncoder<'a, 'b, 'c> {
     dataver_filter: Option<u32>,
@@ -150,7 +67,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         };
 
         if let Some(status) = status {
-            AttrResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
+            AttrResp::Status(status).to_tlv(&TagType::Anonymous, tw)?;
         }
 
         Ok(true)
@@ -176,7 +93,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         };
 
         if let Some(status) = status {
-            status.to_tlv(tw, TagType::Anonymous)?;
+            status.to_tlv(&TagType::Anonymous, tw)?;
         }
 
         Ok(())
@@ -198,11 +115,11 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         {
             let mut writer = AttrDataWriter::new(self.tw);
 
-            writer.start_struct(TagType::Anonymous)?;
-            writer.start_struct(TagType::Context(AttrRespTag::Data as _))?;
-            writer.u32(TagType::Context(AttrDataTag::DataVer as _), dataver)?;
+            writer.start_struct(&TLVTag::Anonymous)?;
+            writer.start_struct(&TLVTag::Context(AttrRespTag::Data as _))?;
+            writer.u32(&TLVTag::Context(AttrDataTag::DataVer as _), dataver)?;
             self.path
-                .to_tlv(&mut writer, TagType::Context(AttrDataTag::Path as _))?;
+                .to_tlv(&TagType::Context(AttrDataTag::Path as _), &mut *writer)?;
 
             Ok(Some(writer))
         } else {
@@ -218,7 +135,7 @@ pub struct AttrDataWriter<'a, 'b, 'c> {
 }
 
 impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
-    pub const TAG: TagType = TagType::Context(AttrDataTag::Data as _);
+    pub const TAG: TLVTag = TLVTag::Context(AttrDataTag::Data as _);
 
     fn new(tw: &'a mut TLVWriter<'b, 'c>) -> Self {
         let anchor = tw.get_tail();
@@ -230,8 +147,8 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
         }
     }
 
-    pub fn set<T: ToTLV>(self, value: T) -> Result<(), Error> {
-        value.to_tlv(self.tw, Self::TAG)?;
+    pub fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
+        value.to_tlv(&Self::TAG, &mut self.tw)?;
         self.complete()
     }
 
@@ -345,7 +262,7 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
         };
 
         if let Some(status) = status {
-            InvResp::Status(status).to_tlv(tw, TagType::Anonymous)?;
+            CmdResp::Status(status).to_tlv(&TagType::Anonymous, tw)?;
         }
 
         Ok(())
@@ -366,12 +283,12 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
     pub fn with_command(mut self, cmd: u16) -> Result<CmdDataWriter<'a, 'b, 'c>, Error> {
         let mut writer = CmdDataWriter::new(self.tracker, self.tw);
 
-        writer.start_struct(TagType::Anonymous)?;
-        writer.start_struct(TagType::Context(InvRespTag::Cmd as _))?;
+        writer.start_struct(&TLVTag::Anonymous)?;
+        writer.start_struct(&TLVTag::Context(CmdRespTag::Cmd as _))?;
 
         self.path.path.leaf = Some(cmd as _);
         self.path
-            .to_tlv(&mut writer, TagType::Context(CmdDataTag::Path as _))?;
+            .to_tlv(&TagType::Context(CmdDataTag::Path as _), &mut *writer)?;
 
         Ok(writer)
     }
@@ -398,8 +315,8 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
         }
     }
 
-    pub fn set<T: ToTLV>(self, value: T) -> Result<(), Error> {
-        value.to_tlv(self.tw, Self::TAG)?;
+    pub fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
+        value.to_tlv(&Self::TAG, &mut self.tw)?;
         self.complete()
     }
 
@@ -478,11 +395,11 @@ impl AttrUtfType {
     }
 
     pub fn encode(&self, writer: AttrDataWriter, value: &str) -> Result<(), Error> {
-        writer.set(UtfStr::new(value.as_bytes()))
+        writer.set(value)
     }
 
-    pub fn decode<'a>(&self, data: &'a TLVElement) -> Result<&'a str, IMStatusCode> {
-        data.str().map_err(|_| IMStatusCode::InvalidDataType)
+    pub fn decode<'a>(&self, data: &TLVElement<'a>) -> Result<&'a str, IMStatusCode> {
+        data.utf8().map_err(|_| IMStatusCode::InvalidDataType)
     }
 }
 

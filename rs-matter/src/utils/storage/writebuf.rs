@@ -20,7 +20,7 @@ use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Debug)]
 pub struct WriteBuf<'a> {
-    buf: &'a mut [u8],
+    pub(crate) buf: &'a mut [u8],
     buf_size: usize,
     start: usize,
     end: usize,
@@ -135,6 +135,16 @@ impl<'a> WriteBuf<'a> {
             let dst_slice = &mut x.buf[(x.start - src.len())..x.start];
             dst_slice.copy_from_slice(src);
         })
+    }
+
+    pub fn append_with_buf<F>(&mut self, f: F) -> Result<usize, Error>
+    where
+        F: FnOnce(&mut [u8]) -> Result<usize, Error>,
+    {
+        let len = f(self.empty_as_mut_slice())?;
+        self.end += len;
+
+        Ok(len)
     }
 
     pub fn append_with<F>(&mut self, size: usize, f: F) -> Result<(), Error>

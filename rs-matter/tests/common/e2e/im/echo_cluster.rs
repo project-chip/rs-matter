@@ -16,22 +16,29 @@
  */
 
 use core::cell::Cell;
+use core::fmt::Debug;
+
 use std::sync::{Arc, Mutex, Once};
 
 use num_derive::FromPrimitive;
-use rs_matter::{
-    attribute_enum, command_enum,
-    data_model::objects::{
-        Access, AttrData, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute,
-        Cluster, CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, NonBlockingHandler,
-        Quality, ATTRIBUTE_LIST, FEATURE_MAP,
-    },
-    error::{Error, ErrorCode},
-    interaction_model::messages::ib::{attr_list_write, ListOperation},
-    tlv::{TLVElement, TagType},
-    transport::exchange::Exchange,
-};
+
 use strum::{EnumDiscriminants, FromRepr};
+
+use rs_matter::data_model::objects::{
+    Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, Cluster,
+    CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, NonBlockingHandler, Quality,
+    ATTRIBUTE_LIST, FEATURE_MAP,
+};
+use rs_matter::error::{Error, ErrorCode};
+use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
+use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
+use rs_matter::transport::exchange::Exchange;
+use rs_matter::{attribute_enum, command_enum};
+
+pub const WRITE_LIST_MAX: usize = 5;
+
+pub const ATTR_CUSTOM_VALUE: u32 = 0xcafebeef;
+pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
 
 pub const ID: u32 = 0xABCD;
 
@@ -122,8 +129,7 @@ impl TestChecker {
     }
 }
 
-pub const WRITE_LIST_MAX: usize = 5;
-
+/// A sample cluster that echoes back the input data. Useful for testing.
 pub struct EchoCluster {
     pub data_ver: Dataver,
     pub multiplier: u8,
@@ -159,9 +165,9 @@ impl EchoCluster {
                         let tc_handle = TestChecker::get().unwrap();
                         let tc = tc_handle.lock().unwrap();
 
-                        writer.start_array(AttrDataWriter::TAG)?;
+                        writer.start_array(&AttrDataWriter::TAG)?;
                         for i in tc.write_list.iter().flatten() {
-                            writer.u16(TagType::Anonymous, *i)?;
+                            writer.u16(&TLVTag::Anonymous, *i)?;
                         }
                         writer.end_container()?;
 
@@ -174,7 +180,11 @@ impl EchoCluster {
         }
     }
 
-    pub fn write(&self, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    pub fn write(
+        &self,
+        attr: &AttrDetails,
+        data: rs_matter::data_model::objects::AttrData,
+    ) -> Result<(), Error> {
         let data = data.with_dataver(self.data_ver.get())?;
 
         match attr.attr_id.try_into()? {
@@ -207,10 +217,8 @@ impl EchoCluster {
 
                 let mut writer = encoder.with_command(RespCommands::EchoResp as _)?;
 
-                writer.start_struct(CmdDataWriter::TAG)?;
                 // Echo = input * self.multiplier
-                writer.u8(TagType::Context(0), a * self.multiplier)?;
-                writer.end_container()?;
+                writer.u8(&CmdDataWriter::TAG, a * self.multiplier)?;
 
                 writer.complete()
             }
@@ -259,9 +267,6 @@ impl EchoCluster {
     }
 }
 
-pub const ATTR_CUSTOM_VALUE: u32 = 0xcafebeef;
-pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
-
 impl Handler for EchoCluster {
     fn read(
         &self,
@@ -272,7 +277,12 @@ impl Handler for EchoCluster {
         EchoCluster::read(self, attr, encoder)
     }
 
-    fn write(&self, _exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
+    fn write(
+        &self,
+        _exchange: &Exchange,
+        attr: &AttrDetails,
+        data: rs_matter::data_model::objects::AttrData,
+    ) -> Result<(), Error> {
         EchoCluster::write(self, attr, data)
     }
 

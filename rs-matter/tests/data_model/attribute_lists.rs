@@ -15,21 +15,15 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
-    data_model::objects::EncodeValue,
-    interaction_model::{
-        core::IMStatusCode,
-        messages::ib::{AttrData, AttrPath, AttrStatus},
-        messages::GenericPath,
-    },
-    tlv::Nullable,
-};
+use rs_matter::interaction_model::core::IMStatusCode;
+use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
+use rs_matter::interaction_model::messages::GenericPath;
+use rs_matter::tlv::{Nullable, TLVValue};
 
-use crate::common::{
-    echo_cluster::{self, TestChecker},
-    im_engine::ImEngine,
-    init_env_logger,
-};
+use crate::common::e2e::im::attributes::TestAttrData;
+use crate::common::e2e::im::echo_cluster::{self, TestChecker};
+use crate::common::e2e::ImEngine;
+use crate::common::init_env_logger;
 
 // Helper for handling Write Attribute sequences
 #[test]
@@ -42,13 +36,8 @@ fn attr_list_ops() {
 
     init_env_logger();
 
-    let delete_item = EncodeValue::Closure(&|tag, t| {
-        let _ = t.null(tag);
-    });
-    let delete_all = EncodeValue::Closure(&|tag, t| {
-        let _ = t.start_array(tag);
-        let _ = t.end_container();
-    });
+    let delete_item = TLVValue::null();
+    let delete_all: &[u32] = &[];
 
     let att_data = GenericPath::new(
         Some(0),
@@ -58,11 +47,7 @@ fn attr_list_ops() {
     let mut att_path = AttrPath::new(&att_data);
 
     // Test 1: Add Operation - add val0
-    let input = &[AttrData::new(
-        None,
-        att_path.clone(),
-        EncodeValue::Value(&val0),
-    )];
+    let input = &[TestAttrData::new(None, att_path.clone(), &val0)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
 
     ImEngine::write_reqs(input, expected);
@@ -72,11 +57,7 @@ fn attr_list_ops() {
     }
 
     // Test 2: Another Add Operation - add val1
-    let input = &[AttrData::new(
-        None,
-        att_path.clone(),
-        EncodeValue::Value(&val1),
-    )];
+    let input = &[TestAttrData::new(None, att_path.clone(), &val1)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
 
     ImEngine::write_reqs(input, expected);
@@ -86,12 +67,8 @@ fn attr_list_ops() {
     }
 
     // Test 3: Edit Operation - edit val1 to val0
-    att_path.list_index = Some(Nullable::NotNull(1));
-    let input = &[AttrData::new(
-        None,
-        att_path.clone(),
-        EncodeValue::Value(&val0),
-    )];
+    att_path.list_index = Some(Nullable::some(1));
+    let input = &[TestAttrData::new(None, att_path.clone(), &val0)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
 
     ImEngine::write_reqs(input, expected);
@@ -101,8 +78,8 @@ fn attr_list_ops() {
     }
 
     // Test 4: Delete Operation - delete index 0
-    att_path.list_index = Some(Nullable::NotNull(0));
-    let input = &[AttrData::new(None, att_path.clone(), delete_item)];
+    att_path.list_index = Some(Nullable::some(0));
+    let input = &[TestAttrData::new(None, att_path.clone(), &delete_item)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
 
     ImEngine::write_reqs(input, expected);
@@ -114,11 +91,7 @@ fn attr_list_ops() {
     // Test 5: Overwrite Operation - overwrite first 2 entries
     let overwrite_val: [u32; 2] = [20, 21];
     att_path.list_index = None;
-    let input = &[AttrData::new(
-        None,
-        att_path.clone(),
-        EncodeValue::Value(&overwrite_val),
-    )];
+    let input = &[TestAttrData::new(None, att_path.clone(), &overwrite_val)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
 
     ImEngine::write_reqs(input, expected);
@@ -129,7 +102,7 @@ fn attr_list_ops() {
 
     // Test 6: Overwrite Operation - delete whole list
     att_path.list_index = None;
-    let input = &[AttrData::new(None, att_path, delete_all)];
+    let input = &[TestAttrData::new(None, att_path, &delete_all)];
     let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
 
     ImEngine::write_reqs(input, expected);

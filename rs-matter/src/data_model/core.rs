@@ -33,11 +33,11 @@ use crate::interaction_model::core::{
     IMStatusCode, OpCode, ReportDataReq, PROTO_ID_INTERACTION_MODEL,
 };
 use crate::interaction_model::messages::msg::{
-    InvReq, InvRespTag, ReadReq, ReportDataTag, StatusResp, SubscribeReq, SubscribeResp, TimedReq,
-    WriteReq, WriteRespTag,
+    InvReqRef, InvRespTag, ReadReqRef, ReportDataTag, StatusResp, SubscribeReqRef, SubscribeResp,
+    TimedReq, WriteReqRef, WriteRespTag,
 };
 use crate::respond::ExchangeHandler;
-use crate::tlv::{get_root_node_struct, FromTLV, TLVWriter, TagType};
+use crate::tlv::{get_root_node_struct, FromTLV, TLVElement, TLVTag, TLVWrite, TLVWriter};
 use crate::transport::exchange::{Exchange, MAX_EXCHANGE_RX_BUF_SIZE, MAX_EXCHANGE_TX_BUF_SIZE};
 use crate::utils::storage::WriteBuf;
 
@@ -147,7 +147,7 @@ where
 
         let metadata = self.handler.lock().await;
 
-        let req = ReadReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+        let req = ReadReqRef::new(TLVElement::new(exchange.rx()?.payload()));
         debug!("IM: Read request: {:?}", req);
 
         let req = ReportDataReq::Read(&req);
@@ -155,17 +155,27 @@ where
         let accessor = exchange.accessor()?;
 
         // Will the clusters that are to be invoked await?
-        let awaits = metadata.node().read(&req, None, &accessor).any(|item| {
-            item.map(|attr| self.handler.read_awaits(exchange, &attr))
+        let mut awaits = false;
+
+        for item in metadata
+            .node()
+            .read(&req, None, &exchange.accessor()?, true)?
+        {
+            if item?
+                .map(|attr| self.handler.read_awaits(exchange, &attr))
                 .unwrap_or(false)
-        });
+            {
+                awaits = true;
+                break;
+            }
+        }
 
         if !awaits {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
             let node = metadata.node();
-            let mut attrs = node.read(&req, None, &accessor).peekable();
+            let mut attrs = node.read(&req, None, &accessor, true)?.peekable();
 
             if !req
                 .respond(&self.handler, exchange, None, &mut attrs, &mut wb, true)
@@ -201,11 +211,11 @@ where
             return Ok(());
         };
 
-        let req = ReadReq::from_tlv(&get_root_node_struct(&rx)?)?;
+        let req = ReadReqRef::new(TLVElement::new(&rx));
         let req = ReportDataReq::Read(&req);
 
         let node = metadata.node();
-        let mut attrs = node.read(&req, None, &accessor).peekable();
+        let mut attrs = node.read(&req, None, &accessor, true)?.peekable();
 
         loop {
             let more_chunks = req
@@ -231,10 +241,10 @@ where
         exchange: &mut Exchange<'_>,
         timeout_instant: Option<Duration>,
     ) -> Result<bool, Error> {
-        let req = WriteReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+        let req = WriteReqRef::new(TLVElement::new(exchange.rx()?.payload()));
         debug!("IM: Write request: {:?}", req);
 
-        let timed = req.timed_request.unwrap_or(false);
+        let timed = req.timed_request()?;
 
         if self.timed_out(exchange, timeout_instant, timed).await? {
             return Ok(false);
@@ -248,16 +258,20 @@ where
 
         let metadata = self.handler.lock().await;
 
-        let req = WriteReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+        let req = WriteReqRef::new(TLVElement::new(exchange.rx()?.payload()));
 
         // Will the clusters that are to be invoked await?
-        let awaits = metadata
-            .node()
-            .write(&req, &exchange.accessor()?)
-            .any(|item| {
-                item.map(|(attr, _)| self.handler.write_awaits(exchange, &attr))
-                    .unwrap_or(false)
-            });
+        let mut awaits = false;
+
+        for item in metadata.node().write(&req, &exchange.accessor()?)? {
+            if item?
+                .map(|(attr, _)| self.handler.write_awaits(exchange, &attr))
+                .unwrap_or(false)
+            {
+                awaits = true;
+                break;
+            }
+        }
 
         let more_chunks = if awaits {
             // Yes, they will
@@ -269,7 +283,7 @@ where
                 return Ok(false);
             };
 
-            let req = WriteReq::from_tlv(&get_root_node_struct(&rx)?)?;
+            let req = WriteReqRef::new(TLVElement::new(&rx));
 
             req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
                 .await?
@@ -291,10 +305,10 @@ where
         exchange: &mut Exchange<'_>,
         timeout_instant: Option<Duration>,
     ) -> Result<(), Error> {
-        let req = InvReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+        let req = InvReqRef::new(TLVElement::new(exchange.rx()?.payload()));
         debug!("IM: Invoke request: {:?}", req);
 
-        let timed = req.timed_request.unwrap_or(false);
+        let timed = req.timed_request()?;
 
         if self.timed_out(exchange, timeout_instant, timed).await? {
             return Ok(());
@@ -308,16 +322,20 @@ where
 
         let metadata = self.handler.lock().await;
 
-        let req = InvReq::from_tlv(&get_root_node_struct(exchange.rx()?.payload())?)?;
+        let req = InvReqRef::new(TLVElement::new(exchange.rx()?.payload()));
 
         // Will the clusters that are to be invoked await?
-        let awaits = metadata
-            .node()
-            .invoke(&req, &exchange.accessor()?)
-            .any(|item| {
-                item.map(|(cmd, _)| self.handler.invoke_awaits(exchange, &cmd))
-                    .unwrap_or(false)
-            });
+        let mut awaits = false;
+
+        for item in metadata.node().invoke(&req, &exchange.accessor()?)? {
+            if item?
+                .map(|(cmd, _)| self.handler.invoke_awaits(exchange, &cmd))
+                .unwrap_or(false)
+            {
+                awaits = true;
+                break;
+            }
+        }
 
         if awaits {
             // Yes, they will
@@ -329,15 +347,15 @@ where
                 return Ok(());
             };
 
-            let req = InvReq::from_tlv(&get_root_node_struct(&rx)?)?;
+            let req = InvReqRef::new(TLVElement::new(&rx));
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+            req.respond(&self.handler, exchange, &metadata.node(), &mut wb, false)
                 .await?;
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+            req.respond(&self.handler, exchange, &metadata.node(), &mut wb, false)
                 .await?;
         }
 
@@ -355,7 +373,7 @@ where
             return Ok(());
         };
 
-        let req = SubscribeReq::from_tlv(&get_root_node_struct(&rx)?)?;
+        let req = SubscribeReqRef::new(TLVElement::new(&rx));
         debug!("IM: Subscribe request: {:?}", req);
 
         let (fabric_idx, peer_node_id) = exchange.with_session(|sess| {
@@ -366,7 +384,7 @@ where
             Ok((fabric_idx, peer_node_id))
         })?;
 
-        if !req.keep_subs {
+        if !req.keep_subs()? {
             self.subscriptions
                 .remove(Some(fabric_idx), Some(peer_node_id), None);
             self.subscriptions_buffers
@@ -376,8 +394,8 @@ where
             info!("All subscriptions for [F:{fabric_idx:x},P:{peer_node_id:x}] removed");
         }
 
-        let max_int_secs = core::cmp::max(req.max_int_ceil, 40); // Say we need at least 4 secs for potential latencies
-        let min_int_secs = req.min_int_floor;
+        let max_int_secs = core::cmp::max(req.max_int_ceil()?, 40); // Say we need at least 4 secs for potential latencies
+        let min_int_secs = req.min_int_floor()?;
 
         let Some(id) = self.subscriptions.add(
             fabric_idx,
@@ -398,7 +416,15 @@ where
         });
 
         let primed = self
-            .report_data(id, fabric_idx.get(), peer_node_id, &rx, &mut tx, exchange)
+            .report_data(
+                id,
+                fabric_idx.get(),
+                peer_node_id,
+                &rx,
+                &mut tx,
+                exchange,
+                true,
+            )
             .await?;
 
         if primed {
@@ -498,11 +524,6 @@ where
                         .unwrap();
                     let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
 
-                    let mut req = SubscribeReq::from_tlv(&get_root_node_struct(&rx)?)?;
-
-                    // Only used when priming the subscription
-                    req.dataver_filters = None;
-
                     let mut exchange = if let Some(session_id) = session_id {
                         Exchange::initiate_for_session(matter, session_id)?
                     } else {
@@ -521,6 +542,7 @@ where
                                 &rx,
                                 &mut tx,
                                 &mut exchange,
+                                false,
                             )
                             .await?;
 
@@ -585,6 +607,7 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn report_data(
         &self,
         id: u32,
@@ -593,13 +616,14 @@ where
         rx: &[u8],
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
+        with_dataver: bool,
     ) -> Result<bool, Error>
     where
         T: DataModelHandler,
     {
         let mut wb = WriteBuf::new(tx);
 
-        let req = SubscribeReq::from_tlv(&get_root_node_struct(rx)?)?;
+        let req = SubscribeReqRef::new(TLVElement::new(rx));
         let req = ReportDataReq::Subscribe(&req);
 
         let metadata = self.handler.lock().await;
@@ -608,7 +632,7 @@ where
 
         {
             let node = metadata.node();
-            let mut attrs = node.read(&req, None, &accessor).peekable();
+            let mut attrs = node.read(&req, None, &accessor, with_dataver)?.peekable();
 
             loop {
                 let more_chunks = req
@@ -746,41 +770,48 @@ impl<'a> ReportDataReq<'a> {
     ) -> Result<bool, Error>
     where
         T: DataModelHandler,
-        I: Iterator<Item = Result<AttrDetails<'a>, AttrStatus>>,
+        I: Iterator<Item = Result<Result<AttrDetails<'a>, AttrStatus>, Error>>,
     {
         wb.reset();
         wb.shrink(Self::LONG_READS_TLV_RESERVE_SIZE)?;
 
         let mut tw = TLVWriter::new(wb);
 
-        tw.start_struct(TagType::Anonymous)?;
+        tw.start_struct(&TLVTag::Anonymous)?;
 
         if let Some(subscription_id) = subscription_id {
             assert!(matches!(self, ReportDataReq::Subscribe(_)));
             tw.u32(
-                TagType::Context(ReportDataTag::SubscriptionId as u8),
+                &TLVTag::Context(ReportDataTag::SubscriptionId as u8),
                 subscription_id,
             )?;
         } else {
             assert!(matches!(self, ReportDataReq::Read(_)));
         }
 
-        let has_requests = self.attr_requests().is_some();
+        let has_requests = self.attr_requests()?.is_some();
 
         if has_requests {
-            tw.start_array(TagType::Context(ReportDataTag::AttributeReports as u8))?;
+            tw.start_array(&TLVTag::Context(ReportDataTag::AttributeReports as u8))?;
         }
 
         while let Some(item) = attrs.peek() {
-            if AttrDataEncoder::handle_read(exchange, item, &handler, &mut tw).await? {
-                attrs.next();
-            } else {
-                break;
+            match item {
+                Ok(item) => {
+                    if AttrDataEncoder::handle_read(exchange, item, &handler, &mut tw).await? {
+                        attrs.next();
+                    } else {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    attrs.next().transpose()?;
+                }
             }
         }
 
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
-        let mut tw = TLVWriter::new(wb);
+        let tw = wb;
 
         if has_requests {
             tw.end_container()?;
@@ -789,11 +820,11 @@ impl<'a> ReportDataReq<'a> {
         let more_chunks = attrs.peek().is_some();
 
         if more_chunks {
-            tw.bool(TagType::Context(ReportDataTag::MoreChunkedMsgs as u8), true)?;
+            tw.bool(&TLVTag::Context(ReportDataTag::MoreChunkedMsgs as u8), true)?;
         }
 
         if !more_chunks && suppress_resp {
-            tw.bool(TagType::Context(ReportDataTag::SupressResponse as u8), true)?;
+            tw.bool(&TLVTag::Context(ReportDataTag::SupressResponse as u8), true)?;
         }
 
         tw.end_container()?;
@@ -802,7 +833,7 @@ impl<'a> ReportDataReq<'a> {
     }
 }
 
-impl<'a> WriteReq<'a> {
+impl<'a> WriteReqRef<'a> {
     async fn respond<T>(
         &self,
         handler: T,
@@ -819,8 +850,8 @@ impl<'a> WriteReq<'a> {
 
         let mut tw = TLVWriter::new(wb);
 
-        tw.start_struct(TagType::Anonymous)?;
-        tw.start_array(TagType::Context(WriteRespTag::WriteResponses as u8))?;
+        tw.start_struct(&TLVTag::Anonymous)?;
+        tw.start_array(&TLVTag::Context(WriteRespTag::WriteResponses as u8))?;
 
         // The spec expects that a single write request like DeleteList + AddItem
         // should cause all ACLs of that fabric to be deleted and the new one to be added (Case 1).
@@ -833,26 +864,27 @@ impl<'a> WriteReq<'a> {
         // Thus we support the Case1 by doing this. It does come at the cost of maintaining an
         // additional list of expanded write requests as we start processing those.
         let write_attrs: heapless::Vec<_, MAX_WRITE_ATTRS_IN_ONE_TRANS> =
-            node.write(self, &accessor).collect();
+            node.write(self, &accessor)?.collect();
 
         for item in write_attrs {
-            AttrDataEncoder::handle_write(exchange, &item, &handler, &mut tw).await?;
+            AttrDataEncoder::handle_write(exchange, &item?, &handler, &mut tw).await?;
         }
 
         tw.end_container()?;
         tw.end_container()?;
 
-        Ok(self.more_chunked.unwrap_or(false))
+        self.more_chunked()
     }
 }
 
-impl<'a> InvReq<'a> {
+impl<'a> InvReqRef<'a> {
     async fn respond<T>(
         &self,
         handler: T,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
         wb: &mut WriteBuf<'_>,
+        suppress_resp: bool,
     ) -> Result<(), Error>
     where
         T: DataModelHandler,
@@ -861,21 +893,24 @@ impl<'a> InvReq<'a> {
 
         let mut tw = TLVWriter::new(wb);
 
-        tw.start_struct(TagType::Anonymous)?;
+        tw.start_struct(&TLVTag::Anonymous)?;
 
         // Suppress Response -> TODO: Need to revisit this for cases where we send a command back
-        tw.bool(TagType::Context(InvRespTag::SupressResponse as u8), false)?;
+        tw.bool(
+            &TLVTag::Context(InvRespTag::SupressResponse as u8),
+            suppress_resp,
+        )?;
 
-        let has_requests = self.inv_requests.is_some();
+        let has_requests = self.inv_requests()?.is_some();
 
         if has_requests {
-            tw.start_array(TagType::Context(InvRespTag::InvokeResponses as u8))?;
+            tw.start_array(&TLVTag::Context(InvRespTag::InvokeResponses as u8))?;
         }
 
         let accessor = exchange.accessor()?;
 
-        for item in node.invoke(self, &accessor) {
-            CmdDataEncoder::handle(&item, &handler, &mut tw, exchange).await?;
+        for item in node.invoke(self, &accessor)? {
+            CmdDataEncoder::handle(&item?, &handler, &mut tw, exchange).await?;
         }
 
         if has_requests {

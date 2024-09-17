@@ -18,6 +18,7 @@
 pub mod cell;
 pub mod epoch;
 pub mod init;
+pub mod iter;
 pub mod maybe;
 pub mod rand;
 pub mod select;

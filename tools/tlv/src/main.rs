@@ -67,15 +67,18 @@ fn main() {
     let tlv_list = base.parse_list(m.value_of("tlvs").unwrap(), ',');
 
     //    println!("Decoding: {:x?}", tlv_list.as_slice());
+
+    let tlv = tlv::TLVElement::new(tlv_list.as_slice());
+
     if m.is_present("cert") {
-        let cert = cert::Cert::new(tlv_list.as_slice()).unwrap();
+        let cert = cert::CertRef::new(tlv);
         println!("{}", cert);
     } else if m.is_present("as-asn1") {
         let mut asn1_cert = [0_u8; 1024];
-        let cert = cert::Cert::new(tlv_list.as_slice()).unwrap();
+        let cert = cert::CertRef::new(tlv);
         let len = cert.as_asn1(&mut asn1_cert).unwrap();
         println!("{:02x?}", &asn1_cert[..len]);
     } else {
-        tlv::print_tlv_list(tlv_list.as_slice());
+        println!("TLV {tlv}");
     }
 }

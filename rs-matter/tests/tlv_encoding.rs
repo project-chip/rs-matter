@@ -19,7 +19,7 @@ mod tlv_encoding_tests {
     use bitflags::bitflags;
     use rs_matter::bitflags_tlv;
     use rs_matter::error::Error;
-    use rs_matter::tlv::{get_root_node, FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
+    use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, TLVWriter, ToTLV};
     use rs_matter::utils::storage::WriteBuf;
 
     #[derive(PartialEq, Debug, ToTLV, FromTLV)]
@@ -48,14 +48,13 @@ mod tlv_encoding_tests {
         let mut output_buffer = [0u8; MAX_OUTPUT_SIZE];
         let mut write_buf = WriteBuf::new(&mut output_buffer);
         let mut writer = TLVWriter::new(&mut write_buf);
-        what.to_tlv(&mut writer, TagType::Anonymous)?;
+        what.to_tlv(&TLVTag::Anonymous, &mut writer)?;
 
         Ok(Vec::from(write_buf.as_slice()))
     }
 
     fn decode_from_tlv<'a, T: FromTLV<'a>>(data: &'a [u8]) -> Result<T, Error> {
-        let node = get_root_node(data)?;
-        T::from_tlv(&node)
+        T::from_tlv(&TLVElement::new(data))
     }
 
     macro_rules! asserted_ok {

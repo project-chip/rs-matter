@@ -12,7 +12,8 @@ license = "Apache-2.0"
 rust-version = "1.78"
 
 [features]
-default = ["os", "mbedtls"]
+default = ["os", "rustcrypto"]
+#default = ["os", "mbedtls"]
 os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std", "embassy-time/generic-queue"]
 std = ["alloc", "rand"]
 backtrace = []
@@ -85,6 +86,7 @@ nix = { version = "0.27", features = ["net"] }
 futures-lite = "2"
 async-channel = "2"
 static_cell = "2"
+similar = "2.6"
 
 [[example]]
 name = "onoff_light"

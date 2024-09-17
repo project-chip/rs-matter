@@ -16,6 +16,7 @@
  */
 
 use core::cell::Cell;
+use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use log::{error, info, warn};
@@ -23,15 +24,16 @@ use log::{error, info, warn};
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::acl::{AclEntry, AuthMode};
-use crate::cert::{Cert, MAX_CERT_TLV_LEN};
+use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{self, KeyPair};
 use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
 use crate::fabric::{Fabric, MAX_SUPPORTED_FABRICS};
-use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVWriter, TagType, ToTLV, UtfStr};
+use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, TLVWriter, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::epoch::Epoch;
+use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
 use crate::{attribute_enum, cmd_enter, command_enum, error::*};
 
@@ -72,13 +74,6 @@ impl From<Error> for NocError {
         Self::Error(value)
     }
 }
-
-// Some placeholder value for now
-const MAX_CERT_DECLARATION_LEN: usize = 600;
-// Some placeholder value for now
-const MAX_CSR_LEN: usize = 300;
-// As defined in the Matter Spec
-const RESP_MAX: usize = 900;
 
 pub const ID: u32 = 0x003E;
 
@@ -170,11 +165,6 @@ impl NocData {
 }
 
 #[derive(ToTLV)]
-struct CertChainResp<'a> {
-    cert: OctetStr<'a>,
-}
-
-#[derive(ToTLV)]
 struct NocResp<'a> {
     status_code: u8,
     fab_idx: u8,
@@ -239,7 +229,7 @@ impl NocCluster {
                     }
                     Attributes::CurrentFabricIndex(codec) => codec.encode(writer, attr.fab_idx),
                     Attributes::Fabrics(_) => {
-                        writer.start_array(AttrDataWriter::TAG)?;
+                        writer.start_array(&AttrDataWriter::TAG)?;
                         exchange
                             .matter()
                             .fabric_mgr
@@ -250,7 +240,7 @@ impl NocCluster {
 
                                     entry
                                         .get_fabric_desc(fab_idx, &root_ca_cert)?
-                                        .to_tlv(&mut writer, TagType::Anonymous)?;
+                                        .to_tlv(&TLVTag::Anonymous, &mut *writer)?;
                                 }
 
                                 Ok(())
@@ -324,16 +314,20 @@ impl NocCluster {
 
         let r = AddNocReq::from_tlv(data).map_err(|_| NocStatus::InvalidNOC)?;
 
-        let noc_cert = Cert::new(r.noc_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-        info!("Received NOC as: {}", noc_cert);
+        info!(
+            "Received NOC as: {}",
+            CertRef::new(TLVElement::new(r.noc_value.0))
+        );
 
         let noc = crate::utils::storage::Vec::from_slice(r.noc_value.0)
             .map_err(|_| NocStatus::InvalidNOC)?;
 
         let icac = if let Some(icac_value) = r.icac_value {
             if !icac_value.0.is_empty() {
-                let icac_cert = Cert::new(icac_value.0).map_err(|_| NocStatus::InvalidNOC)?;
-                info!("Received ICAC as: {}", icac_cert);
+                info!(
+                    "Received ICAC as: {}",
+                    CertRef::new(TLVElement::new(icac_value.0))
+                );
 
                 let icac = crate::utils::storage::Vec::from_slice(icac_value.0)
                     .map_err(|_| NocStatus::InvalidNOC)?;
@@ -431,7 +425,7 @@ impl NocCluster {
         let cmd_data = NocResp {
             status_code: status_code as u8,
             fab_idx,
-            debug_txt: UtfStr::new(debug_txt.as_bytes()),
+            debug_txt,
         };
 
         encoder
@@ -454,10 +448,7 @@ impl NocCluster {
                 .matter()
                 .fabric_mgr
                 .borrow_mut()
-                .set_label(
-                    fab_idx,
-                    req.label.as_str().map_err(Error::map_invalid_data_type)?,
-                )
+                .set_label(fab_idx, req.label)
                 .is_err()
             {
                 (NocStatus::LabelConflict, fab_idx.get())
@@ -554,19 +545,11 @@ impl NocCluster {
 
         let mut writer = encoder.with_command(RespCommands::AttReqResp as _)?;
 
-        let mut buf: [u8; RESP_MAX] = [0; RESP_MAX];
-        let mut attest_element = WriteBuf::new(&mut buf);
-        writer.start_struct(CmdDataWriter::TAG)?;
+        writer.start_struct(&CmdDataWriter::TAG)?;
         add_attestation_element(
             exchange.matter().epoch(),
             exchange.matter().dev_att(),
             req.str.0,
-            &mut attest_element,
-            &mut writer,
-        )?;
-        add_attestation_signature(
-            exchange.matter().dev_att(),
-            &mut attest_element,
             &attest_challenge,
             &mut writer,
         )?;
@@ -588,22 +571,15 @@ impl NocCluster {
         info!("Received data: {}", data);
         let cert_type = get_certchainrequest_params(data).map_err(Error::map_invalid_command)?;
 
-        let mut buf: [u8; RESP_MAX] = [0; RESP_MAX];
-        let len = exchange
-            .matter()
-            .dev_att()
-            .get_devatt_data(cert_type, &mut buf)?;
-        let buf = &buf[0..len];
+        let mut writer = encoder.with_command(RespCommands::CertChainResp as _)?;
 
-        let cmd_data = CertChainResp {
-            cert: OctetStr::new(buf),
-        };
+        writer.start_struct(&CmdDataWriter::TAG)?;
+        writer.str_cb(&TLVTag::Context(0), |buf| {
+            exchange.matter().dev_att().get_devatt_data(cert_type, buf)
+        })?;
+        writer.end_container()?;
 
-        encoder
-            .with_command(RespCommands::CertChainResp as _)?
-            .set(cmd_data)?;
-
-        Ok(())
+        writer.complete()
     }
 
     fn handle_command_csrrequest(
@@ -630,13 +606,11 @@ impl NocCluster {
 
         let mut writer = encoder.with_command(RespCommands::CSRResp as _)?;
 
-        let mut buf: [u8; RESP_MAX] = [0; RESP_MAX];
-        let mut nocsr_element = WriteBuf::new(&mut buf);
-        writer.start_struct(CmdDataWriter::TAG)?;
-        add_nocsrelement(&noc_keypair, req.str.0, &mut nocsr_element, &mut writer)?;
-        add_attestation_signature(
+        writer.start_struct(&CmdDataWriter::TAG)?;
+        add_nocsrelement(
             exchange.matter().dev_att(),
-            &mut nocsr_element,
+            &noc_keypair,
+            req.str.0,
             &attest_challenge,
             &mut writer,
         )?;
@@ -728,58 +702,85 @@ fn add_attestation_element(
     epoch: Epoch,
     dev_att: &dyn DevAttDataFetcher,
     att_nonce: &[u8],
-    write_buf: &mut WriteBuf,
+    attest_challenge: &[u8],
     t: &mut TLVWriter,
 ) -> Result<(), Error> {
-    let mut cert_dec: [u8; MAX_CERT_DECLARATION_LEN] = [0; MAX_CERT_DECLARATION_LEN];
-    let len = dev_att.get_devatt_data(dev_att::DataType::CertDeclaration, &mut cert_dec)?;
-    let cert_dec = &cert_dec[0..len];
-
     let epoch = epoch().as_secs() as u32;
-    let mut writer = TLVWriter::new(write_buf);
-    writer.start_struct(TagType::Anonymous)?;
-    writer.str16(TagType::Context(1), cert_dec)?;
-    writer.str8(TagType::Context(2), att_nonce)?;
-    writer.u32(TagType::Context(3), epoch)?;
-    writer.end_container()?;
 
-    t.str16(TagType::Context(0), write_buf.as_slice())
-}
+    let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+    let signature_buf = signature_buf.init_zeroed();
+    let mut signature_len = 0;
 
-fn add_attestation_signature(
-    dev_att: &dyn DevAttDataFetcher,
-    attest_element: &mut WriteBuf,
-    attest_challenge: &[u8],
-    resp: &mut TLVWriter,
-) -> Result<(), Error> {
-    let dac_key = {
-        let mut pubkey = [0_u8; crypto::EC_POINT_LEN_BYTES];
-        let mut privkey = [0_u8; crypto::BIGNUM_LEN_BYTES];
-        dev_att.get_devatt_data(dev_att::DataType::DACPubKey, &mut pubkey)?;
-        dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, &mut privkey)?;
-        KeyPair::new_from_components(&pubkey, &privkey)
-    }?;
-    attest_element.copy_from_slice(attest_challenge)?;
-    let mut signature = [0u8; crypto::EC_SIGNATURE_LEN_BYTES];
-    dac_key.sign_msg(attest_element.as_slice(), &mut signature)?;
-    resp.str8(TagType::Context(1), &signature)
+    t.str_cb(&TLVTag::Context(0), |buf| {
+        let mut wb = WriteBuf::new(buf);
+        wb.start_struct(&TLVTag::Anonymous)?;
+        wb.str_cb(&TLVTag::Context(1), |buf| {
+            dev_att.get_devatt_data(dev_att::DataType::CertDeclaration, buf)
+        })?;
+        wb.str(&TLVTag::Context(2), att_nonce)?;
+        wb.u32(&TLVTag::Context(3), epoch)?;
+        wb.end_container()?;
+
+        let len = wb.get_tail();
+
+        signature_len =
+            compute_attestation_signature(dev_att, &mut wb, attest_challenge, signature_buf)?.len();
+
+        Ok(len)
+    })?;
+    t.str(&TLVTag::Context(1), &signature_buf[..signature_len])
 }
 
 fn add_nocsrelement(
+    dev_att: &dyn DevAttDataFetcher,
     noc_keypair: &KeyPair,
     csr_nonce: &[u8],
-    write_buf: &mut WriteBuf,
-    resp: &mut TLVWriter,
+    attest_challenge: &[u8],
+    t: &mut TLVWriter,
 ) -> Result<(), Error> {
-    let mut csr: [u8; MAX_CSR_LEN] = [0; MAX_CSR_LEN];
-    let csr = noc_keypair.get_csr(&mut csr)?;
-    let mut writer = TLVWriter::new(write_buf);
-    writer.start_struct(TagType::Anonymous)?;
-    writer.str8(TagType::Context(1), csr)?;
-    writer.str8(TagType::Context(2), csr_nonce)?;
-    writer.end_container()?;
+    let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+    let signature_buf = signature_buf.init_zeroed();
+    let mut signature_len = 0;
 
-    resp.str8(TagType::Context(0), write_buf.as_slice())
+    t.str_cb(&TLVTag::Context(0), |buf| {
+        let mut wb = WriteBuf::new(buf);
+
+        wb.start_struct(&TLVTag::Anonymous)?;
+        wb.str_cb(&TLVTag::Context(1), |buf| {
+            Ok(noc_keypair.get_csr(buf)?.len())
+        })?;
+        wb.str(&TLVTag::Context(2), csr_nonce)?;
+        wb.end_container()?;
+
+        let len = wb.get_tail();
+
+        signature_len =
+            compute_attestation_signature(dev_att, &mut wb, attest_challenge, signature_buf)?.len();
+
+        Ok(len)
+    })?;
+    t.str(&TLVTag::Context(1), &signature_buf[..signature_len])
+}
+
+fn compute_attestation_signature<'a>(
+    dev_att: &dyn DevAttDataFetcher,
+    attest_element: &mut WriteBuf,
+    attest_challenge: &[u8],
+    signature_buf: &'a mut [u8],
+) -> Result<&'a [u8], Error> {
+    let dac_key = {
+        let mut pubkey_buf = MaybeUninit::<[u8; crypto::EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+        let pubkey_buf = pubkey_buf.init_zeroed();
+        let mut privkey_buf = MaybeUninit::<[u8; crypto::BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+        let privkey_buf = privkey_buf.init_zeroed();
+        let pubkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPubKey, pubkey_buf)?;
+        let privkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, privkey_buf)?;
+        KeyPair::new_from_components(&pubkey_buf[..pubkey_len], &privkey_buf[..privkey_len])
+    }?;
+    attest_element.copy_from_slice(attest_challenge)?;
+    let len = dac_key.sign_msg(attest_element.as_slice(), signature_buf)?;
+
+    Ok(&signature_buf[..len])
 }
 
 fn get_certchainrequest_params(data: &TLVElement) -> Result<DataType, Error> {

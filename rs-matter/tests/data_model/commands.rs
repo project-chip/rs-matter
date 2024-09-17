@@ -15,19 +15,15 @@
  *    limitations under the License.
  */
 
-use crate::{
-    cmd_data,
-    common::{commands::*, echo_cluster, im_engine::ImEngine, init_env_logger},
-    echo_req, echo_resp,
-};
+use rs_matter::data_model::cluster_on_off;
+use rs_matter::interaction_model::core::IMStatusCode;
+use rs_matter::interaction_model::messages::ib::{CmdPath, CmdStatus};
 
-use rs_matter::{
-    data_model::{cluster_on_off, objects::EncodeValue},
-    interaction_model::{
-        core::IMStatusCode,
-        messages::ib::{CmdData, CmdPath, CmdStatus},
-    },
-};
+use crate::common::e2e::im::commands::TestCmdResp;
+use crate::common::e2e::im::echo_cluster;
+use crate::common::e2e::ImEngine;
+use crate::common::init_env_logger;
+use crate::{cmd_data, echo_req, echo_resp};
 
 #[test]
 fn test_invoke_cmds_success() {
@@ -77,17 +73,17 @@ fn test_invoke_cmds_unsupported_fields() {
     ];
 
     let expected = &[
-        ExpectedInvResp::Status(CmdStatus::new(
+        TestCmdResp::Status(CmdStatus::new(
             invalid_endpoint,
             IMStatusCode::UnsupportedEndpoint,
             0,
         )),
-        ExpectedInvResp::Status(CmdStatus::new(
+        TestCmdResp::Status(CmdStatus::new(
             invalid_cluster,
             IMStatusCode::UnsupportedCluster,
             0,
         )),
-        ExpectedInvResp::Status(CmdStatus::new(
+        TestCmdResp::Status(CmdStatus::new(
             invalid_command,
             IMStatusCode::UnsupportedCommand,
             0,
@@ -128,7 +124,7 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
         Some(cluster_on_off::CommandsDiscriminants::On as u32),
     );
     let input = &[cmd_data!(target, 1)];
-    let expected = &[ExpectedInvResp::Status(CmdStatus::new(
+    let expected = &[TestCmdResp::Status(CmdStatus::new(
         expected_path,
         IMStatusCode::Success,
         0,

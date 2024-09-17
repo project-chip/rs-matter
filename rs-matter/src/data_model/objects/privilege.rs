@@ -17,7 +17,7 @@
 
 use crate::{
     error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVElement, ToTLV},
+    tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV},
 };
 use log::error;
 
@@ -36,6 +36,22 @@ bitflags! {
         const OPERATE = Self::V.bits() | Self::O.bits();
         const MANAGE = Self::V.bits() | Self::O.bits() | Self::M.bits();
         const ADMIN = Self::V.bits() | Self::O.bits() | Self::M.bits() | Self::A.bits();
+    }
+}
+
+impl Privilege {
+    pub fn raw_value(&self) -> u8 {
+        if self.contains(Privilege::ADMIN) {
+            5
+        } else if self.contains(Privilege::OPERATE) {
+            4
+        } else if self.contains(Privilege::MANAGE) {
+            3
+        } else if self.contains(Privilege::VIEW) {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -59,23 +75,11 @@ impl FromTLV<'_> for Privilege {
 }
 
 impl ToTLV for Privilege {
-    #[allow(clippy::bool_to_int_with_if)]
-    fn to_tlv(
-        &self,
-        tw: &mut crate::tlv::TLVWriter,
-        tag: crate::tlv::TagType,
-    ) -> Result<(), Error> {
-        let val = if self.contains(Privilege::ADMIN) {
-            5
-        } else if self.contains(Privilege::OPERATE) {
-            4
-        } else if self.contains(Privilege::MANAGE) {
-            3
-        } else if self.contains(Privilege::VIEW) {
-            1
-        } else {
-            0
-        };
-        tw.u8(tag, val)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.u8(tag, self.raw_value())
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+        TLV::u8(tag, self.raw_value()).into_tlv_iter()
     }
 }

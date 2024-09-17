@@ -15,11 +15,7 @@
  *    limitations under the License.
  */
 
-pub mod attributes;
-pub mod commands;
-pub mod echo_cluster;
-pub mod handlers;
-pub mod im_engine;
+pub mod e2e;
 
 pub fn init_env_logger() {
     #[cfg(all(feature = "std", not(target_os = "espidf")))]

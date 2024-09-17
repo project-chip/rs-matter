@@ -25,7 +25,7 @@ use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVElement, TagType};
+use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
 use crate::{attribute_enum, command_enum};
 
@@ -182,7 +182,7 @@ impl WifiNwDiagCluster {
                 let data = self.data.borrow();
 
                 match attr.attr_id.try_into()? {
-                    Attributes::Bssid => writer.str8(TagType::Anonymous, &data.bssid),
+                    Attributes::Bssid => writer.str(&TLVTag::Anonymous, &data.bssid),
                     Attributes::SecurityType(codec) => codec.encode(writer, data.security_type),
                     Attributes::WifiVersion(codec) => codec.encode(writer, data.wifi_version),
                     Attributes::ChannelNumber(codec) => codec.encode(writer, data.channel_number),

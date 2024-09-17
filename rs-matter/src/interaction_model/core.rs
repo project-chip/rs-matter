@@ -19,7 +19,7 @@ use core::time::Duration;
 
 use crate::{
     error::*,
-    tlv::{FromTLV, TLVArray, TLVElement, TLVWriter, TagType, ToTLV},
+    tlv::{FromTLV, TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV, TLV},
     transport::exchange::MessageMeta,
     utils::{epoch::Epoch, storage::WriteBuf},
 };
@@ -27,7 +27,7 @@ use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
 use super::messages::ib::{AttrPath, DataVersionFilter};
-use super::messages::msg::{ReadReq, StatusResp, SubscribeReq, SubscribeResp, TimedReq};
+use super::messages::msg::{ReadReqRef, StatusResp, SubscribeReqRef, SubscribeResp, TimedReq};
 
 #[macro_export]
 macro_rules! cmd_enter {
@@ -37,7 +37,7 @@ macro_rules! cmd_enter {
     }};
 }
 
-#[derive(FromPrimitive, Debug, Clone, Copy, PartialEq)]
+#[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IMStatusCode {
     Success = 0,
     Failure = 1,
@@ -98,8 +98,12 @@ impl FromTLV<'_> for IMStatusCode {
 }
 
 impl ToTLV for IMStatusCode {
-    fn to_tlv(&self, tw: &mut TLVWriter, tag_type: TagType) -> Result<(), Error> {
-        tw.u16(tag_type, *self as u16)
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.u16(tag, *self as _)
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+        TLV::u16(tag, *self as _).into_tlv_iter()
     }
 }
 
@@ -143,40 +147,39 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 
 /// A wrapper enum for `ReadReq` and `SubscribeReq` that allows downstream code to
 /// treat the two in a unified manner with regards to `OpCode::ReportDataResp` type responses.
+#[derive(Debug, Clone)]
 pub enum ReportDataReq<'a> {
-    Read(&'a ReadReq<'a>),
-    Subscribe(&'a SubscribeReq<'a>),
+    Read(&'a ReadReqRef<'a>),
+    Subscribe(&'a SubscribeReqRef<'a>),
 }
 
 impl<'a> ReportDataReq<'a> {
-    pub fn attr_requests(&self) -> &Option<TLVArray<'a, AttrPath>> {
+    pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
         match self {
-            ReportDataReq::Read(req) => &req.attr_requests,
-            ReportDataReq::Subscribe(req) => &req.attr_requests,
+            ReportDataReq::Read(req) => req.attr_requests(),
+            ReportDataReq::Subscribe(req) => req.attr_requests(),
         }
     }
 
-    pub fn dataver_filters(&self) -> Option<&TLVArray<'_, DataVersionFilter>> {
+    pub fn dataver_filters(&self) -> Result<Option<TLVArray<'_, DataVersionFilter>>, Error> {
         match self {
-            ReportDataReq::Read(req) => req.dataver_filters.as_ref(),
-            ReportDataReq::Subscribe(req) => req.dataver_filters.as_ref(),
+            ReportDataReq::Read(req) => req.dataver_filters(),
+            ReportDataReq::Subscribe(req) => req.dataver_filters(),
         }
     }
 
-    pub fn fabric_filtered(&self) -> bool {
+    pub fn fabric_filtered(&self) -> Result<bool, Error> {
         match self {
-            ReportDataReq::Read(req) => req.fabric_filtered,
-            ReportDataReq::Subscribe(req) => req.fabric_filtered,
+            ReportDataReq::Read(req) => req.fabric_filtered(),
+            ReportDataReq::Subscribe(req) => req.fabric_filtered(),
         }
     }
 }
 
 impl StatusResp {
     pub fn write(wb: &mut WriteBuf, status: IMStatusCode) -> Result<(), Error> {
-        let mut tw = TLVWriter::new(wb);
-
         let status = Self { status };
-        status.to_tlv(&mut tw, TagType::Anonymous)
+        status.to_tlv(&TagType::Anonymous, wb)
     }
 }
 
@@ -194,10 +197,8 @@ impl SubscribeResp {
         subscription_id: u32,
         max_int: u16,
     ) -> Result<&'a [u8], Error> {
-        let mut tw = TLVWriter::new(wb);
-
         let resp = Self::new(subscription_id, max_int);
-        resp.to_tlv(&mut tw, TagType::Anonymous)?;
+        resp.to_tlv(&TagType::Anonymous, &mut *wb)?;
 
         Ok(wb.as_slice())
     }

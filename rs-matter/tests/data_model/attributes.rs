@@ -15,23 +15,15 @@
  *    limitations under the License.
  */
 
-use rs_matter::{
-    data_model::{
-        cluster_on_off,
-        objects::{EncodeValue, GlobalElements},
-    },
-    interaction_model::{
-        core::IMStatusCode,
-        messages::ib::{AttrData, AttrPath, AttrResp, AttrStatus},
-        messages::GenericPath,
-    },
-    tlv::{ElementType, TLVElement, TLVWriter, TagType},
-};
+use rs_matter::data_model::{cluster_on_off, objects::GlobalElements};
+use rs_matter::interaction_model::core::IMStatusCode;
+use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
+use rs_matter::interaction_model::messages::GenericPath;
 
-use crate::{
-    attr_data, attr_data_path, attr_status,
-    common::{attributes::*, echo_cluster, im_engine::ImEngine, init_env_logger},
-};
+use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
+use crate::common::e2e::ImEngine;
+use crate::common::init_env_logger;
+use crate::{attr_data, attr_data_path, attr_status};
 
 #[test]
 fn test_read_success() {
@@ -62,12 +54,9 @@ fn test_read_success() {
         AttrPath::new(&ep1_attcustom),
     ];
     let expected = &[
-        attr_data_path!(ep0_att1, ElementType::U16(0x1234)),
-        attr_data_path!(ep1_att2, ElementType::U16(0x5678)),
-        attr_data_path!(
-            ep1_attcustom,
-            ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
-        ),
+        attr_data_path!(ep0_att1, Some(&0x1234u16)),
+        attr_data_path!(ep1_att2, Some(&0x5678u16)),
+        attr_data_path!(ep1_attcustom, Some(&echo_cluster::ATTR_CUSTOM_VALUE)),
     ];
     ImEngine::read_reqs(input, expected);
 }
@@ -138,13 +127,13 @@ fn test_read_wc_endpoint_all_have_clusters() {
             0,
             echo_cluster::ID,
             echo_cluster::AttributesDiscriminants::Att1,
-            ElementType::U16(0x1234)
+            Some(&0x1234u16)
         ),
         attr_data!(
             1,
             echo_cluster::ID,
             echo_cluster::AttributesDiscriminants::Att1,
-            ElementType::U16(0x1234)
+            Some(&0x1234u16)
         ),
     ];
     ImEngine::read_reqs(input, expected);
@@ -164,13 +153,11 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
-    let expected = &[attr_data_path!(
-        GenericPath::new(
-            Some(1),
-            Some(cluster_on_off::ID),
-            Some(cluster_on_off::AttributesDiscriminants::OnOff as u32)
-        ),
-        ElementType::False
+    let expected = &[attr_data!(
+        1,
+        cluster_on_off::ID,
+        cluster_on_off::AttributesDiscriminants::OnOff,
+        Some(&false)
     )];
     ImEngine::read_reqs(input, expected);
 }
@@ -184,35 +171,23 @@ fn test_read_wc_endpoint_wc_attribute() {
     let wc_ep_wc_attr = GenericPath::new(None, Some(echo_cluster::ID), None);
     let input = &[AttrPath::new(&wc_ep_wc_attr)];
 
-    let attr_list = TLVHolder::new_array(
-        2,
-        &[
-            GlobalElements::FeatureMap as u16,
-            GlobalElements::AttributeList as u16,
-            echo_cluster::AttributesDiscriminants::Att1 as u16,
-            echo_cluster::AttributesDiscriminants::Att2 as u16,
-            echo_cluster::AttributesDiscriminants::AttWrite as u16,
-            echo_cluster::AttributesDiscriminants::AttCustom as u16,
-        ],
-    );
-    let attr_list_tlv = attr_list.to_tlv();
+    let attr_list: &[u16] = &[
+        GlobalElements::FeatureMap as u16,
+        GlobalElements::AttributeList as u16,
+        echo_cluster::AttributesDiscriminants::Att1 as u16,
+        echo_cluster::AttributesDiscriminants::Att2 as u16,
+        echo_cluster::AttributesDiscriminants::AttWrite as u16,
+        echo_cluster::AttributesDiscriminants::AttCustom as u16,
+        echo_cluster::AttributesDiscriminants::AttWriteList as u16,
+    ];
 
     let expected = &[
-        attr_data_path!(
-            GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(GlobalElements::FeatureMap as u32),
-            ),
-            ElementType::U8(0)
-        ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(GlobalElements::AttributeList as u32),
-            ),
-            attr_list_tlv.get_element_type().clone()
+        attr_data!(0, echo_cluster::ID, GlobalElements::FeatureMap, Some(&0u8)),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            GlobalElements::AttributeList,
+            Some(&attr_list)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -220,7 +195,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
             ),
-            ElementType::U16(0x1234)
+            Some(&0x1234u16)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -228,7 +203,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
             ),
-            ElementType::U16(0x5678)
+            Some(&0x5678u16)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -236,7 +211,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
             ),
-            ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
+            Some(&echo_cluster::ATTR_CUSTOM_VALUE)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -244,7 +219,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(GlobalElements::FeatureMap as u32),
             ),
-            ElementType::U8(0)
+            Some(&0u8)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -252,7 +227,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(GlobalElements::AttributeList as u32),
             ),
-            attr_list_tlv.get_element_type().clone()
+            Some(&attr_list)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -260,7 +235,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
             ),
-            ElementType::U16(0x1234)
+            Some(&0x1234u16)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -268,7 +243,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
             ),
-            ElementType::U16(0x5678)
+            Some(&0x5678u16)
         ),
         attr_data_path!(
             GenericPath::new(
@@ -276,7 +251,7 @@ fn test_read_wc_endpoint_wc_attribute() {
                 Some(echo_cluster::ID),
                 Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
             ),
-            ElementType::U32(echo_cluster::ATTR_CUSTOM_VALUE)
+            Some(&echo_cluster::ATTR_CUSTOM_VALUE)
         ),
     ];
     ImEngine::read_reqs(input, expected);
@@ -290,12 +265,6 @@ fn test_write_success() {
     let val0 = 10;
     let val1 = 15;
     init_env_logger();
-    let attr_data0 = |tag, t: &mut TLVWriter| {
-        let _ = t.u16(tag, val0);
-    };
-    let attr_data1 = |tag, t: &mut TLVWriter| {
-        let _ = t.u16(tag, val1);
-    };
 
     let ep0_att = GenericPath::new(
         Some(0),
@@ -309,16 +278,8 @@ fn test_write_success() {
     );
 
     let input = &[
-        AttrData::new(
-            None,
-            AttrPath::new(&ep0_att),
-            EncodeValue::Closure(&attr_data0),
-        ),
-        AttrData::new(
-            None,
-            AttrPath::new(&ep1_att),
-            EncodeValue::Closure(&attr_data1),
-        ),
+        TestAttrData::new(None, AttrPath::new(&ep0_att), &val0 as _),
+        TestAttrData::new(None, AttrPath::new(&ep1_att), &val1 as _),
     ];
     let expected = &[
         AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
@@ -341,20 +302,13 @@ fn test_write_wc_endpoint() {
     // - wildcard endpoint, AttWrite
     let val0 = 10;
     init_env_logger();
-    let attr_data0 = |tag, t: &mut TLVWriter| {
-        let _ = t.u16(tag, val0);
-    };
 
     let ep_att = GenericPath::new(
         None,
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let input = &[AttrData::new(
-        None,
-        AttrPath::new(&ep_att),
-        EncodeValue::Closure(&attr_data0),
-    )];
+    let input = &[TestAttrData::new(None, AttrPath::new(&ep_att), &val0 as _)];
 
     let ep0_att = GenericPath::new(
         Some(0),
@@ -394,9 +348,6 @@ fn test_write_unsupported_fields() {
     init_env_logger();
 
     let val0 = 50;
-    let attr_data0 = |tag, t: &mut TLVWriter| {
-        let _ = t.u16(tag, val0);
-    };
 
     let invalid_endpoint = GenericPath::new(
         Some(4),
@@ -424,41 +375,21 @@ fn test_write_unsupported_fields() {
     let wc_attribute = GenericPath::new(Some(0), Some(echo_cluster::ID), None);
 
     let input = &[
-        AttrData::new(
-            None,
-            AttrPath::new(&invalid_endpoint),
-            EncodeValue::Closure(&attr_data0),
-        ),
-        AttrData::new(
-            None,
-            AttrPath::new(&invalid_cluster),
-            EncodeValue::Closure(&attr_data0),
-        ),
-        AttrData::new(
-            None,
-            AttrPath::new(&invalid_attribute),
-            EncodeValue::Closure(&attr_data0),
-        ),
-        AttrData::new(
+        TestAttrData::new(None, AttrPath::new(&invalid_endpoint), &val0 as _),
+        TestAttrData::new(None, AttrPath::new(&invalid_cluster), &val0 as _),
+        TestAttrData::new(None, AttrPath::new(&invalid_attribute), &val0 as _),
+        TestAttrData::new(
             None,
             AttrPath::new(&wc_endpoint_invalid_cluster),
-            EncodeValue::Closure(&attr_data0),
+            &val0 as _,
         ),
-        AttrData::new(
+        TestAttrData::new(
             None,
             AttrPath::new(&wc_endpoint_invalid_attribute),
-            EncodeValue::Closure(&attr_data0),
+            &val0 as _,
         ),
-        AttrData::new(
-            None,
-            AttrPath::new(&wc_cluster),
-            EncodeValue::Closure(&attr_data0),
-        ),
-        AttrData::new(
-            None,
-            AttrPath::new(&wc_attribute),
-            EncodeValue::Closure(&attr_data0),
-        ),
+        TestAttrData::new(None, AttrPath::new(&wc_cluster), &val0 as _),
+        TestAttrData::new(None, AttrPath::new(&wc_attribute), &val0 as _),
     ];
     let expected = &[
         AttrStatus::new(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint, 0),
