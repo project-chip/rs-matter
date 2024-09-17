@@ -345,8 +345,6 @@ impl NocCluster {
 
             Ok(())
         } else {
-            // TODO
-
             Self::create_nocresponse(
                 encoder,
                 NocStatus::InvalidFabricIndex,
