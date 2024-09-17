@@ -15,14 +15,16 @@
  *    limitations under the License.
  */
 
+use core::mem::MaybeUninit;
+
 use log::error;
 
 use crate::{
-    alloc,
     error::*,
     respond::ExchangeHandler,
     secure_channel::{common::*, pake::Pake},
     transport::exchange::Exchange,
+    utils::init::InitMaybeUninit,
 };
 
 use super::{
@@ -53,12 +55,14 @@ impl SecureChannel {
 
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
-                let mut spake2p = alloc!(Spake2P::new()); // TODO LARGE BUFFER
-                Pake::new().handle(exchange, &mut spake2p).await
+                let mut spake2p = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                let spake2p = spake2p.init_with(Spake2P::init());
+                Pake::new().handle(exchange, spake2p).await
             }
             OpCode::CASESigma1 => {
-                let mut case_session = alloc!(CaseSession::new()); // TODO LARGE BUFFER
-                Case::new().handle(exchange, &mut case_session).await
+                let mut case_session = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                let case_session = case_session.init_with(CaseSession::init());
+                Case::new().handle(exchange, case_session).await
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);

@@ -77,7 +77,7 @@ pub struct TLVElement<'a>(TLVSequence<'a>);
 impl<'a> TLVElement<'a> {
     /// Create a new `TLVElement` from a byte slice, where the byte slice contains an encoded TLV stream (a TLV element).
     #[inline(always)]
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self(TLVSequence(data))
     }
 

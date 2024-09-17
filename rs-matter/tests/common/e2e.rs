@@ -25,6 +25,7 @@ use embassy_sync::{
 };
 
 use rs_matter::acl::{AclEntry, AuthMode};
+use rs_matter::crypto::KeyPair;
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
 use rs_matter::data_model::core::{DataModel, IMBuffer};
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Privilege};
@@ -132,10 +133,13 @@ impl E2eRunner {
     /// Add a default ACL entry to the remote (tested) Matter instance.
     pub fn add_default_acl(&self) {
         // Only allow the standard peer node id of the IM Engine
-        let mut default_acl =
-            AclEntry::new(NonZeroU8::new(1).unwrap(), Privilege::ADMIN, AuthMode::Case);
+        let mut default_acl = AclEntry::new(Privilege::ADMIN, AuthMode::Case);
         default_acl.add_subject(Self::PEER_ID).unwrap();
-        self.matter.acl_mgr.borrow_mut().add(default_acl).unwrap();
+        self.matter
+            .fabric_mgr
+            .borrow_mut()
+            .acl_add(NonZeroU8::new(1).unwrap(), default_acl)
+            .unwrap();
     }
 
     /// Initiates a new exchange on the local Matter instance
@@ -215,6 +219,12 @@ impl E2eRunner {
             rand,
             MATTER_PORT,
         );
+
+        matter
+            .fabric_mgr
+            .borrow_mut()
+            .add_with_post_init(KeyPair::new(matter.rand()).unwrap(), |_| Ok(()))
+            .unwrap();
 
         matter.initialize_transport_buffers().unwrap();
 

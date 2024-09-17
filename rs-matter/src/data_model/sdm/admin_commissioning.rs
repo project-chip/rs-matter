@@ -37,7 +37,7 @@ pub enum WindowStatus {
     BasicWindowOpen = 2,
 }
 
-#[derive(Copy, Clone, Debug, FromRepr, EnumDiscriminants)]
+#[derive(Clone, Debug, FromRepr, EnumDiscriminants)]
 #[repr(u16)]
 pub enum Attributes {
     WindowStatus(AttrType<u8>) = 0,

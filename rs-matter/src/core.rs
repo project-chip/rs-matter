@@ -17,7 +17,6 @@
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use crate::acl::AclMgr;
 use crate::data_model::{
     cluster_basic_information::BasicInfoConfig,
     sdm::{dev_att::DevAttDataFetcher, failsafe::FailSafe},
@@ -50,8 +49,7 @@ pub struct CommissioningData {
 
 /// The primary Matter Object
 pub struct Matter<'a> {
-    pub(crate) fabric_mgr: RefCell<FabricMgr>,
-    pub acl_mgr: RefCell<AclMgr>, // Public for tests
+    pub fabric_mgr: RefCell<FabricMgr>, // Public for tests
     pub(crate) pase_mgr: RefCell<PaseMgr>,
     pub(crate) failsafe: RefCell<FailSafe>,
     pub transport_mgr: TransportMgr<'a>, // Public for tests
@@ -112,9 +110,8 @@ impl<'a> Matter<'a> {
     ) -> Self {
         Self {
             fabric_mgr: RefCell::new(FabricMgr::new()),
-            acl_mgr: RefCell::new(AclMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
-            failsafe: RefCell::new(FailSafe::new()),
+            failsafe: RefCell::new(FailSafe::new(epoch, rand)),
             transport_mgr: TransportMgr::new(mdns, dev_det, port, epoch, rand),
             persist_notification: Notification::new(),
             epoch,
@@ -173,9 +170,8 @@ impl<'a> Matter<'a> {
         init!(
             Self {
                 fabric_mgr <- RefCell::init(FabricMgr::init()),
-                acl_mgr <- RefCell::init(AclMgr::init()),
                 pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
-                failsafe: RefCell::new(FailSafe::new()),
+                failsafe: RefCell::new(FailSafe::new(epoch, rand)),
                 transport_mgr <- TransportMgr::init(mdns, dev_det, port, epoch, rand),
                 persist_notification: Notification::new(),
                 epoch,
@@ -249,20 +245,12 @@ impl<'a> Matter<'a> {
             .load(data, &self.transport_mgr.mdns)
     }
 
-    pub fn load_acls(&self, data: &[u8]) -> Result<(), Error> {
-        self.acl_mgr.borrow_mut().load(data)
-    }
-
     pub fn store_fabrics<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
         self.fabric_mgr.borrow_mut().store(buf)
     }
 
-    pub fn store_acls<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
-        self.acl_mgr.borrow_mut().store(buf)
-    }
-
-    pub fn is_changed(&self) -> bool {
-        self.acl_mgr.borrow().is_changed() || self.fabric_mgr.borrow().is_changed()
+    pub fn fabrics_changed(&self) -> bool {
+        self.fabric_mgr.borrow().is_changed()
     }
 
     /// Return `true` if there is at least one commissioned fabric
@@ -277,7 +265,7 @@ impl<'a> Matter<'a> {
     // after we receive `CommissioningComplete` on behalf of a Case session
     // for the fabric in question.
     pub fn is_commissioned(&self) -> bool {
-        self.fabric_mgr.borrow().used_count() > 0
+        self.fabric_mgr.borrow().iter().count() > 0
     }
 
     fn start_comissioning(
@@ -286,7 +274,8 @@ impl<'a> Matter<'a> {
         discovery_capabilities: DiscoveryCapabilities,
         buf: &mut [u8],
     ) -> Result<bool, Error> {
-        if !self.pase_mgr.borrow().is_pase_session_enabled() && self.fabric_mgr.borrow().is_empty()
+        if !self.pase_mgr.borrow().is_pase_session_enabled()
+            && self.fabric_mgr.borrow().iter().count() == 0
         {
             print_pairing_code_and_qr(self.dev_det, &dev_comm, discovery_capabilities, buf)?;
 
@@ -354,8 +343,8 @@ impl<'a> Matter<'a> {
     /// The default IM and SC handlers (`DataModel` and `SecureChannel`) do call this method after processing the messages.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub fn notify_changed(&self) {
-        if self.is_changed() {
+    pub fn notify_fabrics_maybe_changed(&self) {
+        if self.fabrics_changed() {
             self.persist_notification.notify();
         }
     }
@@ -365,7 +354,7 @@ impl<'a> Matter<'a> {
     /// if there are changes, persist them.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub async fn wait_changed(&self) {
+    pub async fn wait_fabrics_changed(&self) {
         self.persist_notification.wait().await
     }
 }

@@ -23,19 +23,17 @@ use log::{error, info, warn};
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::acl::{AclEntry, AuthMode};
-use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
+use crate::cert::CertRef;
 use crate::crypto::{self, KeyPair};
 use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
-use crate::fabric::{Fabric, MAX_SUPPORTED_FABRICS};
-use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, TLVWriter, ToTLV, UtfStr};
+use crate::fabric::MAX_SUPPORTED_FABRICS;
+use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
-use crate::utils::epoch::Epoch;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-use crate::{attribute_enum, cmd_enter, command_enum, error::*};
+use crate::{alloc, attribute_enum, cmd_enter, command_enum, error::*};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
@@ -43,36 +41,19 @@ use super::dev_att::{DataType, DevAttDataFetcher};
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
-enum NocStatus {
+pub enum NocStatus {
     Ok = 0,
     InvalidPublicKey = 1,
     InvalidNodeOpId = 2,
     InvalidNOC = 3,
     MissingCsr = 4,
     TableFull = 5,
-    MissingAcl = 6,
-    MissingIpk = 7,
-    InsufficientPrivlege = 8,
+    InvalidAdminSubject = 6,
+    Reserved1 = 7,
+    Reserved2 = 8,
     FabricConflict = 9,
     LabelConflict = 10,
     InvalidFabricIndex = 11,
-}
-
-enum NocError {
-    Status(NocStatus),
-    Error(Error),
-}
-
-impl From<NocStatus> for NocError {
-    fn from(value: NocStatus) -> Self {
-        Self::Status(value)
-    }
-}
-
-impl From<Error> for NocError {
-    fn from(value: Error) -> Self {
-        Self::Error(value)
-    }
 }
 
 pub const ID: u32 = 0x003E;
@@ -112,6 +93,67 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[tlvargs(lifetime = "'a")]
+struct NocResp<'a> {
+    status_code: u8,
+    fab_idx: u8,
+    debug_txt: UtfStr<'a>,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[tlvargs(lifetime = "'a")]
+struct AddNocReq<'a> {
+    noc_value: OctetStr<'a>,
+    icac_value: Option<OctetStr<'a>>,
+    ipk_value: OctetStr<'a>,
+    case_admin_subject: u64,
+    vendor_id: u16,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[tlvargs(lifetime = "'a")]
+struct CsrReq<'a> {
+    nonce: OctetStr<'a>,
+    for_update_noc: Option<bool>,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[tlvargs(lifetime = "'a")]
+struct CommonReq<'a> {
+    str: OctetStr<'a>,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[tlvargs(lifetime = "'a")]
+struct UpdateFabricLabelReq<'a> {
+    label: UtfStr<'a>,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+struct CertChainReq {
+    cert_type: u8,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+struct RemoveFabricReq {
+    fab_idx: NonZeroU8,
+}
+
+impl NocStatus {
+    fn map(result: Result<(), Error>) -> Result<Self, Error> {
+        match result {
+            Ok(()) => Ok(NocStatus::Ok),
+            Err(err) => match err.code() {
+                ErrorCode::NocFabricTableFull => Ok(NocStatus::TableFull),
+                ErrorCode::NocInvalidFabricIndex => Ok(NocStatus::InvalidFabricIndex),
+                ErrorCode::ConstraintError => Ok(NocStatus::MissingCsr),
+                _ => Err(err),
+            },
+        }
+    }
+}
+
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     feature_map: 0,
@@ -150,59 +192,6 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     ],
 };
 
-pub struct NocData {
-    pub key_pair: KeyPair,
-    pub root_ca: crate::utils::storage::Vec<u8, { MAX_CERT_TLV_LEN }>,
-}
-
-impl NocData {
-    pub fn new(key_pair: KeyPair) -> Self {
-        Self {
-            key_pair,
-            root_ca: crate::utils::storage::Vec::new(),
-        }
-    }
-}
-
-#[derive(ToTLV)]
-struct NocResp<'a> {
-    status_code: u8,
-    fab_idx: u8,
-    debug_txt: UtfStr<'a>,
-}
-
-#[derive(FromTLV)]
-#[tlvargs(lifetime = "'a")]
-struct AddNocReq<'a> {
-    noc_value: OctetStr<'a>,
-    icac_value: Option<OctetStr<'a>>,
-    ipk_value: OctetStr<'a>,
-    case_admin_subject: u64,
-    vendor_id: u16,
-}
-
-#[derive(FromTLV)]
-#[tlvargs(lifetime = "'a")]
-struct CommonReq<'a> {
-    str: OctetStr<'a>,
-}
-
-#[derive(FromTLV)]
-#[tlvargs(lifetime = "'a")]
-struct UpdateFabricLabelReq<'a> {
-    label: UtfStr<'a>,
-}
-
-#[derive(FromTLV)]
-struct CertChainReq {
-    cert_type: u8,
-}
-
-#[derive(FromTLV)]
-struct RemoveFabricReq {
-    fab_idx: NonZeroU8,
-}
-
 #[derive(Debug, Clone)]
 pub struct NocCluster {
     data_ver: Dataver,
@@ -230,28 +219,26 @@ impl NocCluster {
                     Attributes::CurrentFabricIndex(codec) => codec.encode(writer, attr.fab_idx),
                     Attributes::Fabrics(_) => {
                         writer.start_array(&AttrDataWriter::TAG)?;
-                        exchange
-                            .matter()
-                            .fabric_mgr
-                            .borrow()
-                            .for_each(|entry, fab_idx| {
-                                if !attr.fab_filter || attr.fab_idx == fab_idx.get() {
-                                    let root_ca_cert = entry.get_root_ca()?;
+                        for fabric in exchange.matter().fabric_mgr.borrow().iter() {
+                            if (!attr.fab_filter || attr.fab_idx == fabric.fab_idx().get())
+                                && !fabric.root_ca().is_empty()
+                            {
+                                // Empty `root_ca` might happen in the E2E tests
+                                let root_ca_cert = CertRef::new(TLVElement::new(fabric.root_ca()));
 
-                                    entry
-                                        .get_fabric_desc(fab_idx, &root_ca_cert)?
-                                        .to_tlv(&TLVTag::Anonymous, &mut *writer)?;
-                                }
+                                fabric
+                                    .descriptor(&root_ca_cert)?
+                                    .to_tlv(&TLVTag::Anonymous, &mut *writer)?;
+                            }
+                        }
 
-                                Ok(())
-                            })?;
                         writer.end_container()?;
 
                         writer.complete()
                     }
                     Attributes::CommissionedFabrics(codec) => codec.encode(
                         writer,
-                        exchange.matter().fabric_mgr.borrow().used_count() as _,
+                        exchange.matter().fabric_mgr.borrow().iter().count() as _,
                     ),
                     _ => {
                         error!("Attribute not supported: this shouldn't happen");
@@ -292,147 +279,6 @@ impl NocCluster {
         Ok(())
     }
 
-    fn _handle_command_addnoc(
-        &self,
-        exchange: &Exchange,
-        data: &TLVElement,
-    ) -> Result<NonZeroU8, NocError> {
-        let noc_data = exchange
-            .with_session(|sess| Ok(sess.take_noc_data()))?
-            .ok_or(NocStatus::MissingCsr)?;
-
-        if !exchange
-            .matter()
-            .failsafe
-            .borrow_mut()
-            .allow_noc_change()
-            .map_err(|_| NocStatus::InsufficientPrivlege)?
-        {
-            error!("AddNOC not allowed by Fail Safe");
-            Err(NocStatus::InsufficientPrivlege)?;
-        }
-
-        let r = AddNocReq::from_tlv(data).map_err(|_| NocStatus::InvalidNOC)?;
-
-        info!(
-            "Received NOC as: {}",
-            CertRef::new(TLVElement::new(r.noc_value.0))
-        );
-
-        let noc = crate::utils::storage::Vec::from_slice(r.noc_value.0)
-            .map_err(|_| NocStatus::InvalidNOC)?;
-
-        let icac = if let Some(icac_value) = r.icac_value {
-            if !icac_value.0.is_empty() {
-                info!(
-                    "Received ICAC as: {}",
-                    CertRef::new(TLVElement::new(icac_value.0))
-                );
-
-                let icac = crate::utils::storage::Vec::from_slice(icac_value.0)
-                    .map_err(|_| NocStatus::InvalidNOC)?;
-                Some(icac)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let fabric = Fabric::new(
-            noc_data.key_pair,
-            noc_data.root_ca,
-            icac,
-            noc,
-            r.ipk_value.0,
-            r.vendor_id,
-            "",
-        )
-        .map_err(|_| NocStatus::TableFull)?;
-
-        let fab_idx = exchange
-            .matter()
-            .fabric_mgr
-            .borrow_mut()
-            .add(fabric, &exchange.matter().transport_mgr.mdns)
-            .map_err(|_| NocStatus::TableFull)?;
-
-        let succeeded = Cell::new(false);
-
-        let _fab_guard = scopeguard::guard(fab_idx, |fab_idx| {
-            if !succeeded.get() {
-                // Remove the fabric if we fail further down this function
-                warn!("Removing fabric {} due to failure", fab_idx.get());
-
-                exchange
-                    .matter()
-                    .fabric_mgr
-                    .borrow_mut()
-                    .remove(fab_idx, &exchange.matter().transport_mgr.mdns)
-                    .unwrap();
-            }
-        });
-
-        let mut acl = AclEntry::new(fab_idx, Privilege::ADMIN, AuthMode::Case);
-        acl.add_subject(r.case_admin_subject)?;
-        let acl_entry_index = exchange.matter().acl_mgr.borrow_mut().add(acl)?;
-
-        let _acl_guard = scopeguard::guard(fab_idx, |fab_idx| {
-            if !succeeded.get() {
-                // Remove the ACL entry if we fail further down this function
-                warn!(
-                    "Removing ACL entry {}/{} due to failure",
-                    acl_entry_index,
-                    fab_idx.get()
-                );
-
-                exchange
-                    .matter()
-                    .acl_mgr
-                    .borrow_mut()
-                    .delete(acl_entry_index, fab_idx)
-                    .unwrap();
-            }
-        });
-
-        exchange
-            .matter()
-            .failsafe
-            .borrow_mut()
-            .record_add_noc(fab_idx)?;
-
-        // Finally, upgrade our session with the new fabric index
-        exchange.with_session(|sess| {
-            if matches!(sess.get_session_mode(), SessionMode::Pase { .. }) {
-                sess.upgrade_fabric_idx(fab_idx)?;
-            }
-
-            Ok(())
-        })?;
-
-        // Leave the fabric and its ACLs in place now that we've updated everything
-        succeeded.set(true);
-
-        Ok(fab_idx)
-    }
-
-    fn create_nocresponse(
-        encoder: CmdDataEncoder,
-        status_code: NocStatus,
-        fab_idx: u8,
-        debug_txt: &str,
-    ) -> Result<(), Error> {
-        let cmd_data = NocResp {
-            status_code: status_code as u8,
-            fab_idx,
-            debug_txt,
-        };
-
-        encoder
-            .with_command(RespCommands::NOCResp as _)?
-            .set(cmd_data)
-    }
-
     fn handle_command_updatefablabel(
         &self,
         exchange: &Exchange,
@@ -440,29 +286,33 @@ impl NocCluster {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Update Fabric Label");
-        let req = UpdateFabricLabelReq::from_tlv(data).map_err(Error::map_invalid_data_type)?;
-        let (result, fab_idx) = if let SessionMode::Case { fab_idx, .. } =
-            exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))?
-        {
-            if exchange
+        let req = UpdateFabricLabelReq::from_tlv(data).map_err(Error::map_invalid_command)?;
+        info!("Received Fabric Label: {:?}", req);
+
+        let mut updated_fab_idx = 0;
+
+        let status = NocStatus::map(exchange.with_session(|sess| {
+            let SessionMode::Case { fab_idx, .. } = sess.get_session_mode() else {
+                return Err(ErrorCode::GennCommInvalidAuthentication.into());
+            };
+
+            updated_fab_idx = fab_idx.get();
+
+            exchange
                 .matter()
                 .fabric_mgr
                 .borrow_mut()
-                .set_label(fab_idx, req.label)
-                .is_err()
-            {
-                (NocStatus::LabelConflict, fab_idx.get())
-            } else {
-                (NocStatus::Ok, fab_idx.get())
-            }
-        } else {
-            // Update Fabric Label not allowed
-            (NocStatus::InvalidFabricIndex, 0)
-        };
+                .update_label(*fab_idx, req.label)
+                .map_err(|e| {
+                    if e.code() == ErrorCode::Invalid {
+                        ErrorCode::NocLabelConflict.into()
+                    } else {
+                        e
+                    }
+                })
+        }))?;
 
-        Self::create_nocresponse(encoder, result, fab_idx, "")?;
-
-        Ok(())
+        Self::create_nocresponse(encoder, status as _, updated_fab_idx, "")
     }
 
     fn handle_command_rmfabric(
@@ -472,7 +322,9 @@ impl NocCluster {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Remove Fabric");
-        let req = RemoveFabricReq::from_tlv(data).map_err(Error::map_invalid_data_type)?;
+        let req = RemoveFabricReq::from_tlv(data).map_err(Error::map_invalid_command)?;
+        info!("Received Fabric Index: {:?}", req);
+
         if exchange
             .matter()
             .fabric_mgr
@@ -480,11 +332,6 @@ impl NocCluster {
             .remove(req.fab_idx, &exchange.matter().transport_mgr.mdns)
             .is_ok()
         {
-            let _ = exchange
-                .matter()
-                .acl_mgr
-                .borrow_mut()
-                .delete_for_fabric(req.fab_idx);
             exchange
                 .matter()
                 .transport_mgr
@@ -498,6 +345,8 @@ impl NocCluster {
 
             Ok(())
         } else {
+            // TODO
+
             Self::create_nocresponse(
                 encoder,
                 NocStatus::InvalidFabricIndex,
@@ -515,13 +364,66 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("AddNOC");
 
-        let (status, fab_idx) = match self._handle_command_addnoc(exchange, data) {
-            Ok(fab_idx) => (NocStatus::Ok, fab_idx.get()),
-            Err(NocError::Status(status)) => (status, 0),
-            Err(NocError::Error(error)) => Err(error)?,
-        };
+        let r = AddNocReq::from_tlv(data).map_err(Error::map_invalid_command)?;
 
-        Self::create_nocresponse(encoder, status, fab_idx, "")?;
+        info!(
+            "Received NOC as: {}",
+            CertRef::new(TLVElement::new(r.noc_value.0))
+        );
+
+        if let Some(icac_value) = r.icac_value {
+            info!(
+                "Received ICAC as: {}",
+                CertRef::new(TLVElement::new(icac_value.0))
+            );
+        }
+
+        let mut added_fab_idx = 0;
+
+        let mut buf = alloc!([0; 800]); // TODO LARGE BUFFER
+        let buf = &mut buf[..];
+
+        let status = NocStatus::map(exchange.with_session(|sess| {
+            let fab_idx = exchange.matter().failsafe.borrow_mut().add_noc(
+                &exchange.matter().fabric_mgr,
+                sess.get_session_mode(),
+                r.vendor_id,
+                r.icac_value.as_ref().map(|icac| icac.0),
+                r.noc_value.0,
+                r.ipk_value.0,
+                r.case_admin_subject,
+                buf,
+                &exchange.matter().transport_mgr.mdns,
+            )?;
+
+            let succeeded = Cell::new(false);
+
+            let _fab_guard = scopeguard::guard(fab_idx, |fab_idx| {
+                if !succeeded.get() {
+                    // Remove the fabric if we fail further down this function
+                    warn!("Removing fabric {} due to failure", fab_idx.get());
+
+                    exchange
+                        .matter()
+                        .fabric_mgr
+                        .borrow_mut()
+                        .remove(fab_idx, &exchange.matter().transport_mgr.mdns)
+                        .unwrap();
+                }
+            });
+
+            if matches!(sess.get_session_mode(), SessionMode::Pase { .. }) {
+                sess.upgrade_fabric_idx(fab_idx)?;
+            }
+
+            succeeded.set(true);
+
+            added_fab_idx = fab_idx.get();
+
+            Ok(())
+        }))?;
+
+        Self::create_nocresponse(encoder, status, added_fab_idx, "")?;
 
         Ok(())
     }
@@ -537,27 +439,47 @@ impl NocCluster {
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
         info!("Received Attestation Nonce:{:?}", req.str);
 
-        let mut attest_challenge = [0u8; crypto::SYMM_KEY_LEN_BYTES];
         exchange.with_session(|sess| {
-            attest_challenge.copy_from_slice(sess.get_att_challenge());
-            Ok(())
-        })?;
+            let mut writer = encoder.with_command(RespCommands::AttReqResp as _)?;
 
-        let mut writer = encoder.with_command(RespCommands::AttReqResp as _)?;
+            writer.start_struct(&CmdDataWriter::TAG)?;
 
-        writer.start_struct(&CmdDataWriter::TAG)?;
-        add_attestation_element(
-            exchange.matter().epoch(),
-            exchange.matter().dev_att(),
-            req.str.0,
-            &attest_challenge,
-            &mut writer,
-        )?;
-        writer.end_container()?;
+            let epoch = (exchange.matter().epoch())().as_secs() as u32;
 
-        writer.complete()?;
+            let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+            let signature_buf = signature_buf.init_zeroed();
+            let mut signature_len = 0;
 
-        Ok(())
+            writer.str_cb(&TLVTag::Context(0), |buf| {
+                let dev_att = exchange.matter().dev_att();
+
+                let mut wb = WriteBuf::new(buf);
+                wb.start_struct(&TLVTag::Anonymous)?;
+                wb.str_cb(&TLVTag::Context(1), |buf| {
+                    dev_att.get_devatt_data(dev_att::DataType::CertDeclaration, buf)
+                })?;
+                wb.str(&TLVTag::Context(2), req.str.0)?;
+                wb.u32(&TLVTag::Context(3), epoch)?;
+                wb.end_container()?;
+
+                let len = wb.get_tail();
+
+                signature_len = Self::compute_attestation_signature(
+                    dev_att,
+                    &mut wb,
+                    sess.get_att_challenge(),
+                    signature_buf,
+                )?
+                .len();
+
+                Ok(len)
+            })?;
+            writer.str(&TLVTag::Context(1), &signature_buf[..signature_len])?;
+
+            writer.end_container()?;
+
+            writer.complete()
+        })
     }
 
     fn handle_command_certchainrequest(
@@ -569,7 +491,8 @@ impl NocCluster {
         cmd_enter!("CertChainRequest");
 
         info!("Received data: {}", data);
-        let cert_type = get_certchainrequest_params(data).map_err(Error::map_invalid_command)?;
+        let cert_type =
+            Self::get_certchainrequest_params(data).map_err(Error::map_invalid_command)?;
 
         let mut writer = encoder.with_command(RespCommands::CertChainResp as _)?;
 
@@ -590,56 +513,51 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("CSRRequest");
 
-        let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received CSR Nonce:{:?}", req.str);
+        let req = CsrReq::from_tlv(data).map_err(Error::map_invalid_command)?;
+        info!("Received CSR: {:?}", req);
 
-        if !exchange.matter().failsafe.borrow().is_armed() {
-            Err(ErrorCode::UnsupportedAccess)?;
-        }
-
-        let noc_keypair = KeyPair::new(exchange.matter().rand())?;
-        let mut attest_challenge = [0u8; crypto::SYMM_KEY_LEN_BYTES];
         exchange.with_session(|sess| {
-            attest_challenge.copy_from_slice(sess.get_att_challenge());
-            Ok(())
-        })?;
+            let mut failsafe = exchange.matter().failsafe.borrow_mut();
 
-        let mut writer = encoder.with_command(RespCommands::CSRResp as _)?;
+            let key_pair = if req.for_update_noc.unwrap_or(false) {
+                failsafe.update_csr_req(sess.get_session_mode())
+            } else {
+                failsafe.add_csr_req(sess.get_session_mode())
+            }?;
 
-        writer.start_struct(&CmdDataWriter::TAG)?;
-        add_nocsrelement(
-            exchange.matter().dev_att(),
-            &noc_keypair,
-            req.str.0,
-            &attest_challenge,
-            &mut writer,
-        )?;
-        writer.end_container()?;
+            let mut writer = encoder.with_command(RespCommands::CSRResp as _)?;
 
-        writer.complete()?;
+            writer.start_struct(&CmdDataWriter::TAG)?;
 
-        let noc_data = NocData::new(noc_keypair);
-        // Store this in the session data instead of cluster data, so it gets cleared
-        // if the session goes away for some reason
-        exchange.with_session(|sess| {
-            sess.set_noc_data(noc_data);
-            Ok(())
-        })?;
+            let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+            let signature_buf = signature_buf.init_zeroed();
+            let mut signature_len = 0;
 
-        Ok(())
-    }
+            writer.str_cb(&TLVTag::Context(0), |buf| {
+                let mut wb = WriteBuf::new(buf);
 
-    fn add_rca_to_session_noc_data(exchange: &Exchange, data: &TLVElement) -> Result<(), Error> {
-        exchange.with_session(|sess| {
-            let noc_data = sess.get_noc_data().ok_or(ErrorCode::NoSession)?;
+                wb.start_struct(&TLVTag::Anonymous)?;
+                wb.str_cb(&TLVTag::Context(1), |buf| Ok(key_pair.get_csr(buf)?.len()))?;
+                wb.str(&TLVTag::Context(2), req.nonce.0)?;
+                wb.end_container()?;
 
-            let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-            info!("Received Trusted Cert:{:x?}", req.str);
+                let len = wb.get_tail();
 
-            noc_data.root_ca = crate::utils::storage::Vec::from_slice(req.str.0)
-                .map_err(|_| ErrorCode::BufferTooSmall)?;
+                signature_len = Self::compute_attestation_signature(
+                    exchange.matter().dev_att(),
+                    &mut wb,
+                    sess.get_att_challenge(),
+                    signature_buf,
+                )?
+                .len();
 
-            Ok(())
+                Ok(len)
+            })?;
+            writer.str(&TLVTag::Context(1), &signature_buf[..signature_len])?;
+
+            writer.end_container()?;
+
+            writer.complete()
         })
     }
 
@@ -649,23 +567,73 @@ impl NocCluster {
         data: &TLVElement,
     ) -> Result<(), Error> {
         cmd_enter!("AddTrustedRootCert");
-        if !exchange.matter().failsafe.borrow().is_armed() {
-            Err(ErrorCode::UnsupportedAccess)?;
-        }
 
-        // This may happen on CASE or PASE. For PASE, the existence of NOC Data is necessary
-        match exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))? {
-            SessionMode::Case { .. } => {
-                // TODO - Updating the Trusted RCA of an existing Fabric
-                Self::add_rca_to_session_noc_data(exchange, data)?;
-            }
-            SessionMode::Pase { .. } => {
-                Self::add_rca_to_session_noc_data(exchange, data)?;
-            }
-            _ => (),
-        }
+        let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
+        info!("Received Trusted Cert: {:x?}", req.str);
 
-        Ok(())
+        exchange.with_session(|sess| {
+            exchange
+                .matter()
+                .failsafe
+                .borrow_mut()
+                .add_trusted_root_cert(sess.get_session_mode(), req.str.0)
+        })
+    }
+
+    fn create_nocresponse(
+        encoder: CmdDataEncoder,
+        status_code: NocStatus,
+        fab_idx: u8,
+        debug_txt: &str,
+    ) -> Result<(), Error> {
+        let cmd_data = NocResp {
+            status_code: status_code as u8,
+            fab_idx,
+            debug_txt,
+        };
+
+        encoder
+            .with_command(RespCommands::NOCResp as _)?
+            .set(cmd_data)
+    }
+
+    fn compute_attestation_signature<'a>(
+        dev_att: &dyn DevAttDataFetcher,
+        attest_element: &mut WriteBuf,
+        attest_challenge: &[u8],
+        signature_buf: &'a mut [u8],
+    ) -> Result<&'a [u8], Error> {
+        let dac_key = {
+            let mut pubkey_buf = MaybeUninit::<[u8; crypto::EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+            let pubkey_buf = pubkey_buf.init_zeroed();
+
+            let mut privkey_buf = MaybeUninit::<[u8; crypto::BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+            let privkey_buf = privkey_buf.init_zeroed();
+
+            let pubkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPubKey, pubkey_buf)?;
+            let privkey_len =
+                dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, privkey_buf)?;
+
+            KeyPair::new_from_components(&pubkey_buf[..pubkey_len], &privkey_buf[..privkey_len])
+        }?;
+
+        attest_element.copy_from_slice(attest_challenge)?;
+        let len = dac_key.sign_msg(attest_element.as_slice(), signature_buf)?;
+
+        Ok(&signature_buf[..len])
+    }
+
+    fn get_certchainrequest_params(data: &TLVElement) -> Result<DataType, Error> {
+        let cert_type = CertChainReq::from_tlv(data)?.cert_type;
+
+        const CERT_TYPE_DAC: u8 = 1;
+        const CERT_TYPE_PAI: u8 = 2;
+        info!("Received Cert Type:{:?}", cert_type);
+        match cert_type {
+            CERT_TYPE_DAC => Ok(dev_att::DataType::DAC),
+            CERT_TYPE_PAI => Ok(dev_att::DataType::PAI),
+            _ => Err(ErrorCode::Invalid.into()),
+        }
     }
 }
 
@@ -695,103 +663,5 @@ impl NonBlockingHandler for NocCluster {}
 impl ChangeNotifier<()> for NocCluster {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
-    }
-}
-
-fn add_attestation_element(
-    epoch: Epoch,
-    dev_att: &dyn DevAttDataFetcher,
-    att_nonce: &[u8],
-    attest_challenge: &[u8],
-    t: &mut TLVWriter,
-) -> Result<(), Error> {
-    let epoch = epoch().as_secs() as u32;
-
-    let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-    let signature_buf = signature_buf.init_zeroed();
-    let mut signature_len = 0;
-
-    t.str_cb(&TLVTag::Context(0), |buf| {
-        let mut wb = WriteBuf::new(buf);
-        wb.start_struct(&TLVTag::Anonymous)?;
-        wb.str_cb(&TLVTag::Context(1), |buf| {
-            dev_att.get_devatt_data(dev_att::DataType::CertDeclaration, buf)
-        })?;
-        wb.str(&TLVTag::Context(2), att_nonce)?;
-        wb.u32(&TLVTag::Context(3), epoch)?;
-        wb.end_container()?;
-
-        let len = wb.get_tail();
-
-        signature_len =
-            compute_attestation_signature(dev_att, &mut wb, attest_challenge, signature_buf)?.len();
-
-        Ok(len)
-    })?;
-    t.str(&TLVTag::Context(1), &signature_buf[..signature_len])
-}
-
-fn add_nocsrelement(
-    dev_att: &dyn DevAttDataFetcher,
-    noc_keypair: &KeyPair,
-    csr_nonce: &[u8],
-    attest_challenge: &[u8],
-    t: &mut TLVWriter,
-) -> Result<(), Error> {
-    let mut signature_buf = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-    let signature_buf = signature_buf.init_zeroed();
-    let mut signature_len = 0;
-
-    t.str_cb(&TLVTag::Context(0), |buf| {
-        let mut wb = WriteBuf::new(buf);
-
-        wb.start_struct(&TLVTag::Anonymous)?;
-        wb.str_cb(&TLVTag::Context(1), |buf| {
-            Ok(noc_keypair.get_csr(buf)?.len())
-        })?;
-        wb.str(&TLVTag::Context(2), csr_nonce)?;
-        wb.end_container()?;
-
-        let len = wb.get_tail();
-
-        signature_len =
-            compute_attestation_signature(dev_att, &mut wb, attest_challenge, signature_buf)?.len();
-
-        Ok(len)
-    })?;
-    t.str(&TLVTag::Context(1), &signature_buf[..signature_len])
-}
-
-fn compute_attestation_signature<'a>(
-    dev_att: &dyn DevAttDataFetcher,
-    attest_element: &mut WriteBuf,
-    attest_challenge: &[u8],
-    signature_buf: &'a mut [u8],
-) -> Result<&'a [u8], Error> {
-    let dac_key = {
-        let mut pubkey_buf = MaybeUninit::<[u8; crypto::EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-        let pubkey_buf = pubkey_buf.init_zeroed();
-        let mut privkey_buf = MaybeUninit::<[u8; crypto::BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-        let privkey_buf = privkey_buf.init_zeroed();
-        let pubkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPubKey, pubkey_buf)?;
-        let privkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, privkey_buf)?;
-        KeyPair::new_from_components(&pubkey_buf[..pubkey_len], &privkey_buf[..privkey_len])
-    }?;
-    attest_element.copy_from_slice(attest_challenge)?;
-    let len = dac_key.sign_msg(attest_element.as_slice(), signature_buf)?;
-
-    Ok(&signature_buf[..len])
-}
-
-fn get_certchainrequest_params(data: &TLVElement) -> Result<DataType, Error> {
-    let cert_type = CertChainReq::from_tlv(data)?.cert_type;
-
-    const CERT_TYPE_DAC: u8 = 1;
-    const CERT_TYPE_PAI: u8 = 2;
-    info!("Received Cert Type:{:?}", cert_type);
-    match cert_type {
-        CERT_TYPE_DAC => Ok(dev_att::DataType::DAC),
-        CERT_TYPE_PAI => Ok(dev_att::DataType::PAI),
-        _ => Err(ErrorCode::Invalid.into()),
     }
 }

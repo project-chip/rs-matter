@@ -24,7 +24,6 @@ use strum::{EnumDiscriminants, FromRepr};
 use crate::data_model::objects::*;
 use crate::tlv::{FromTLV, TLVElement, ToTLV, Utf8Str};
 use crate::transport::exchange::Exchange;
-use crate::transport::session::SessionMode;
 use crate::{attribute_enum, cmd_enter};
 use crate::{command_enum, error::*};
 
@@ -56,11 +55,64 @@ pub enum RespCommands {
     CommissioningCompleteResp = 0x05,
 }
 
-#[derive(FromTLV, ToTLV)]
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
 #[tlvargs(lifetime = "'a")]
 struct CommonResponse<'a> {
     error_code: u8,
     debug_txt: Utf8Str<'a>,
+}
+
+impl CommissioningErrorEnum {
+    fn map(result: Result<(), Error>) -> Result<Self, Error> {
+        match result {
+            Ok(()) => Ok(CommissioningErrorEnum::OK),
+            Err(err) => match err.code() {
+                ErrorCode::Busy | ErrorCode::NocInvalidFabricIndex => {
+                    Ok(CommissioningErrorEnum::BusyWithOtherAdmin)
+                }
+                ErrorCode::GennCommInvalidAuthentication => {
+                    Ok(CommissioningErrorEnum::InvalidAuthentication)
+                }
+                ErrorCode::FailSafeRequired => Ok(CommissioningErrorEnum::NoFailSafe),
+                _ => Err(err),
+            },
+        }
+    }
+}
+
+#[derive(Debug, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+struct FailSafeParams {
+    expiry_len: u16,
+    bread_crumb: u64,
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+pub struct BasicCommissioningInfo {
+    pub expiry_len: u16,
+    pub max_cmltv_failsafe_secs: u16,
+}
+
+impl BasicCommissioningInfo {
+    pub const fn new() -> Self {
+        // TODO: Arch-Specific
+        Self {
+            expiry_len: 120,
+            max_cmltv_failsafe_secs: 120,
+        }
+    }
+}
+
+impl Default for BasicCommissioningInfo {
+    fn default() -> Self {
+        BasicCommissioningInfo::new()
+    }
+}
+
+#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[tlvargs(lifetime = "'a")]
+struct RegulatoryConfig<'a> {
+    #[tagval(1)]
+    country_code: Utf8Str<'a>,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {
@@ -101,34 +153,6 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Commands::CommissioningComplete as _,
     ],
 };
-
-#[derive(FromTLV, ToTLV)]
-struct FailSafeParams {
-    expiry_len: u16,
-    bread_crumb: u64,
-}
-
-#[derive(FromTLV, ToTLV, Debug, Clone)]
-pub struct BasicCommissioningInfo {
-    pub expiry_len: u16,
-    pub max_cmltv_failsafe_secs: u16,
-}
-
-impl BasicCommissioningInfo {
-    pub const fn new() -> Self {
-        // TODO: Arch-Specific
-        Self {
-            expiry_len: 120,
-            max_cmltv_failsafe_secs: 120,
-        }
-    }
-}
-
-impl Default for BasicCommissioningInfo {
-    fn default() -> Self {
-        BasicCommissioningInfo::new()
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct GenCommCluster {
@@ -215,25 +239,19 @@ impl GenCommCluster {
     ) -> Result<(), Error> {
         cmd_enter!("ARM Fail Safe");
 
-        let p = FailSafeParams::from_tlv(data)?;
+        let p = FailSafeParams::from_tlv(data).map_err(Error::map_invalid_command)?;
+        info!("Received fail safe params: {:?}", p);
 
-        let status = if exchange
-            .matter()
-            .failsafe
-            .borrow_mut()
-            .arm(
-                p.expiry_len,
-                exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))?,
-            )
-            .is_err()
-        {
-            CommissioningErrorEnum::BusyWithOtherAdmin as u8
-        } else {
-            CommissioningErrorEnum::OK as u8
-        };
+        let status = CommissioningErrorEnum::map(exchange.with_session(|sess| {
+            exchange
+                .matter()
+                .failsafe
+                .borrow_mut()
+                .arm(p.expiry_len, sess.get_session_mode())
+        }))?;
 
         let cmd_data = CommonResponse {
-            error_code: status,
+            error_code: status as _,
             debug_txt: "",
         };
 
@@ -251,14 +269,9 @@ impl GenCommCluster {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Set Regulatory Config");
-        let country_code = data
-            .r#struct()
-            .map_err(|_| ErrorCode::InvalidCommand)?
-            .find_ctx(1)
-            .map_err(|_| ErrorCode::InvalidCommand)?
-            .utf8()
-            .map_err(|_| ErrorCode::InvalidCommand)?;
-        info!("Received country code: {}", country_code);
+
+        let cfg = RegulatoryConfig::from_tlv(data).map_err(Error::map_invalid_command)?;
+        info!("Received reg cfg: {:?}", cfg);
 
         let cmd_data = CommonResponse {
             error_code: 0,
@@ -278,29 +291,17 @@ impl GenCommCluster {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         cmd_enter!("Commissioning Complete");
-        let mut status: u8 = CommissioningErrorEnum::OK as u8;
 
-        // Has to be a Case Session
-        if !exchange
-            .with_session(|sess| Ok(matches!(sess.get_session_mode(), SessionMode::Case { .. })))?
-        {
-            status = CommissioningErrorEnum::InvalidAuthentication as u8;
-        }
-
-        // AddNOC or UpdateNOC must have happened, and that too for the same fabric
-        // scope that is for this session
-        if exchange
-            .matter()
-            .failsafe
-            .borrow_mut()
-            .disarm(exchange.with_session(|sess| Ok(sess.get_session_mode().clone()))?)
-            .is_err()
-        {
-            status = CommissioningErrorEnum::InvalidAuthentication as u8;
-        }
+        let status = CommissioningErrorEnum::map(exchange.with_session(|sess| {
+            exchange
+                .matter()
+                .failsafe
+                .borrow_mut()
+                .disarm(sess.get_session_mode())
+        }))?;
 
         let cmd_data = CommonResponse {
-            error_code: status,
+            error_code: status as _,
             debug_txt: "",
         };
 

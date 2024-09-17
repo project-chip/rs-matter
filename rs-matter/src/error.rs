@@ -17,7 +17,15 @@
 
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+// TODO: The error code enum is in a need of an overhaul
+//
+// We need separate error enums per chunks of functionality
+// and a way to map them to concrete IM and SC status codes
+//
+// This is a non-trivial effort though as we need to also generify
+// the returned error type of all APIs that take callbacks that return errors
+// (i.e., `Exchange::with_*`, `WriteBuf::append_with_buf` etc.)
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum ErrorCode {
     AttributeNotFound,
     AttributeIsCustom,
@@ -28,6 +36,8 @@ pub enum ErrorCode {
     EndpointNotFound,
     InvalidAction,
     InvalidCommand,
+    FailSafeRequired,
+    ConstraintError,
     InvalidDataType,
     UnsupportedAccess,
     ResourceExhausted,
@@ -74,6 +84,13 @@ pub enum ErrorCode {
     TLVTypeMismatch,
     TruncatedPacket,
     Utf8Fail,
+    GennCommInvalidAuthentication,
+    NocInvalidNoc,
+    NocMissingCsr,
+    NocFabricTableFull,
+    NocFabricConflict,
+    NocLabelConflict,
+    NocInvalidFabricIndex,
 }
 
 impl From<ErrorCode> for Error {

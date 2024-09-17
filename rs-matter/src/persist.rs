@@ -58,11 +58,6 @@ pub mod fileio {
         pub fn load(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
             fs::create_dir_all(dir)?;
 
-            if let Some(data) = Self::load_key(dir, "acls", unsafe { self.buf.assume_init_mut() })?
-            {
-                matter.load_acls(data)?;
-            }
-
             if let Some(data) =
                 Self::load_key(dir, "fabrics", unsafe { self.buf.assume_init_mut() })?
             {
@@ -73,12 +68,8 @@ pub mod fileio {
         }
 
         pub fn store(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
-            if matter.is_changed() {
+            if matter.fabrics_changed() {
                 fs::create_dir_all(dir)?;
-
-                if let Some(data) = matter.store_acls(unsafe { self.buf.assume_init_mut() })? {
-                    Self::store_key(dir, "acls", data)?;
-                }
 
                 if let Some(data) = matter.store_fabrics(unsafe { self.buf.assume_init_mut() })? {
                     Self::store_key(dir, "fabrics", data)?;
@@ -98,7 +89,7 @@ pub mod fileio {
             self.load(dir, matter)?;
 
             loop {
-                matter.wait_changed().await;
+                matter.wait_fabrics_changed().await;
 
                 self.store(dir, matter)?;
             }

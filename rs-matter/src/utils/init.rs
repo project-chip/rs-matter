@@ -46,14 +46,6 @@ pub trait IntoFallibleInit<T>: Init<T, Infallible> {
 
 impl<T, I> IntoFallibleInit<T> for I where I: Init<T, Infallible> {}
 
-/// An extension trait for re-setting an already instantiated `T` with the given initializer.
-pub trait ApplyInit<T, E>: Init<T, E> {
-    fn apply(self, to: &mut T) -> Result<(), E> {
-        unsafe { Self::__init(self, to as *mut T) }
-    }
-}
-
-impl<T, I, E> ApplyInit<T, E> for I where I: Init<T, E> {}
 /// An extension trait for retrofitting `UnsafeCell` with an initializer.
 pub trait UnsafeCellInit<T> {
     /// Create a new in-place initializer for `UnsafeCell`

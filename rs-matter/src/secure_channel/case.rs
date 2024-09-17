@@ -31,7 +31,11 @@ use crate::{
         exchange::Exchange,
         session::{NocCatIds, ReservedSession, SessionMode},
     },
-    utils::{init::InitMaybeUninit, rand::Rand, storage::WriteBuf},
+    utils::{
+        init::{init, zeroed, Init, InitMaybeUninit},
+        rand::Rand,
+        storage::WriteBuf,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -64,6 +68,18 @@ impl CaseSession {
             local_fabric_idx: 0,
         }
     }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            peer_sessid: 0,
+            local_sessid: 0,
+            tt_hash: None,
+            shared_secret <- zeroed(),
+            our_pub_key <- zeroed(),
+            peer_pub_key <- zeroed(),
+            local_fabric_idx: 0,
+        })
+    }
 }
 
 pub struct Case(());
@@ -89,7 +105,7 @@ impl Case {
             .await?;
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_changed();
+        exchange.matter().notify_fabrics_maybe_changed();
 
         Ok(())
     }
@@ -106,7 +122,7 @@ impl Case {
             let fabric_mgr = exchange.matter().fabric_mgr.borrow();
 
             let fabric = NonZeroU8::new(case_session.local_fabric_idx)
-                .and_then(|fabric_idx| fabric_mgr.get_fabric(fabric_idx));
+                .and_then(|fabric_idx| fabric_mgr.get(fabric_idx));
             if let Some(fabric) = fabric {
                 let root = get_root_node_struct(exchange.rx()?.payload())?;
                 let encrypted = root.structure()?.ctx(1)?.str()?;
@@ -120,7 +136,7 @@ impl Case {
                 decrypted.copy_from_slice(encrypted);
 
                 let len =
-                    Case::get_sigma3_decryption(fabric.ipk.op_key(), case_session, decrypted)?;
+                    Case::get_sigma3_decryption(fabric.ipk().op_key(), case_session, decrypted)?;
                 let decrypted = &decrypted[..len];
 
                 let root = get_root_node_struct(decrypted)?;
@@ -131,14 +147,11 @@ impl Case {
                     .initiator_icac
                     .map(|icac| CertRef::new(TLVElement::new(icac.0)));
 
-                let mut validate_certs_buf = alloc!([0; 800]); // TODO LARGE BUFFER
-                let validate_certs_buf = &mut validate_certs_buf[..];
-                if let Err(e) = Case::validate_certs(
-                    fabric,
-                    &initiator_noc,
-                    initiator_icac.as_ref(),
-                    validate_certs_buf,
-                ) {
+                let mut buf = alloc!([0; 800]); // TODO LARGE BUFFER
+                let buf = &mut buf[..];
+                if let Err(e) =
+                    Case::validate_certs(fabric, &initiator_noc, initiator_icac.as_ref(), buf)
+                {
                     error!("Certificate Chain doesn't match: {}", e);
                     SCStatusCodes::InvalidParameter
                 } else if let Err(e) = Case::validate_sigma3_sign(
@@ -147,6 +160,7 @@ impl Case {
                     &initiator_noc,
                     d.signature.0,
                     case_session,
+                    buf,
                 ) {
                     error!("Sigma3 Signature doesn't match: {}", e);
                     SCStatusCodes::InvalidParameter
@@ -164,7 +178,7 @@ impl Case {
                         MaybeUninit::<[u8; 3 * crypto::SYMM_KEY_LEN_BYTES]>::uninit(); // TODO MEDIM BUFFER
                     let session_keys = session_keys.init_zeroed();
                     Case::get_session_keys(
-                        fabric.ipk.op_key(),
+                        fabric.ipk().op_key(),
                         case_session.tt_hash.as_ref().unwrap(),
                         &case_session.shared_secret,
                         session_keys,
@@ -173,7 +187,7 @@ impl Case {
                     let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
 
                     session.update(
-                        fabric.get_node_id(),
+                        fabric.node_id(),
                         initiator_noc.get_node_id()?,
                         case_session.peer_sessid,
                         case_session.local_sessid,
@@ -220,9 +234,10 @@ impl Case {
         let local_fabric_idx = exchange
             .matter()
             .fabric_mgr
-            .borrow_mut()
-            .match_dest_id(r.initiator_random.0, r.dest_id.0);
-        if local_fabric_idx.is_err() {
+            .borrow()
+            .get_by_dest_id(r.initiator_random.0, r.dest_id.0)
+            .map(|fabric| fabric.fab_idx());
+        if local_fabric_idx.is_none() {
             error!("Fabric Index mismatch");
             complete_with_status(exchange, SCStatusCodes::NoSharedTrustRoots, &[]).await?;
 
@@ -243,7 +258,7 @@ impl Case {
             .as_mut()
             .unwrap()
             .update(exchange.rx()?.payload())?;
-        case_session.local_fabric_idx = local_fabric_idx?.get();
+        case_session.local_fabric_idx = local_fabric_idx.unwrap().get();
         if r.peer_pub_key.0.len() != crypto::EC_POINT_LEN_BYTES {
             error!("Invalid public key length");
             Err(ErrorCode::Invalid)?;
@@ -276,7 +291,7 @@ impl Case {
                 let fabric_mgr = exchange.matter().fabric_mgr.borrow();
 
                 let fabric = NonZeroU8::new(case_session.local_fabric_idx)
-                    .and_then(|fabric_idx| fabric_mgr.get_fabric(fabric_idx));
+                    .and_then(|fabric_idx| fabric_mgr.get(fabric_idx));
 
                 let Some(fabric) = fabric else {
                     return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
@@ -335,10 +350,9 @@ impl Case {
         initiator_noc_cert: &CertRef,
         sign: &[u8],
         case_session: &CaseSession,
+        buf: &mut [u8],
     ) -> Result<(), Error> {
-        const MAX_TBS_SIZE: usize = 800;
-        let mut buf = [0; MAX_TBS_SIZE];
-        let mut write_buf = WriteBuf::new(&mut buf);
+        let mut write_buf = WriteBuf::new(buf);
         let tw = &mut write_buf;
         tw.start_struct(&TLVTag::Anonymous)?;
         tw.str(&TLVTag::Context(1), initiator_noc)?;
@@ -362,14 +376,14 @@ impl Case {
     ) -> Result<(), Error> {
         let mut verifier = noc.verify_chain_start();
 
-        if fabric.get_fabric_id() != noc.get_fabric_id()? {
+        if fabric.fabric_id() != noc.get_fabric_id()? {
             Err(ErrorCode::Invalid)?;
         }
 
         if let Some(icac) = icac {
             // If ICAC is present handle it
             if let Ok(fid) = icac.get_fabric_id() {
-                if fid != fabric.get_fabric_id() {
+                if fid != fabric.fabric_id() {
                     Err(ErrorCode::Invalid)?;
                 }
             }
@@ -377,7 +391,7 @@ impl Case {
         }
 
         verifier
-            .add_cert(&CertRef::new(TLVElement::new(&fabric.root_ca)), buf)?
+            .add_cert(&CertRef::new(TLVElement::new(fabric.root_ca())), buf)?
             .finalise(buf)?;
         Ok(())
     }
@@ -501,7 +515,7 @@ impl Case {
 
         let mut sigma2_key = [0_u8; crypto::SYMM_KEY_LEN_BYTES];
         Case::get_sigma2_key(
-            fabric.ipk.op_key(),
+            fabric.ipk().op_key(),
             our_random,
             case_session,
             &mut sigma2_key,
@@ -510,9 +524,9 @@ impl Case {
         let mut write_buf = WriteBuf::new(out);
         let tw = &mut write_buf;
         tw.start_struct(&TLVTag::Anonymous)?;
-        tw.str(&TLVTag::Context(1), &fabric.noc)?;
-        if let Some(icac_cert) = fabric.icac.as_ref() {
-            tw.str(&TLVTag::Context(2), icac_cert)?
+        tw.str(&TLVTag::Context(1), fabric.noc())?;
+        if !fabric.icac().is_empty() {
+            tw.str(&TLVTag::Context(2), fabric.icac())?
         };
 
         tw.str(&TLVTag::Context(3), signature)?;
@@ -550,9 +564,9 @@ impl Case {
         let mut write_buf = WriteBuf::new(buf);
         let tw = &mut write_buf;
         tw.start_struct(&TLVTag::Anonymous)?;
-        tw.str(&TLVTag::Context(1), &fabric.noc)?;
-        if let Some(icac_cert) = fabric.icac.as_deref() {
-            tw.str(&TLVTag::Context(2), icac_cert)?;
+        tw.str(&TLVTag::Context(1), fabric.noc())?;
+        if !fabric.icac().is_empty() {
+            tw.str(&TLVTag::Context(2), fabric.icac())?;
         }
         tw.str(&TLVTag::Context(3), our_pub_key)?;
         tw.str(&TLVTag::Context(4), peer_pub_key)?;
