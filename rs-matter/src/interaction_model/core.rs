@@ -153,14 +153,13 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 pub enum ReportDataReq<'a> {
     Read(&'a ReadReqRef<'a>),
     Subscribe(&'a SubscribeReqRef<'a>),
-    SubscribeReport(&'a SubscribeReqRef<'a>),
 }
 
 impl<'a> ReportDataReq<'a> {
     pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
         match self {
             Self::Read(req) => req.attr_requests(),
-            Self::Subscribe(req) | Self::SubscribeReport(req) => req.attr_requests(),
+            Self::Subscribe(req) => req.attr_requests(),
         }
     }
 
@@ -168,14 +167,13 @@ impl<'a> ReportDataReq<'a> {
         match self {
             Self::Read(req) => req.dataver_filters(),
             Self::Subscribe(req) => req.dataver_filters(),
-            Self::SubscribeReport(_) => Ok(None),
         }
     }
 
     pub fn fabric_filtered(&self) -> Result<bool, Error> {
         match self {
             Self::Read(req) => req.fabric_filtered(),
-            Self::Subscribe(req) | Self::SubscribeReport(req) => req.fabric_filtered(),
+            Self::Subscribe(req) => req.fabric_filtered(),
         }
     }
 }
