@@ -325,9 +325,9 @@ pub struct AclEntry {
 }
 
 impl AclEntry {
-    pub fn new(privilege: Privilege, auth_mode: AuthMode) -> Self {
+    pub fn new(fab_idx: Option<NonZeroU8>, privilege: Privilege, auth_mode: AuthMode) -> Self {
         Self {
-            fab_idx: None,
+            fab_idx,
             privilege,
             auth_mode,
             subjects: Vec::new(),
@@ -335,9 +335,13 @@ impl AclEntry {
         }
     }
 
-    pub fn init(privilege: Privilege, auth_mode: AuthMode) -> impl Init<Self> {
+    pub fn init(
+        fab_idx: Option<NonZeroU8>,
+        privilege: Privilege,
+        auth_mode: AuthMode,
+    ) -> impl Init<Self> {
         init!(Self {
-            fab_idx: None,
+            fab_idx,
             privilege,
             auth_mode,
             subjects <- Vec::init(),
@@ -446,7 +450,7 @@ pub(crate) mod tests {
     use crate::fabric::FabricMgr;
     use crate::interaction_model::messages::GenericPath;
     use crate::utils::cell::RefCell;
-    use crate::utils::rand::sys_rand;
+    use crate::utils::rand::dummy_rand;
 
     use super::{AccessReq, Accessor, AclEntry, AuthMode, Target};
 
@@ -482,15 +486,15 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         // Deny adding invalid auth mode (PASE is reserved for future)
-        let new = AclEntry::new(Privilege::VIEW, AuthMode::Pase);
+        let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Pase);
         assert!(fm.borrow_mut().acl_add(FAB_1, new).is_err());
 
         // Deny for fab idx mismatch
-        let new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 0);
         assert_eq!(req.allow(), false);
 
@@ -499,11 +503,11 @@ pub(crate) mod tests {
 
         // Add fabric with ID 2
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         // Allow
-        let new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         assert_eq!(fm.borrow_mut().acl_add(FAB_2, new).unwrap(), 0);
         assert_eq!(req.allow(), true);
     }
@@ -514,7 +518,7 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         let accessor = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
@@ -523,13 +527,13 @@ pub(crate) mod tests {
         req.set_target_perms(Access::RWVA);
 
         // Deny for subject mismatch
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112232).unwrap();
         assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 0);
         assert_eq!(req.allow(), false);
 
         // Allow for subject match - target is wildcard
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112233).unwrap();
         assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 1);
         assert_eq!(req.allow(), true);
@@ -541,7 +545,7 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         let allow_cat = 0xABCD;
@@ -558,20 +562,20 @@ pub(crate) mod tests {
         req.set_target_perms(Access::RWVA);
 
         // Deny for CAT id mismatch
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(disallow_cat, v2))
             .unwrap();
         fm.borrow_mut().acl_add(FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Deny of CAT version mismatch
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(allow_cat, v3)).unwrap();
         fm.borrow_mut().acl_add(FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for CAT match
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(allow_cat, v2)).unwrap();
         fm.borrow_mut().acl_add(FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
@@ -583,7 +587,7 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         let allow_cat = 0xABCD;
@@ -600,14 +604,14 @@ pub(crate) mod tests {
         req.set_target_perms(Access::RWVA);
 
         // Deny for CAT id mismatch
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(disallow_cat, v2))
             .unwrap();
         fm.borrow_mut().acl_add(FAB_1, new).unwrap();
         assert_eq!(req.allow(), false);
 
         // Allow for CAT match and version more than ACL version
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject_catid(gen_noc_cat(allow_cat, v2)).unwrap();
         fm.borrow_mut().acl_add(FAB_1, new).unwrap();
         assert_eq!(req.allow(), true);
@@ -619,7 +623,7 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         let accessor = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
@@ -628,7 +632,7 @@ pub(crate) mod tests {
         req.set_target_perms(Access::RWVA);
 
         // Deny for target mismatch
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_target(Target {
             cluster: Some(2),
             endpoint: Some(4567),
@@ -639,7 +643,7 @@ pub(crate) mod tests {
         assert_eq!(req.allow(), false);
 
         // Allow for cluster match - subject wildcard
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_target(Target {
             cluster: Some(1234),
             endpoint: None,
@@ -653,7 +657,7 @@ pub(crate) mod tests {
         fm.borrow_mut().get_mut(FAB_1).unwrap().acl_remove_all();
 
         // Allow for endpoint match - subject wildcard
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_target(Target {
             cluster: None,
             endpoint: Some(1),
@@ -667,7 +671,7 @@ pub(crate) mod tests {
         fm.borrow_mut().get_mut(FAB_1).unwrap().acl_remove_all();
 
         // Allow for exact match
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_target(Target {
             cluster: Some(1234),
             endpoint: Some(1),
@@ -685,14 +689,14 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         let accessor = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
 
         // Create an Exact Match ACL with View privilege
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_target(Target {
             cluster: Some(1234),
             endpoint: Some(1),
@@ -708,7 +712,7 @@ pub(crate) mod tests {
         assert_eq!(req.allow(), false);
 
         // Create an Exact Match ACL with Admin privilege
-        let mut new = AclEntry::new(Privilege::ADMIN, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
         new.add_target(Target {
             cluster: Some(1234),
             endpoint: Some(1),
@@ -730,12 +734,12 @@ pub(crate) mod tests {
 
         // Add fabric with ID 1
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         // Add fabric with ID 2
         fm.borrow_mut()
-            .add_with_post_init(KeyPair::new(sys_rand).unwrap(), |_| Ok(()))
+            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
         let path = GenericPath::new(Some(1), Some(1234), None);
@@ -747,12 +751,12 @@ pub(crate) mod tests {
         req2.set_target_perms(Access::RWVA);
 
         // Allow for subject match - target is wildcard - Fabric idx 2
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112233).unwrap();
         assert_eq!(fm.borrow_mut().acl_add(FAB_1, new).unwrap(), 0);
 
         // Allow for subject match - target is wildcard - Fabric idx 3
-        let mut new = AclEntry::new(Privilege::VIEW, AuthMode::Case);
+        let mut new = AclEntry::new(None, Privilege::VIEW, AuthMode::Case);
         new.add_subject(112233).unwrap();
         assert_eq!(fm.borrow_mut().acl_add(FAB_2, new).unwrap(), 0);
 

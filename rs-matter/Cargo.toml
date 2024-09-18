@@ -13,7 +13,7 @@ rust-version = "1.78"
 
 [features]
 default = ["os", "rustcrypto"]
-#default = ["os", "mbedtls"]
+#default = ["os", "mbedtls"] mbedtls is broken since several months - check the root cause
 os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std", "embassy-time/generic-queue"]
 std = ["alloc", "rand"]
 backtrace = []

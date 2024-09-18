@@ -173,7 +173,7 @@ impl Fabric {
         if let Some(case_admin_subject) = case_admin_subject {
             self.acl.clear();
             self.acl.push_init(
-                AclEntry::init(Privilege::ADMIN, AuthMode::Case)
+                AclEntry::init(None, Privilege::ADMIN, AuthMode::Case)
                     .into_fallible()
                     .chain(|e| {
                         e.fab_idx = Some(self.fab_idx);

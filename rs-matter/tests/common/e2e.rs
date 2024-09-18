@@ -133,7 +133,7 @@ impl E2eRunner {
     /// Add a default ACL entry to the remote (tested) Matter instance.
     pub fn add_default_acl(&self) {
         // Only allow the standard peer node id of the IM Engine
-        let mut default_acl = AclEntry::new(Privilege::ADMIN, AuthMode::Case);
+        let mut default_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
         default_acl.add_subject(Self::PEER_ID).unwrap();
         self.matter
             .fabric_mgr
