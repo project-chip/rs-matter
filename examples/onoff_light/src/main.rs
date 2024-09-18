@@ -133,7 +133,7 @@ fn run() -> Result<(), Error> {
         core::mem::size_of_val(&responder.run::<4, 4>())
     );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultenously)
+    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
