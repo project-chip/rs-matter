@@ -15,18 +15,16 @@
  *    limitations under the License.
  */
 
-use crate::{
-    crypto::{self, HmacSha256},
-    utils::rand::Rand,
-};
 use byteorder::{ByteOrder, LittleEndian};
+
 use log::error;
+
 use subtle::ConstantTimeEq;
 
-use crate::{
-    crypto::{pbkdf2_hmac, Sha256},
-    error::{Error, ErrorCode},
-};
+use crate::crypto::{self, pbkdf2_hmac, HmacSha256, Sha256};
+use crate::error::{Error, ErrorCode};
+use crate::utils::init::{init, zeroed, Init};
+use crate::utils::rand::Rand;
 
 use super::{common::SCStatusCodes, crypto::CryptoSpake2};
 
@@ -134,7 +132,7 @@ impl VerifierData {
 
 impl Spake2P {
     pub const fn new() -> Self {
-        Spake2P {
+        Self {
             mode: Spake2Mode::Unknown,
             context: None,
             crypto_spake2: None,
@@ -142,6 +140,18 @@ impl Spake2P {
             cA: [0; 32],
             app_data: 0,
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            mode: Spake2Mode::Unknown,
+            context: None,
+            crypto_spake2: None,
+            Ke <- zeroed(),
+            cA <- zeroed(),
+            app_data: 0,
+        })
     }
 
     pub fn set_app_data(&mut self, data: u32) {

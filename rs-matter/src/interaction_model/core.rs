@@ -80,6 +80,8 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::Busy => IMStatusCode::Busy,
             ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
             ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
+            ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
+            ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
             _ => IMStatusCode::Failure,
         }
     }
@@ -156,22 +158,22 @@ pub enum ReportDataReq<'a> {
 impl<'a> ReportDataReq<'a> {
     pub fn attr_requests(&self) -> Result<Option<TLVArray<'a, AttrPath>>, Error> {
         match self {
-            ReportDataReq::Read(req) => req.attr_requests(),
-            ReportDataReq::Subscribe(req) => req.attr_requests(),
+            Self::Read(req) => req.attr_requests(),
+            Self::Subscribe(req) => req.attr_requests(),
         }
     }
 
     pub fn dataver_filters(&self) -> Result<Option<TLVArray<'_, DataVersionFilter>>, Error> {
         match self {
-            ReportDataReq::Read(req) => req.dataver_filters(),
-            ReportDataReq::Subscribe(req) => req.dataver_filters(),
+            Self::Read(req) => req.dataver_filters(),
+            Self::Subscribe(req) => req.dataver_filters(),
         }
     }
 
     pub fn fabric_filtered(&self) -> Result<bool, Error> {
         match self {
-            ReportDataReq::Read(req) => req.fabric_filtered(),
-            ReportDataReq::Subscribe(req) => req.fabric_filtered(),
+            Self::Read(req) => req.fabric_filtered(),
+            Self::Subscribe(req) => req.fabric_filtered(),
         }
     }
 }

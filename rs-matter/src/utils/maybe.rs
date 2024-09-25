@@ -101,6 +101,40 @@ impl<T, G> Maybe<T, G> {
         }
     }
 
+    /// Sets the `Maybe` value to "none".
+    pub fn clear(&mut self) {
+        if self.some {
+            unsafe {
+                let slot = addr_of_mut!(*self);
+
+                addr_of_mut!((*slot).some).write(false);
+
+                let value = addr_of_mut!((*slot).value) as *mut T;
+
+                core::ptr::drop_in_place(value);
+            }
+        }
+    }
+
+    /// Re-initialize the `Maybe` value with a new in-place initializer.
+    pub fn reinit<I: init::Init<Self>>(&mut self, value: I) {
+        // Unwrap is safe because the initializer is infallible
+        Self::try_reinit(self, value).unwrap();
+    }
+
+    /// Try to re-initialize the `Maybe` value with a new in-place initializer.
+    ///
+    /// If the re-initialization fails, the `Maybe` value is left to `none`.
+    pub fn try_reinit<I: init::Init<Self, E>, E>(&mut self, value: I) -> Result<(), E> {
+        self.clear();
+
+        unsafe {
+            let slot = addr_of_mut!(*self);
+
+            value.__init(slot)
+        }
+    }
+
     /// Return a mutable reference to the wrapped value, if it exists.
     pub fn as_mut(&mut self) -> Option<&mut T> {
         if self.some {
@@ -146,12 +180,21 @@ impl<T, G> Maybe<T, G> {
     /// Note that this method is not efficient when the wrapped value is large
     /// (might result in big stack memory usage due to moves), hence its usage
     /// is not recommended when the wrapped value is large.
-    pub fn into_option(self) -> Option<T> {
-        if self.some {
-            Some(unsafe { self.value.assume_init() })
-        } else {
-            None
+    pub fn into_option(mut self) -> Option<T> {
+        if !self.some {
+            return None;
         }
+
+        Some(unsafe {
+            let slot = addr_of_mut!(self);
+
+            let ret = core::ptr::read(addr_of_mut!((*slot).value) as *mut _);
+
+            // So that `T` is not double-dropped on dtor
+            self.some = false;
+
+            ret
+        })
     }
 
     /// Return whether the `Maybe` value is empty.
@@ -162,6 +205,15 @@ impl<T, G> Maybe<T, G> {
     /// Return whether the `Maybe` value is not empty.
     pub fn is_some(&self) -> bool {
         self.some
+    }
+}
+
+impl<T, G> Drop for Maybe<T, G> {
+    fn drop(&mut self) {
+        // Explicit drop to ensure that the wrapped value is dropped
+        // The compiler won't drop it automatically, because it is tracked as `MaybeUninit<T>`
+        // (even if it is initialized in the meantime, i.e. `self.some == true`)
+        self.clear();
     }
 }
 
@@ -192,8 +244,6 @@ where
     }
 }
 
-impl<T, G> Copy for Maybe<T, G> where T: Copy {}
-
 impl<T, G> PartialEq for Maybe<T, G>
 where
     T: PartialEq,
@@ -211,5 +261,99 @@ where
 {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.as_ref().hash(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Maybe;
+
+    macro_rules! droppable {
+        () => {
+            static COUNT: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+
+            #[derive(Eq, Ord, PartialEq, PartialOrd)]
+            struct Droppable(());
+
+            impl Droppable {
+                fn new() -> Self {
+                    COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    Droppable(())
+                }
+
+                fn count() -> i32 {
+                    COUNT.load(core::sync::atomic::Ordering::Relaxed)
+                }
+            }
+
+            impl Drop for Droppable {
+                fn drop(&mut self) {
+                    COUNT.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
+            impl Clone for Droppable {
+                fn clone(&self) -> Self {
+                    COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+                    Self(())
+                }
+            }
+        };
+    }
+
+    #[test]
+    fn drop() {
+        droppable!();
+
+        // Test dropping none
+
+        assert_eq!(Droppable::count(), 0);
+
+        {
+            let _m: Maybe<Droppable> = Maybe::none();
+        }
+
+        assert_eq!(Droppable::count(), 0);
+
+        // Test dropping some
+
+        {
+            let _m: Maybe<Droppable> = Maybe::some(Droppable::new());
+        }
+
+        assert_eq!(Droppable::count(), 0);
+
+        // Test `into_option` destructuring
+        {
+            let m: Maybe<Droppable> = Maybe::some(Droppable::new());
+            m.into_option();
+        }
+
+        assert_eq!(Droppable::count(), 0);
+
+        // Test clone semantics w.r.t. drop
+
+        {
+            let m: Maybe<Droppable> = Maybe::some(Droppable::new());
+
+            let _m2 = m.clone();
+
+            core::mem::drop(m);
+
+            assert_eq!(Droppable::count(), 1);
+        }
+
+        assert_eq!(Droppable::count(), 0);
+
+        // Test clear semantics w.r.t. drop
+
+        {
+            let mut m: Maybe<Droppable> = Maybe::some(Droppable::new());
+
+            m.clear();
+        }
+
+        assert_eq!(Droppable::count(), 0);
     }
 }

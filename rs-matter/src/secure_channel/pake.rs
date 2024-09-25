@@ -181,7 +181,9 @@ impl Pake {
         self.handle_pasepake3(exchange, session, spake2p).await?;
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_changed();
+        exchange.matter().notify_fabrics_maybe_changed();
+
+        self.clear_timeout(exchange);
 
         Ok(())
     }
@@ -360,6 +362,12 @@ impl Pake {
                 Ok(Some(OpCode::PBKDFParamResponse.into()))
             })
             .await
+    }
+
+    fn clear_timeout(&mut self, exchange: &Exchange) {
+        let mut pase = exchange.matter().pase_mgr.borrow_mut();
+
+        pase.timeout = None;
     }
 
     async fn update_timeout(

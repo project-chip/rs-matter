@@ -814,8 +814,6 @@ impl<'m> TransportMgr<'m> {
 
         // No existing session: we either have to create one, or return an error
 
-        let mut error_code = ErrorCode::NoSession;
-
         if !packet.header.plain.is_encrypted() {
             // Unencrypted packets can be decoded without a session, and we need to anyway do that
             // in order to determine (based on proto hdr data) whether to create a new session or not
@@ -829,22 +827,18 @@ impl<'m> TransportMgr<'m> {
                 // As per spec, new unencrypted sessions are only created for
                 // `PBKDFParamRequest` or `CASESigma1` unencrypted messages
 
-                if let Some(session) =
-                    session_mgr.add(false, packet.peer, packet.header.plain.get_src_nodeid())
-                {
-                    // Session created successfully: decode, indicate packet payload slice and process further
-                    return session.post_recv(&packet.header, epoch);
-                } else {
-                    // We tried to create a new PASE session, but there was no space
-                    error_code = ErrorCode::NoSpaceSessions;
-                }
+                let session =
+                    session_mgr.add(false, packet.peer, packet.header.plain.get_src_nodeid())?;
+
+                // Session created successfully: decode, indicate packet payload slice and process further
+                return session.post_recv(&packet.header, epoch);
             }
         } else {
             // Packet cannot be decoded, set packet payload to empty
             set_payload(packet, (0, 0));
         }
 
-        Err(error_code.into())
+        Err(ErrorCode::NoSession.into())
     }
 
     fn encode_packet<const N: usize, F>(

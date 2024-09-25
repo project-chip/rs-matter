@@ -90,7 +90,7 @@ impl<'a> AttrDetails<'a> {
             endpoint: Some(self.endpoint_id),
             cluster: Some(self.cluster_id),
             attr: Some(self.attr_id),
-            list_index: self.list_index,
+            list_index: self.list_index.clone(),
             ..Default::default()
         }
     }

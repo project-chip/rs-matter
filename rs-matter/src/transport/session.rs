@@ -21,13 +21,12 @@ use core::time::Duration;
 
 use log::{error, info, trace, warn};
 
-use crate::data_model::sdm::noc::NocData;
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, Init};
+use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::Matter;
@@ -89,8 +88,7 @@ pub struct Session {
     msg_ctr: u32,
     rx_ctr_state: RxCtrState,
     mode: SessionMode,
-    data: Option<NocData>,
-    pub(crate) exchanges: heapless::Vec<Option<ExchangeState>, MAX_EXCHANGES>,
+    pub(crate) exchanges: crate::utils::storage::Vec<Option<ExchangeState>, MAX_EXCHANGES>,
     last_use: Duration,
     reserved: bool,
 }
@@ -118,26 +116,36 @@ impl Session {
             msg_ctr: Self::rand_msg_ctr(rand),
             rx_ctr_state: RxCtrState::new(0),
             mode: SessionMode::PlainText,
-            data: None,
-            exchanges: heapless::Vec::new(),
+            exchanges: crate::utils::storage::Vec::new(),
             last_use: epoch(),
         }
     }
 
-    pub fn set_noc_data(&mut self, data: NocData) {
-        self.data = Some(data);
-    }
-
-    pub fn clear_noc_data(&mut self) {
-        self.data = None;
-    }
-
-    pub fn get_noc_data(&mut self) -> Option<&mut NocData> {
-        self.data.as_mut()
-    }
-
-    pub fn take_noc_data(&mut self) -> Option<NocData> {
-        self.data.take()
+    pub fn init(
+        id: u32,
+        reserved: bool,
+        peer_addr: Address,
+        peer_nodeid: Option<u64>,
+        epoch: Epoch,
+        rand: Rand,
+    ) -> impl Init<Self> {
+        init!(Self {
+            id,
+            reserved,
+            peer_addr,
+            local_nodeid: 0,
+            peer_nodeid,
+            dec_key <- zeroed(),
+            enc_key <- zeroed(),
+            att_challenge <- zeroed(),
+            peer_sess_id: 0,
+            local_sess_id: 0,
+            msg_ctr: Self::rand_msg_ctr(rand),
+            rx_ctr_state: RxCtrState::new(0),
+            mode: SessionMode::PlainText,
+            exchanges: crate::utils::storage::Vec::new(),
+            last_use: epoch(),
+        })
     }
 
     pub fn get_local_sess_id(&self) -> u16 {
@@ -450,10 +458,7 @@ impl<'a> ReservedSession<'a> {
     pub fn reserve_now(matter: &'a Matter<'a>) -> Result<Self, Error> {
         let mut mgr = matter.transport_mgr.session_mgr.borrow_mut();
 
-        let id = mgr
-            .add(true, Address::new(), None)
-            .ok_or(ErrorCode::NoSpaceSessions)?
-            .id;
+        let id = mgr.add(true, Address::new(), None)?.id;
 
         Ok(Self {
             id,
@@ -643,7 +648,7 @@ impl SessionMgr {
         reserved: bool,
         peer_addr: Address,
         peer_nodeid: Option<u64>,
-    ) -> Option<&mut Session> {
+    ) -> Result<&mut Session, Error> {
         let session_id = self.next_sess_unique_id;
 
         self.next_sess_unique_id += 1;
@@ -652,7 +657,7 @@ impl SessionMgr {
             self.next_sess_unique_id = 0;
         }
 
-        let session = Session::new(
+        let session = Session::init(
             session_id,
             reserved,
             peer_addr,
@@ -661,9 +666,12 @@ impl SessionMgr {
             self.rand,
         );
 
-        self.sessions.push(session).ok()?;
+        self.sessions
+            .push_init(session.into_fallible::<Error>(), || {
+                ErrorCode::NoSpaceSessions.into()
+            })?;
 
-        Some(self.sessions.last_mut().unwrap())
+        Ok(self.sessions.last_mut().unwrap())
     }
 
     /// This assumes that the higher layer has taken care of doing anything required
