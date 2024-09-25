@@ -60,7 +60,7 @@ impl<'a> E2eTestHandler<'a> {
                     access_control::CLUSTER,
                     echo_cluster::CLUSTER,
                 ],
-                device_type: DEV_TYPE_ROOT_NODE,
+                device_types: &[DEV_TYPE_ROOT_NODE],
             },
             Endpoint {
                 id: 1,
@@ -69,7 +69,7 @@ impl<'a> E2eTestHandler<'a> {
                     cluster_on_off::CLUSTER,
                     echo_cluster::CLUSTER,
                 ],
-                device_type: DEV_TYPE_ON_OFF_LIGHT,
+                device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             },
         ],
     };

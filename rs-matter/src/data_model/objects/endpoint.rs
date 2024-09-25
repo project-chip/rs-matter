@@ -24,7 +24,7 @@ use super::{AttrId, Attribute, Cluster, ClusterId, CmdId, DeviceType, EndptId};
 #[derive(Debug, Clone)]
 pub struct Endpoint<'a> {
     pub id: EndptId,
-    pub device_type: DeviceType,
+    pub device_types: &'a [DeviceType],
     pub clusters: &'a [Cluster<'a>],
 }
 

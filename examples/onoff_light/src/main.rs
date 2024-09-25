@@ -133,7 +133,7 @@ fn run() -> Result<(), Error> {
         core::mem::size_of_val(&responder.run::<4, 4>())
     );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultenously)
+    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
     //let mut respond = responder_fut(responder);
@@ -229,7 +229,7 @@ const NODE: Node<'static> = Node {
         root_endpoint::endpoint(0, root_endpoint::OperNwType::Ethernet),
         Endpoint {
             id: 1,
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
         },
     ],

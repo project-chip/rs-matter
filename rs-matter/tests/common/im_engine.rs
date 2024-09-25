@@ -109,7 +109,7 @@ const NODE: Node<'static> = Node {
                 access_control::CLUSTER,
                 echo_cluster::CLUSTER,
             ],
-            device_type: DEV_TYPE_ROOT_NODE,
+            device_types: &[DEV_TYPE_ROOT_NODE],
         },
         Endpoint {
             id: 1,
@@ -118,7 +118,7 @@ const NODE: Node<'static> = Node {
                 cluster_on_off::CLUSTER,
                 echo_cluster::CLUSTER,
             ],
-            device_type: DEV_TYPE_ON_OFF_LIGHT,
+            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
         },
     ],
 };
