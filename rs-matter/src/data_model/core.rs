@@ -157,10 +157,7 @@ where
         // Will the clusters that are to be invoked await?
         let mut awaits = false;
 
-        for item in metadata
-            .node()
-            .read(&req, None, &exchange.accessor()?, true)?
-        {
+        for item in metadata.node().read(&req, &exchange.accessor()?)? {
             if item?
                 .map(|attr| self.handler.read_awaits(exchange, &attr))
                 .unwrap_or(false)
@@ -175,7 +172,7 @@ where
             // of the transport layer, as the operation won't await.
 
             let node = metadata.node();
-            let mut attrs = node.read(&req, None, &accessor, true)?.peekable();
+            let mut attrs = node.read(&req, &accessor)?.peekable();
 
             if !req
                 .respond(&self.handler, exchange, None, &mut attrs, &mut wb, true)
@@ -215,7 +212,7 @@ where
         let req = ReportDataReq::Read(&req);
 
         let node = metadata.node();
-        let mut attrs = node.read(&req, None, &accessor, true)?.peekable();
+        let mut attrs = node.read(&req, &accessor)?.peekable();
 
         loop {
             let more_chunks = req
@@ -624,7 +621,11 @@ where
         let mut wb = WriteBuf::new(tx);
 
         let req = SubscribeReqRef::new(TLVElement::new(rx));
-        let req = ReportDataReq::Subscribe(&req);
+        let req = if with_dataver {
+            ReportDataReq::Subscribe(&req)
+        } else {
+            ReportDataReq::SubscribeReport(&req)
+        };
 
         let metadata = self.handler.lock().await;
 
@@ -632,7 +633,7 @@ where
 
         {
             let node = metadata.node();
-            let mut attrs = node.read(&req, None, &accessor, with_dataver)?.peekable();
+            let mut attrs = node.read(&req, &accessor)?.peekable();
 
             loop {
                 let more_chunks = req
@@ -780,7 +781,10 @@ impl<'a> ReportDataReq<'a> {
         tw.start_struct(&TLVTag::Anonymous)?;
 
         if let Some(subscription_id) = subscription_id {
-            assert!(matches!(self, ReportDataReq::Subscribe(_)));
+            assert!(matches!(
+                self,
+                ReportDataReq::Subscribe(_) | ReportDataReq::SubscribeReport(_)
+            ));
             tw.u32(
                 &TLVTag::Context(ReportDataTag::SubscriptionId as u8),
                 subscription_id,
