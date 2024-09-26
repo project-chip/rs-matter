@@ -54,6 +54,41 @@ where
 
         Ok(vec.into_array().map_err(|_| ErrorCode::NoSpace).unwrap())
     }
+
+    fn check_from_tlv(element: &TLVElement<'a>) -> Result<(), Error> {
+        let mut count = 0;
+
+        while let Some(e) = element.clone().array()?.iter().next() {
+            T::check_from_tlv(&e?)?;
+            count += 1;
+        }
+
+        if count > N {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        Ok(())
+    }
+
+    fn update_from_tlv(&mut self, element: &TLVElement<'a>) -> Result<(), Error> {
+        Self::check_from_tlv(element)?;
+
+        // Unwraps and indexing below should not trigger a panic, because we just checked the TLV data.
+
+        let mut index = 0;
+
+        for item in TLVArray::new(element.clone()).unwrap() {
+            self[index] = item.unwrap();
+            index += 1;
+        }
+
+        while index < self.len() {
+            self[index] = Default::default();
+            index += 1;
+        }
+
+        Ok(())
+    }
 }
 
 impl<T, const N: usize> ToTLV for [T; N]

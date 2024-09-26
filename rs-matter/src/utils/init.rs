@@ -15,8 +15,10 @@
  *    limitations under the License.
  */
 
+use core::cell::UnsafeCell;
 use core::convert::Infallible;
-use core::{cell::UnsafeCell, mem::MaybeUninit};
+use core::fmt::Debug;
+use core::mem::MaybeUninit;
 
 /// Re-export `pinned-init` because its API is very unstable currently (0.0.x)
 pub use pinned_init::*;
@@ -46,24 +48,97 @@ pub trait IntoFallibleInit<T>: Init<T, Infallible> {
 
 impl<T, I> IntoFallibleInit<T> for I where I: Init<T, Infallible> {}
 
+/// An extension trait for converting `Init<T, E>` to an infallible `Init<T, Infallible>`.
+/// Useful when the upstream code can **guarantee**, that there will be no errors during the initialization.
+///
+/// If any errors occur, the resulting infallible initializer will panic.
+pub trait IntoInfallibleInit<T, E: Debug>: Init<T, E> {
+    /// Convert the fallible initializer to an infallible one.
+    fn into_infallible(self) -> impl Init<T> {
+        unsafe {
+            init_from_closure(move |slot| {
+                Self::__init(self, slot).unwrap();
+
+                Ok(())
+            })
+        }
+    }
+}
+
+impl<T, E: Debug, I> IntoInfallibleInit<T, E> for I where I: Init<T, E> {}
+
+/// An extension trait for updating a type using an infallible initializer.
+///
+/// NOTE: The initializer - besides being infallible - should **NOT** panic.
+/// If the initializer does panic, the code will immediately turn any unwinding panic
+/// into a program abort.
+pub trait ApplyInit<T>: Init<T> {
+    fn apply(self, to: &mut T) {
+        let update = move || {
+            let to = to as *mut T;
+
+            unsafe {
+                // We can drop in place because we are sure that the following update
+                // will not fail and also it should NOT panic
+                core::ptr::drop_in_place(to);
+
+                // NOTE:
+                // We just dropped the value in-place, but the compiler does not know about that!
+                // From here on, if the initializer panics, the program will be in an inconsistent state,
+                // as the compiler will do another drop of the value.
+                //
+                // Therefore, we really need to promote any unwinding panic to an abort, which is
+                // the only safe way to handle this situation.
+
+                // Unwrapping should not panic because the initializer is an infallible one
+                Self::__init(self, to).unwrap();
+            }
+        };
+
+        #[cfg(not(panic = "abort"))]
+        {
+            // In the presence of `panic_unwind`:
+            //
+            // Catch the panic and abort immediately, because otherwise the program will continue
+            // to run in an inconsistent state due to the potential double-drop of the value on
+            // panic-unwind (we already called `core::ptr::drop_in_place` but the compiler does not know that!)
+
+            extern crate std;
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(update));
+
+            if result.is_err() {
+                log::error!(
+                    "Panic detected during an infallible in-place update. Aborting the program."
+                );
+                std::process::abort();
+            }
+        }
+
+        // `panic_abort` is active. We should be safe to call `update` directly
+        #[cfg(panic = "abort")]
+        update();
+    }
+}
+
+impl<T, I> ApplyInit<T> for I where I: Init<T> {}
+
 /// An extension trait for retrofitting `UnsafeCell` with an initializer.
 pub trait UnsafeCellInit<T> {
     /// Create a new in-place initializer for `UnsafeCell`
     /// by using the given initializer for the value.
-    fn init<I: Init<T>>(value: I) -> impl Init<Self>;
+    fn init<I: Init<T, E>, E>(value: I) -> impl Init<Self, E>;
 }
 
 impl<T> UnsafeCellInit<T> for UnsafeCell<T> {
-    fn init<I: Init<T>>(value: I) -> impl Init<Self> {
+    fn init<I: Init<T, E>, E>(value: I) -> impl Init<Self, E> {
         unsafe {
-            init_from_closure::<_, Infallible>(move |slot: *mut Self| {
+            init_from_closure::<_, E>(move |slot: *mut Self| {
                 // `slot` contains uninit memory, avoid creating a reference.
                 let slot: *mut T = slot as _;
 
                 // Initialize the value
-                value.__init(slot).unwrap();
-
-                Ok(())
+                value.__init(slot)
             })
         }
     }

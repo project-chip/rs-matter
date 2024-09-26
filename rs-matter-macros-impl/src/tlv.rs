@@ -5,7 +5,7 @@ use quote::{format_ident, quote};
 use syn::meta::ParseNestedMeta;
 use syn::parse::ParseStream;
 use syn::token::{Gt, Lt};
-use syn::{DeriveInput, Lifetime, LifetimeParam, LitInt, LitStr, Type};
+use syn::{DeriveInput, Generics, Lifetime, LifetimeParam, LitInt, LitStr, Type};
 
 #[derive(PartialEq, Debug)]
 struct TlvArgs {
@@ -516,33 +516,12 @@ fn gen_fromtlv_for_struct_named(
 ) -> TokenStream {
     let mut tag_start = tlvargs.start;
 
-    let (lifetime, impl_generics) = if tlvargs.lifetime_explicit {
-        (tlvargs.lifetime, generics.clone())
-    } else {
-        // The `'_` default lifetime from tlvargs won't do.
-        // We need a named lifetime that has to be part of the `impl<>` block.
-
-        let lifetime = Lifetime::new("'__from_tlv", Span::call_site());
-
-        let mut impl_generics = generics.clone();
-
-        if impl_generics.gt_token.is_none() {
-            impl_generics.gt_token = Some(Gt::default());
-            impl_generics.lt_token = Some(Lt::default());
-        }
-
-        impl_generics
-            .params
-            .push(syn::GenericParam::Lifetime(LifetimeParam::new(
-                lifetime.clone(),
-            )));
-
-        (lifetime, impl_generics)
-    };
+    let (lifetime, impl_generics) = derive_impl_generics(&tlvargs, generics);
 
     let datatype = format_ident!("r#{}", tlvargs.datatype);
 
     let mut idents = Vec::new();
+    let mut full_types = Vec::new();
     let mut types = Vec::new();
     let mut tags = Vec::new();
 
@@ -559,6 +538,7 @@ fn gen_fromtlv_for_struct_named(
         }
         idents.push(&field.ident);
 
+        full_types.push(&field.ty);
         types.push(normalize_fromtlv_type(&field.ty));
     }
 
@@ -590,6 +570,18 @@ fn gen_fromtlv_for_struct_named(
                     Ok(init)
                 })
             }
+
+            fn check_from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<(), #krate::error::Error> {
+                #[allow(unused_mut)]
+                let mut seq = element.#datatype()?;
+
+                #({
+                    type Checked<#lifetime> = #full_types;
+                    Checked::check_from_tlv(&seq.#seq_method(#tags)?)?;
+                })*
+
+                Ok(())
+            }
         }
 
         impl #impl_generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #struct_name #generics {
@@ -615,7 +607,7 @@ fn gen_fromtlv_for_enum(
     // so we need to support "tags" up to u16 for those cases
     let mut tag_start = tlvargs.start as u16;
 
-    let lifetime = tlvargs.lifetime;
+    let (lifetime, impl_generics) = derive_impl_generics(&tlvargs, generics);
 
     let mut variant_names = Vec::new();
     let mut tags = Vec::new();
@@ -663,7 +655,7 @@ fn gen_fromtlv_for_enum(
             get_unit_enum_func_and_tags(enum_name, tlvargs.datatype.as_str(), tags);
 
         quote! {
-            impl #generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {
+            impl #impl_generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {
                 fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
                     Ok(match element.#elem_read_method()? {
                         #(#tags => Self::#variant_names,
@@ -673,7 +665,7 @@ fn gen_fromtlv_for_enum(
                 }
             }
 
-            impl #generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #enum_name #generics {
+            impl #impl_generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #enum_name #generics {
                 type Error = #krate::error::Error;
 
                 fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
@@ -696,11 +688,13 @@ fn gen_fromtlv_for_enum(
             .map(|v| Literal::u8_suffixed(v as u8))
             .collect::<Vec<_>>();
 
+        let mut full_types = Vec::new();
         let mut types = Vec::new();
 
         for v in data_enum.variants.iter() {
             if let syn::Fields::Unnamed(fields) = &v.fields {
                 if let Type::Path(path) = &fields.unnamed[0].ty {
+                    full_types.push(path.clone());
                     types.push(&path.path.segments[0].ident);
                 } else {
                     panic!("Path not found {:?}", v.fields);
@@ -723,7 +717,7 @@ fn gen_fromtlv_for_enum(
             .unwrap_or(TokenStream::new());
 
         quote! {
-            impl #generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {
+            impl #impl_generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {
                 fn from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
                     #enter
 
@@ -737,9 +731,27 @@ fn gen_fromtlv_for_enum(
                         _ => Err(#krate::error::ErrorCode::Invalid)?,
                     })
                 }
+
+                fn check_from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<(), #krate::error::Error> {
+                    #enter
+
+                    let tag = element
+                        .try_ctx()?
+                        .ok_or(#krate::error::ErrorCode::TLVTypeMismatch)?;
+
+                    match tag {
+                        #(#tags => {
+                            type Checked<#lifetime> = #full_types;
+                            Checked::check_from_tlv(&element)?;
+                        })*
+                        _ => Err(#krate::error::ErrorCode::Invalid)?,
+                    }
+
+                    Ok(())
+                }
             }
 
-            impl #generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #enum_name #generics {
+            impl #impl_generics TryFrom<&#krate::tlv::TLVElement<#lifetime>> for #enum_name #generics {
                 type Error = #krate::error::Error;
 
                 fn try_from(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, Self::Error> {
@@ -768,6 +780,32 @@ fn normalize_fromtlv_type(ty: &syn::Type) -> TokenStream {
         .collect::<Vec<_>>();
 
     quote!(#(#type_idents)::*)
+}
+
+fn derive_impl_generics(tlvargs: &TlvArgs, generics: &Generics) -> (Lifetime, Generics) {
+    if tlvargs.lifetime_explicit {
+        return (tlvargs.lifetime.clone(), generics.clone());
+    }
+
+    // The `'_` default lifetime from tlvargs won't do.
+    // We need a named lifetime that has to be part of the `impl<>` block.
+
+    let lifetime = Lifetime::new("'__from_tlv", Span::call_site());
+
+    let mut impl_generics = generics.clone();
+
+    if impl_generics.gt_token.is_none() {
+        impl_generics.gt_token = Some(Gt::default());
+        impl_generics.lt_token = Some(Lt::default());
+    }
+
+    impl_generics
+        .params
+        .push(syn::GenericParam::Lifetime(LifetimeParam::new(
+            lifetime.clone(),
+        )));
+
+    (lifetime, impl_generics)
 }
 
 /// Derive FromTLV Macro
@@ -979,6 +1017,32 @@ mod tests {
                             Ok(init)
                         })
                     }
+
+                    fn check_from_tlv(
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                        #[allow(unused_mut)]
+                        let mut seq = element.r#struct()?;
+
+                        {
+                            type Checked<'__from_tlv> = u8;
+                            Checked::check_from_tlv(&seq.scan_ctx(0u8)?)?;
+                        }
+                        {
+                            type Checked<'__from_tlv> = u32;
+                            Checked::check_from_tlv(&seq.scan_ctx(1u8)?)?;
+                        }
+                        {
+                            type Checked<'__from_tlv> = Option<u32>;
+                            Checked::check_from_tlv(&seq.scan_ctx(2u8)?)?;
+                        }
+                        {
+                            type Checked<'__from_tlv> = rs_matter_maybe_renamed::tlv::Nullable<u32>;
+                            Checked::check_from_tlv(&seq.scan_ctx(3u8)?)?;
+                        }
+
+                        Ok(())
+                    }
                 }
 
                 impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestS {
@@ -1171,15 +1235,14 @@ mod tests {
         assert_tokenstreams_eq!(
             &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
-                impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
+                impl<'__from_tlv> rs_matter_maybe_renamed::tlv::FromTLV<'__from_tlv> for TestEnum {
                     fn from_tlv(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
-                        let element = element
-                            .r#struct()?
-                            .iter()
-                            .next()
-                            .ok_or(rs_matter_maybe_renamed::error::ErrorCode::TLVTypeMismatch)??;
+                        let element =
+                            element.r#struct()?.iter().next().ok_or(
+                                rs_matter_maybe_renamed::error::ErrorCode::TLVTypeMismatch,
+                            )??;
 
                         let tag = element
                             .try_ctx()?
@@ -1191,13 +1254,40 @@ mod tests {
                             _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
                         })
                     }
+
+                    fn check_from_tlv(
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                        let element =
+                            element.r#struct()?.iter().next().ok_or(
+                                rs_matter_maybe_renamed::error::ErrorCode::TLVTypeMismatch,
+                            )??;
+
+                        let tag = element
+                            .try_ctx()?
+                            .ok_or(rs_matter_maybe_renamed::error::ErrorCode::TLVTypeMismatch)?;
+
+                        match tag {
+                            0u8 => {
+                                type Checked<'__from_tlv> = u32;
+                                Checked::check_from_tlv(&element)?;
+                            }
+                            1u8 => {
+                                type Checked<'__from_tlv> = u32;
+                                Checked::check_from_tlv(&element)?;
+                            }
+                            _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                        }
+
+                        Ok(())
+                    }
                 }
 
-                impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
+                impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestEnum {
                     type Error = rs_matter_maybe_renamed::error::Error;
 
                     fn try_from(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, Self::Error> {
                         use rs_matter_maybe_renamed::tlv::FromTLV;
                         Self::from_tlv(element)
@@ -1220,9 +1310,9 @@ mod tests {
         assert_tokenstreams_eq!(
             &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
-                impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
-                   fn from_tlv(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                impl<'__from_tlv> rs_matter_maybe_renamed::tlv::FromTLV<'__from_tlv> for TestEnum {
+                    fn from_tlv(
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
                         Ok(match element.u8()? {
                             0u8 => Self::ValueA,
@@ -1232,11 +1322,11 @@ mod tests {
                     }
                 }
 
-                impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
+                impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestEnum {
                     type Error = rs_matter_maybe_renamed::error::Error;
 
                     fn try_from(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, Self::Error> {
                         use rs_matter_maybe_renamed::tlv::FromTLV;
                         Self::from_tlv(element)
@@ -1264,9 +1354,9 @@ mod tests {
         assert_tokenstreams_eq!(
             &derive_fromtlv(ast, "rs_matter_maybe_renamed".to_string()),
             &quote!(
-                impl rs_matter_maybe_renamed::tlv::FromTLV<'_> for TestEnum {
+                impl<'__from_tlv> rs_matter_maybe_renamed::tlv::FromTLV<'__from_tlv> for TestEnum {
                     fn from_tlv(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
                         Ok(match element.u16()? {
                             0u16 => Self::A,
@@ -1274,15 +1364,15 @@ mod tests {
                             100u16 => Self::C,
                             4660u16 => Self::D,
                             _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
-                       })
+                        })
                     }
                 }
 
-                impl TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'_>> for TestEnum {
+                impl<'__from_tlv> TryFrom<&rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>> for TestEnum {
                     type Error = rs_matter_maybe_renamed::error::Error;
 
                     fn try_from(
-                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'__from_tlv>,
                     ) -> Result<Self, Self::Error> {
                         use rs_matter_maybe_renamed::tlv::FromTLV;
                         Self::from_tlv(element)

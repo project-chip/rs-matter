@@ -310,6 +310,44 @@ impl Target {
     }
 }
 
+/// An ACL Entry variant that serializes the original ACL entry with fabric data
+///
+/// This is a temporary, stop-gap type until the `ToTLV` trait is extended with
+/// contextual information to allow for the serialization of the fabric index
+/// as taken from the context.
+pub struct AclEntryWithFabric<'a> {
+    entry: &'a AclEntry,
+    fab_idx: Option<NonZeroU8>,
+}
+
+impl<'a> AclEntryWithFabric<'a> {
+    pub const fn new(entry: &'a AclEntry, fab_idx: Option<NonZeroU8>) -> Self {
+        Self { entry, fab_idx }
+    }
+}
+
+impl<'a> ToTLV for AclEntryWithFabric<'a> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+
+        self.entry.privilege.to_tlv(&TLVTag::Context(1), &mut tw)?;
+        self.entry.auth_mode.to_tlv(&TLVTag::Context(2), &mut tw)?;
+        self.entry.subjects.to_tlv(&TLVTag::Context(3), &mut tw)?;
+        self.entry.targets.to_tlv(&TLVTag::Context(4), &mut tw)?;
+
+        self.fab_idx.to_tlv(&TLVTag::Context(0xFE), &mut tw)?;
+
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+        unimplemented!("Not supported");
+
+        #[allow(unreachable_code)]
+        core::iter::empty()
+    }
+}
+
 #[derive(ToTLV, FromTLV, Clone, Debug, PartialEq)]
 #[tlvargs(start = 1)]
 pub struct AclEntry {
@@ -393,12 +431,7 @@ impl AclEntry {
             allow = true;
         }
 
-        // true if both are true
         allow
-            && self
-                .fab_idx
-                .map(|fab_idx| fab_idx.get() == accessor.fab_idx)
-                .unwrap_or(false)
     }
 
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
