@@ -193,6 +193,7 @@ pub struct Cluster<'a> {
 }
 
 impl<'a> Cluster<'a> {
+    /// Create a new cluster with the provided parameters.
     pub const fn new(
         id: ClusterId,
         feature_map: u32,
@@ -207,60 +208,10 @@ impl<'a> Cluster<'a> {
         }
     }
 
-    pub fn match_attributes(
-        &self,
-        attr: Option<AttrId>,
-    ) -> impl Iterator<Item = &'_ Attribute> + '_ {
-        self.attributes
-            .iter()
-            .filter(move |attribute| attr.map(|attr| attr == attribute.id).unwrap_or(true))
-    }
-
-    pub fn match_commands(&self, cmd: Option<CmdId>) -> impl Iterator<Item = CmdId> + '_ {
-        self.commands
-            .iter()
-            .filter(move |id| cmd.map(|cmd| **id == cmd).unwrap_or(true))
-            .copied()
-    }
-
-    pub fn check_attribute(
-        &self,
-        accessor: &Accessor,
-        ep: EndptId,
-        attr: AttrId,
-        write: bool,
-    ) -> Result<(), IMStatusCode> {
-        let attribute = self
-            .attributes
-            .iter()
-            .find(|attribute| attribute.id == attr)
-            .ok_or(IMStatusCode::UnsupportedAttribute)?;
-
-        Self::check_attr_access(
-            accessor,
-            GenericPath::new(Some(ep), Some(self.id), Some(attr as _)),
-            write,
-            attribute.access,
-        )
-    }
-
-    pub fn check_command(
-        &self,
-        accessor: &Accessor,
-        ep: EndptId,
-        cmd: CmdId,
-    ) -> Result<(), IMStatusCode> {
-        self.commands
-            .iter()
-            .find(|id| **id == cmd)
-            .ok_or(IMStatusCode::UnsupportedCommand)?;
-
-        Self::check_cmd_access(
-            accessor,
-            GenericPath::new(Some(ep), Some(self.id), Some(cmd)),
-        )
-    }
-
+    /// Check if the accessor has the required permissions to access the attribute
+    /// designated by the provided path.
+    ///
+    /// if `write` is true, the operation is a write operation, otherwise it is a read operation.
     pub(crate) fn check_attr_access(
         accessor: &Accessor,
         path: GenericPath,
@@ -289,6 +240,8 @@ impl<'a> Cluster<'a> {
         }
     }
 
+    /// Check if the accessor has the required permissions to access the command
+    /// designated by the provided path.
     pub(crate) fn check_cmd_access(
         accessor: &Accessor,
         path: GenericPath,
