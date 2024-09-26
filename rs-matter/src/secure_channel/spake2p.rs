@@ -15,15 +15,11 @@
  *    limitations under the License.
  */
 
-use byteorder::{ByteOrder, LittleEndian};
-
-use log::error;
-
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{self, pbkdf2_hmac, HmacSha256, Sha256};
 use crate::error::{Error, ErrorCode};
-use crate::utils::init::{init, zeroed, Init};
+use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 
 use super::{common::SCStatusCodes, crypto::CryptoSpake2};
@@ -37,6 +33,15 @@ use super::{common::SCStatusCodes, crypto::CryptoSpake2};
 // validate that the cA is confirmed.
 
 pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
+pub const MAX_SALT_SIZE_BYTES: usize = 32;
+
+const SPAKE2P_KEY_CONFIRM_INFO: &[u8] = b"ConfirmationKeys";
+const SPAKE2P_CONTEXT_PREFIX: &[u8] = b"CHIP PAKE V1 Commissioning";
+const CRYPTO_GROUP_SIZE_BYTES: usize = 32;
+const CRYPTO_W_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + 8;
+const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
+
+const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Spake2VerifierState {
@@ -63,71 +68,6 @@ pub struct Spake2P {
     cA: [u8; 32],
     crypto_spake2: Option<CryptoSpake2>,
     app_data: u32,
-}
-
-const SPAKE2P_KEY_CONFIRM_INFO: [u8; 16] = *b"ConfirmationKeys";
-const SPAKE2P_CONTEXT_PREFIX: [u8; 26] = *b"CHIP PAKE V1 Commissioning";
-const CRYPTO_GROUP_SIZE_BYTES: usize = 32;
-const CRYPTO_W_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + 8;
-const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
-
-pub const MAX_SALT_SIZE_BYTES: usize = 32;
-const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
-
-fn crypto_spake2_new() -> Result<CryptoSpake2, Error> {
-    CryptoSpake2::new()
-}
-
-impl Default for Spake2P {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct VerifierData {
-    pub data: VerifierOption,
-    // For the VerifierOption::Verifier, the following fields only serve
-    // information purposes
-    pub salt: [u8; MAX_SALT_SIZE_BYTES],
-    pub count: u32,
-}
-
-#[derive(Debug, Clone)]
-pub enum VerifierOption {
-    /// With Password
-    Password(u32),
-    /// With Verifier
-    Verifier([u8; VERIFIER_SIZE_BYTES]),
-}
-
-impl VerifierData {
-    pub fn new_with_pw(pw: u32, rand: Rand) -> Self {
-        let mut s = Self {
-            salt: [0; MAX_SALT_SIZE_BYTES],
-            count: SPAKE2_ITERATION_COUNT,
-            data: VerifierOption::Password(pw),
-        };
-        rand(&mut s.salt);
-        s
-    }
-
-    pub fn new(verifier: &[u8], count: u32, salt: &[u8]) -> Self {
-        let mut v = [0_u8; VERIFIER_SIZE_BYTES];
-        let mut s = [0_u8; MAX_SALT_SIZE_BYTES];
-
-        let slice = &mut v[..verifier.len()];
-        slice.copy_from_slice(verifier);
-
-        let slice = &mut s[..salt.len()];
-        slice.copy_from_slice(salt);
-
-        Self {
-            data: VerifierOption::Verifier(v),
-            count,
-            salt: s,
-        }
-    }
 }
 
 impl Spake2P {
@@ -164,7 +104,7 @@ impl Spake2P {
 
     pub fn set_context(&mut self) -> Result<(), Error> {
         let mut context = Sha256::new()?;
-        context.update(&SPAKE2P_CONTEXT_PREFIX)?;
+        context.update(SPAKE2P_CONTEXT_PREFIX)?;
         self.context = Some(context);
         Ok(())
     }
@@ -175,36 +115,34 @@ impl Spake2P {
 
     #[inline(always)]
     fn get_w0w1s(pw: u32, iter: u32, salt: &[u8], w0w1s: &mut [u8]) {
-        let mut pw_str: [u8; 4] = [0; 4];
-        LittleEndian::write_u32(&mut pw_str, pw);
-        let _ = pbkdf2_hmac(&pw_str, iter as usize, salt, w0w1s);
+        let _ = pbkdf2_hmac(&pw.to_le_bytes(), iter as usize, salt, w0w1s);
     }
 
-    pub fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
-        self.crypto_spake2 = Some(crypto_spake2_new()?);
-        match verifier.data {
-            VerifierOption::Password(pw) => {
-                // Derive w0 and L from the password
-                let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
-                Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
+    pub(crate) fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
+        self.crypto_spake2 = Some(CryptoSpake2::new()?);
+        if let Some(pw) = verifier.password {
+            // Derive w0 and L from the password
+            let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
+            Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
-                let w0s_len = w0w1s.len() / 2;
-                if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-                    crypto_spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
-                    crypto_spake2.set_L_from_w1s(&w0w1s[w0s_len..])?;
-                }
+            let w0s_len = w0w1s.len() / 2;
+            if let Some(crypto_spake2) = &mut self.crypto_spake2 {
+                crypto_spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
+                crypto_spake2.set_L_from_w1s(&w0w1s[w0s_len..])?;
             }
-            VerifierOption::Verifier(v) => {
-                // Extract w0 and L from the verifier
-                if v.len() != CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES {
-                    error!("Verifier of invalid length");
-                }
-                if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-                    crypto_spake2.set_w0(&v[0..CRYPTO_GROUP_SIZE_BYTES])?;
-                    crypto_spake2.set_L(&v[CRYPTO_GROUP_SIZE_BYTES..])?;
-                }
+        } else {
+            // Extract w0 and L from the verifier
+            assert_eq!(
+                verifier.verifier.len(),
+                CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES
+            );
+
+            if let Some(crypto_spake2) = &mut self.crypto_spake2 {
+                crypto_spake2.set_w0(&verifier.verifier[0..CRYPTO_GROUP_SIZE_BYTES])?;
+                crypto_spake2.set_L(&verifier.verifier[CRYPTO_GROUP_SIZE_BYTES..])?;
             }
         }
+
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Init);
         Ok(())
     }
@@ -276,7 +214,7 @@ impl Spake2P {
 
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
         let mut KcAKcB: [u8; 32] = [0; 32];
-        crypto::hkdf_sha256(&[], Ka, &SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
+        crypto::hkdf_sha256(&[], Ka, SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
             .map_err(|_x| ErrorCode::NoSpace)?;
 
         let KcA = &KcAKcB[0..(KcAKcB.len() / 2)];
@@ -290,6 +228,71 @@ impl Spake2P {
         let mut mac = HmacSha256::new(KcB)?;
         mac.update(pA)?;
         mac.finish(cB)?;
+        Ok(())
+    }
+}
+
+impl Default for Spake2P {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct VerifierData {
+    /// When `password` is `None`, `verifier` is expected to be set
+    pub password: Option<u32>,
+    pub verifier: [u8; VERIFIER_SIZE_BYTES],
+    // For the VerifierOption::Verifier, the following fields only serve
+    // information purposes
+    pub salt: [u8; MAX_SALT_SIZE_BYTES],
+    pub count: u32,
+}
+
+impl VerifierData {
+    pub fn init_with_pw(password: u32, rand: Rand) -> impl Init<Self> {
+        Self::init_empty().chain(move |this| {
+            this.configure_pw(password, rand);
+
+            Ok(())
+        })
+    }
+
+    pub fn init<'a>(verifier: &'a [u8], salt: &'a [u8], count: u32) -> impl Init<Self, Error> + 'a {
+        Self::init_empty()
+            .into_fallible()
+            .chain(move |this| this.configure_verifier(verifier, salt, count))
+    }
+
+    fn init_empty() -> impl Init<Self> {
+        init!(Self {
+            password: None,
+            verifier <- zeroed(),
+            salt <- zeroed(),
+            count: SPAKE2_ITERATION_COUNT,
+        })
+    }
+
+    fn configure_pw(&mut self, password: u32, rand: Rand) {
+        self.password = Some(password);
+        rand(&mut self.salt);
+    }
+
+    fn configure_verifier(
+        &mut self,
+        verifier: &[u8],
+        salt: &[u8],
+        count: u32,
+    ) -> Result<(), Error> {
+        if salt.len() != self.salt.len() || verifier.len() != self.verifier.len() {
+            Err(ErrorCode::InvalidData)?;
+        }
+
+        self.password = None;
+        self.salt.copy_from_slice(salt);
+        self.verifier.copy_from_slice(verifier);
+        self.count = count;
+
         Ok(())
     }
 }

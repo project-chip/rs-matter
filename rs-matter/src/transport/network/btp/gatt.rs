@@ -20,7 +20,6 @@ use core::iter::{empty, once};
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::Error;
 use crate::transport::network::BtAddr;
-use crate::CommissioningData;
 
 #[cfg(all(feature = "std", target_os = "linux"))]
 pub use builtin::BluerGattPeripheral as BuiltinGattPeripheral;
@@ -62,11 +61,11 @@ pub struct AdvData {
 
 impl AdvData {
     /// Create a new instance by using the provided `BasicInfoConfig` and `CommissioningData`.
-    pub const fn new(dev_det: &BasicInfoConfig, comm_data: &CommissioningData) -> Self {
+    pub const fn new(dev_det: &BasicInfoConfig, discriminator: u16) -> Self {
         Self {
             vid: dev_det.vid,
             pid: dev_det.pid,
-            discriminator: comm_data.discriminator,
+            discriminator,
         }
     }
 

@@ -75,8 +75,14 @@ impl<T, G> Maybe<T, G> {
     }
 
     /// Create an in-place initializer for a `Maybe` value that is empty.
-    pub fn init_none<I: init::Init<T, E>, E>() -> impl init::Init<Self, E> {
-        Self::init::<I, E>(None)
+    pub fn init_none() -> impl init::Init<Self> {
+        unsafe {
+            init::init_from_closure(move |slot: *mut Self| {
+                addr_of_mut!((*slot).some).write(false);
+
+                Ok(())
+            })
+        }
     }
 
     /// Create an in-place initializer for a `Maybe` value that is not empty

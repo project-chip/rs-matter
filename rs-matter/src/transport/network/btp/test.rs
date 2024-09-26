@@ -25,8 +25,6 @@ use alloc::{vec, vec::Vec};
 
 use embassy_futures::block_on;
 
-use crate::secure_channel::spake2p::VerifierData;
-use crate::utils::rand::sys_rand;
 use crate::utils::sync::blocking::raw::StdRawMutex;
 
 use super::*;
@@ -215,15 +213,7 @@ impl GattPeriheralMock {
 
         block_on(
             select4(
-                btp.run(
-                    "test",
-                    &BASIC_INFO,
-                    &CommissioningData {
-                        // TODO: Hard-coded for now
-                        verifier: VerifierData::new_with_pw(123456, sys_rand),
-                        discriminator: 250,
-                    },
-                ),
+                btp.run("test", &BASIC_INFO, 250),
                 async {
                     loop {
                         let mut buf = vec![0; 1500];
