@@ -341,9 +341,10 @@ async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
             &Host {
                 id: 0,
                 hostname: "rs-matter-demo",
-                ip: ipv4_addr.octets(),
-                ipv6: Some(ipv6_addr.octets()),
+                ip: ipv4_addr,
+                ipv6: ipv6_addr,
             },
+            Some(ipv4_addr),
             Some(interface),
         )
         .await

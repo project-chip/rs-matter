@@ -59,17 +59,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         ),
         Attribute::new(
             AttributesDiscriminants::GroupTable as u16,
-            Access::RF,
+            Access::RF.union(Access::NEED_VIEW),
             Quality::NONE,
         ),
         Attribute::new(
             AttributesDiscriminants::MaxGroupsPerFabric as u16,
-            Access::READ,
+            Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
             AttributesDiscriminants::MaxGroupKeysPerFabric as u16,
-            Access::READ,
+            Access::RV,
             Quality::FIXED,
         ),
     ],

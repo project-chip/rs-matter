@@ -1,4 +1,5 @@
 use core::fmt::Write;
+use core::net::{Ipv4Addr, Ipv6Addr};
 
 use bitflags::bitflags;
 
@@ -100,8 +101,8 @@ bitflags! {
 pub struct Host<'a> {
     pub id: u16,
     pub hostname: &'a str,
-    pub ip: [u8; 4],
-    pub ipv6: Option<[u8; 16]>,
+    pub ip: Ipv4Addr,
+    pub ipv6: Ipv6Addr,
 }
 
 impl<'a> Host<'a> {
@@ -422,12 +423,18 @@ impl<'a> Host<'a> {
         R: RecordSectionBuilder<T>,
         T: Composer,
     {
-        answer.push((
-            Self::host_fqdn(self.hostname, false).unwrap(),
-            dns_class_with_flush(Class::IN),
-            ttl_sec,
-            A::from_octets(self.ip[0], self.ip[1], self.ip[2], self.ip[3]),
-        ))
+        if !self.ip.is_unspecified() {
+            let octets = self.ip.octets();
+
+            answer.push((
+                Self::host_fqdn(self.hostname, false).unwrap(),
+                dns_class_with_flush(Class::IN),
+                ttl_sec,
+                A::from_octets(octets[0], octets[1], octets[2], octets[3]),
+            ))?;
+        }
+
+        Ok(())
     }
 
     fn add_ipv6<R, T>(&self, answer: &mut R, ttl_sec: u32) -> Result<(), PushError>
@@ -435,16 +442,16 @@ impl<'a> Host<'a> {
         R: RecordSectionBuilder<T>,
         T: Composer,
     {
-        if let Some(ip) = &self.ipv6 {
+        if !self.ipv6.is_unspecified() {
             answer.push((
                 Self::host_fqdn(self.hostname, false).unwrap(),
                 dns_class_with_flush(Class::IN),
                 ttl_sec,
-                Aaaa::new((*ip).into()),
-            ))
-        } else {
-            Ok(())
+                Aaaa::new(self.ipv6.octets().into()),
+            ))?;
         }
+
+        Ok(())
     }
 
     fn host_fqdn(hostname: &str, suffix: bool) -> Result<impl ToName, FromStrError> {
@@ -715,8 +722,8 @@ mod tests {
         host: Host {
             id: 0,
             hostname: "foo",
-            ip: [192, 168, 0, 1],
-            ipv6: None,
+            ip: Ipv4Addr::new(192, 168, 0, 1),
+            ipv6: Ipv6Addr::UNSPECIFIED,
         },
         services: &[],
 
@@ -760,8 +767,8 @@ mod tests {
         host: Host {
             id: 1,
             hostname: "foo",
-            ip: [192, 168, 0, 1],
-            ipv6: Some(Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1).octets()),
+            ip: Ipv4Addr::new(192, 168, 0, 1),
+            ipv6: Ipv6Addr::new(0xfb, 0, 0, 0, 0, 0, 0, 1),
         },
         services: &[
             Service {

@@ -17,6 +17,8 @@
 
 use core::fmt::Write;
 
+use log::info;
+
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::Error;
 use crate::utils::init::{init, Init};
@@ -152,7 +154,13 @@ impl<'a> Mdns for MdnsImpl<'a> {
             MdnsService::Disabled => Ok(()),
             MdnsService::Builtin => self.builtin.add(service, mode),
             MdnsService::Provided(mdns) => mdns.add(service, mode),
-        }
+        }?;
+
+        // Do not remove this logging line or change its formatting.
+        // C++ E2E tests rely on this log line to determine when the mDNS service is published
+        info!("mDNS service published: {service}::{mode:?}");
+
+        Ok(())
     }
 
     fn remove(&self, service: &str) -> Result<(), Error> {
@@ -160,7 +168,11 @@ impl<'a> Mdns for MdnsImpl<'a> {
             MdnsService::Disabled => Ok(()),
             MdnsService::Builtin => self.builtin.remove(service),
             MdnsService::Provided(mdns) => mdns.remove(service),
-        }
+        }?;
+
+        info!("mDNS service removed: {service}");
+
+        Ok(())
     }
 }
 
@@ -173,7 +185,7 @@ pub struct Service<'a> {
     pub txt_kvs: &'a [(&'a str, &'a str)],
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ServiceMode {
     /// The commissioned state
     Commissioned,
