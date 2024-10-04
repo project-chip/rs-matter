@@ -91,7 +91,10 @@ pub trait ApplyInit<T>: Init<T> {
                 // the only safe way to handle this situation.
 
                 // Unwrapping should not panic because the initializer is an infallible one
-                Self::__init(self, to).unwrap();
+                match Self::__init(self, to) {
+                    Ok(()) => {}
+                    Err(i) => match i {}
+                }
             }
         };
 
