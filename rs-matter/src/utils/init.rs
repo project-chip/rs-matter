@@ -93,7 +93,7 @@ pub trait ApplyInit<T>: Init<T> {
                 // Unwrapping should not panic because the initializer is an infallible one
                 match Self::__init(self, to) {
                     Ok(()) => {}
-                    Err(i) => match i {}
+                    Err(i) => match i {},
                 }
             }
         };
