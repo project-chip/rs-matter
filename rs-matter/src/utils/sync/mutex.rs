@@ -195,7 +195,7 @@ where
     mutex: &'a IfMutex<M, T>,
 }
 
-impl<'a, M, T> Drop for IfMutexGuard<'a, M, T>
+impl<M, T> Drop for IfMutexGuard<'_, M, T>
 where
     M: RawMutex,
     T: ?Sized,
@@ -211,7 +211,7 @@ where
     }
 }
 
-impl<'a, M, T> Deref for IfMutexGuard<'a, M, T>
+impl<M, T> Deref for IfMutexGuard<'_, M, T>
 where
     M: RawMutex,
     T: ?Sized,
@@ -225,7 +225,7 @@ where
     }
 }
 
-impl<'a, M, T> DerefMut for IfMutexGuard<'a, M, T>
+impl<M, T> DerefMut for IfMutexGuard<'_, M, T>
 where
     M: RawMutex,
     T: ?Sized,

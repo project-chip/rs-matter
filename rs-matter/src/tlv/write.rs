@@ -67,7 +67,7 @@ impl<'a, 'b> TLVWriter<'a, 'b> {
     }
 }
 
-impl<'a, 'b> TLVWrite for TLVWriter<'a, 'b> {
+impl TLVWrite for TLVWriter<'_, '_> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
@@ -424,7 +424,7 @@ where
     }
 }
 
-impl<'a> TLVWrite for WriteBuf<'a> {
+impl TLVWrite for WriteBuf<'_> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
@@ -440,7 +440,7 @@ impl<'a> TLVWrite for WriteBuf<'a> {
     }
 }
 
-impl<'a> WriteBuf<'a> {
+impl WriteBuf<'_> {
     /// Write a tag and a TLV Octet String to the TLV stream, where the Octet String is a slice of u8 bytes.
     ///
     /// The writing is done via a user-supplied callback `cb`, that is expected to fill the provided buffer with the data

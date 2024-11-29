@@ -45,7 +45,7 @@ const SPACE: [&str; MAX_DEPTH] = [
     "                                ",
 ];
 
-impl<'a, 'b> CertConsumer for CertPrinter<'a, 'b> {
+impl CertConsumer for CertPrinter<'_, '_> {
     fn start_seq(&mut self, tag: &str) -> Result<(), Error> {
         if !tag.is_empty() {
             let _ = writeln!(self.f, "{} {}", SPACE[self.level], tag);

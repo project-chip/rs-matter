@@ -705,13 +705,13 @@ impl<'a> TLVElement<'a> {
     }
 }
 
-impl<'a> fmt::Debug for TLVElement<'a> {
+impl fmt::Debug for TLVElement<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
 }
 
-impl<'a> fmt::Display for TLVElement<'a> {
+impl fmt::Display for TLVElement<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
@@ -930,7 +930,7 @@ impl<'a> TLVSequence<'a> {
             return Ok(TLVElement(Self::EMPTY));
         }
 
-        return Ok(TLVElement::new(self.0));
+        Ok(TLVElement::new(self.0))
     }
 
     /// Return the TLV control byte of the first TLV in the sequence.
@@ -1128,13 +1128,13 @@ impl<'a> TLVSequence<'a> {
     }
 }
 
-impl<'a> fmt::Debug for TLVSequence<'a> {
+impl fmt::Debug for TLVSequence<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
 }
 
-impl<'a> fmt::Display for TLVSequence<'a> {
+impl fmt::Display for TLVSequence<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
@@ -1219,13 +1219,13 @@ impl<'a> Iterator for TLVSequenceIter<'a> {
     }
 }
 
-impl<'a> fmt::Debug for TLVSequenceIter<'a> {
+impl fmt::Debug for TLVSequenceIter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(0, f)
     }
 }
 
-impl<'a> fmt::Display for TLVSequenceIter<'a> {
+impl fmt::Display for TLVSequenceIter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(0, f)
     }

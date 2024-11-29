@@ -646,7 +646,7 @@ impl IntoIterator for TLVTag {
     }
 }
 
-impl<'a> IntoIterator for &'a TLVTag {
+impl IntoIterator for &TLVTag {
     type Item = u8;
     type IntoIter = TLVTagIter<Self>;
 
@@ -1021,7 +1021,7 @@ impl<'a> IntoIterator for TLVValue<'a> {
     }
 }
 
-impl<'s, 'a> IntoIterator for &'s TLVValue<'a> {
+impl<'a> IntoIterator for &TLVValue<'a> {
     type Item = u8;
     type IntoIter = TLVValueIter<'a, Self>;
 
@@ -1110,7 +1110,7 @@ where
     }
 }
 
-impl<'a> fmt::Display for TLVValue<'a> {
+impl fmt::Display for TLVValue<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.fmt(f)
     }

@@ -49,7 +49,10 @@ where
     B: BufferAccess<T>,
     T: ?Sized,
 {
-    type Buffer<'a> = B::Buffer<'a> where Self: 'a;
+    type Buffer<'a>
+        = B::Buffer<'a>
+    where
+        Self: 'a;
 
     async fn get(&self) -> Option<Self::Buffer<'_>> {
         (*self).get().await
@@ -99,7 +102,10 @@ where
     M: RawMutex,
     T: Default + Clone,
 {
-    type Buffer<'b> = PooledBuffer<'b, N, M, T> where Self: 'b;
+    type Buffer<'b>
+        = PooledBuffer<'b, N, M, T>
+    where
+        Self: 'b;
 
     async fn get(&self) -> Option<Self::Buffer<'_>> {
         if self.wait_timeout_ms > 0 {
@@ -165,7 +171,7 @@ where
     access: &'a PooledBuffers<N, M, T>,
 }
 
-impl<'a, const N: usize, M, T> Drop for PooledBuffer<'a, N, M, T>
+impl<const N: usize, M, T> Drop for PooledBuffer<'_, N, M, T>
 where
     M: RawMutex,
 {
@@ -177,7 +183,7 @@ where
     }
 }
 
-impl<'a, const N: usize, M, T> Deref for PooledBuffer<'a, N, M, T>
+impl<const N: usize, M, T> Deref for PooledBuffer<'_, N, M, T>
 where
     M: RawMutex,
 {
@@ -188,7 +194,7 @@ where
     }
 }
 
-impl<'a, const N: usize, M, T> DerefMut for PooledBuffer<'a, N, M, T>
+impl<const N: usize, M, T> DerefMut for PooledBuffer<'_, N, M, T>
 where
     M: RawMutex,
 {

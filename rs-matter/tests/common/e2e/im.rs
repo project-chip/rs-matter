@@ -239,7 +239,7 @@ impl<'a> TestReportDataMsg<'a> {
     }
 }
 
-impl<'a> TestToTLV for TestReportDataMsg<'a> {
+impl TestToTLV for TestReportDataMsg<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
@@ -304,7 +304,7 @@ impl<'a> TestInvReq<'a> {
     }
 }
 
-impl<'a> TestToTLV for TestInvReq<'a> {
+impl TestToTLV for TestInvReq<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
@@ -351,7 +351,7 @@ impl<'a> TestInvResp<'a> {
     }
 }
 
-impl<'a> TestToTLV for TestInvResp<'a> {
+impl TestToTLV for TestInvResp<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 

@@ -88,7 +88,7 @@ impl<'a> FromTLV<'a> for TLVElement<'a> {
     }
 }
 
-impl<'a> ToTLV for TLVElement<'a> {
+impl ToTLV for TLVElement<'_> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         if self.is_empty() {
             // Special-case serializing empty TLV elements to nothing
@@ -151,7 +151,7 @@ impl<'a> FromTLV<'a> for TLVValue<'a> {
     }
 }
 
-impl<'a> ToTLV for TLVValue<'a> {
+impl ToTLV for TLVValue<'_> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         tw.tlv(tag, self)
     }

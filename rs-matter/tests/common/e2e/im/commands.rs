@@ -78,7 +78,7 @@ impl<'a> TestCmdData<'a> {
     }
 }
 
-impl<'a> TestToTLV for TestCmdData<'a> {
+impl TestToTLV for TestCmdData<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
@@ -102,7 +102,7 @@ pub enum TestCmdResp<'a> {
     Status(CmdStatus),
 }
 
-impl<'a> TestToTLV for TestCmdResp<'a> {
+impl TestToTLV for TestCmdResp<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 

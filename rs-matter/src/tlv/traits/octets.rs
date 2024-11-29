@@ -57,7 +57,7 @@ impl<'a> Octets<'a> {
     }
 }
 
-impl<'a> Deref for Octets<'a> {
+impl Deref for Octets<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -71,7 +71,7 @@ impl<'a> FromTLV<'a> for Octets<'a> {
     }
 }
 
-impl<'a> ToTLV for Octets<'a> {
+impl ToTLV for Octets<'_> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         tw.str(tag, self.0)
     }

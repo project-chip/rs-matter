@@ -327,13 +327,7 @@ mod tests {
             &verifier[0]
         );
         assert_eq!(
-            fab_mgr
-                .get(FAB_2)
-                .unwrap()
-                .acl_iter()
-                .skip(1)
-                .next()
-                .unwrap(),
+            fab_mgr.get(FAB_2).unwrap().acl_iter().nth(1).unwrap(),
             &verifier[2]
         );
     }

@@ -109,7 +109,7 @@ impl<'a> E2eTestHandler<'a> {
     }
 }
 
-impl<'a> Handler for E2eTestHandler<'a> {
+impl Handler for E2eTestHandler<'_> {
     fn read(
         &self,
         exchange: &Exchange,
@@ -139,9 +139,9 @@ impl<'a> Handler for E2eTestHandler<'a> {
     }
 }
 
-impl<'a> NonBlockingHandler for E2eTestHandler<'a> {}
+impl NonBlockingHandler for E2eTestHandler<'_> {}
 
-impl<'a> AsyncHandler for E2eTestHandler<'a> {
+impl AsyncHandler for E2eTestHandler<'_> {
     async fn read(
         &self,
         exchange: &Exchange<'_>,
@@ -183,16 +183,22 @@ impl<'a> AsyncHandler for E2eTestHandler<'a> {
     }
 }
 
-impl<'a> Metadata for E2eTestHandler<'a> {
-    type MetadataGuard<'g> = Node<'g> where Self: 'g;
+impl Metadata for E2eTestHandler<'_> {
+    type MetadataGuard<'g>
+        = Node<'g>
+    where
+        Self: 'g;
 
     fn lock(&self) -> Self::MetadataGuard<'_> {
         Self::NODE
     }
 }
 
-impl<'a> AsyncMetadata for E2eTestHandler<'a> {
-    type MetadataGuard<'g> = Node<'g> where Self: 'g;
+impl AsyncMetadata for E2eTestHandler<'_> {
+    type MetadataGuard<'g>
+        = Node<'g>
+    where
+        Self: 'g;
 
     async fn lock(&self) -> Self::MetadataGuard<'_> {
         Self::NODE

@@ -56,7 +56,7 @@ impl<'a> Node<'a> {
         &'m self,
         req: &'m ReportDataReq,
         accessor: &'m Accessor<'m>,
-    ) -> Result<impl Iterator<Item = Result<Result<AttrDetails, AttrStatus>, Error>> + 'm, Error>
+    ) -> Result<impl Iterator<Item = Result<Result<AttrDetails<'m>, AttrStatus>, Error>> + 'm, Error>
     {
         let dataver_filters = req.dataver_filters()?;
         let fabric_filtered = req.fabric_filtered()?;
@@ -82,12 +82,13 @@ impl<'a> Node<'a> {
     /// As part of the expansion, the method will check whether the attributes are
     /// accessible by the accessor and filter out the inaccessible ones (wildcard writes)
     /// or report an error status for the non-wildcard ones.
+    #[allow(clippy::type_complexity)]
     pub fn write<'m>(
         &'m self,
         req: &'m WriteReqRef,
         accessor: &'m Accessor<'m>,
     ) -> Result<
-        impl Iterator<Item = Result<Result<(AttrDetails, TLVElement<'m>), AttrStatus>, Error>> + 'm,
+        impl Iterator<Item = Result<Result<(AttrDetails<'m>, TLVElement<'m>), AttrStatus>, Error>> + 'm,
         Error,
     > {
         Ok(PathExpander::new(
@@ -103,12 +104,13 @@ impl<'a> Node<'a> {
     /// As part of the expansion, the method will check whether the commands are
     /// accessible by the accessor and filter out the inaccessible ones (wildcard invocations)
     /// or report an error status for the non-wildcard ones.
+    #[allow(clippy::type_complexity)]
     pub fn invoke<'m>(
         &'m self,
         req: &'m InvReqRef,
         accessor: &'m Accessor<'m>,
     ) -> Result<
-        impl Iterator<Item = Result<Result<(CmdDetails, TLVElement<'m>), CmdStatus>, Error>> + 'm,
+        impl Iterator<Item = Result<Result<(CmdDetails<'m>, TLVElement<'m>), CmdStatus>, Error>> + 'm,
         Error,
     > {
         Ok(PathExpander::new(
@@ -119,7 +121,7 @@ impl<'a> Node<'a> {
     }
 }
 
-impl<'a> core::fmt::Display for Node<'a> {
+impl core::fmt::Display for Node<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "node:")?;
         for (index, endpoint) in self.endpoints.iter().enumerate() {
@@ -180,7 +182,7 @@ impl<'a, const N: usize> DynamicNode<'a, N> {
     }
 }
 
-impl<'a, const N: usize> core::fmt::Display for DynamicNode<'a, N> {
+impl<const N: usize> core::fmt::Display for DynamicNode<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.node().fmt(f)
     }
@@ -653,8 +655,7 @@ mod test {
         let fab_mgr = RefCell::new(FabricMgr::new());
         let accessor = Accessor::new(0, AccessorSubjects::new(0), AuthMode::Pase, &fab_mgr);
 
-        let expander =
-            PathExpander::new(&node, &accessor, Some(input.into_iter().cloned().map(Ok)));
+        let expander = PathExpander::new(node, &accessor, Some(input.iter().cloned().map(Ok)));
 
         assert_eq!(
             expander

@@ -731,7 +731,7 @@ impl<'a> CertRef<'a> {
     }
 }
 
-impl<'a> fmt::Display for CertRef<'a> {
+impl fmt::Display for CertRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut printer = CertPrinter::new(f);
 

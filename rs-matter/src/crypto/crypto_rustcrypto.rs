@@ -354,19 +354,19 @@ impl<'a> SliceBuffer<'a> {
     }
 }
 
-impl<'a> AsMut<[u8]> for SliceBuffer<'a> {
+impl AsMut<[u8]> for SliceBuffer<'_> {
     fn as_mut(&mut self) -> &mut [u8] {
         &mut self.slice[..self.len]
     }
 }
 
-impl<'a> AsRef<[u8]> for SliceBuffer<'a> {
+impl AsRef<[u8]> for SliceBuffer<'_> {
     fn as_ref(&self) -> &[u8] {
         &self.slice[..self.len]
     }
 }
 
-impl<'a> ccm::aead::Buffer for SliceBuffer<'a> {
+impl ccm::aead::Buffer for SliceBuffer<'_> {
     fn extend_from_slice(&mut self, other: &[u8]) -> ccm::aead::Result<()> {
         self.slice[self.len..][..other.len()].copy_from_slice(other);
         self.len += other.len();
@@ -380,7 +380,7 @@ impl<'a> ccm::aead::Buffer for SliceBuffer<'a> {
 
 struct VecWriter<'a>(&'a mut alloc::vec::Vec<u8>);
 
-impl<'a> Writer for VecWriter<'a> {
+impl Writer for VecWriter<'_> {
     fn write(&mut self, slice: &[u8]) -> x509_cert::der::Result<()> {
         self.0.extend_from_slice(slice);
 
