@@ -521,47 +521,73 @@ where
                         .unwrap();
                     let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
 
-                    let mut exchange = if let Some(session_id) = session_id {
-                        Exchange::initiate_for_session(matter, session_id)?
-                    } else {
-                        // Commented out as we have issues on HomeKit with that:
-                        // https://github.com/ivmarkov/esp-idf-matter/issues/3
-                        // Exchange::initiate(matter, fabric_idx, peer_node_id, true).await?
-                        Err(ErrorCode::NoSession)?
-                    };
+                    let result = self
+                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, id, &rx)
+                        .await;
 
-                    if let Some(mut tx) = self.buffers.get().await {
-                        let primed = self
-                            .report_data(
-                                id,
-                                fabric_idx.get(),
-                                peer_node_id,
-                                &rx,
-                                &mut tx,
-                                &mut exchange,
-                                false,
-                            )
-                            .await?;
-
-                        exchange.acknowledge().await?;
-
-                        if primed && self.subscriptions.mark_reported(id) {
-                            let _ =
-                                self.subscriptions_buffers
-                                    .borrow_mut()
-                                    .push(SubscriptionBuffer {
+                    match result {
+                        Ok(primed) => {
+                            if primed && self.subscriptions.mark_reported(id) {
+                                let _ = self.subscriptions_buffers.borrow_mut().push(
+                                    SubscriptionBuffer {
                                         fabric_idx,
                                         peer_node_id,
                                         subscription_id: id,
                                         buffer: rx,
-                                    });
-                            subscribed.set(true);
+                                    },
+                                );
+                                subscribed.set(true);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error while processing subscription: {:?}", e);
                         }
                     }
                 } else {
                     break;
                 }
             }
+        }
+    }
+
+    async fn process_subscription(
+        &self,
+        matter: &Matter<'_>,
+        fabric_idx: NonZeroU8,
+        peer_node_id: u64,
+        session_id: Option<u32>,
+        id: u32,
+        rx: &[u8],
+    ) -> Result<bool, Error> {
+        let mut exchange = if let Some(session_id) = session_id {
+            Exchange::initiate_for_session(matter, session_id)?
+        } else {
+            // Commented out as we have issues on HomeKit with that:
+            // https://github.com/ivmarkov/esp-idf-matter/issues/3
+            // Exchange::initiate(matter, fabric_idx, peer_node_id, true).await?
+            Err(ErrorCode::NoSession)?
+        };
+
+        if let Some(mut tx) = self.buffers.get().await {
+            let primed = self
+                .report_data(
+                    id,
+                    fabric_idx.get(),
+                    peer_node_id,
+                    rx,
+                    &mut tx,
+                    &mut exchange,
+                    false,
+                )
+                .await?;
+
+            exchange.acknowledge().await?;
+
+            Ok(primed)
+        } else {
+            error!("No TX buffer available for processing subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id}");
+
+            Ok(false)
         }
     }
 
