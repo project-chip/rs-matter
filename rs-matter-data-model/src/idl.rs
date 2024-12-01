@@ -49,7 +49,7 @@ where
     }
 }
 
-impl<'a> DeepestIndex for GreedyError<Span<'a>, ErrorKind> {
+impl DeepestIndex for GreedyError<Span<'_>, ErrorKind> {
     fn depest_index(&self) -> Option<usize> {
         self.errors.iter().map(|(p, _k)| p.location_offset()).max()
     }

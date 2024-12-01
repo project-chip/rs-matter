@@ -270,7 +270,7 @@ impl<'a> MdnsImpl<'a> {
     }
 }
 
-impl<'a> Services for MdnsImpl<'a> {
+impl Services for MdnsImpl<'_> {
     fn for_each<F>(&self, callback: F) -> Result<(), Error>
     where
         F: FnMut(&Service) -> Result<(), Error>,

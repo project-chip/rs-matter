@@ -80,7 +80,7 @@ pub struct AttrDetails<'a> {
     pub wildcard: bool,
 }
 
-impl<'a> AttrDetails<'a> {
+impl AttrDetails<'_> {
     pub fn is_system(&self) -> bool {
         Attribute::is_system_attr(self.attr_id)
     }
@@ -136,7 +136,7 @@ pub struct CmdDetails<'a> {
     pub wildcard: bool,
 }
 
-impl<'a> CmdDetails<'a> {
+impl CmdDetails<'_> {
     pub fn path(&self) -> CmdPath {
         CmdPath::new(
             Some(self.endpoint_id),
@@ -285,7 +285,7 @@ impl<'a> Cluster<'a> {
     }
 }
 
-impl<'a> core::fmt::Display for Cluster<'a> {
+impl core::fmt::Display for Cluster<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "id:{}, ", self.id)?;
         write!(f, "attrs[")?;

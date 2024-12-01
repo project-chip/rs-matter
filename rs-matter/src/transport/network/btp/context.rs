@@ -137,7 +137,7 @@ where
     }
 }
 
-impl<'a, M> Drop for SessionSendLock<'a, M>
+impl<M> Drop for SessionSendLock<'_, M>
 where
     M: RawMutex,
 {

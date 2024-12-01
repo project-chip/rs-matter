@@ -51,7 +51,6 @@ const MATTER_N_BIN: [u8; 65] = [
 ];
 
 #[allow(non_snake_case)]
-
 pub struct CryptoSpake2 {
     group: EcGroup,
     order: Mpi,

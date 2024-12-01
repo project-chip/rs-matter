@@ -459,7 +459,7 @@ impl<'a> ThreadNwDiagCluster<'a> {
     }
 }
 
-impl<'a> Handler for ThreadNwDiagCluster<'a> {
+impl Handler for ThreadNwDiagCluster<'_> {
     fn read(
         &self,
         exchange: &Exchange,
@@ -484,4 +484,4 @@ impl<'a> Handler for ThreadNwDiagCluster<'a> {
     }
 }
 
-impl<'a> NonBlockingHandler for ThreadNwDiagCluster<'a> {}
+impl NonBlockingHandler for ThreadNwDiagCluster<'_> {}

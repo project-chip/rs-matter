@@ -467,7 +467,7 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    pub async fn reserve(matter: &'a Matter<'a>) -> Result<ReservedSession<'_>, Error> {
+    pub async fn reserve(matter: &'a Matter<'a>) -> Result<ReservedSession<'a>, Error> {
         let session = Self::reserve_now(matter);
 
         if let Ok(session) = session {
@@ -522,7 +522,7 @@ impl<'a> ReservedSession<'a> {
     }
 }
 
-impl<'a> Drop for ReservedSession<'a> {
+impl Drop for ReservedSession<'_> {
     fn drop(&mut self) {
         if self.complete {
             let mut session_mgr = self.session_mgr.borrow_mut();

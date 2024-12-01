@@ -166,7 +166,7 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> Drop for AttrDataWriter<'a, 'b, 'c> {
+impl Drop for AttrDataWriter<'_, '_, '_> {
     fn drop(&mut self) {
         if !self.completed {
             self.reset();
@@ -174,7 +174,7 @@ impl<'a, 'b, 'c> Drop for AttrDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> Deref for AttrDataWriter<'a, 'b, 'c> {
+impl<'b, 'c> Deref for AttrDataWriter<'_, 'b, 'c> {
     type Target = TLVWriter<'b, 'c>;
 
     fn deref(&self) -> &Self::Target {
@@ -182,7 +182,7 @@ impl<'a, 'b, 'c> Deref for AttrDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> DerefMut for AttrDataWriter<'a, 'b, 'c> {
+impl DerefMut for AttrDataWriter<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.tw
     }
@@ -335,7 +335,7 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> Drop for CmdDataWriter<'a, 'b, 'c> {
+impl Drop for CmdDataWriter<'_, '_, '_> {
     fn drop(&mut self) {
         if !self.completed {
             self.reset();
@@ -343,7 +343,7 @@ impl<'a, 'b, 'c> Drop for CmdDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> Deref for CmdDataWriter<'a, 'b, 'c> {
+impl<'b, 'c> Deref for CmdDataWriter<'_, 'b, 'c> {
     type Target = TLVWriter<'b, 'c>;
 
     fn deref(&self) -> &Self::Target {
@@ -351,7 +351,7 @@ impl<'a, 'b, 'c> Deref for CmdDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl<'a, 'b, 'c> DerefMut for CmdDataWriter<'a, 'b, 'c> {
+impl DerefMut for CmdDataWriter<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.tw
     }

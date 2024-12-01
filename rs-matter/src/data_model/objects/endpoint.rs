@@ -40,7 +40,7 @@ impl<'a> Endpoint<'a> {
     }
 }
 
-impl<'a> core::fmt::Display for Endpoint<'a> {
+impl core::fmt::Display for Endpoint<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "clusters:[")?;
         let mut comma = "";

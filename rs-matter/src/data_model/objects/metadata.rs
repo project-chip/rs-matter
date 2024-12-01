@@ -55,7 +55,10 @@ impl<T> Metadata for &T
 where
     T: Metadata,
 {
-    type MetadataGuard<'a> = T::MetadataGuard<'a> where Self: 'a;
+    type MetadataGuard<'a>
+        = T::MetadataGuard<'a>
+    where
+        Self: 'a;
 
     fn lock(&self) -> Self::MetadataGuard<'_> {
         (**self).lock()
@@ -66,14 +69,17 @@ impl<T> Metadata for &mut T
 where
     T: Metadata,
 {
-    type MetadataGuard<'a> = T::MetadataGuard<'a> where Self: 'a;
+    type MetadataGuard<'a>
+        = T::MetadataGuard<'a>
+    where
+        Self: 'a;
 
     fn lock(&self) -> Self::MetadataGuard<'_> {
         (**self).lock()
     }
 }
 
-impl<'a> MetadataGuard for Node<'a> {
+impl MetadataGuard for Node<'_> {
     fn node(&self) -> Node<'_> {
         Node {
             id: self.id,
@@ -82,8 +88,11 @@ impl<'a> MetadataGuard for Node<'a> {
     }
 }
 
-impl<'a> Metadata for Node<'a> {
-    type MetadataGuard<'g> = Node<'g> where Self: 'g;
+impl Metadata for Node<'_> {
+    type MetadataGuard<'g>
+        = Node<'g>
+    where
+        Self: 'g;
 
     fn lock(&self) -> Self::MetadataGuard<'_> {
         Node {
@@ -97,7 +106,8 @@ impl<M, H> Metadata for (M, H)
 where
     M: Metadata,
 {
-    type MetadataGuard<'a> = M::MetadataGuard<'a>
+    type MetadataGuard<'a>
+        = M::MetadataGuard<'a>
     where
         Self: 'a;
 
@@ -110,7 +120,8 @@ impl<T> Metadata for HandlerCompat<T>
 where
     T: Metadata,
 {
-    type MetadataGuard<'a> = T::MetadataGuard<'a>
+    type MetadataGuard<'a>
+        = T::MetadataGuard<'a>
     where
         Self: 'a;
 
@@ -136,7 +147,10 @@ pub mod asynch {
     where
         T: AsyncMetadata,
     {
-        type MetadataGuard<'a> = T::MetadataGuard<'a> where Self: 'a;
+        type MetadataGuard<'a>
+            = T::MetadataGuard<'a>
+        where
+            Self: 'a;
 
         async fn lock(&self) -> Self::MetadataGuard<'_> {
             (**self).lock().await
@@ -147,15 +161,21 @@ pub mod asynch {
     where
         T: AsyncMetadata,
     {
-        type MetadataGuard<'a> = T::MetadataGuard<'a> where Self: 'a;
+        type MetadataGuard<'a>
+            = T::MetadataGuard<'a>
+        where
+            Self: 'a;
 
         async fn lock(&self) -> Self::MetadataGuard<'_> {
             (**self).lock().await
         }
     }
 
-    impl<'a> AsyncMetadata for Node<'a> {
-        type MetadataGuard<'g> = Node<'g> where Self: 'g;
+    impl AsyncMetadata for Node<'_> {
+        type MetadataGuard<'g>
+            = Node<'g>
+        where
+            Self: 'g;
 
         async fn lock(&self) -> Self::MetadataGuard<'_> {
             Node {
@@ -169,7 +189,8 @@ pub mod asynch {
     where
         M: AsyncMetadata,
     {
-        type MetadataGuard<'a> = M::MetadataGuard<'a>
+        type MetadataGuard<'a>
+            = M::MetadataGuard<'a>
         where
             Self: 'a;
 
@@ -182,7 +203,8 @@ pub mod asynch {
     where
         T: Metadata,
     {
-        type MetadataGuard<'a> = T::MetadataGuard<'a>
+        type MetadataGuard<'a>
+            = T::MetadataGuard<'a>
         where
             Self: 'a;
 

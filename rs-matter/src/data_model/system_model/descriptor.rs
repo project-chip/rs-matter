@@ -241,7 +241,7 @@ impl<'a> DescriptorCluster<'a> {
     }
 }
 
-impl<'a> Handler for DescriptorCluster<'a> {
+impl Handler for DescriptorCluster<'_> {
     fn read(
         &self,
         exchange: &Exchange,
@@ -252,9 +252,9 @@ impl<'a> Handler for DescriptorCluster<'a> {
     }
 }
 
-impl<'a> NonBlockingHandler for DescriptorCluster<'a> {}
+impl NonBlockingHandler for DescriptorCluster<'_> {}
 
-impl<'a> ChangeNotifier<()> for DescriptorCluster<'a> {
+impl ChangeNotifier<()> for DescriptorCluster<'_> {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }

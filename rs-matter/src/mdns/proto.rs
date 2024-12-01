@@ -105,7 +105,7 @@ pub struct Host<'a> {
     pub ipv6: Ipv6Addr,
 }
 
-impl<'a> Host<'a> {
+impl Host<'_> {
     /// Broadcast an mDNS packet with the host and its services
     ///
     /// Should be done pro-actively every time there is a change in the host
@@ -464,7 +464,7 @@ impl<'a> Host<'a> {
     }
 }
 
-impl<'a> Service<'a> {
+impl Service<'_> {
     fn add_service<R, T>(
         &self,
         answer: &mut R,
@@ -668,9 +668,9 @@ impl<'a> Service<'a> {
 
 struct Buf<'a>(pub &'a mut [u8], pub usize);
 
-impl<'a> Composer for Buf<'a> {}
+impl Composer for Buf<'_> {}
 
-impl<'a> OctetsBuilder for Buf<'a> {
+impl OctetsBuilder for Buf<'_> {
     type AppendError = ShortBuf;
 
     fn append_slice(&mut self, slice: &[u8]) -> Result<(), Self::AppendError> {
@@ -686,19 +686,19 @@ impl<'a> OctetsBuilder for Buf<'a> {
     }
 }
 
-impl<'a> Truncate for Buf<'a> {
+impl Truncate for Buf<'_> {
     fn truncate(&mut self, len: usize) {
         self.1 = len;
     }
 }
 
-impl<'a> AsMut<[u8]> for Buf<'a> {
+impl AsMut<[u8]> for Buf<'_> {
     fn as_mut(&mut self) -> &mut [u8] {
         &mut self.0[..self.1]
     }
 }
 
-impl<'a> AsRef<[u8]> for Buf<'a> {
+impl AsRef<[u8]> for Buf<'_> {
     fn as_ref(&self) -> &[u8] {
         &self.0[..self.1]
     }
@@ -903,7 +903,7 @@ mod tests {
         tests: &'a [(&'a [Question<'a>], &'a [Answer<'a>], &'a [Answer<'a>])],
     }
 
-    impl<'a> TestRun<'a> {
+    impl TestRun<'_> {
         fn run(&self) {
             let mut buf1 = [0; 1500];
             let mut buf2 = [0; 1500];
@@ -937,7 +937,7 @@ mod tests {
         qtype: Rtype,
     }
 
-    impl<'a> Question<'a> {
+    impl Question<'_> {
         fn prep<'b>(buf: &'b mut [u8], id: u16, questions: &[Question]) -> &'b [u8] {
             let message = MessageBuilder::from_target(Buf(buf, 0)).unwrap();
 
@@ -981,7 +981,7 @@ mod tests {
         details: AnswerDetails<'a>,
     }
 
-    impl<'a> Answer<'a> {
+    impl Answer<'_> {
         fn validate(
             data: &[u8],
             expected_id: u16,

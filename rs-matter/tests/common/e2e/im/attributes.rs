@@ -90,7 +90,7 @@ impl<'a> TestAttrData<'a> {
     }
 }
 
-impl<'a> TestToTLV for TestAttrData<'a> {
+impl TestToTLV for TestAttrData<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
@@ -125,7 +125,7 @@ impl<'a> TestAttrResp<'a> {
     }
 }
 
-impl<'a> TestToTLV for TestAttrResp<'a> {
+impl TestToTLV for TestAttrResp<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
         tw.start_struct(tag)?;
 

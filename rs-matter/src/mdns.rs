@@ -140,7 +140,7 @@ impl<'a> MdnsImpl<'a> {
     }
 }
 
-impl<'a> Mdns for MdnsImpl<'a> {
+impl Mdns for MdnsImpl<'_> {
     fn reset(&self) {
         match self.service {
             MdnsService::Disabled => {}

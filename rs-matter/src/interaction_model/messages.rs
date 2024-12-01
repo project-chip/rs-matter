@@ -444,7 +444,7 @@ pub mod ib {
         Status(CmdStatus),
     }
 
-    impl<'a> CmdResp<'a> {
+    impl CmdResp<'_> {
         pub fn status_new(cmd_path: CmdPath, status: IMStatusCode, cluster_status: u16) -> Self {
             Self::Status(CmdStatus {
                 path: cmd_path,
@@ -464,7 +464,7 @@ pub mod ib {
         Status = 1,
     }
 
-    impl<'a> From<CmdStatus> for CmdResp<'a> {
+    impl From<CmdStatus> for CmdResp<'_> {
         fn from(value: CmdStatus) -> Self {
             Self::Status(value)
         }
@@ -547,7 +547,7 @@ pub mod ib {
         }
     }
 
-    impl<'a> From<AttrStatus> for AttrResp<'a> {
+    impl From<AttrStatus> for AttrResp<'_> {
         fn from(value: AttrStatus) -> Self {
             Self::Status(value)
         }

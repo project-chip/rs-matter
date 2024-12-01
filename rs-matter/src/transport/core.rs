@@ -170,7 +170,7 @@ impl<'m> TransportMgr<'m> {
         fabric_idx: u8,
         peer_node_id: u64,
         secure: bool,
-    ) -> Result<Exchange<'_>, Error> {
+    ) -> Result<Exchange<'a>, Error> {
         // TODO: Future: once we have mDNS lookups in place
         // create a new session if no suitable one is found
 
@@ -192,7 +192,7 @@ impl<'m> TransportMgr<'m> {
         &'a self,
         matter: &'a Matter<'a>,
         session_id: u32,
-    ) -> Result<Exchange<'_>, Error> {
+    ) -> Result<Exchange<'a>, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
         session_mgr.get(session_id).ok_or(ErrorCode::NoSession)?;
@@ -219,7 +219,7 @@ impl<'m> TransportMgr<'m> {
         &'a self,
         matter: &'a Matter<'a>,
         mut f: F,
-    ) -> Result<Exchange<'_>, Error>
+    ) -> Result<Exchange<'a>, Error>
     where
         F: FnMut(&Session, &ExchangeState, &Packet<MAX_RX_BUF_SIZE>) -> bool,
     {
@@ -1076,7 +1076,7 @@ impl<const N: usize> Packet<N> {
     pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
         struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
 
-        impl<'a> Display for PacketInfo<'a> {
+        impl Display for PacketInfo<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 Packet::<0>::fmt(f, self.0, self.1)
             }
@@ -1088,7 +1088,7 @@ impl<const N: usize> Packet<N> {
     pub fn display_payload<'a>(proto: &'a ProtoHdr, buf: &'a [u8]) -> impl Display + 'a {
         struct PacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
 
-        impl<'a> Display for PacketInfo<'a> {
+        impl Display for PacketInfo<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 Packet::<0>::fmt_payload(f, self.0, self.1)
             }
@@ -1224,13 +1224,13 @@ impl<const N: usize> DerefMut for PacketBuffer<N> {
 // This type is only known and used by `TransportMgr` and the `exchange` module
 pub(crate) struct PacketAccess<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>, bool);
 
-impl<'a, const N: usize> PacketAccess<'a, N> {
+impl<const N: usize> PacketAccess<'_, N> {
     pub fn clear_on_drop(&mut self, clear: bool) {
         self.1 = clear;
     }
 }
 
-impl<'a, const N: usize> Deref for PacketAccess<'a, N> {
+impl<const N: usize> Deref for PacketAccess<'_, N> {
     type Target = Packet<N>;
 
     fn deref(&self) -> &Self::Target {
@@ -1238,13 +1238,13 @@ impl<'a, const N: usize> Deref for PacketAccess<'a, N> {
     }
 }
 
-impl<'a, const N: usize> DerefMut for PacketAccess<'a, N> {
+impl<const N: usize> DerefMut for PacketAccess<'_, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<'a, const N: usize> Drop for PacketAccess<'a, N> {
+impl<const N: usize> Drop for PacketAccess<'_, N> {
     fn drop(&mut self) {
         if self.1 {
             self.buf.clear();
@@ -1252,7 +1252,7 @@ impl<'a, const N: usize> Drop for PacketAccess<'a, N> {
     }
 }
 
-impl<'a, const N: usize> Display for PacketAccess<'a, N> {
+impl<const N: usize> Display for PacketAccess<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -1266,8 +1266,11 @@ pub(crate) struct PacketBufferExternalAccess<'a, const N: usize>(
     pub(crate) &'a IfMutex<NoopRawMutex, Packet<N>>,
 );
 
-impl<'a, const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'a, N> {
-    type Buffer<'b> = ExternalPacketBuffer<'b, N> where Self: 'b;
+impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
+    type Buffer<'b>
+        = ExternalPacketBuffer<'b, N>
+    where
+        Self: 'b;
 
     async fn get(&self) -> Option<ExternalPacketBuffer<'_, N>> {
         let mut packet = self.0.lock_if(|packet| packet.buf.is_empty()).await;
@@ -1283,7 +1286,7 @@ impl<'a, const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'a, N
 // Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8]` buffer.
 pub struct ExternalPacketBuffer<'a, const N: usize>(IfMutexGuard<'a, NoopRawMutex, Packet<N>>);
 
-impl<'a, const N: usize> Deref for ExternalPacketBuffer<'a, N> {
+impl<const N: usize> Deref for ExternalPacketBuffer<'_, N> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -1291,13 +1294,13 @@ impl<'a, const N: usize> Deref for ExternalPacketBuffer<'a, N> {
     }
 }
 
-impl<'a, const N: usize> DerefMut for ExternalPacketBuffer<'a, N> {
+impl<const N: usize> DerefMut for ExternalPacketBuffer<'_, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0.buf
     }
 }
 
-impl<'a, const N: usize> Drop for ExternalPacketBuffer<'a, N> {
+impl<const N: usize> Drop for ExternalPacketBuffer<'_, N> {
     fn drop(&mut self) {
         self.0.buf.clear();
     }

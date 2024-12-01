@@ -205,7 +205,7 @@ where
     }
 }
 
-impl<'a, T, C> ToTLV for TLVContainer<'a, T, C> {
+impl<T, C> ToTLV for TLVContainer<'_, T, C> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
         self.element.to_tlv(tag, tw)
     }

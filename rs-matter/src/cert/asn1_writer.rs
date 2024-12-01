@@ -171,7 +171,7 @@ impl<'a> ASN1Writer<'a> {
     }
 }
 
-impl<'a> CertConsumer for ASN1Writer<'a> {
+impl CertConsumer for ASN1Writer<'_> {
     fn start_seq(&mut self, _tag: &str) -> Result<(), Error> {
         self.add_compound(0x30)
     }

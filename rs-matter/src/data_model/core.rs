@@ -745,7 +745,7 @@ where
     }
 }
 
-impl<'a, const N: usize, B, T> ExchangeHandler for DataModel<'a, N, B, T>
+impl<const N: usize, B, T> ExchangeHandler for DataModel<'_, N, B, T>
 where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
@@ -837,7 +837,7 @@ impl<'a> ReportDataReq<'a> {
     }
 }
 
-impl<'a> WriteReqRef<'a> {
+impl WriteReqRef<'_> {
     async fn respond<T>(
         &self,
         handler: T,
@@ -881,7 +881,7 @@ impl<'a> WriteReqRef<'a> {
     }
 }
 
-impl<'a> InvReqRef<'a> {
+impl InvReqRef<'_> {
     async fn respond<T>(
         &self,
         handler: T,

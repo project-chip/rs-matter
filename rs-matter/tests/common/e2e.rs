@@ -281,7 +281,7 @@ type NetworkPipe<'a, const N: usize> = Channel<'a, NoopRawMutex, heapless::Vec<u
 
 struct NetworkReceiveImpl<'a, const N: usize>(Receiver<'a, NoopRawMutex, heapless::Vec<u8, N>>);
 
-impl<'a, const N: usize> NetworkSend for NetworkSendImpl<'a, N> {
+impl<const N: usize> NetworkSend for NetworkSendImpl<'_, N> {
     async fn send_to(&mut self, data: &[u8], _addr: Address) -> Result<(), Error> {
         let vec = self.0.send().await;
 
@@ -296,7 +296,7 @@ impl<'a, const N: usize> NetworkSend for NetworkSendImpl<'a, N> {
 
 struct NetworkSendImpl<'a, const N: usize>(Sender<'a, NoopRawMutex, heapless::Vec<u8, N>>);
 
-impl<'a, const N: usize> NetworkReceive for NetworkReceiveImpl<'a, N> {
+impl<const N: usize> NetworkReceive for NetworkReceiveImpl<'_, N> {
     async fn wait_available(&mut self) -> Result<(), Error> {
         self.0.receive().await;
 
