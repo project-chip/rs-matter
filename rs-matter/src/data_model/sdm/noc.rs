@@ -369,11 +369,13 @@ impl NocCluster {
             CertRef::new(TLVElement::new(r.noc_value.0))
         );
 
-        if let Some(icac_value) = r.icac_value {
-            info!(
-                "Received ICAC as: {}",
-                CertRef::new(TLVElement::new(icac_value.0))
-            );
+        let icac = r
+            .icac_value
+            .as_ref()
+            .map(|icac| icac.0)
+            .filter(|icac| !icac.is_empty());
+        if let Some(icac) = icac {
+            info!("Received ICAC as: {}", CertRef::new(TLVElement::new(icac)));
         }
 
         let mut added_fab_idx = 0;
@@ -386,7 +388,7 @@ impl NocCluster {
                 &exchange.matter().fabric_mgr,
                 sess.get_session_mode(),
                 r.vendor_id,
-                r.icac_value.as_ref().map(|icac| icac.0),
+                icac,
                 r.noc_value.0,
                 r.ipk_value.0,
                 r.case_admin_subject,
