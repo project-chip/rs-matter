@@ -89,6 +89,7 @@ futures-lite = "2"
 async-channel = "2"
 static_cell = "2"
 similar = "2.6"
+embassy-time-queue-utils = { version = "0.1", features = ["generic-queue-64"] }
 
 [[example]]
 name = "onoff_light"
