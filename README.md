@@ -18,7 +18,13 @@ $ cargo build
 ### Building and running the example (Linux, MacOS X)
 
 ```
-$ cargo run --example onoff_light --features async-io
+$ cargo run --example onoff_light --features examples
+```
+
+### Building and running the BLE example (Linux, MacOS X)
+
+```
+$ cargo run --example onoff_light_bt --features examples
 ```
 
 ## Test
