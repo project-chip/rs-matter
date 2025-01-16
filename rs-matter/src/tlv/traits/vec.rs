@@ -60,6 +60,21 @@ where
             Ok(())
         })
     }
+
+    fn check_from_tlv(element: &TLVElement<'a>) -> Result<(), Error> {
+        let mut count = 0;
+
+        while let Some(e) = element.clone().array()?.iter().next() {
+            T::check_from_tlv(&e?)?;
+            count += 1;
+        }
+
+        if count > N {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<T, const N: usize> ToTLV for Vec<T, N>
