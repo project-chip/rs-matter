@@ -119,6 +119,7 @@ impl TestChecker {
     }
 
     /// Get a handle to the globally unique mDNS instance
+    #[allow(static_mut_refs)]
     pub fn get() -> Result<Arc<Mutex<Self>>, Error> {
         unsafe {
             INIT.call_once(|| {

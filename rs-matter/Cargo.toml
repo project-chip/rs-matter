@@ -9,12 +9,13 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.78"
+rust-version = "1.83"
 
 [features]
 default = ["os", "rustcrypto"]
 #default = ["os", "mbedtls"] mbedtls is broken since several months - check the root cause
-os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std", "embassy-time/generic-queue"]
+examples = ["std", "async-io", "async-compat", "embassy-time-queue-utils/generic-queue-64"]
+os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
 alloc = []
@@ -39,7 +40,8 @@ owo-colors = "4"
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1"
-embassy-time = "0.3"
+embassy-time = "0.4"
+embassy-time-queue-utils = "0.1"
 embassy-sync = "0.6"
 critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
@@ -87,18 +89,19 @@ futures-lite = "2"
 async-channel = "2"
 static_cell = "2"
 similar = "2.6"
+embassy-time-queue-utils = { version = "0.1", features = ["generic-queue-64"] }
 
 [[example]]
 name = "onoff_light"
 path = "../examples/onoff_light/src/main.rs"
-required-features = ["std", "async-io"]
+required-features = ["examples"]
 
 [[example]]
 name = "onoff_light_bt"
 path = "../examples/onoff_light_bt/src/main.rs"
-required-features = ["std", "async-io", "async-compat"]
+required-features = ["examples"]
 
 # [[example]]
 # name = "speaker"
 # path = "../examples/speaker/src/main.rs"
-# required-features = ["std", "async-io"]
+# required-features = ["examples"]
