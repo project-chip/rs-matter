@@ -300,6 +300,16 @@ impl GenCommCluster {
                 .disarm(sess.get_session_mode())
         }))?;
 
+        if matches!(status, CommissioningErrorEnum::OK) {
+            // As per section 5.5 of the Matter Core Spec V1.3 we have to teriminate the PASE session
+            // upon completion of commissioning
+            exchange
+                .matter()
+                .pase_mgr
+                .borrow_mut()
+                .disable_pase_session(&exchange.matter().transport_mgr.mdns)?;
+        }
+
         let cmd_data = CommonResponse {
             error_code: status as _,
             debug_txt: "",
