@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter_macros::FromTLV;
+use bitflags::bitflags;
 
 use strum::FromRepr;
 
@@ -24,9 +24,9 @@ use crate::data_model::objects::{
     Cluster, Dataver, Handler, NonBlockingHandler, Quality, ATTRIBUTE_LIST, FEATURE_MAP,
 };
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
+use crate::tlv::{FromTLV, OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, command_enum};
+use crate::{attribute_enum, bitflags_tlv, command_enum};
 
 pub const ID: u32 = 0x0031;
 
@@ -155,22 +155,28 @@ pub const ETH_CLUSTER: Cluster<'static> = cluster(FeatureMap::Ethernet);
 pub const WIFI_CLUSTER: Cluster<'static> = cluster(FeatureMap::Wifi);
 pub const THR_CLUSTER: Cluster<'static> = cluster(FeatureMap::Thread);
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
-pub enum WiFiSecurity {
-    Unencrypted = 0x01,
-    Wep = 0x02,
-    WpaPersonal = 0x04,
-    Wpa2Personal = 0x08,
-    Wpa3Personal = 0x10,
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct WiFiSecurity: u8 {
+        const UNENCRYPTED = 0x01;
+        const WEP = 0x02;
+        const WPA_PERSONAL = 0x04;
+        const WPA2_PERSONAL = 0x08;
+        const WPA3_PERSONAL = 0x10;
+    }
 }
+
+bitflags_tlv!(WiFiSecurity, u8);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
 pub enum WifiBand {
-    B3G4 = 0x01,
-    B3G65 = 0x02,
-    B5G = 0x04,
-    B6G = 0x08,
-    B60G = 0x10,
+    B2G4 = 0,
+    B3G65 = 1,
+    B5G = 2,
+    B6G = 3,
+    B60G = 4,
+    B1G = 5,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
@@ -186,7 +192,7 @@ pub struct ScanNetworksResponse<'a> {
     pub status: NetworkCommissioningStatus,
     pub debug_text: Option<OctetStr<'a>>,
     pub wifi_scan_results: Option<TLVArray<'a, WiFiInterfaceScanResult<'a>>>,
-    pub thread_scan_results: Option<TLVArray<'a, WiFiInterfaceScanResult<'a>>>,
+    pub thread_scan_results: Option<TLVArray<'a, ThreadInterfaceScanResult<'a>>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
