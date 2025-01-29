@@ -52,9 +52,9 @@ fn main() {
         let mut media_playback_cluster = MediaPlaybackCluster::new().unwrap();
 
         // Add some callbacks
-        let play_callback = Box::new(|| log::info!("Comamnd [Play] handled with callback."));
-        let pause_callback = Box::new(|| log::info!("Comamnd [Pause] handled with callback."));
-        let stop_callback = Box::new(|| log::info!("Comamnd [Stop] handled with callback."));
+        let play_callback = Box::new(|| log::info!("Command [Play] handled with callback."));
+        let pause_callback = Box::new(|| log::info!("Command [Pause] handled with callback."));
+        let stop_callback = Box::new(|| log::info!("Command [Stop] handled with callback."));
         let start_over_callback =
             Box::new(|| log::info!("Comamnd [StartOver] handled with callback."));
         media_playback_cluster.add_callback(Commands::Play, play_callback);
