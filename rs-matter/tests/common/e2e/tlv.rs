@@ -108,7 +108,7 @@ where
                 write!(diff_str, "{}{}", sign, change).unwrap();
             }
 
-            assert!(false, "Expected does not match actual:\n== Diff:\n{diff_str}\n== Expected:\n{expected_str}\n== Actual:\n{actual_str}");
+            panic!("Expected does not match actual:\n== Diff:\n{diff_str}\n== Expected:\n{expected_str}\n== Actual:\n{actual_str}");
         }
 
         Ok(())

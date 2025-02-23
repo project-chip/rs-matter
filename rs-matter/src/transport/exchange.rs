@@ -62,7 +62,7 @@ impl ExchangeId {
             panic!("Exchange index out of range");
         }
 
-        Self((exchange_index as u32) << 28 | session_id)
+        Self(((exchange_index as u32) << 28) | session_id)
     }
 
     pub(crate) fn session_id(&self) -> u32 {

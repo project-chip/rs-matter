@@ -710,17 +710,17 @@ fn gen_fromtlv_for_enum(
             }
         }
 
-        let enter = (tlvargs.datatype != "naked")
-            .then(|| {
-                quote! {
-                    let element = element
-                        .r#struct()?
-                        .iter()
-                        .next()
-                        .ok_or(#krate::error::ErrorCode::TLVTypeMismatch)??;
-                }
-            })
-            .unwrap_or(TokenStream::new());
+        let enter = if tlvargs.datatype != "naked" {
+            quote! {
+                let element = element
+                    .r#struct()?
+                    .iter()
+                    .next()
+                    .ok_or(#krate::error::ErrorCode::TLVTypeMismatch)??;
+            }
+        } else {
+            TokenStream::new()
+        };
 
         quote! {
             impl #generics #krate::tlv::FromTLV<#lifetime> for #enum_name #generics {

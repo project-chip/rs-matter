@@ -459,7 +459,7 @@ impl ReplyProcessor {
     }
 
     /// Process the supplied element with removing the data value from the `AttrData` payload
-    pub fn remove_attr_data<'a>(element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
+    pub fn remove_attr_data(element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
         (Self::REMOVE_ATTRDATA_VALUE | Self::REMOVE_ATTRDATA_DATAVER).process(element, buf)
     }
 }
