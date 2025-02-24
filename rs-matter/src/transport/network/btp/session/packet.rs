@@ -377,7 +377,7 @@ impl HandshakeReq {
     /// Return an iterator over the versions supported by the BTP handshake request.
     pub fn versions(&self) -> impl Iterator<Item = u8> + '_ {
         (0..7u8)
-            .map(|index| (self.versions >> (index * 4) & 0xff) as u8)
+            .map(|index| ((self.versions >> (index * 4)) & 0xff) as u8)
             .filter(|version| *version > 0)
     }
 

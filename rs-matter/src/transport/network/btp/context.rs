@@ -168,11 +168,11 @@ where
 ///
 /// The BTP protocol implementation is split into two structures:
 /// - `Btp` - the main BTP protocol implementation, which is responsible for handling the BTP protocol itself. This structure is not `Send` and `Sync`
-///    and is overall a typical future-based protocol implementation, like the others in the `rs-matter` stack.
+///   and is overall a typical future-based protocol implementation, like the others in the `rs-matter` stack.
 /// - `BtpContext` - a structure that holds the state of the BTP protocol shared between itself and the Gatt peripheral implementation.
-///    In terms of ownership, The `Btp` instance holds a `'static` reference to the context, i.e. a `&'static BtpContext<M>` reference,
-///    or an `Arc<BtpContext<M>>` instance for platforms where the Rust `alloc::sync` module is available.
-///    Furthermore, the state kept in `BtpContext` is safe to share amongst multiple threads.
+///   In terms of ownership, The `Btp` instance holds a `'static` reference to the context, i.e. a `&'static BtpContext<M>` reference,
+///   or an `Arc<BtpContext<M>>` instance for platforms where the Rust `alloc::sync` module is available.
+///   Furthermore, the state kept in `BtpContext` is safe to share amongst multiple threads.
 ///
 /// The need to split the BTP implementation into two structures is due to the fact that the `GattPeripheral` trait uses a
 /// `'static + Send + Sync` callback closure so as to report subscribe, unsubscribe and write events back to the BTP protocol implementation.

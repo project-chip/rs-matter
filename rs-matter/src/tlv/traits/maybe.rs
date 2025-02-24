@@ -18,7 +18,7 @@
 //! TLV support for TLV optional values and TLV nullable types via `Maybe` and `Option`.
 //! - `Option<T>` and `Optional<T>` both represent an optional value in a TLV struct
 //! - `Nullable<T>` represents a nullable TLV type, where `T` is the non-nullable subdomain of the type.
-//!    i.e. `Nullable<u8>` represents the nullable variation of the TLV `U8` type.
+//!   i.e. `Nullable<u8>` represents the nullable variation of the TLV `U8` type.
 //!
 //! To elaborate, `null` and optional are two different notions in the TLV spec:
 //! - Optional values apply only to TLV structs, and have the semantics
