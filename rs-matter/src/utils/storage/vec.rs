@@ -1680,7 +1680,8 @@ mod tests {
         assert_eq!(v.pop(), None);
 
         // Validate slice
-        assert_eq!(v.as_slice(), &[]);
+        const EMPTY_SLICE: &[u8] = &[];
+        assert_eq!(v.as_slice(), EMPTY_SLICE);
 
         // Validate empty
         assert!(v.is_empty());

@@ -269,7 +269,7 @@ impl RecvWindow {
                 return Err(ErrorCode::InvalidData.into());
             }
 
-            if !hdr.is_final() && payload.len() + hdr.len() != mtu as _ {
+            if !hdr.is_final() && payload.len() + hdr.len() != mtu as usize {
                 warn!("RX data integrity failure: Non-final packets should have a size equal to the MTU size");
                 return Err(ErrorCode::InvalidData.into());
             }
