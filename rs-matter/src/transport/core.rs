@@ -979,7 +979,7 @@ impl<'m> TransportMgr<'m> {
         let mut pb = ParseBuf::new(payload);
         let report = StatusReport::read(&mut pb)?;
 
-        let close_session = report.proto_id == PROTO_ID_SECURE_CHANNEL as _
+        let close_session = report.proto_id == PROTO_ID_SECURE_CHANNEL as u32
             && report.proto_code == SCStatusCodes::CloseSession as u16;
 
         Ok(close_session)

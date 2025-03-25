@@ -820,7 +820,7 @@ impl<'a> TLVValue<'a> {
     /// Create a TLV value as an S8 or S16 TLV value,
     /// depending on whether the value is small enough to fit in an S8 TLV value.
     pub const fn i16(value: i16) -> Self {
-        if value >= i8::MIN as _ && value <= i8::MAX as _ {
+        if value >= i8::MIN as i16 && value <= i8::MAX as i16 {
             Self::i8(value as i8)
         } else {
             Self::S16(value)
@@ -830,7 +830,7 @@ impl<'a> TLVValue<'a> {
     /// Create a TLV value as an S8, S16, or S32 TLV value,
     /// depending on whether the value is small enough to fit in an S8 or S16 TLV value.
     pub const fn i32(value: i32) -> Self {
-        if value >= i16::MIN as _ && value <= i16::MAX as _ {
+        if value >= i16::MIN as i32 && value <= i16::MAX as i32 {
             Self::i16(value as i16)
         } else {
             Self::S32(value)
@@ -840,7 +840,7 @@ impl<'a> TLVValue<'a> {
     /// Create a TLV value as an S8, S16, S32, or S64 TLV value,
     /// depending on whether the value is small enough to fit in an S8, S16, or S32 TLV value.
     pub const fn i64(value: i64) -> Self {
-        if value >= i32::MIN as _ && value <= i32::MAX as _ {
+        if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
             Self::i32(value as i32)
         } else {
             Self::S64(value)
@@ -855,7 +855,7 @@ impl<'a> TLVValue<'a> {
     /// Create a TLV value as a U8 or U16 TLV value,
     /// depending on whether the value is small enough to fit in a U8 TLV value.
     pub const fn u16(value: u16) -> Self {
-        if value <= u8::MAX as _ {
+        if value <= u8::MAX as u16 {
             Self::u8(value as u8)
         } else {
             Self::U16(value)
@@ -865,7 +865,7 @@ impl<'a> TLVValue<'a> {
     /// Create a TLV value as a U8, U16, or U32 TLV value,
     /// depending on whether the value is small enough to fit in a U8 or U16 TLV value.
     pub const fn u32(value: u32) -> Self {
-        if value <= u16::MAX as _ {
+        if value <= u16::MAX as u32 {
             Self::u16(value as u16)
         } else {
             Self::U32(value)
@@ -875,7 +875,7 @@ impl<'a> TLVValue<'a> {
     /// Create a TLV value as a U8, U16, U32, or U64 TLV value,
     /// depending on whether the value is small enough to fit in a U8, U16, or U32 TLV value.
     pub const fn u64(value: u64) -> Self {
-        if value <= u32::MAX as _ {
+        if value <= u32::MAX as u64 {
             Self::u32(value as u32)
         } else {
             Self::U64(value)
@@ -898,11 +898,11 @@ impl<'a> TLVValue<'a> {
     pub const fn utf8(value: &'a str) -> Self {
         let len = value.len();
 
-        if len <= u8::MAX as _ {
+        if len <= u8::MAX as usize {
             Self::Utf8l(value)
-        } else if len <= u16::MAX as _ {
+        } else if len <= u16::MAX as usize {
             Self::Utf16l(value)
-        } else if len <= u32::MAX as _ {
+        } else if len <= u32::MAX as usize {
             Self::Utf32l(value)
         } else {
             Self::Utf64l(value)
@@ -915,11 +915,11 @@ impl<'a> TLVValue<'a> {
     pub const fn str(value: &'a [u8]) -> Self {
         let len = value.len();
 
-        if len <= u8::MAX as _ {
+        if len <= u8::MAX as usize {
             Self::Str8l(value)
-        } else if len <= u16::MAX as _ {
+        } else if len <= u16::MAX as usize {
             Self::Str16l(value)
-        } else if len <= u32::MAX as _ {
+        } else if len <= u32::MAX as usize {
             Self::Str32l(value)
         } else {
             Self::Str64l(value)
