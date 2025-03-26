@@ -485,7 +485,7 @@ impl<'m> TransportMgr<'m> {
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
                 if !packet.peer.is_reliable() {
-                    info!("\n>>>>> {packet}\n => Duplicate, sending ACK");
+                    info!("\n>>RCV {packet}\n      => Duplicate, sending ACK");
 
                     {
                         let mut session_mgr = self.session_mgr.borrow_mut();
@@ -513,14 +513,14 @@ impl<'m> TransportMgr<'m> {
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
                 } else {
-                    info!("\n>>>>> {packet}\n => Duplicate, discarding");
+                    info!("\n>>RCV {packet}\n      => Duplicate, discarding");
                 }
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
                 if !packet.header.plain.is_encrypted()
                     && MessageMeta::from(&packet.header.proto).is_new_session()
                 {
-                    warn!("\n>>>>> {packet}\n => No space for a new unencrypted session, sending Busy");
+                    warn!("\n>>RCV {packet}\n      => No space for a new unencrypted session, sending Busy");
 
                     let ack = packet.header.plain.ctr;
 
@@ -548,7 +548,9 @@ impl<'m> TransportMgr<'m> {
                         .await?;
                     }
                 } else {
-                    error!("\n>>>>> {packet}\n => No space for a new encrypted session, dropping");
+                    error!(
+                        "\n>>RCV {packet}\n      => No space for a new encrypted session, dropping"
+                    );
                 }
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSpaceExchanges) => {
@@ -558,7 +560,7 @@ impl<'m> TransportMgr<'m> {
                 //   wait for ACK and retransmit without releasing the RX buffer, potentially
                 //   blocking all other interactions
 
-                error!("\n>>>>> {packet}\n => No space for a new exchange, closing session");
+                error!("\n>>RCV {packet}\n      => No space for a new exchange, closing session");
 
                 {
                     let mut session_mgr = self.session_mgr.borrow_mut();
@@ -593,27 +595,29 @@ impl<'m> TransportMgr<'m> {
                     .await?;
             }
             Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
-                warn!("\n>>>>> {packet}\n => No valid exchange found, dropping");
+                warn!("\n>>RCV {packet}\n      => No valid exchange found, dropping");
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
-                warn!("\n>>>>> {packet}\n => No valid session found, dropping");
+                warn!("\n>>RCV {packet}\n      => No valid session found, dropping");
             }
             Err(e) => {
-                error!("\n>>>>> {packet}\n => Error ({e:?}), dropping");
+                error!("\n>>RCV {packet}\n      => Error ({e:?}), dropping");
             }
             Ok(new_exchange) => {
                 let meta = MessageMeta::from(&packet.header.proto);
 
                 if meta.is_standalone_ack() {
                     // No need to propagate this further
-                    info!("\n>>>>> {packet}\n => Standalone Ack, dropping");
+                    info!("\n>>RCV {packet}\n      => Standalone Ack, dropping");
                 } else if meta.is_sc_status()
                     && matches!(
                         Self::is_close_session(&mut packet.buf[packet.payload_start..]),
                         Ok(true)
                     )
                 {
-                    warn!("\n>>>>> {packet}\n => Close session received, removing this session");
+                    warn!(
+                        "\n>>RCV {packet}\n      => Close session received, removing this session"
+                    );
 
                     let mut session_mgr = self.session_mgr.borrow_mut();
                     if let Some(session_id) = session_mgr
@@ -625,7 +629,7 @@ impl<'m> TransportMgr<'m> {
                     }
                 } else {
                     info!(
-                        "\n>>>>> {packet}\n => Processing{}",
+                        "\n>>RCV {packet}\n      => Processing{}",
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
@@ -903,7 +907,7 @@ impl<'m> TransportMgr<'m> {
         };
 
         info!(
-            "\n<<<<< {}\n => {} (system)",
+            "\n<<SND {}\n      => {} (system)",
             Packet::<0>::display(&packet.peer, &packet.header),
             if retransmission {
                 "Re-sending"
@@ -991,7 +995,7 @@ impl<'m> TransportMgr<'m> {
     {
         match recv.recv_from(buf).await {
             Ok((len, addr)) => {
-                debug!("\n>>>>> {} {}B:\n{:02x?}", addr, len, &buf[..len]);
+                debug!("\n>>RCV {} {}B:\n     {:02x?}", addr, len, &buf[..len]);
 
                 Ok((len, addr))
             }
@@ -1015,7 +1019,7 @@ impl<'m> TransportMgr<'m> {
         match send.lock().await.send_to(data, peer).await {
             Ok(_) => {
                 debug!(
-                    "\n<<<<< {} {}B{}: {:02x?}",
+                    "\n<<SND {} {}B{}: {:02x?}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
@@ -1026,7 +1030,7 @@ impl<'m> TransportMgr<'m> {
             }
             Err(e) => {
                 error!(
-                    "\n<<<<< {} {}B{} !FAILED!: {e:?}: {:02x?}",
+                    "\n<<SND {} {}B{} !FAILED!: {e:?}: {:02x?}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
@@ -1103,7 +1107,7 @@ impl<const N: usize> Packet<N> {
         if header.proto.is_decoded() {
             let meta = MessageMeta::from(&header.proto);
 
-            write!(f, "\n{meta}")?;
+            write!(f, "\n      {meta}")?;
         }
 
         Ok(())
