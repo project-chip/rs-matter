@@ -484,7 +484,9 @@ impl<'m> TransportMgr<'m> {
         let result = self.decode_packet(packet);
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
-                if !packet.peer.is_reliable() {
+                if !packet.peer.is_reliable()
+                    && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
+                {
                     info!("\n>>RCV {packet}\n      => Duplicate, sending ACK");
 
                     {
