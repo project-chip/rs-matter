@@ -535,7 +535,7 @@ impl Session {
             min(MAX_MESSAGE_SIZE as u16 / mtu / 2, 255) as u8,
         );
 
-        info!("\n>>RCV (BTP IO) {address} [{hdr}]\n     HANDSHAKE REQ {req:?}\nSelected version: {version}, MTU: {mtu}, window size: {window_size}");
+        info!("\n>>RCV (BTP IO) {address} [{hdr}]\n      HANDSHAKE REQ {req:?}\nSelected version: {version}, MTU: {mtu}, window size: {window_size}");
 
         Ok(Self::init(address, version, mtu, window_size))
     }
@@ -548,7 +548,7 @@ impl Session {
         let payload = iter.as_slice();
 
         info!(
-            "\n>>RCV (BTP IO) {} [{hdr}]\n     READ {}B",
+            "\n>>RCV (BTP IO) {} [{hdr}]\n      READ {}B",
             self.address,
             payload.len()
         );
@@ -574,7 +574,7 @@ impl Session {
         hdr.set_opcode(Some(0x6c));
 
         info!(
-            "\n<<SND (BTP IO) {} [{hdr}]\n     HANDSHAKE RESP {resp:?}",
+            "\n<<SND (BTP IO) {} [{hdr}]\n      HANDSHAKE RESP {resp:?}",
             self.address
         );
 
@@ -644,7 +644,7 @@ impl Session {
         wb.append(segment_data)?;
 
         info!(
-            "\n<<SND (BTP IO) {} [{hdr}]\n     WRITE {}B",
+            "\n<<SND (BTP IO) {} [{hdr}]\n      WRITE {}B",
             self.address,
             segment_data.len()
         );
