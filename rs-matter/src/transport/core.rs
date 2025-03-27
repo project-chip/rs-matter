@@ -1032,11 +1032,10 @@ impl<'m> TransportMgr<'m> {
             }
             Err(e) => {
                 error!(
-                    "\n<<SND {} {}B{} !FAILED!: {e:?}: {:02x?}",
+                    "\n<<SND {} {}B{} !FAILED!: {e:?}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
-                    data
                 );
 
                 // Do not return an error as that would unroll the main `rs-matter` loop
