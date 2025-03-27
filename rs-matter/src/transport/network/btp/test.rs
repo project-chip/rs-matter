@@ -43,6 +43,8 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     device_name: "Test Device",
     product_name: "TestProd",
     vendor_name: "TestVendor",
+    sai: None,
+    sii: None,
 };
 
 #[derive(Debug, Clone)]

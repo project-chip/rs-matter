@@ -104,7 +104,7 @@ impl ExchangeId {
             let mut session_removed = pin!(transport_mgr.session_removed.wait());
 
             let mut timeout = pin!(Timer::after(Duration::from_millis(
-                RetransEntry::max_delay_ms() * 3 / 2
+                RetransEntry::new(matter.dev_det().sai, 0).max_delay_ms() * 3 / 2
             )));
 
             match select3(&mut recv, &mut session_removed, &mut timeout).await {
@@ -256,7 +256,10 @@ impl ExchangeId {
         self.with_ctx(matter, |sess, exch_index| {
             let exchange = sess.exchanges[exch_index].as_mut().unwrap();
 
-            Ok(exchange.retrans_delay_ms())
+            let mut jitter_rand = [0; 1];
+            matter.rand()(&mut jitter_rand);
+
+            Ok(exchange.retrans_delay_ms(jitter_rand[0]))
         })
     }
 
@@ -385,7 +388,8 @@ impl ExchangeState {
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        epoch: Epoch,
+        session_active_interval_ms: Option<u16>,
+        session_idle_interval_ms: Option<u16>,
     ) -> Result<(), Error> {
         if matches!(self.role, Role::Initiator(_)) {
             tx_proto.set_initiator();
@@ -395,11 +399,19 @@ impl ExchangeState {
 
         tx_proto.exch_id = self.exch_id;
 
-        self.mrp.pre_send(tx_plain, tx_proto, epoch)
+        self.mrp.pre_send(
+            tx_plain,
+            tx_proto,
+            session_active_interval_ms,
+            session_idle_interval_ms,
+        )
     }
 
-    pub fn retrans_delay_ms(&mut self) -> Option<u64> {
-        self.mrp.retrans.as_ref().map(RetransEntry::delay_ms)
+    pub fn retrans_delay_ms(&mut self, jitter_rand: u8) -> Option<u64> {
+        self.mrp
+            .retrans
+            .as_ref()
+            .map(|retrans| retrans.delay_ms(jitter_rand))
     }
 }
 
@@ -594,7 +606,14 @@ impl TxMessage<'_> {
         let (peer, retransmission) = session.pre_send(
             Some(self.exchange_id.exchange_index()),
             &mut self.packet.header,
-            self.matter.epoch(),
+            // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
+            // as the peer might be slower than us
+            //
+            // However, given that for now `rs-matter` would be in the role of the device rather
+            // than a controller, that's a good-enough approximation (i.e. if we are running on Thread,
+            // the controller would either be running on Thread as well, or on a network faster than ours)
+            self.matter.dev_det().sai,
+            self.matter.dev_det().sii,
         )?;
 
         self.packet.peer = peer;

@@ -291,7 +291,8 @@ impl Session {
         &mut self,
         exch_index: Option<usize>,
         tx_header: &mut PacketHdr,
-        epoch: Epoch,
+        session_active_interval_ms: Option<u16>,
+        session_idle_interval_ms: Option<u16>,
     ) -> Result<(Address, bool), Error> {
         let ctr = if let Some(exchange_index) = exch_index {
             let exchange = self.exchanges[exchange_index].as_mut().unwrap();
@@ -316,7 +317,12 @@ impl Session {
         if let Some(exchange_index) = exch_index {
             let exchange = self.exchanges[exchange_index].as_mut().unwrap();
 
-            exchange.pre_send(&tx_header.plain, &mut tx_header.proto, epoch)?;
+            exchange.pre_send(
+                &tx_header.plain,
+                &mut tx_header.proto,
+                session_active_interval_ms,
+                session_idle_interval_ms,
+            )?;
         }
 
         Ok((self.peer_addr, retransmission))

@@ -214,15 +214,21 @@ impl ServiceMode {
                 let discriminator_str = Self::get_discriminator_str(*discriminator);
                 let vp = Self::get_vp(dev_att.vid, dev_att.pid);
 
+                let mut sai_str = heapless::String::<5>::new();
+                write!(sai_str, "{}", dev_att.sai.unwrap_or(300)).unwrap();
+
+                let mut sii_str = heapless::String::<5>::new();
+                write!(sii_str, "{}", dev_att.sii.unwrap_or(5000)).unwrap();
+
                 let txt_kvs = &[
                     ("D", discriminator_str.as_str()),
                     ("CM", "1"),
                     ("DN", dev_att.device_name),
                     ("VP", &vp),
-                    ("SII", "5000"), /* Sleepy Idle Interval */
-                    ("SAI", "300"),  /* Sleepy Active Interval */
-                    ("PH", "33"),    /* Pairing Hint */
-                    ("PI", ""),      /* Pairing Instruction */
+                    ("SAI", sai_str.as_str()), // Session Active Interval
+                    ("SII", sii_str.as_str()), // Session Idle Interval
+                    ("PH", "33"),              // Pairing Hint
+                    ("PI", ""),                // Pairing Instruction
                 ];
 
                 f(&Service {
