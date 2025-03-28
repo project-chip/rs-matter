@@ -600,7 +600,7 @@ impl TxMessage<'_> {
         self.packet.peer = peer;
 
         info!(
-            "\n<<<<< {}\n => {}",
+            "\n<<SND {}\n      => {}",
             Packet::<0>::display(&self.packet.peer, &self.packet.header),
             if retransmission {
                 "Re-sending"
