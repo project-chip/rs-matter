@@ -73,6 +73,12 @@ pub struct BasicInfoConfig<'a> {
     pub device_name: &'a str,
     pub vendor_name: &'a str,
     pub product_name: &'a str,
+    /// Session Active Interval in ms
+    /// If not specified, defaults to 300
+    pub sai: Option<u16>,
+    /// Session Idle Interval in ms
+    /// If not specified, defaults to 5000
+    pub sii: Option<u16>,
 }
 
 pub const CLUSTER: Cluster<'static> = Cluster {

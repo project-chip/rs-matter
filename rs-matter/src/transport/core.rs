@@ -79,6 +79,8 @@ pub struct TransportMgr<'m> {
     pub(crate) mdns: MdnsImpl<'m>,
     #[allow(dead_code)]
     rand: Rand,
+    device_sai: Option<u16>,
+    device_sii: Option<u16>,
 }
 
 impl<'m> TransportMgr<'m> {
@@ -98,6 +100,8 @@ impl<'m> TransportMgr<'m> {
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
             mdns: MdnsImpl::new(service, dev_det, matter_port),
             rand,
+            device_sai: dev_det.sai,
+            device_sii: dev_det.sii,
         }
     }
 
@@ -116,6 +120,8 @@ impl<'m> TransportMgr<'m> {
             session_mgr <- RefCell::init(SessionMgr::init(epoch, rand)),
             mdns <- MdnsImpl::init(service, dev_det, matter_port),
             rand,
+            device_sai: dev_det.sai,
+            device_sii: dev_det.sii,
         })
     }
 
@@ -491,7 +497,6 @@ impl<'m> TransportMgr<'m> {
 
                     {
                         let mut session_mgr = self.session_mgr.borrow_mut();
-                        let epoch = session_mgr.epoch;
 
                         // `unwrap` is safe because we know we have a session.
                         // If we didn't have a session, the error code would've been `NoSession`
@@ -507,7 +512,7 @@ impl<'m> TransportMgr<'m> {
                         packet.header.proto.toggle_initiator();
                         packet.header.proto.set_ack(Some(ack));
 
-                        self.encode_packet(packet, Some(session), None, epoch, |_| {
+                        self.encode_packet(packet, Some(session), None, |_| {
                             Ok(Some(OpCode::MRPStandAloneAck.into()))
                         })?;
                     }
@@ -529,13 +534,9 @@ impl<'m> TransportMgr<'m> {
                     packet.header.proto.toggle_initiator();
                     packet.header.proto.set_ack(Some(ack));
 
-                    self.encode_packet(
-                        packet,
-                        None,
-                        None,
-                        self.session_mgr.borrow().epoch,
-                        |wb| sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01]),
-                    )?;
+                    self.encode_packet(packet, None, None, |wb| {
+                        sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
+                    })?;
 
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
@@ -584,13 +585,9 @@ impl<'m> TransportMgr<'m> {
                     let mut session = session_mgr.remove(session_id).unwrap();
                     self.session_removed.notify();
 
-                    self.encode_packet(
-                        packet,
-                        Some(&mut session),
-                        None,
-                        session_mgr.epoch,
-                        |wb| sc_write(wb, SCStatusCodes::CloseSession, &[]),
-                    )?;
+                    self.encode_packet(packet, Some(&mut session), None, |wb| {
+                        sc_write(wb, SCStatusCodes::CloseSession, &[])
+                    })?;
                 }
 
                 Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
@@ -761,15 +758,13 @@ impl<'m> TransportMgr<'m> {
             // Found a dropped exchange which has no outstanding (re)transmission
             // Send a standalone ACK if necessary and then close it
 
-            let epoch = session_mgr.epoch;
-
             // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
             let session = session_mgr.get(session_id).unwrap();
             // Ditto
             let exchange = session.exchanges[exch_index].as_mut().unwrap();
 
             if exchange.mrp.is_ack_pending() {
-                self.encode_packet(packet, Some(session), Some(exch_index), epoch, |_| {
+                self.encode_packet(packet, Some(session), Some(exch_index), |_| {
                     Ok(Some(OpCode::MRPStandAloneAck.into()))
                 })?;
             }
@@ -854,7 +849,6 @@ impl<'m> TransportMgr<'m> {
         packet: &mut Packet<N>,
         mut session: Option<&mut Session>,
         exchange_index: Option<usize>,
-        epoch: Epoch,
         payload_writer: F,
     ) -> Result<(), Error>
     where
@@ -878,8 +872,12 @@ impl<'m> TransportMgr<'m> {
         let retransmission = if let Some(session) = &mut session {
             packet.header.plain = Default::default();
 
-            let (peer, retransmission) =
-                session.pre_send(exchange_index, &mut packet.header, epoch)?;
+            let (peer, retransmission) = session.pre_send(
+                exchange_index,
+                &mut packet.header,
+                self.device_sai,
+                self.device_sii,
+            )?;
 
             packet.peer = peer;
 
@@ -974,7 +972,7 @@ impl<'m> TransportMgr<'m> {
             session.get_peer_sess_id()
         );
 
-        self.encode_packet(packet, Some(&mut session), None, session_mgr.epoch, |wb| {
+        self.encode_packet(packet, Some(&mut session), None, |wb| {
             sc_write(wb, SCStatusCodes::CloseSession, &[])
         })?;
 

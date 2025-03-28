@@ -23,26 +23,29 @@ use crate::utils::epoch::Epoch;
 use super::{plain_hdr::PlainHdr, proto_hdr::ProtoHdr};
 
 //const MRP_STANDALONE_ACK_TIMEOUT_MS: u64 = 200;   // TODO: Use to pro-actively send ACKs
-const MRP_BASE_RETRY_INTERVAL_MS: u64 = 200; // TODO: Un-hardcode for Sleepy vs Active devices
-const MRP_MAX_TRANSMISSIONS: usize = 10;
-const MRP_BACKOFF_THRESHOLD: usize = 3;
+const MRP_BASE_RETRY_INTERVAL_MS: u16 = 300;
+const MRP_MAX_TRANSMISSIONS: u16 = 10;
+const MRP_BACKOFF_THRESHOLD: u16 = 1;
 const MRP_BACKOFF_BASE: (u64, u64) = (16, 10); // 1.6
-                                               //const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25
-                                               //const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10);  // 1.1
+const MRP_BACKOFF_JITTER: (u64, u64) = (25, 100); // 0.25
+const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10); // 1.1
+const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
 
 #[derive(Debug)]
 pub struct RetransEntry {
+    /// The retransmission delay interval in milliseconds
+    base_delay_interval_ms: u16,
     // The msg counter that we are waiting to be acknowledged
     msg_ctr: u32,
-    sent_at_ms: u64,
-    counter: usize,
+    // The retransmission counter
+    counter: u16,
 }
 
 impl RetransEntry {
-    pub fn new(msg_ctr: u32, epoch: Epoch) -> Self {
+    pub fn new(base_delay_interval_ms: Option<u16>, msg_ctr: u32) -> Self {
         Self {
+            base_delay_interval_ms: base_delay_interval_ms.unwrap_or(MRP_BASE_RETRY_INTERVAL_MS),
             msg_ctr,
-            sent_at_ms: epoch().as_millis() as u64,
             counter: 0,
         }
     }
@@ -51,36 +54,30 @@ impl RetransEntry {
         self.msg_ctr
     }
 
-    pub fn is_due(&self, epoch: Epoch) -> bool {
-        self.sent_at_ms
-            .checked_add(self.delay_ms())
-            .map(|d| d <= epoch().as_millis() as u64)
-            .unwrap_or(true)
-    }
-
     /// Return how much to delay before (re)transmitting the message
     /// based on the number of re-transmissions so far
-    pub fn delay_ms(&self) -> u64 {
-        Self::delay_ms_counter(self.counter)
+    pub fn delay_ms(&self, jitter_rand: u8) -> u64 {
+        self.delay_ms_counter(self.counter, jitter_rand)
     }
 
     /// Maximum delay before giving up on retransmitting the message
-    pub fn max_delay_ms() -> u64 {
-        Self::delay_ms_counter(MRP_MAX_TRANSMISSIONS)
+    pub fn max_delay_ms(&self) -> u64 {
+        self.delay_ms_counter(MRP_MAX_TRANSMISSIONS, MRP_JITTER_RAND_MAX)
     }
 
     /// Return how much to delay before (re)transmitting the message
     /// based on the provided number of re-transmissions so far
-    pub fn delay_ms_counter(counter: usize) -> u64 {
-        let mut delay = MRP_BASE_RETRY_INTERVAL_MS;
+    pub fn delay_ms_counter(&self, counter: u16, jitter_rand: u8) -> u64 {
+        let mut delay =
+            self.base_delay_interval_ms as u64 * MRP_BACKOFF_MARGIN.0 / MRP_BACKOFF_MARGIN.1;
 
-        if counter >= MRP_BACKOFF_THRESHOLD {
+        if counter > MRP_BACKOFF_THRESHOLD {
             for _ in 0..counter - MRP_BACKOFF_THRESHOLD {
                 delay = delay * MRP_BACKOFF_BASE.0 / MRP_BACKOFF_BASE.1;
             }
         }
 
-        delay
+        delay + (delay * jitter_rand as u64 * MRP_BACKOFF_JITTER.0) / (255 * MRP_BACKOFF_JITTER.1)
     }
 
     pub fn pre_send(&mut self, ctr: u32) -> Result<(), Error> {
@@ -156,7 +153,10 @@ impl ReliableMessage {
         &mut self,
         tx_plain: &PlainHdr,
         tx_proto: &mut ProtoHdr,
-        epoch: Epoch,
+        session_active_interval_ms: Option<u16>,
+        // TODO: Need to make use of it in future,
+        // once we detect idle vs active devices
+        _session_idle_interval_ms: Option<u16>,
     ) -> Result<(), Error> {
         // Check if any acknowledgements are pending for this exchange,
         if let Some(ack) = &mut self.ack {
@@ -175,7 +175,7 @@ impl ReliableMessage {
                     self.ack = None;
                 }
             } else {
-                self.retrans = Some(RetransEntry::new(tx_plain.ctr, epoch));
+                self.retrans = Some(RetransEntry::new(session_active_interval_ms, tx_plain.ctr));
             }
         }
 

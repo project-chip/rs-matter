@@ -83,6 +83,8 @@ impl E2eRunner {
         device_name: "E2E",
         product_name: "E2E",
         vendor_name: "E2E",
+        sai: None,
+        sii: None,
     };
 
     const BASIC_COMM: BasicCommData = BasicCommData {
