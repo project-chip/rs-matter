@@ -58,6 +58,8 @@ static DEV_DET: BasicInfoConfig = BasicInfoConfig {
     device_name: "OnOff Light",
     product_name: "Light123",
     vendor_name: "Vendor PQR",
+    sai: None,
+    sii: None,
 };
 
 static DEV_COMM: BasicCommData = BasicCommData {

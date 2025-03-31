@@ -110,6 +110,8 @@ fn run() -> Result<(), Error> {
         device_name: "OnOff Light",
         product_name: "Light123",
         vendor_name: "Vendor PQR",
+        sai: None,
+        sii: None,
     };
 
     let dev_comm = BasicCommData {
