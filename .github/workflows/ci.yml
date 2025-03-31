@@ -50,3 +50,7 @@ jobs:
       - name: Test
         if: matrix.features == 'os'
         run: cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}}
+
+      - name: Examples
+        if: matrix.features == 'os'
+        run: cargo build --examples --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},examples
