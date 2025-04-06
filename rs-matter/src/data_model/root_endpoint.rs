@@ -5,7 +5,9 @@ use super::cluster_basic_information::{self, BasicInfoCluster};
 use super::objects::{Cluster, Dataver, EmptyHandler, Endpoint, EndptId, HandlerCompat};
 use super::sdm::admin_commissioning::{self, AdminCommCluster};
 use super::sdm::ethernet_nw_diagnostics::{self, EthNwDiagCluster};
-use super::sdm::general_commissioning::{self, BasicCommissioningInfo, GenCommCluster};
+use super::sdm::general_commissioning::{
+    self, BasicCommissioningInfo, ConcurrentConnectionPolicy, GenCommCluster,
+};
 use super::sdm::general_diagnostics::{self, GenDiagCluster};
 use super::sdm::group_key_management::{self, GrpKeyMgmtCluster};
 use super::sdm::noc::{self, NocCluster};
@@ -90,7 +92,7 @@ pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     NWDIAG,
     HandlerCompat<descriptor::DescriptorCluster<'a>>,
     HandlerCompat<cluster_basic_information::BasicInfoCluster>,
-    HandlerCompat<general_commissioning::GenCommCluster>,
+    HandlerCompat<general_commissioning::GenCommCluster<'a>>,
     HandlerCompat<admin_commissioning::AdminCommCluster>,
     HandlerCompat<noc::NocCluster>,
     HandlerCompat<access_control::AccessControlCluster>,
@@ -105,7 +107,7 @@ pub fn eth_handler(endpoint_id: u16, rand: Rand) -> EthRootEndpointHandler<'stat
         EthNwCommCluster::new(Dataver::new_rand(rand)),
         ethernet_nw_diagnostics::ID,
         EthNwDiagCluster::new(Dataver::new_rand(rand)),
-        true,
+        &true,
         rand,
     )
 }
@@ -119,15 +121,15 @@ pub fn handler<NWCOMM, NWDIAG>(
     nwcomm: NWCOMM,
     nwdiag_id: u32,
     nwdiag: NWDIAG,
-    supports_concurrent_connection: bool,
+    concurrent_connection_policy: &dyn ConcurrentConnectionPolicy,
     rand: Rand,
-) -> RootEndpointHandler<'static, NWCOMM, NWDIAG> {
+) -> RootEndpointHandler<'_, NWCOMM, NWDIAG> {
     wrap(
         endpoint_id,
         nwcomm,
         nwdiag_id,
         nwdiag,
-        supports_concurrent_connection,
+        concurrent_connection_policy,
         rand,
     )
 }
@@ -137,9 +139,9 @@ fn wrap<NWCOMM, NWDIAG>(
     nwcomm: NWCOMM,
     nwdiag_id: u32,
     nwdiag: NWDIAG,
-    supports_concurrent_connection: bool,
+    concurrent_connection_policy: &dyn ConcurrentConnectionPolicy,
     rand: Rand,
-) -> RootEndpointHandler<'static, NWCOMM, NWDIAG> {
+) -> RootEndpointHandler<'_, NWCOMM, NWDIAG> {
     EmptyHandler
         .chain(
             endpoint_id,
@@ -172,7 +174,7 @@ fn wrap<NWCOMM, NWDIAG>(
             HandlerCompat(GenCommCluster::new(
                 Dataver::new_rand(rand),
                 BasicCommissioningInfo::new(),
-                supports_concurrent_connection,
+                concurrent_connection_policy,
             )),
         )
         .chain(
