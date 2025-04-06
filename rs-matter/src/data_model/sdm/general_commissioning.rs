@@ -154,23 +154,45 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     ],
 };
 
-#[derive(Debug, Clone)]
-pub struct GenCommCluster {
-    data_ver: Dataver,
-    basic_comm_info: BasicCommissioningInfo,
-    supports_concurrent_connection: bool,
+/// A trait indicating whether the device supports concurrent connection
+/// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
+pub trait ConcurrentConnectionPolicy {
+    /// Return true if the device supports concurrent connection.
+    fn concurrent_connection_supported(&self) -> bool;
 }
 
-impl GenCommCluster {
+impl<T> ConcurrentConnectionPolicy for &T
+where
+    T: ConcurrentConnectionPolicy,
+{
+    fn concurrent_connection_supported(&self) -> bool {
+        (*self).concurrent_connection_supported()
+    }
+}
+
+impl ConcurrentConnectionPolicy for bool {
+    fn concurrent_connection_supported(&self) -> bool {
+        *self
+    }
+}
+
+#[derive(Clone)]
+pub struct GenCommCluster<'a> {
+    data_ver: Dataver,
+    basic_comm_info: BasicCommissioningInfo,
+    concurrent_connection_policy: &'a dyn ConcurrentConnectionPolicy,
+}
+
+impl<'a> GenCommCluster<'a> {
     pub const fn new(
         data_ver: Dataver,
         basic_comm_info: BasicCommissioningInfo,
-        supports_concurrent_connection: bool,
+        concurrent_connection_policy: &'a dyn ConcurrentConnectionPolicy,
     ) -> Self {
         Self {
             data_ver,
             basic_comm_info,
-            supports_concurrent_connection,
+            concurrent_connection_policy,
         }
     }
 
@@ -199,9 +221,11 @@ impl GenCommCluster {
                             .to_tlv(&AttrDataWriter::TAG, &mut *writer)?;
                         writer.complete()
                     }
-                    Attributes::SupportsConcurrentConnection(codec) => {
-                        codec.encode(writer, self.supports_concurrent_connection)
-                    }
+                    Attributes::SupportsConcurrentConnection(codec) => codec.encode(
+                        writer,
+                        self.concurrent_connection_policy
+                            .concurrent_connection_supported(),
+                    ),
                 }
             }
         } else {
@@ -323,7 +347,7 @@ impl GenCommCluster {
     }
 }
 
-impl Handler for GenCommCluster {
+impl Handler for GenCommCluster<'_> {
     fn read(
         &self,
         exchange: &Exchange,
@@ -344,9 +368,9 @@ impl Handler for GenCommCluster {
     }
 }
 
-impl NonBlockingHandler for GenCommCluster {}
+impl NonBlockingHandler for GenCommCluster<'_> {}
 
-impl ChangeNotifier<()> for GenCommCluster {
+impl ChangeNotifier<()> for GenCommCluster<'_> {
     fn consume_change(&mut self) -> Option<()> {
         self.data_ver.consume_change(())
     }
