@@ -154,6 +154,16 @@ impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
             Ok(())
         })
     }
+
+    fn check_from_tlv(element: &TLVElement<'a>) -> Result<(), Error> {
+        let octets = element.str()?;
+
+        if octets.len() > N {
+            Err(ErrorCode::NoSpace)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl<const N: usize> ToTLV for OctetsOwned<N> {

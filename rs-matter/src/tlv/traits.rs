@@ -16,7 +16,7 @@
  */
 
 use crate::error::Error;
-use crate::utils::init;
+use crate::utils::init::{self, ApplyInit, IntoInfallibleInit};
 
 use super::{
     EitherIter, TLVElement, TLVSequenceIter, TLVSequenceTLVIter, TLVTag, TLVValue, TLVValueType,
@@ -55,6 +55,34 @@ pub trait FromTLV<'a>: Sized + 'a {
                 Ok(())
             })
         }
+    }
+
+    /// Update the type from a TLV-encoded element.
+    ///
+    /// The implementation should guarantee, that in case of errors, the element is left unchanged.
+    fn update_from_tlv(&mut self, element: &TLVElement<'a>) -> Result<(), Error> {
+        Self::check_from_tlv(element)?;
+
+        // Applying the fallible initializer as infallible one should not panic,
+        // because we just checked the TLV data.
+
+        Self::init_from_tlv(element.clone())
+            .into_infallible()
+            .apply(self);
+
+        Ok(())
+    }
+
+    /// Check that the type can be created without TLV errors.
+    ///
+    /// The default implementation just tries to materialize the type from the
+    /// TLV stream, but downstream implementations might do a more optimized check,
+    /// that does _not_ materialize the type if the memory footprint of the type
+    /// is relatively large.
+    fn check_from_tlv(element: &TLVElement<'a>) -> Result<(), Error> {
+        Self::from_tlv(element)?;
+
+        Ok(())
     }
 }
 

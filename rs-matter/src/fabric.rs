@@ -297,6 +297,21 @@ impl Fabric {
         Ok(self.acl.len() - 1)
     }
 
+    /// Add with in-place initialization a new ACL entry to the fabric with the provided local index
+    ///
+    /// Return the index of the added entry.
+    fn acl_add_init<I: Init<AclEntry, Error>>(&mut self, entry: I) -> Result<usize, Error> {
+        // TODO: Move somewhere else
+        // if entry.auth_mode() == AuthMode::Pase {
+        //     // Reserved for future use
+        //     Err(ErrorCode::ConstraintError)?;
+        // }
+
+        self.acl.push_init(entry, || ErrorCode::NoSpace.into())?;
+
+        Ok(self.acl.len() - 1)
+    }
+
     /// Update an existing ACL entry in the fabric
     fn acl_update(&mut self, idx: usize, mut entry: AclEntry) -> Result<(), Error> {
         if self.acl.len() <= idx {
@@ -309,6 +324,21 @@ impl Fabric {
         self.acl[idx] = entry;
 
         Ok(())
+    }
+
+    /// Update an existing ACL entry in the fabric using the provided TLV element
+    fn acl_update_tlv(&mut self, idx: usize, entry: &TLVElement) -> Result<(), Error> {
+        // TODO: Move somewhere else
+        // if entry.auth_mode() == AuthMode::Pase {
+        //     // Reserved for future use
+        //     Err(ErrorCode::ConstraintError)?;
+        // }
+
+        if self.acl.len() <= idx {
+            return Err(ErrorCode::NotFound.into());
+        }
+
+        self.acl[idx].update_from_tlv(entry)
     }
 
     /// Remove an ACL entry from the fabric
@@ -666,7 +696,24 @@ impl FabricMgr {
         fabric.allow(req)
     }
 
-    /// Add a new ACL entry to the fabric with the provided local index
+    /// Add with in-place initialization a new ACL entry to the fabric with the provided local index
+    ///
+    /// Return the index of the added entry.
+    pub fn acl_add_init<I: Init<AclEntry, Error>>(
+        &mut self,
+        fab_idx: NonZeroU8,
+        entry: I,
+    ) -> Result<usize, Error> {
+        let index = self
+            .get_mut(fab_idx)
+            .ok_or(ErrorCode::NotFound)?
+            .acl_add_init(entry)?;
+        self.changed = true;
+
+        Ok(index)
+    }
+
+    /// Add a new ACL entry TLV to the fabric with the provided local index
     ///
     /// Return the index of the added entry.
     pub fn acl_add(&mut self, fab_idx: NonZeroU8, entry: AclEntry) -> Result<usize, Error> {
@@ -689,6 +736,21 @@ impl FabricMgr {
         self.get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
             .acl_update(idx, entry)?;
+        self.changed = true;
+
+        Ok(())
+    }
+
+    /// Update an existing ACL entry in the fabric with the provided local index and TLV element
+    pub fn acl_update_tlv(
+        &mut self,
+        fab_idx: NonZeroU8,
+        idx: usize,
+        entry: &TLVElement,
+    ) -> Result<(), Error> {
+        self.get_mut(fab_idx)
+            .ok_or(ErrorCode::NotFound)?
+            .acl_update_tlv(idx, entry)?;
         self.changed = true;
 
         Ok(())
