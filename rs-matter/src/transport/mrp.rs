@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::{error, warn};
-
 use crate::error::*;
 use crate::utils::epoch::Epoch;
 
@@ -172,7 +170,10 @@ impl ReliableMessage {
             if let Some(retrans) = &mut self.retrans {
                 if retrans.pre_send(tx_plain.ctr).is_err() {
                     // Too many retransmissions, give up
-                    error!("Packet {tx_plain}{tx_proto}: Too many retransmissions. Giving up");
+                    error!(
+                        "Packet {}{}: Too many retransmissions. Giving up",
+                        tx_plain, tx_proto
+                    );
 
                     self.retrans = None;
                     self.ack = None;

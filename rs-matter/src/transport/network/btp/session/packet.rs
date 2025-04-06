@@ -17,8 +17,6 @@
 
 use core::fmt;
 
-use log::trace;
-
 use crate::error::{Error, ErrorCode};
 use crate::utils::bitflags::bitflags;
 use crate::utils::storage::WriteBuf;
@@ -29,7 +27,8 @@ bitflags! {
     /// Consult the Matter Core Specification for more information.
     #[repr(transparent)]
     #[derive(Default)]
-    pub struct BtpFlags: u8 { // TODO: defmt
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    pub struct BtpFlags: u8 {
         const HANDSHAKE = 0x40;
         const MANAGEMENT = 0x20;
         const ACK = 0x08;
@@ -42,6 +41,7 @@ bitflags! {
 }
 
 impl fmt::Display for BtpFlags {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut sep = false;
         for flag in [

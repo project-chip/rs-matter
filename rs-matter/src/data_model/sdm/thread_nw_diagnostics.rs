@@ -17,8 +17,6 @@
 
 use core::net::Ipv6Addr;
 
-use log::info;
-
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;

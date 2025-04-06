@@ -30,7 +30,6 @@ use crate::{
     interaction_model::messages::ib::{AttrDataTag, AttrRespTag},
     tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV},
 };
-use log::error;
 
 use super::{AttrDetails, CmdDetails, DataModelHandler};
 

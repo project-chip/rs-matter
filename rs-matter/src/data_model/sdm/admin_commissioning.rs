@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::info;
-
 use num_derive::FromPrimitive;
 
 use strum::{EnumDiscriminants, FromRepr};

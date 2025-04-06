@@ -19,8 +19,6 @@ use core::fmt;
 use core::num::NonZeroU8;
 use core::time::Duration;
 
-use log::{error, info, trace, warn};
-
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;

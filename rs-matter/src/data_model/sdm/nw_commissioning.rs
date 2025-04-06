@@ -158,6 +158,7 @@ pub const THR_CLUSTER: Cluster<'static> = cluster(FeatureMap::Thread);
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct WiFiSecurity: u8 {
         const UNENCRYPTED = 0x01;
         const WEP = 0x02;

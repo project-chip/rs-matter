@@ -17,11 +17,7 @@
 
 //! This module contains the logic for generating the pairing code and the QR code for easy pairing.
 
-use log::info;
-
 use qr::no_optional_data;
-
-use verhoeff::Verhoeff;
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::Error;
@@ -37,6 +33,7 @@ pub mod vendor_identifiers;
 
 bitflags! {
     #[repr(transparent)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct DiscoveryCapabilities: u8 {
         const SOFT_AP = 0x01;
         const BLE = 0x02;

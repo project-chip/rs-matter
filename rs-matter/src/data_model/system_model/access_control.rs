@@ -19,8 +19,6 @@ use core::num::NonZeroU8;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use log::{error, info};
-
 use crate::acl::{self, AclEntry};
 use crate::data_model::objects::*;
 use crate::fabric::FabricMgr;

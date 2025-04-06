@@ -17,13 +17,12 @@
 
 use core::fmt::{self, Write};
 
-use log::error;
-
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
 use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
 use crate::utils::epoch::MATTER_CERT_DOESNT_EXPIRE;
 use crate::utils::iter::TryFindIterator;
@@ -201,7 +200,7 @@ impl<'a> Extension<'a> {
                 Self::encode_extension_end(w)?;
             }
             Extension::FutureExtensions(t) => {
-                error!("Future Extensions Not Yet Supported: {:x?}", t.0)
+                error!("Future Extensions Not Yet Supported: {}", Bytes(t.0))
             }
         }
 
@@ -776,9 +775,10 @@ impl<'a> CertVerifier<'a> {
         k.verify_msg(asn1, self.cert.signature()?)
             .inspect_err(|e| {
                 error!(
-                    "Error {e} in signature verification of certificate: {:x?} by {:x?}",
-                    self.cert.get_subject_key_id(),
-                    parent.get_subject_key_id()
+                    "Error {} in signature verification of certificate: {:?} by {:?}",
+                    e,
+                    self.cert.get_subject_key_id().map(Bytes),
+                    parent.get_subject_key_id().map(Bytes)
                 );
             })?;
 
@@ -816,8 +816,6 @@ pub trait CertConsumer {
 
 #[cfg(test)]
 mod tests {
-    use log::info;
-
     use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
     use crate::utils::storage::WriteBuf;
 

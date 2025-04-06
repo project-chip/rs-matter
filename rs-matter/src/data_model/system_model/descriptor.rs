@@ -75,7 +75,6 @@ impl PartsMatcher for AggregatorPartsMatcher {
 }
 
 pub trait PartsMatcher: Debug {
-    // TODO: defmt
     fn describe(&self, our_endpoint: EndptId, endpoint: EndptId) -> bool;
 }
 

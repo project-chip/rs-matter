@@ -19,8 +19,6 @@ use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
-use log::{error, info, warn};
-
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::cert::CertRef;
@@ -28,6 +26,7 @@ use crate::crypto::{self, KeyPair};
 use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
 use crate::fabric::MAX_SUPPORTED_FABRICS;
+use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
@@ -577,7 +576,7 @@ impl NocCluster {
         cmd_enter!("AddTrustedRootCert");
 
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Trusted Cert: {:x?}", req.str);
+        info!("Received Trusted Cert: {}", Bytes(&req.str));
 
         exchange.with_session(|sess| {
             exchange

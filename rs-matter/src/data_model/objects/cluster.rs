@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use log::error;
 use strum::FromRepr;
 
 use crate::{

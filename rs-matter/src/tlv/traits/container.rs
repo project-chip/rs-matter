@@ -176,7 +176,6 @@ where
 }
 
 impl<'a, T, C> fmt::Debug for TLVContainer<'a, T, C>
-// TODO: defmt
 where
     T: FromTLV<'a> + fmt::Debug,
 {
@@ -196,6 +195,16 @@ where
         }
 
         write!(f, "]")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a, T, C> defmt::Format for TLVContainer<'a, T, C>
+where
+    T: FromTLV<'a> + fmt::Debug,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::Debug2Format(self).format(f)
     }
 }
 

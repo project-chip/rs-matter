@@ -23,10 +23,9 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
-use log::{debug, error, info, trace, warn};
-
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::mdns::{MdnsImpl, MdnsService};
 use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 use crate::secure_channel::status_report::StatusReport;
@@ -409,7 +408,7 @@ impl<'m> TransportMgr<'m> {
                 }
                 Err(e) => {
                     // Drop the packet and report the unexpected error
-                    error!("UNEXPECTED RX ERROR: {e:?}");
+                    error!("UNEXPECTED RX ERROR: {:?}", e);
                 }
             }
         }
@@ -463,7 +462,7 @@ impl<'m> TransportMgr<'m> {
                     wait
                 }
                 Err(e) => {
-                    error!("UNEXPECTED RX ERROR: {e:?}");
+                    error!("UNEXPECTED RX ERROR: {:?}", e);
                     false
                 }
             };
@@ -493,7 +492,7 @@ impl<'m> TransportMgr<'m> {
                 if !packet.peer.is_reliable()
                     && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                 {
-                    info!("\n>>RCV {packet}\n      => Duplicate, sending ACK");
+                    info!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
                     {
                         let mut session_mgr = self.session_mgr.borrow_mut();
@@ -520,14 +519,17 @@ impl<'m> TransportMgr<'m> {
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
                 } else {
-                    info!("\n>>RCV {packet}\n      => Duplicate, discarding");
+                    info!("\n>>RCV {}\n      => Duplicate, discarding", packet);
                 }
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
                 if !packet.header.plain.is_encrypted()
                     && MessageMeta::from(&packet.header.proto).is_new_session()
                 {
-                    warn!("\n>>RCV {packet}\n      => No space for a new unencrypted session, sending Busy");
+                    warn!(
+                        "\n>>RCV {}\n      => No space for a new unencrypted session, sending Busy",
+                        packet
+                    );
 
                     let ack = packet.header.plain.ctr;
 
@@ -552,7 +554,8 @@ impl<'m> TransportMgr<'m> {
                     }
                 } else {
                     error!(
-                        "\n>>RCV {packet}\n      => No space for a new encrypted session, dropping"
+                        "\n>>RCV {}\n      => No space for a new encrypted session, dropping",
+                        packet
                     );
                 }
             }
@@ -563,7 +566,10 @@ impl<'m> TransportMgr<'m> {
                 //   wait for ACK and retransmit without releasing the RX buffer, potentially
                 //   blocking all other interactions
 
-                error!("\n>>RCV {packet}\n      => No space for a new exchange, closing session");
+                error!(
+                    "\n>>RCV {}\n      => No space for a new exchange, closing session",
+                    packet
+                );
 
                 {
                     let mut session_mgr = self.session_mgr.borrow_mut();
@@ -594,20 +600,26 @@ impl<'m> TransportMgr<'m> {
                     .await?;
             }
             Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
-                warn!("\n>>RCV {packet}\n      => No valid exchange found, dropping");
+                warn!(
+                    "\n>>RCV {}\n      => No valid exchange found, dropping",
+                    packet
+                );
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
-                warn!("\n>>RCV {packet}\n      => No valid session found, dropping");
+                warn!(
+                    "\n>>RCV {}\n      => No valid session found, dropping",
+                    packet
+                );
             }
             Err(e) => {
-                error!("\n>>RCV {packet}\n      => Error ({e:?}), dropping");
+                error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);
             }
             Ok(new_exchange) => {
                 let meta = MessageMeta::from(&packet.header.proto);
 
                 if meta.is_standalone_ack() {
                     // No need to propagate this further
-                    info!("\n>>RCV {packet}\n      => Standalone Ack, dropping");
+                    info!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
                 } else if meta.is_sc_status()
                     && matches!(
                         Self::is_close_session(&mut packet.buf[packet.payload_start..]),
@@ -615,7 +627,8 @@ impl<'m> TransportMgr<'m> {
                     )
                 {
                     warn!(
-                        "\n>>RCV {packet}\n      => Close session received, removing this session"
+                        "\n>>RCV {}\n      => Close session received, removing this session",
+                        packet
                     );
 
                     let mut session_mgr = self.session_mgr.borrow_mut();
@@ -628,7 +641,8 @@ impl<'m> TransportMgr<'m> {
                     }
                 } else {
                     info!(
-                        "\n>>RCV {packet}\n      => Processing{}",
+                        "\n>>RCV {}\n      => Processing{}",
+                        packet,
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
@@ -675,7 +689,10 @@ impl<'m> TransportMgr<'m> {
             return false;
         }
 
-        warn!("\n----- {packet}\n => Accept timeout, marking exchange as dropped");
+        warn!(
+            "\n----- {}\n => Accept timeout, marking exchange as dropped",
+            packet
+        );
 
         exchange.role = Role::Responder(ResponderState::Dropped);
         packet.buf.clear();
@@ -692,14 +709,14 @@ impl<'m> TransportMgr<'m> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
         let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
-            warn!("\n----- {packet}\n => No session, dropping");
+            warn!("\n----- {}\n => No session, dropping", packet);
 
             packet.buf.clear();
             return true;
         };
 
         let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
-            warn!("\n----- {packet}\n => No exchange, dropping");
+            warn!("\n----- {}\n => No exchange, dropping", packet);
 
             packet.buf.clear();
             return true;
@@ -710,7 +727,8 @@ impl<'m> TransportMgr<'m> {
 
         if exchange.role.is_dropped_state() {
             warn!(
-                "\n----- {packet}\n => Owned by orphaned dropped {}, dropping packet",
+                "\n----- {}\n => Owned by orphaned dropped {}, dropping packet",
+                packet,
                 ExchangeId::new(session.id, exch_index)
             );
 
@@ -995,12 +1013,12 @@ impl<'m> TransportMgr<'m> {
     {
         match recv.recv_from(buf).await {
             Ok((len, addr)) => {
-                debug!("\n>>RCV {} {}B:\n     {:02x?}", addr, len, &buf[..len]);
+                debug!("\n>>RCV {} {}B:\n     {}", addr, len, Bytes(&buf[..len]));
 
                 Ok((len, addr))
             }
             Err(e) => {
-                error!("FAILED network recv: {e:?}");
+                error!("FAILED network recv: {:?}", e);
 
                 Err(e)
             }
@@ -1019,21 +1037,22 @@ impl<'m> TransportMgr<'m> {
         match send.lock().await.send_to(data, peer).await {
             Ok(_) => {
                 debug!(
-                    "\n<<SND {} {}B{}: {:02x?}",
+                    "\n<<SND {} {}B{}: {}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
-                    data
+                    Bytes(data)
                 );
 
                 Ok(())
             }
             Err(e) => {
                 error!(
-                    "\n<<SND {} {}B{} !FAILED!: {e:?}",
+                    "\n<<SND {} {}B{} !FAILED!: {:?}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
+                    e
                 );
 
                 // Do not return an error as that would unroll the main `rs-matter` loop
@@ -1138,6 +1157,13 @@ impl<const N: usize> Packet<N> {
 impl<const N: usize> Display for Packet<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Self::fmt(f, &self.peer, &self.header)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<const N: usize> defmt::Format for Packet<N> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::Display2Format(self).format(f)
     }
 }
 

@@ -88,9 +88,6 @@ impl RxCtrState {
 
 #[cfg(test)]
 mod tests {
-
-    use log::info;
-
     use super::RxCtrState;
 
     const ENCRYPTED: bool = true;

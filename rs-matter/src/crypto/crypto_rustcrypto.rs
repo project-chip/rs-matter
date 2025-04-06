@@ -27,7 +27,6 @@ use ccm::{
 };
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use hmac::Mac;
-use log::error;
 use p256::{
     ecdsa::{Signature, SigningKey, VerifyingKey},
     AffinePoint, EncodedPoint, PublicKey, SecretKey,
@@ -86,7 +85,7 @@ impl HmacSha256 {
     pub fn new(key: &[u8]) -> Result<Self, Error> {
         Ok(Self {
             inner: HmacSha256I::new_from_slice(key).map_err(|e| {
-                error!("Error creating HmacSha256 {:?}", e);
+                error!("Error creating HmacSha256 {:?}", display2format!(&e));
                 ErrorCode::TLSStack
             })?,
         })
@@ -132,7 +131,12 @@ impl KeyPair {
         let secret_key = SecretKey::from_slice(priv_key).unwrap();
         let encoded_point = EncodedPoint::from_bytes(pub_key).unwrap();
         let public_key = PublicKey::from_encoded_point(&encoded_point).unwrap();
-        assert_eq!(public_key, secret_key.public_key());
+        assert!(
+            public_key == secret_key.public_key(),
+            "Public key {:?} is not equal to ours {:?}",
+            debug2format!(public_key),
+            debug2format!(secret_key.public_key())
+        );
 
         Ok(Self {
             key: KeyType::Private(secret_key),
@@ -302,7 +306,7 @@ pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Resu
     hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm)
         .expand(info, key)
         .map_err(|e| {
-            error!("Error with hkdf_sha256 {:?}", e);
+            error!("Error with hkdf_sha256 {:?}", display2format!(&e));
             ErrorCode::TLSStack.into()
         })
 }

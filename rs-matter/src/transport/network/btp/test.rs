@@ -108,8 +108,8 @@ impl Peripheral {
     async fn expect(&self, data: &[u8], addr: BtAddr) {
         let received = self.peer_receiver.recv().await.unwrap();
 
-        assert_eq!(received.data, data);
-        assert_eq!(received.address, addr);
+        ::core::assert_eq!(received.data, data);
+        ::core::assert_eq!(received.address, addr);
     }
 }
 
@@ -143,8 +143,8 @@ impl Io {
     async fn expect(&self, data: &[u8], addr: BtAddr) {
         let packet = self.recv.recv().await.unwrap();
 
-        assert_eq!(packet.data, data);
-        assert_eq!(packet.address, addr);
+        ::core::assert_eq!(packet.data, data);
+        ::core::assert_eq!(packet.address, addr);
     }
 }
 

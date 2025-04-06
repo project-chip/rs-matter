@@ -17,8 +17,6 @@
 
 use core::{fmt::Write, time::Duration};
 
-use log::{error, info};
-
 use crate::crypto;
 use crate::error::{Error, ErrorCode};
 use crate::mdns::{Mdns, ServiceMode};

@@ -450,7 +450,6 @@ pub mod ib {
         interaction_model::core::IMStatusCode,
         tlv::{FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV, TLV},
     };
-    use log::error;
 
     use super::GenericPath;
 

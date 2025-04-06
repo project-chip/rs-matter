@@ -17,8 +17,7 @@
 
 use core::fmt;
 
-use log::{trace, warn};
-
+use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::bitflags::bitflags;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -29,7 +28,8 @@ use super::network::Address;
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
-    pub struct ExchFlags: u8 { // TODO: defmt
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    pub struct ExchFlags: u8 {
         const VENDOR = 0x10;
         const SECEX = 0x08;
         const RELIABLE = 0x04;
@@ -39,6 +39,7 @@ bitflags! {
 }
 
 impl fmt::Display for ExchFlags {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut sep = false;
         for flag in [
@@ -229,7 +230,7 @@ impl ProtoHdr {
             self.ack_msg_ctr = parsebuf.le_u32()?;
         }
         trace!("[decode] {}", self);
-        trace!("[rx payload]: {:x?}", parsebuf.as_mut_slice());
+        trace!("[rx payload]: {}", Bytes(parsebuf.as_mut_slice()));
         Ok(())
     }
 

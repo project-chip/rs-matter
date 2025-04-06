@@ -124,12 +124,22 @@ impl Display for Address {
 }
 
 impl Debug for Address {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Address::Udp(addr) => writeln!(f, "{}", addr),
             Address::Tcp(addr) => writeln!(f, "{}", addr),
             Address::Btp(addr) => writeln!(f, "{:?}", addr),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Address {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match self {
+            Address::Udp(addr) => defmt::write!(f, "UDP {}", defmt::Display2Format(addr)),
+            Address::Tcp(addr) => defmt::write!(f, "TCP {}", defmt::Display2Format(addr)),
+            Address::Btp(addr) => defmt::write!(f, "BTP {}", defmt::Display2Format(addr)),
         }
     }
 }

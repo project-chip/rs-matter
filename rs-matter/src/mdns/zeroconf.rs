@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
-use log::error;
+use crate::error;
 
 use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 

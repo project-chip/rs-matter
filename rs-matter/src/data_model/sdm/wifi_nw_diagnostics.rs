@@ -17,8 +17,6 @@
 
 use core::cell::RefCell;
 
-use log::info;
-
 use rs_matter_macros::{FromTLV, ToTLV};
 
 use strum::{EnumDiscriminants, FromRepr};

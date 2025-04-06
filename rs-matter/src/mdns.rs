@@ -17,8 +17,6 @@
 
 use core::fmt::Write;
 
-use log::info;
-
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::Error;
 use crate::utils::init::{init, Init};
@@ -158,7 +156,7 @@ impl Mdns for MdnsImpl<'_> {
 
         // Do not remove this logging line or change its formatting.
         // C++ E2E tests rely on this log line to determine when the mDNS service is published
-        info!("mDNS service published: {service}::{mode:?}");
+        info!("mDNS service published: {}::{:?}", service, mode);
 
         Ok(())
     }
@@ -170,7 +168,7 @@ impl Mdns for MdnsImpl<'_> {
             MdnsService::Provided(mdns) => mdns.remove(service),
         }?;
 
-        info!("mDNS service removed: {service}");
+        info!("mDNS service removed: {}", service);
 
         Ok(())
     }

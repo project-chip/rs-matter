@@ -17,8 +17,6 @@
 
 use core::fmt;
 
-use log::trace;
-
 use crate::error::*;
 use crate::utils::bitflags::bitflags;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -26,7 +24,8 @@ use crate::utils::storage::{ParseBuf, WriteBuf};
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
-    pub struct MsgFlags: u8 { // TODO: defmt
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    pub struct MsgFlags: u8 {
         const DSIZ_UNICAST_NODEID = 0x01;
         const DSIZ_GROUPCAST_NODEID = 0x02;
         const SRC_ADDR_PRESENT = 0x04;
@@ -34,6 +33,7 @@ bitflags! {
 }
 
 impl fmt::Display for MsgFlags {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut sep = false;
         for flag in [

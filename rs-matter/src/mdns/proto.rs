@@ -12,8 +12,6 @@ use domain::dep::octseq::Truncate;
 use domain::dep::octseq::{OctetsBuilder, ShortBuf};
 use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
 
-use log::trace;
-
 use crate::error::{Error, ErrorCode};
 use crate::utils::bitflags::bitflags;
 
@@ -90,6 +88,7 @@ where
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct AdditionalData: u8 {
         const IPS = 0x01;
         const SRV = 0x02;
@@ -1000,9 +999,9 @@ mod tests {
             let message = Message::from_octets(data).unwrap();
 
             let header = message.header();
-            assert_eq!(header.id(), expected_id);
-            assert_eq!(header.opcode(), Opcode::QUERY);
-            assert_eq!(header.rcode(), Rcode::NOERROR);
+            ::core::assert_eq!(header.id(), expected_id);
+            ::core::assert_eq!(header.opcode(), Opcode::QUERY);
+            ::core::assert_eq!(header.rcode(), Rcode::NOERROR);
 
             Answer::validate_section(&message.answer().unwrap(), expected_answers);
             Answer::validate_section(&message.additional().unwrap(), expected_additional);
@@ -1027,16 +1026,16 @@ mod tests {
                         &Name::<heapless::Vec<u8, 64>>::from_chars(expected.owner.chars()).unwrap()
                     ),
                     "OWNER {} (answer) != {} (expected)",
-                    answer.owner(),
+                    display2format!(answer.owner()),
                     expected.owner
                 );
 
                 match (answer.data(), &expected.details) {
                     (AllRecordData::A(a), AnswerDetails::A(ip)) => {
-                        assert_eq!(Ipv4Addr::from(a.addr().octets()), *ip);
+                        ::core::assert_eq!(Ipv4Addr::from(a.addr().octets()), *ip);
                     }
                     (AllRecordData::Aaaa(a), AnswerDetails::Aaaa(ip)) => {
-                        assert_eq!(Ipv6Addr::from(a.addr().octets()), *ip);
+                        ::core::assert_eq!(Ipv6Addr::from(a.addr().octets()), *ip);
                     }
                     (AllRecordData::Srv(s), AnswerDetails::Srv { port, target }) => {
                         assert_eq!(s.port(), *port);
@@ -1045,7 +1044,7 @@ mod tests {
                                 &Name::<heapless::Vec<u8, 64>>::from_chars(target.chars()).unwrap()
                             ),
                             "SRV {} (answer) != {} (expected)",
-                            s.target(),
+                            display2format!(s.target()),
                             target
                         );
                     }
@@ -1055,7 +1054,7 @@ mod tests {
                                 &Name::<heapless::Vec<u8, 64>>::from_chars(name.chars()).unwrap()
                             ),
                             "PTR {} (answer) != {} (expected)",
-                            p.ptrdname(),
+                            display2format!(p.ptrdname()),
                             name,
                         );
                     }
@@ -1087,10 +1086,10 @@ mod tests {
                         }
 
                         if let Some((k, v)) = kvs.next() {
-                            panic!("Missing TXT string {k}={v} for {}", expected.owner);
+                            panic!("Missing TXT string {}={} for {}", k, v, expected.owner);
                         }
                     }
-                    other => panic!("Unexpected record type: {:?}", other),
+                    other => panic!("Unexpected record type: {:?}", debug2format!(other)),
                 }
             }
 
@@ -1100,7 +1099,7 @@ mod tests {
                     .to_any_record::<AllRecordData<_, _>>()
                     .unwrap();
 
-                panic!("Unexpected answer {:?}", answer);
+                panic!("Unexpected answer {:?}", debug2format!(answer));
             }
 
             if let Some(expected) = expectations.next() {

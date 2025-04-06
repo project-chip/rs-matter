@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::info;
-
 use rs_matter_macros::idl_import;
 
 use strum::{EnumDiscriminants, FromRepr};

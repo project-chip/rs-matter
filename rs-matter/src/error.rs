@@ -202,7 +202,7 @@ impl<T> From<std::sync::PoisonError<T>> for Error {
 #[cfg(feature = "openssl")]
 impl From<openssl::error::ErrorStack> for Error {
     fn from(e: openssl::error::ErrorStack) -> Self {
-        ::log::error!("Error in TLS: {}", e);
+        error!("Error in TLS: {}", e);
         Self::new(ErrorCode::TLSStack)
     }
 }
@@ -210,7 +210,7 @@ impl From<openssl::error::ErrorStack> for Error {
 #[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
 impl From<mbedtls::Error> for Error {
     fn from(e: mbedtls::Error) -> Self {
-        ::log::error!("Error in TLS: {}", e);
+        error!("Error in TLS: {}", e);
         Self::new(ErrorCode::TLSStack)
     }
 }
@@ -227,7 +227,7 @@ impl From<bluer::Error> for Error {
     fn from(e: bluer::Error) -> Self {
         // Log the error given that we lose all context from the
         // original error here
-        ::log::error!("Error in BTP: {e}");
+        crate::error!("Error in BTP: {e}");
         Self::new(ErrorCode::BtpError)
     }
 }
@@ -259,7 +259,6 @@ impl From<Utf8Error> for Error {
 }
 
 impl fmt::Debug for Error {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(not(all(feature = "std", feature = "backtrace")))]
         {
@@ -294,6 +293,13 @@ impl fmt::Display for Error {
         {
             write!(f, "{:?}", self.code())
         }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Error {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.code())
     }
 }
 

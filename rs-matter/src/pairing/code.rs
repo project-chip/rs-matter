@@ -17,7 +17,9 @@
 
 use core::fmt::Write;
 
-use super::*;
+use verhoeff::Verhoeff;
+
+use crate::BasicCommData;
 
 pub fn compute_pairing_code(comm_data: &BasicCommData) -> heapless::String<32> {
     // 0: no Vendor ID and Product ID present in Manual Pairing Code

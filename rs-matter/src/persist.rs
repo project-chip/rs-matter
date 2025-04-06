@@ -25,8 +25,6 @@ pub mod fileio {
     use std::io::{Read, Write};
     use std::path::Path;
 
-    use log::info;
-
     use crate::error::{Error, ErrorCode};
     use crate::utils::init::{init, Init};
     use crate::Matter;

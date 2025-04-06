@@ -17,8 +17,6 @@
 
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
-use log::{error, trace};
-
 use crate::{
     alloc,
     cert::CertRef,

@@ -175,10 +175,9 @@ mod tests {
     use super::{FromTLV, OctetStr, TLVTag, ToTLV};
 
     fn test_from_tlv<'a, T: FromTLV<'a> + PartialEq + Debug>(data: &'a [u8], expected: T) {
-        // TODO: defmt
         let root = TLVElement::new(data);
         let test = T::from_tlv(&root).unwrap();
-        assert_eq!(test, expected);
+        ::core::assert_eq!(test, expected);
 
         let test_init = T::init_from_tlv(root);
 
@@ -186,7 +185,7 @@ mod tests {
 
         let test = test.try_init_with(test_init).unwrap();
 
-        assert_eq!(*test, expected);
+        ::core::assert_eq!(*test, expected);
     }
 
     fn test_to_tlv<T: ToTLV>(t: T, expected: &[u8]) {
@@ -211,7 +210,7 @@ mod tests {
             }
         }
 
-        assert_eq!(writebuf.as_slice(), expected);
+        ::core::assert_eq!(writebuf.as_slice(), expected);
     }
 
     #[derive(ToTLV)]

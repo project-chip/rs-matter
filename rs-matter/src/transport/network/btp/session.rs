@@ -20,8 +20,6 @@ use core::num::Wrapping;
 
 use embassy_time::{Duration, Instant};
 
-use log::{info, warn};
-
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::packet::{HandshakeReq, HandshakeResp};
 use crate::transport::network::btp::{GATT_HEADER_SIZE, MAX_MTU, MIN_MTU};
@@ -303,7 +301,7 @@ impl RecvWindow {
             || hdr.get_ack().is_some()
         // Handshake packets must not have an ACK
         {
-            warn!("RX handshake integrity failure: {hdr}");
+            warn!("RX handshake integrity failure: {}", hdr);
             return Err(ErrorCode::InvalidData.into());
         }
 
@@ -515,8 +513,8 @@ impl Session {
         let mtu = if gatt_mtu.map(|gatt_mtu| gatt_mtu != req.mtu).unwrap_or(true) {
             if let Some(gatt_mtu) = gatt_mtu {
                 warn!(
-                    "MTU mismatch: GATT MTU: {gatt_mtu}, BTP MTU: {}, will use MTU: {MIN_MTU}",
-                    req.mtu
+                    "MTU mismatch: GATT MTU: {}, BTP MTU: {}, will use MTU: {}",
+                    gatt_mtu, req.mtu, MIN_MTU
                 );
             }
 
@@ -539,7 +537,7 @@ impl Session {
             min(MAX_MESSAGE_SIZE as u16 / mtu / 2, 255) as u8,
         );
 
-        info!("\n>>RCV (BTP IO) {address} [{hdr}]\n      HANDSHAKE REQ {req:?}\nSelected version: {version}, MTU: {mtu}, window size: {window_size}");
+        info!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, req, version, mtu, window_size);
 
         Ok(Self::init(address, version, mtu, window_size))
     }
@@ -552,8 +550,9 @@ impl Session {
         let payload = iter.as_slice();
 
         info!(
-            "\n>>RCV (BTP IO) {} [{hdr}]\n      READ {}B",
+            "\n>>RCV (BTP IO) {} [{}]\n      READ {}B",
             self.address,
+            hdr,
             payload.len()
         );
 
@@ -578,8 +577,8 @@ impl Session {
         hdr.set_opcode(Some(0x6c));
 
         info!(
-            "\n<<SND (BTP IO) {} [{hdr}]\n      HANDSHAKE RESP {resp:?}",
-            self.address
+            "\n<<SND (BTP IO) {} [{}]\n      HANDSHAKE RESP {:?}",
+            self.address, hdr, resp
         );
 
         hdr.encode(&mut wb)?;
@@ -648,8 +647,9 @@ impl Session {
         wb.append(segment_data)?;
 
         info!(
-            "\n<<SND (BTP IO) {} [{hdr}]\n      WRITE {}B",
+            "\n<<SND (BTP IO) {} [{}]\n      WRITE {}B",
             self.address,
+            hdr,
             segment_data.len()
         );
 

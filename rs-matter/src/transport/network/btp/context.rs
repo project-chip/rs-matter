@@ -17,9 +17,8 @@
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use log::{error, info, trace, warn};
-
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::transport::network::BtAddr;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
@@ -250,27 +249,32 @@ where
         };
 
         if let Err(e) = result {
-            error!("Unexpected error in GATT callback: {e:?}");
+            error!("Unexpected error in GATT callback: {:?}", e);
         }
     }
 
     /// Handles a write event to characteristic `C1` from the GATT peripheral.
     fn on_write(&self, address: BtAddr, data: &[u8], gatt_mtu: Option<u16>) -> Result<(), Error> {
-        trace!("Received {data:02x?} bytes from {address}");
+        trace!("Received {} bytes from {}", Bytes(data), address);
 
         self.sessions.lock(|sessions| {
             let mut sessions = sessions.borrow_mut();
 
             if Session::is_handshake(data)? {
                 if sessions.len() >= MAX_BTP_SESSIONS {
-                    warn!("Too many BTP sessions, dropping a handshake request from address {address}");
+                    warn!(
+                        "Too many BTP sessions, dropping a handshake request from address {}",
+                        address
+                    );
                 } else {
                     // Unwrap is safe because we checked the length above
-                    sessions.push_init(
-                        Session::process_rx_handshake(address, data, gatt_mtu)?.into_fallible::<Error>(),
-                        || ErrorCode::NoSpace.into(),
-                    )
-                    .unwrap();
+                    sessions
+                        .push_init(
+                            Session::process_rx_handshake(address, data, gatt_mtu)?
+                                .into_fallible::<Error>(),
+                            || ErrorCode::NoSpace.into(),
+                        )
+                        .unwrap();
                 }
 
                 Ok(())
@@ -279,7 +283,10 @@ where
                     .iter_mut()
                     .position(|session| session.address() == address)
                 else {
-                    warn!("Dropping data from address {address} because there is no session for it");
+                    warn!(
+                        "Dropping data from address {} because there is no session for it",
+                        address
+                    );
                     return Ok(());
                 };
 
@@ -288,7 +295,10 @@ where
 
                 if result.is_err() {
                     sessions.swap_remove(index);
-                    error!("Dropping session {address} because of an error: {result:?}");
+                    error!(
+                        "Dropping session {} because of an error: {:?}",
+                        address, result
+                    );
                 }
 
                 self.available_notif.notify();
@@ -303,7 +313,7 @@ where
 
     /// Handles a subscribe event to characteristic `C2` from the GATT peripheral.
     fn on_subscribe(&self, address: BtAddr) -> Result<(), Error> {
-        info!("Subscribe request from {address}");
+        info!("Subscribe request from {}", address);
 
         self.sessions.lock(|sessions| {
             let mut sessions = sessions.borrow_mut();
@@ -312,13 +322,13 @@ where
                 .find(|session| session.address() == address)
             {
                 if !session.set_subscribed() {
-                    warn!("Got a second subscribe request for an address which is already subscribed: {address}");
+                    warn!("Got a second subscribe request for an address which is already subscribed: {}", address);
                     Err(ErrorCode::InvalidState)?;
                 }
 
                 self.handshake_notif.notify();
             } else {
-                warn!("No session for address {address}");
+                warn!("No session for address {}", address);
             }
 
             Ok(())
@@ -327,7 +337,7 @@ where
 
     /// Handles an unsubscribe event to characteristic `C2` from the GATT peripheral.
     fn on_unsubscribe(&self, address: BtAddr) -> Result<(), Error> {
-        info!("Unsubscribe request from {address}");
+        info!("Unsubscribe request from {}", address);
 
         self.remove(|session| session.address() == address)
     }

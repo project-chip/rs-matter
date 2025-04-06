@@ -168,6 +168,21 @@ impl Display for AccessorSubjects {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for AccessorSubjects {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "[");
+        for i in self.0 {
+            if is_noc_cat(i) {
+                defmt::write!(f, "CAT({} - {})", get_noc_cat_id(i), get_noc_cat_version(i));
+            } else if i != 0 {
+                defmt::write!(f, "{}, ", i);
+            }
+        }
+        defmt::write!(f, "]")
+    }
+}
+
 /// The Accessor Object
 pub struct Accessor<'a> {
     /// The fabric index of the accessor
@@ -460,12 +475,12 @@ pub(crate) mod tests {
 
     pub(crate) const FAB_1: NonZeroU8 = match NonZeroU8::new(1) {
         Some(f) => f,
-        None => unreachable!(),
+        None => ::core::unreachable!(),
     };
 
     pub(crate) const FAB_2: NonZeroU8 = match NonZeroU8::new(2) {
         Some(f) => f,
-        None => unreachable!(),
+        None => ::core::unreachable!(),
     };
 
     #[test]

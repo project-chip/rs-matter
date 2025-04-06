@@ -706,7 +706,6 @@ impl<'a> TLVElement<'a> {
 }
 
 impl fmt::Debug for TLVElement<'_> {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
@@ -715,6 +714,13 @@ impl fmt::Debug for TLVElement<'_> {
 impl fmt::Display for TLVElement<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for TLVElement<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::Display2Format(self).format(f)
     }
 }
 
@@ -1130,7 +1136,6 @@ impl<'a> TLVSequence<'a> {
 }
 
 impl fmt::Debug for TLVSequence<'_> {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
@@ -1139,6 +1144,13 @@ impl fmt::Debug for TLVSequence<'_> {
 impl fmt::Display for TLVSequence<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for TLVSequence<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::Display2Format(self).format(f)
     }
 }
 
@@ -1222,7 +1234,6 @@ impl<'a> Iterator for TLVSequenceIter<'a> {
 }
 
 impl fmt::Debug for TLVSequenceIter<'_> {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(0, f)
     }
@@ -1231,6 +1242,13 @@ impl fmt::Debug for TLVSequenceIter<'_> {
 impl fmt::Display for TLVSequenceIter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(0, f)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for TLVSequenceIter<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::Display2Format(self).format(f)
     }
 }
 

@@ -18,8 +18,6 @@
 use core::num::NonZeroU8;
 use core::time::Duration;
 
-use log::error;
-
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
@@ -38,6 +36,7 @@ use crate::utils::storage::Vec;
 bitflags! {
     #[repr(transparent)]
     #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct NocFlags: u8 {
         const ADD_CSR_REQ_RECVD = 0x01;
         const UPDATE_CSR_REQ_RECVD = 0x02;

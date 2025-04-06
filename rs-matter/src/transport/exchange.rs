@@ -21,8 +21,6 @@ use core::pin::pin;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant, Timer};
 
-use log::{debug, error, info, warn};
-
 use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
 use crate::interaction_model::{self, core::PROTO_ID_INTERACTION_MODEL};
@@ -234,7 +232,7 @@ impl ExchangeId {
         if let Some(session) = session_mgr.get(self.session_id()) {
             f(session, self.exchange_index())
         } else {
-            warn!("Exchange {self}: No session");
+            warn!("Exchange {}: No session", self);
             Err(ErrorCode::NoSession.into())
         }
     }
@@ -320,6 +318,28 @@ impl Display for ExchangeIdDisplay<'_> {
             // This should never happen, as that would mean we have invalid exchange index
             // but let's not crash when displaying that
             write!(f, "{}???", self.id)
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ExchangeIdDisplay<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let state = self.session.exchanges[self.id.exchange_index()].as_ref();
+
+        if let Some(state) = state {
+            defmt::write!(
+                f,
+                "{} [SID:{:x},RSID:{:x},EID:{:x}]",
+                self.id,
+                self.session.get_local_sess_id(),
+                self.session.get_peer_sess_id(),
+                state.exch_id
+            )
+        } else {
+            // This should never happen, as that would mean we have invalid exchange index
+            // but let's not crash when displaying that
+            defmt::write!(f, "{}???", self.id)
         }
     }
 }

@@ -22,7 +22,6 @@ use crate::utils::rand::Rand;
 
 use alloc::vec;
 use foreign_types::ForeignTypeRef;
-use log::error;
 use openssl::asn1::Asn1Type;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::cipher::CipherRef;
@@ -398,7 +397,6 @@ impl Sha256 {
 }
 
 impl Debug for Sha256 {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "Sha256")
     }

@@ -920,6 +920,7 @@ where
     }
 }
 
+#[cfg(feature = "defmt")]
 impl<T, const N: usize> defmt::Format for Vec<T, N>
 where
     T: defmt::Format,

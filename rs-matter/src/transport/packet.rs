@@ -17,10 +17,9 @@
 
 use core::fmt;
 
-use log::trace;
-
 use crate::crypto::AEAD_MIC_LEN_BYTES;
 use crate::error::Error;
+use crate::fmt::Bytes;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 
 use super::{
@@ -89,14 +88,14 @@ impl PacketHdr {
         self.plain.encode(&mut write_buf)?;
         let plain_hdr_bytes = write_buf.as_slice();
 
-        trace!("unencrypted packet: {:x?}", wb.as_slice());
+        trace!("Unencrypted packet: {}", Bytes(wb.as_slice()));
         let ctr = self.plain.ctr;
         if let Some(e) = enc_key {
             proto_hdr::encrypt_in_place(ctr, local_nodeid, plain_hdr_bytes, wb, e)?;
         }
 
         wb.prepend(plain_hdr_bytes)?;
-        trace!("Full encrypted packet: {:x?}", wb.as_slice());
+        trace!("Full encrypted packet: {}", Bytes(wb.as_slice()));
 
         Ok(())
     }

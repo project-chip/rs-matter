@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::info;
-
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;

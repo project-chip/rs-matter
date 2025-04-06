@@ -57,7 +57,6 @@ pub struct BorrowError {
 }
 
 impl Debug for BorrowError {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = f.debug_struct("BorrowError");
 
@@ -74,6 +73,13 @@ impl Display for BorrowError {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for BorrowError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        display2format!(self).format(f)
+    }
+}
+
 /// An error returned by [`RefCell::try_borrow_mut`].
 #[non_exhaustive]
 pub struct BorrowMutError {
@@ -82,7 +88,6 @@ pub struct BorrowMutError {
 }
 
 impl Debug for BorrowMutError {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = f.debug_struct("BorrowMutError");
 
@@ -96,6 +101,13 @@ impl Debug for BorrowMutError {
 impl Display for BorrowMutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt("already borrowed", f)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for BorrowMutError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        display2format!(self).format(f)
     }
 }
 
