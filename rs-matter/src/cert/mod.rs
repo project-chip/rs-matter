@@ -62,6 +62,7 @@ pub enum CertTag {
 }
 
 #[derive(FromPrimitive, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EcCurveIdValue {
     Prime256V1 = 1,
 }
@@ -71,6 +72,7 @@ pub fn get_ec_curve_id(algo: u8) -> Option<EcCurveIdValue> {
 }
 
 #[derive(FromPrimitive, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PubKeyAlgoValue {
     EcPubKey = 1,
 }
@@ -80,6 +82,7 @@ pub fn get_pubkey_algo(algo: u8) -> Option<PubKeyAlgoValue> {
 }
 
 #[derive(FromPrimitive, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SignAlgoValue {
     ECDSAWithSHA256 = 1,
 }
@@ -89,6 +92,7 @@ pub fn get_sign_algo(algo: u8) -> Option<SignAlgoValue> {
 }
 
 #[derive(Default, Debug, Clone, FromTLV, ToTLV, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct BasicConstraints {
     is_ca: bool,
@@ -110,6 +114,7 @@ impl BasicConstraints {
 }
 
 // #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 // #[repr(u8)]
 // enum ExtTag {
 //     BasicConstraints = 1,
@@ -121,6 +126,7 @@ impl BasicConstraints {
 // }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1, lifetime = "'a", datatype = "naked", unordered)]
 enum Extension<'a> {
     BasicConstraints(BasicConstraints),
@@ -319,6 +325,7 @@ impl<'a> Extension<'a> {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 enum DNTag {
     CommonName = 1,
@@ -346,6 +353,7 @@ enum DNTag {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum DNValue<'a> {
     Uint(u64),
     Utf8(&'a str),
@@ -353,6 +361,7 @@ enum DNValue<'a> {
 }
 
 #[derive(FromTLV, ToTLV, Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct DN<'a>(TLVElement<'a>);
 
@@ -547,6 +556,7 @@ enum IntToStringLen {
 }
 
 #[derive(FromTLV, ToTLV, Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct CertRef<'a>(TLVElement<'a>);
 

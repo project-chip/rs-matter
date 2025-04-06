@@ -706,6 +706,7 @@ impl<'a> TLVElement<'a> {
 }
 
 impl fmt::Debug for TLVElement<'_> {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
@@ -1129,6 +1130,7 @@ impl<'a> TLVSequence<'a> {
 }
 
 impl fmt::Debug for TLVSequence<'_> {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(0, f)
     }
@@ -1220,6 +1222,7 @@ impl<'a> Iterator for TLVSequenceIter<'a> {
 }
 
 impl fmt::Debug for TLVSequenceIter<'_> {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(0, f)
     }

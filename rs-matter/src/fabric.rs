@@ -37,6 +37,7 @@ use crate::utils::storage::{Vec, WriteBuf};
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
 #[derive(Debug, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a", start = 1)]
 pub struct FabricDescriptor<'a> {
     root_public_key: OctetStr<'a>,
@@ -51,6 +52,7 @@ pub struct FabricDescriptor<'a> {
 
 /// Fabric type
 #[derive(Debug, ToTLV, FromTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Fabric {
     /// Fabric local index
     fab_idx: NonZeroU8,

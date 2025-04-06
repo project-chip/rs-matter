@@ -43,6 +43,7 @@ pub const MAX_TX_LARGE_PACKET_SIZE: usize = MAX_RX_LARGE_PACKET_SIZE;
 
 /// A Bluetooth address.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BtAddr(pub [u8; 6]);
 
 impl Display for BtAddr {
@@ -123,6 +124,7 @@ impl Display for Address {
 }
 
 impl Debug for Address {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Address::Udp(addr) => writeln!(f, "{}", addr),

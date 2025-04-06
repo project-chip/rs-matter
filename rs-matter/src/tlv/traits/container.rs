@@ -39,14 +39,17 @@ pub type AnyContainer = ();
 
 /// A type-state that indicates that the container should be an array.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ArrayContainer;
 
 /// A type-state that indicates that the container should be a list.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ListContainer;
 
 /// A type-state that indicates that the container should be a struct.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StructContainer;
 
 /// A type alias for an array TLV container.
@@ -173,6 +176,7 @@ where
 }
 
 impl<'a, T, C> fmt::Debug for TLVContainer<'a, T, C>
+// TODO: defmt
 where
     T: FromTLV<'a> + fmt::Debug,
 {
@@ -263,6 +267,7 @@ where
 /// Necessary for the few cases in the code where deserialized TLV structures are mutated -
 /// post deserialization - with custom array data.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TLVArrayOrSlice<'a, T>
 where
     T: FromTLV<'a>,
@@ -437,7 +442,7 @@ where
 //     }
 // }
 
-// impl<'a, T: Debug + ToTLV + FromTLV<'a> + Clone> Debug for TLVArray<'a, T> {
+// impl<'a, T: Debug + ToTLV + FromTLV<'a> + Clone> Debug for TLVArray<'a, T> { // TODO: defmt
 //     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 //         write!(f, "TLVArray [")?;
 //         let mut first = true;

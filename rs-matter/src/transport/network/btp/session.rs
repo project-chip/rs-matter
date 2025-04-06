@@ -43,6 +43,7 @@ pub(crate) const BTP_CONN_IDLE_TIMEOUT_SECS: u16 = 30;
 
 /// Represents the three possible states of each BTP session
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum SessionState {
     /// The session was just created as a result of a remote peer writing a BTP Handshake Request SDU
     /// to characteristic `C1`.
@@ -56,6 +57,7 @@ enum SessionState {
 
 /// Represents the sending window of a BTP session, as per the Matter Core spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct SendWindow {
     /// The negotiated window size
     window_size: u8,
@@ -155,6 +157,7 @@ const MAX_MESSAGE_SIZE: usize = MAX_RX_PACKET_SIZE * 2;
 
 /// Represents the receiving window of a BTP session, as per the Matter Core spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RecvWindow {
     /// A ring-buffer holding all received BTP segment' payloads, including not been fully processed yet
     buf: RingBuf<MAX_MESSAGE_SIZE>,
@@ -364,6 +367,7 @@ impl RecvWindow {
 
 /// Represents a BTP Session, as per the MAtter Core spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Session {
     address: BtAddr,
     state: SessionState,

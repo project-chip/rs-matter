@@ -329,6 +329,7 @@ pub fn print_qr_code(qr_code_text: &str, buf: &mut [u8]) -> Result<(), Error> {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TextImage {
     Ascii,
     Ansi,

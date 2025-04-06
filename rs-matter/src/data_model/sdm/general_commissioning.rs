@@ -56,6 +56,7 @@ pub enum RespCommands {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct CommonResponse<'a> {
     error_code: u8,
@@ -81,12 +82,14 @@ impl CommissioningErrorEnum {
 }
 
 #[derive(Debug, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct FailSafeParams {
     expiry_len: u16,
     bread_crumb: u64,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicCommissioningInfo {
     pub expiry_len: u16,
     pub max_cmltv_failsafe_secs: u16,
@@ -109,6 +112,7 @@ impl Default for BasicCommissioningInfo {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct RegulatoryConfig<'a> {
     #[tagval(1)]

@@ -18,6 +18,7 @@
 const MSG_RX_STATE_BITMAP_LEN: u32 = 16;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RxCtrState {
     max_ctr: u32,
     ctr_bitmap: u16,

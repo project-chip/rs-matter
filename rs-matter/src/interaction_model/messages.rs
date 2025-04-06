@@ -24,6 +24,7 @@ use crate::{
 // A generic path with endpoint, clusters, and a leaf
 // The leaf could be command, attribute, event
 #[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(datatype = "list")]
 pub struct GenericPath {
     pub endpoint: Option<EndptId>,
@@ -84,6 +85,7 @@ pub mod msg {
     };
 
     #[derive(Debug, Default, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct SubscribeReq<'a> {
         pub keep_subs: bool,
@@ -141,6 +143,7 @@ pub mod msg {
     }
 
     impl fmt::Debug for SubscribeReqRef<'_> {
+        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("SubscribeReqRef")
                 .field("keep_subs", &self.keep_subs())
@@ -156,6 +159,7 @@ pub mod msg {
     }
 
     #[derive(Debug, Default, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct SubscribeResp {
         pub subs_id: u32,
         // The Context Tags are discontiguous for some reason
@@ -174,11 +178,13 @@ pub mod msg {
     }
 
     #[derive(Debug, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct TimedReq {
         pub timeout: u16,
     }
 
     #[derive(Debug, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct StatusResp {
         pub status: IMStatusCode,
     }
@@ -190,6 +196,7 @@ pub mod msg {
     }
 
     #[derive(Debug, Default, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct InvReq<'a> {
         pub suppress_response: Option<bool>,
@@ -230,6 +237,7 @@ pub mod msg {
     }
 
     impl fmt::Debug for InvReqRef<'_> {
+        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("InvReqRef")
                 .field("suppress_response", &self.suppress_response())
@@ -240,6 +248,7 @@ pub mod msg {
     }
 
     #[derive(FromTLV, ToTLV, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct InvResp<'a> {
         pub suppress_response: Option<bool>,
@@ -249,6 +258,7 @@ pub mod msg {
     // This enum is helpful when we are constructing the response
     // step by step in incremental manner
     #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[repr(u8)]
     pub enum InvRespTag {
         SupressResponse = 0,
@@ -256,6 +266,7 @@ pub mod msg {
     }
 
     #[derive(Debug, Default, Clone, ToTLV, FromTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct ReadReq<'a> {
         pub attr_requests: Option<TLVArray<'a, AttrPath>>,
@@ -296,6 +307,7 @@ pub mod msg {
     }
 
     impl fmt::Debug for ReadReqRef<'_> {
+        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("ReadReqRef")
                 .field("attr_requests", &self.attr_requests())
@@ -310,6 +322,7 @@ pub mod msg {
     // This enum is helpful when we are constructing the request
     // step by step in incremental manner
     #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[repr(u8)]
     pub enum ReadReqTag {
         AttrRequests = 0,
@@ -320,6 +333,7 @@ pub mod msg {
     }
 
     #[derive(Debug, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct WriteReq<'a> {
         pub supress_response: Option<bool>,
@@ -331,6 +345,7 @@ pub mod msg {
     // This enum is helpful when we are constructing the request
     // step by step in incremental manner
     #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[repr(u8)]
     pub enum WriteReqTag {
         SuppressResponse = 0,
@@ -381,6 +396,7 @@ pub mod msg {
     }
 
     impl fmt::Debug for WriteReqRef<'_> {
+        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("WriteReqRef")
                 .field("supress_response", &self.supress_response())
@@ -393,6 +409,7 @@ pub mod msg {
 
     // Report Data
     #[derive(FromTLV, ToTLV, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct ReportDataMsg<'a> {
         pub subscription_id: Option<u32>,
@@ -413,6 +430,7 @@ pub mod msg {
 
     // Write Response
     #[derive(ToTLV, FromTLV, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct WriteResp<'a> {
         pub write_responses: TLVArray<'a, AttrStatus>,
@@ -438,6 +456,7 @@ pub mod ib {
 
     // Command Response
     #[derive(Clone, FromTLV, ToTLV, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub enum CmdResp<'a> {
         Cmd(CmdData<'a>),
@@ -471,6 +490,7 @@ pub mod ib {
     }
 
     #[derive(FromTLV, ToTLV, Clone, PartialEq, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct CmdStatus {
         path: CmdPath,
         status: Status,
@@ -489,6 +509,7 @@ pub mod ib {
     }
 
     #[derive(Debug, Clone, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct CmdData<'a> {
         pub path: CmdPath,
@@ -508,6 +529,7 @@ pub mod ib {
 
     // Status
     #[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Status {
         pub status: IMStatusCode,
         pub cluster_status: u16,
@@ -524,6 +546,7 @@ pub mod ib {
 
     // Attribute Response
     #[derive(Clone, FromTLV, ToTLV, PartialEq, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub enum AttrResp<'a> {
         Status(AttrStatus),
@@ -560,6 +583,7 @@ pub mod ib {
 
     // Attribute Data
     #[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     pub struct AttrData<'a> {
         pub data_ver: Option<u32>,
@@ -584,6 +608,7 @@ pub mod ib {
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     /// Operations on an Interaction Model List
     pub enum ListOperation {
         /// Add (append) an item to the list
@@ -627,6 +652,7 @@ pub mod ib {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AttrStatus {
         path: AttrPath,
         status: Status,
@@ -643,6 +669,7 @@ pub mod ib {
 
     // Attribute Path
     #[derive(Default, Clone, Debug, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(datatype = "list")]
     pub struct AttrPath {
         pub tag_compression: Option<bool>,
@@ -676,6 +703,7 @@ pub mod ib {
 
     // Command Path
     #[derive(Default, Debug, Clone, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct CmdPath {
         pub path: GenericPath,
     }
@@ -736,6 +764,7 @@ pub mod ib {
     }
 
     #[derive(FromTLV, ToTLV, Clone, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ClusterPath {
         pub node: Option<u64>,
         pub endpoint: EndptId,
@@ -743,12 +772,14 @@ pub mod ib {
     }
 
     #[derive(FromTLV, ToTLV, Clone, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct DataVersionFilter {
         pub path: ClusterPath,
         pub data_ver: u32,
     }
 
     #[derive(FromTLV, ToTLV, Clone, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(datatype = "list")]
     pub struct EventPath {
         pub node: Option<u64>,
@@ -759,6 +790,7 @@ pub mod ib {
     }
 
     #[derive(FromTLV, ToTLV, Clone, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct EventFilter {
         pub node: Option<u64>,
         pub event_min: Option<u64>,

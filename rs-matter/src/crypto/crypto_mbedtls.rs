@@ -222,6 +222,7 @@ impl KeyPair {
 }
 
 impl core::fmt::Debug for KeyPair {
+    // TODO: defmt
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("KeyPair").finish()
     }
@@ -376,6 +377,7 @@ impl Sha256 {
 }
 
 impl Debug for Sha256 {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "Sha256")
     }

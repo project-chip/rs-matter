@@ -58,6 +58,7 @@ const THREAD_NW_CLUSTERS: [Cluster<'static>; 10] = [
 /// The type of operational network (Ethernet, Wifi or Thread)
 /// for which root endpoint meta-data is being requested
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OperNwType {
     Ethernet,
     Wifi,

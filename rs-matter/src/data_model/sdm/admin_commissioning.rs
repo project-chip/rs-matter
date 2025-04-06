@@ -30,6 +30,7 @@ use crate::{command_enum, error::*};
 pub const ID: u32 = 0x003C;
 
 #[derive(FromPrimitive, Debug, Copy, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum WindowStatus {
     WindowNotOpen = 0,
     EnhancedWindowOpen = 1,
@@ -37,6 +38,7 @@ pub enum WindowStatus {
 }
 
 #[derive(Clone, Debug, FromRepr, EnumDiscriminants)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum Attributes {
     WindowStatus(AttrType<u8>) = 0,
@@ -101,6 +103,7 @@ pub struct OpenBasicCommWindowReq {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AdminCommCluster {
     data_ver: Dataver,
 }

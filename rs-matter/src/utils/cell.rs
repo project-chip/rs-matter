@@ -57,6 +57,7 @@ pub struct BorrowError {
 }
 
 impl Debug for BorrowError {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = f.debug_struct("BorrowError");
 
@@ -81,6 +82,7 @@ pub struct BorrowMutError {
 }
 
 impl Debug for BorrowMutError {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = f.debug_struct("BorrowMutError");
 

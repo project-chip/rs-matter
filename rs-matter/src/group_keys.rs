@@ -25,6 +25,7 @@ use crate::{
 type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
 
 #[derive(Debug, Default, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct KeySet {
     pub epoch_key: KeySetKey,
     pub op_key: KeySetKey,

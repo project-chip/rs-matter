@@ -65,6 +65,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EthNwDiagCluster {
     data_ver: Dataver,
 }

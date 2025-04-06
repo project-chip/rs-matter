@@ -37,6 +37,7 @@ pub const MAX_BTP_SESSIONS: usize = 2;
 
 /// Represents an error that occurred while trying to lock a session for sending.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum LockError {
     /// Session for the specified condition was not found.
     NoMatch,

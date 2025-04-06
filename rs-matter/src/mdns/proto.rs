@@ -1,8 +1,6 @@
 use core::fmt::Write;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
-use bitflags::bitflags;
-
 use domain::base::header::Flags;
 use domain::base::iana::{Class, Opcode, Rcode};
 use domain::base::message::ShortMessage;
@@ -17,6 +15,7 @@ use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
 use log::trace;
 
 use crate::error::{Error, ErrorCode};
+use crate::utils::bitflags::bitflags;
 
 use super::Service;
 
@@ -90,7 +89,7 @@ where
 // What additional data to be set in the mDNS reply
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
     pub struct AdditionalData: u8 {
         const IPS = 0x01;
         const SRV = 0x02;
@@ -938,8 +937,10 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct Question<'a> {
         name: &'a str,
+        #[cfg_attr(feature = "defmt", defmt(Display2Format))]
         qtype: Rtype,
     }
 
@@ -973,15 +974,17 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     enum AnswerDetails<'a> {
-        A(Ipv4Addr),
-        Aaaa(Ipv6Addr),
+        A(#[cfg_attr(feature = "defmt", defmt(Display2Format))] Ipv4Addr),
+        Aaaa(#[cfg_attr(feature = "defmt", defmt(Display2Format))] Ipv6Addr),
         Srv { port: u16, target: &'a str },
         Ptr(&'a str),
         Txt(&'a [(&'a str, &'a str)]),
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct Answer<'a> {
         owner: &'a str,
         details: AnswerDetails<'a>,

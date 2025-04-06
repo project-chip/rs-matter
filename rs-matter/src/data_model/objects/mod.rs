@@ -49,6 +49,7 @@ pub type AttrId = u16;
 pub type CmdId = u32;
 
 #[derive(Debug, ToTLV, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DeviceType {
     pub dtype: u16,
     pub drev: u16,

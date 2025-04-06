@@ -38,8 +38,10 @@ use super::init;
 /// one of the provided init constructors, and then use one of the `as_ref`, `as_mut`,
 /// `as_deref` and `as_deref_mut` methods to access the wrapped value.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Maybe<T, G = ()> {
     some: bool,
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     value: MaybeUninit<T>,
     _tag: PhantomData<G>,
 }

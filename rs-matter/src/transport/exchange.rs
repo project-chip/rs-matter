@@ -50,6 +50,7 @@ pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
 
 /// An exchange identifier, uniquely identifying a session and an exchange within that session for a given Matter stack.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExchangeId(u32);
 
 impl ExchangeId {
@@ -324,6 +325,7 @@ impl Display for ExchangeIdDisplay<'_> {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum InitiatorState {
     #[default]
     Owned,
@@ -331,6 +333,7 @@ pub(crate) enum InitiatorState {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum ResponderState {
     #[default]
     AcceptPending,
@@ -339,6 +342,7 @@ pub(crate) enum ResponderState {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum Role {
     Initiator(InitiatorState),
     Responder(ResponderState),
@@ -361,6 +365,7 @@ impl Role {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct ExchangeState {
     pub(crate) exch_id: u16,
     pub(crate) role: Role,
@@ -418,6 +423,7 @@ impl ExchangeState {
 /// Meta-data when sending/receving messages via an Exchange.
 /// Basically, the protocol ID, the protocol opcode and whether the message should be set in a reliable manner.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MessageMeta {
     pub proto_id: u16,
     pub proto_opcode: u8,
@@ -659,6 +665,7 @@ impl TxMessage<'_> {
 
 /// Outcome from calling `Exchange::wait_tx`
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TxOutcome {
     /// The other side has acknowledged the last message or the last message was not using the MRP protocol
     /// Stop re-sending.

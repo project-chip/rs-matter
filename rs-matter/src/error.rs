@@ -26,6 +26,7 @@ use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 // the returned error type of all APIs that take callbacks that return errors
 // (i.e., `Exchange::with_*`, `WriteBuf::append_with_buf` etc.)
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ErrorCode {
     AttributeNotFound,
     AttributeIsCustom,
@@ -258,6 +259,7 @@ impl From<Utf8Error> for Error {
 }
 
 impl fmt::Debug for Error {
+    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(not(all(feature = "std", feature = "backtrace")))]
         {

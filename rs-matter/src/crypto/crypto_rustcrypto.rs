@@ -53,7 +53,9 @@ type AesCcm = Ccm<Aes128, U16, U13>;
 extern crate alloc;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Sha256 {
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     hasher: sha2::Sha256,
 }
 
@@ -103,13 +105,16 @@ impl HmacSha256 {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum KeyType {
-    Private(SecretKey),
-    Public(PublicKey),
+    Private(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] SecretKey),
+    Public(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] PublicKey),
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct KeyPair {
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     key: KeyType,
 }
 
@@ -339,6 +344,7 @@ pub fn decrypt_in_place(
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct SliceBuffer<'a> {
     slice: &'a mut [u8],
     len: usize,

@@ -19,6 +19,7 @@ use crate::error::*;
 use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WriteBuf<'a> {
     pub(crate) buf: &'a mut [u8],
     buf_size: usize,

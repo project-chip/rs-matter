@@ -38,6 +38,7 @@ macro_rules! cmd_enter {
 }
 
 #[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum IMStatusCode {
     Success = 0,
     Failure = 1,
@@ -110,6 +111,7 @@ impl ToTLV for IMStatusCode {
 }
 
 #[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpCode {
     Reserved = 0,
     StatusResponse = 1,
@@ -150,6 +152,7 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 /// A wrapper enum for `ReadReq` and `SubscribeReq` that allows downstream code to
 /// treat the two in a unified manner with regards to `OpCode::ReportDataResp` type responses.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportDataReq<'a> {
     Read(&'a ReadReqRef<'a>),
     Subscribe(&'a SubscribeReqRef<'a>),

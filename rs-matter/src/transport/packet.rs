@@ -29,6 +29,7 @@ use super::{
 };
 
 #[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PacketHdr {
     pub plain: PlainHdr,
     pub proto: ProtoHdr,

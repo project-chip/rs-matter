@@ -21,6 +21,7 @@ use crate::utils::init::{init, Init};
 
 /// A ring buffer of a fixed capacity `N` using owned storage.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RingBuf<const N: usize> {
     buf: crate::utils::storage::Vec<u8, N>,
     start: usize,

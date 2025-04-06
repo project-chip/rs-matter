@@ -39,6 +39,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CaseSession {
     peer_sessid: u16,
     local_sessid: u16,

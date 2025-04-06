@@ -17,11 +17,10 @@
 
 use core::fmt;
 
-use bitflags::bitflags;
-
 use log::trace;
 
 use crate::error::{Error, ErrorCode};
+use crate::utils::bitflags::bitflags;
 use crate::utils::storage::WriteBuf;
 
 bitflags! {
@@ -29,8 +28,8 @@ bitflags! {
     ///
     /// Consult the Matter Core Specification for more information.
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct BtpFlags: u8 {
+    #[derive(Default)]
+    pub struct BtpFlags: u8 { // TODO: defmt
         const HANDSHAKE = 0x40;
         const MANAGEMENT = 0x20;
         const ACK = 0x08;
@@ -79,6 +78,7 @@ impl fmt::Display for BtpFlags {
 
 /// Models the BTP header.
 #[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BtpHdr {
     flags: BtpFlags,
     opcode: u8,
@@ -352,6 +352,7 @@ impl fmt::Display for BtpHdr {
 
 /// Models the BTP handshake request.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandshakeReq {
     /// The versions supported by the BTP handshake request.
     versions: u32,
@@ -425,6 +426,7 @@ impl HandshakeReq {
 
 /// Models the BTP handshake response.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandshakeResp {
     /// The version of the BTP protocol supported by the responder.
     pub version: u8,

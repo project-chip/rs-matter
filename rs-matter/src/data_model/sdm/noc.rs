@@ -94,6 +94,7 @@ pub enum Attributes {
 attribute_enum!(Attributes);
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct NocResp<'a> {
     status_code: u8,
@@ -102,6 +103,7 @@ struct NocResp<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct AddNocReq<'a> {
     noc_value: OctetStr<'a>,
@@ -112,6 +114,7 @@ struct AddNocReq<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct CsrReq<'a> {
     nonce: OctetStr<'a>,
@@ -119,23 +122,27 @@ struct CsrReq<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct CommonReq<'a> {
     str: OctetStr<'a>,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct UpdateFabricLabelReq<'a> {
     label: UtfStr<'a>,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct CertChainReq {
     cert_type: u8,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RemoveFabricReq {
     fab_idx: NonZeroU8,
 }
@@ -193,6 +200,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NocCluster {
     data_ver: Dataver,
 }

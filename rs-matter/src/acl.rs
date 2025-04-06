@@ -43,6 +43,7 @@ pub const ENTRIES_PER_FABRIC: usize = 3;
 
 // TODO: Check if this and the SessionMode can be combined into some generic data structure
 #[derive(FromPrimitive, Copy, Clone, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AuthMode {
     Pase = 1,
     Case = 2,
@@ -231,6 +232,7 @@ impl<'a> Accessor<'a> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AccessDesc {
     /// The object to be acted upon
     path: GenericPath,
@@ -290,6 +292,7 @@ impl<'a> AccessReq<'a> {
 }
 
 #[derive(FromTLV, ToTLV, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Target {
     cluster: Option<ClusterId>,
     endpoint: Option<EndptId>,
@@ -311,6 +314,7 @@ impl Target {
 }
 
 #[derive(ToTLV, FromTLV, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 pub struct AclEntry {
     privilege: Privilege,

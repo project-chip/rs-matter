@@ -25,6 +25,7 @@ use crate::{
 use core::fmt::Write;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ASN1Writer<'a> {
     buf: &'a mut [u8],
     // The current write offset in the buffer

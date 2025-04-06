@@ -32,6 +32,7 @@ use super::{AttrDetails, Cluster, ClusterId, CmdDetails, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Node<'a> {
     /// The ID of the node.
     pub id: u16,
@@ -193,6 +194,7 @@ impl<const N: usize> core::fmt::Display for DynamicNode<'_, N> {
 /// as well as with information which attributes should only be served if their
 /// dataver had changed.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct AttrReadPath<'a> {
     path: AttrPath,
     dataver_filters: Option<TLVArray<'a, DataVersionFilter>>,
@@ -202,6 +204,7 @@ struct AttrReadPath<'a> {
 /// A helper type for `PathExpander` that captures what type of expansion is being done:
 /// Read requests, write requests, or invoke requests.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Operation {
     Read,
     Write,

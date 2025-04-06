@@ -17,15 +17,16 @@
 
 use core::fmt;
 
-use crate::error::*;
-use crate::utils::storage::{ParseBuf, WriteBuf};
-use bitflags::bitflags;
 use log::trace;
+
+use crate::error::*;
+use crate::utils::bitflags::bitflags;
+use crate::utils::storage::{ParseBuf, WriteBuf};
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct MsgFlags: u8 {
+    #[derive(Default)]
+    pub struct MsgFlags: u8 { // TODO: defmt
         const DSIZ_UNICAST_NODEID = 0x01;
         const DSIZ_GROUPCAST_NODEID = 0x02;
         const SRC_ADDR_PRESENT = 0x04;
@@ -63,6 +64,7 @@ impl fmt::Display for MsgFlags {
 
 // This is the unencrypted message
 #[derive(Debug, Default, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PlainHdr {
     flags: MsgFlags,
     pub sess_id: u16,

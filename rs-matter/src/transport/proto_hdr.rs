@@ -15,21 +15,21 @@
  *    limitations under the License.
  */
 
-use bitflags::bitflags;
 use core::fmt;
 
+use log::{trace, warn};
+
 use crate::transport::plain_hdr;
+use crate::utils::bitflags::bitflags;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::{crypto, error::*};
-
-use log::{trace, warn};
 
 use super::network::Address;
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct ExchFlags: u8 {
+    #[derive(Default)]
+    pub struct ExchFlags: u8 { // TODO: defmt
         const VENDOR = 0x10;
         const SECEX = 0x08;
         const RELIABLE = 0x04;
@@ -72,6 +72,7 @@ impl fmt::Display for ExchFlags {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProtoHdr {
     pub exch_id: u16,
     exch_flags: ExchFlags,

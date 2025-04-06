@@ -44,6 +44,7 @@ const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
 const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Spake2VerifierState {
     // Initialised - w0, L are set
     Init,
@@ -54,6 +55,7 @@ pub enum Spake2VerifierState {
 }
 
 #[derive(PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Spake2Mode {
     Unknown,
     Prover,
@@ -239,6 +241,7 @@ impl Default for Spake2P {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct VerifierData {
     /// When `password` is `None`, `verifier` is expected to be set
     pub password: Option<u32>,

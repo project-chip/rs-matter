@@ -45,6 +45,7 @@ pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 const MATTER_AES128_KEY_SIZE: usize = 16;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SessionMode {
     // The Case session will capture the local fabric index
     // and the local fabric index

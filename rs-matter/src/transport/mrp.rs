@@ -32,6 +32,7 @@ const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10); // 1.1
 const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RetransEntry {
     /// The retransmission delay interval in milliseconds
     base_delay_interval_ms: u16,
@@ -96,6 +97,7 @@ impl RetransEntry {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AckEntry {
     // The msg counter that we should acknowledge
     pub(crate) msg_ctr: u32,
@@ -117,6 +119,7 @@ impl AckEntry {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReliableMessage {
     pub(crate) retrans: Option<RetransEntry>,
     pub(crate) ack: Option<AckEntry>,

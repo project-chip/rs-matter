@@ -920,6 +920,15 @@ where
     }
 }
 
+impl<T, const N: usize> defmt::Format for Vec<T, N>
+where
+    T: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        <[T] as defmt::Format>::format(self, f)
+    }
+}
+
 impl<const N: usize> fmt::Write for Vec<u8, N> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         match self.extend_from_slice(s.as_bytes()) {
