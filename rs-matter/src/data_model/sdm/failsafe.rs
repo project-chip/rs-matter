@@ -206,7 +206,7 @@ impl FailSafe {
 
         self.add_flags(NocFlags::ADD_CSR_REQ_RECVD);
 
-        Ok(self.key_pair.as_ref().unwrap())
+        Ok(unwrap!(self.key_pair.as_ref()))
     }
 
     pub fn update_csr_req(&mut self, session_mode: &SessionMode) -> Result<&KeyPair, Error> {
@@ -226,7 +226,7 @@ impl FailSafe {
 
         self.add_flags(NocFlags::UPDATE_CSR_REQ_RECVD);
 
-        Ok(self.key_pair.as_ref().unwrap())
+        Ok(unwrap!(self.key_pair.as_ref()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -262,7 +262,7 @@ impl FailSafe {
 
         fabric_mgr.borrow_mut().update(
             fab_idx,
-            self.key_pair.take().unwrap(),
+            unwrap!(self.key_pair.take()),
             &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
@@ -309,7 +309,7 @@ impl FailSafe {
         let fab_idx = fabric_mgr
             .borrow_mut()
             .add(
-                self.key_pair.take().unwrap(),
+                unwrap!(self.key_pair.take()),
                 &self.root_ca,
                 noc,
                 icac.unwrap_or(&[]),

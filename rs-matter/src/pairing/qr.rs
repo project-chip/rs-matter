@@ -561,10 +561,7 @@ mod tests {
         let qr_code_data =
             QrSetupPayload::<NoOptionalData>::new(&dev_det, &comm_data, disc_cap, no_optional_data);
         let mut buf = [0; 1024];
-        let data_str = qr_code_data
-            .try_as_str(&mut buf)
-            .expect("Failed to encode")
-            .0;
+        let data_str = unwrap!(qr_code_data.try_as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
     }
 
@@ -587,10 +584,7 @@ mod tests {
         let qr_code_data =
             QrSetupPayload::<NoOptionalData>::new(&dev_det, &comm_data, disc_cap, no_optional_data);
         let mut buf = [0; 1024];
-        let data_str = qr_code_data
-            .try_as_str(&mut buf)
-            .expect("Failed to encode")
-            .0;
+        let data_str = unwrap!(qr_code_data.try_as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
     }
 
@@ -635,10 +629,7 @@ mod tests {
         let qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap, optional_data);
 
         let mut buf = [0; 1024];
-        let data_str = qr_code_data
-            .try_as_str(&mut buf)
-            .expect("Failed to encode")
-            .0;
+        let data_str = unwrap!(qr_code_data.try_as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
     }
 }

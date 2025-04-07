@@ -232,7 +232,7 @@ impl RecvWindow {
         self.buf.push(payload);
         self.level -= 1;
         // Unwrap is safe because we are only processing BTP data segments here and they always have a sequence number
-        self.ack_seq = hdr.get_seq().unwrap();
+        self.ack_seq = unwrap!(hdr.get_seq());
         self.ack_level += 1;
         self.received_at = Instant::now();
 

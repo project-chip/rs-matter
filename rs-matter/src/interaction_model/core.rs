@@ -192,9 +192,7 @@ impl StatusResp {
 
 impl TimedReq {
     pub fn timeout_instant(&self, epoch: Epoch) -> Duration {
-        epoch()
-            .checked_add(Duration::from_millis(self.timeout as _))
-            .unwrap()
+        unwrap!(epoch().checked_add(Duration::from_millis(self.timeout as _)))
     }
 }
 

@@ -58,7 +58,7 @@ impl PaseSession {
         let num = u64::from_be_bytes(buf);
 
         self.mdns_service_name.clear();
-        write!(&mut self.mdns_service_name, "{:016X}", num).unwrap();
+        write_unwrap!(&mut self.mdns_service_name, "{:016X}", num);
 
         mdns.add(
             &self.mdns_service_name,
@@ -117,7 +117,7 @@ impl PaseMgr {
             )));
 
         // Can't fail as we just initialized the session
-        let session = self.session.as_mut().unwrap();
+        let session = unwrap!(self.session.as_mut());
 
         session.add_mdns(discriminator, self.rand, mdns)
     }
@@ -139,7 +139,7 @@ impl PaseMgr {
             .try_reinit(Maybe::init_some(PaseSession::init(verifier, salt, count)))?;
 
         // Can't fail as we just initialized the session
-        let session = self.session.as_mut().unwrap();
+        let session = unwrap!(self.session.as_mut());
 
         session.add_mdns(discriminator, self.rand, mdns)
     }

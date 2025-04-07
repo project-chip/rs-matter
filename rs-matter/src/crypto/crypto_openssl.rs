@@ -72,8 +72,8 @@ impl HmacSha256 {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum KeyType {
-    Public(EcKey<pkey::Public>),
-    Private(EcKey<pkey::Private>),
+    Public(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] EcKey<pkey::Public>),
+    Private(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] EcKey<pkey::Private>),
 }
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -399,5 +399,12 @@ impl Sha256 {
 impl Debug for Sha256 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "Sha256")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Sha256 {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "Sha256")
     }
 }

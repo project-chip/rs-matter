@@ -315,7 +315,7 @@ where
         let mut buf = self.send_buf.lock().await;
 
         // Unwrap is safe because the max size of the buffer is MAX_PDU_SIZE
-        buf.resize_default(MAX_BTP_SEGMENT_SIZE).unwrap();
+        unwrap!(buf.resize_default(MAX_BTP_SEGMENT_SIZE));
 
         buf
     }

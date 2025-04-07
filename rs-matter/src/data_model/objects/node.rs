@@ -412,7 +412,7 @@ where
     ///
     /// This method should only be called when `self.item` is `Some` or else it will panic.
     fn next_for_path(&mut self) -> Result<Option<(EndptId, ClusterId, u32)>, IMStatusCode> {
-        let path = self.item.as_ref().map(PathExpansionItem::path).unwrap();
+        let path = unwrap!(self.item.as_ref().map(PathExpansionItem::path));
 
         let command = matches!(T::OPERATION, Operation::Invoke);
 
@@ -556,7 +556,7 @@ where
                 Ok(Some((endpoint_id, cluster_id, leaf_id))) => {
                     // Next expansion of the path
 
-                    let expanded = self.item.as_ref().unwrap().expand(
+                    let expanded = unwrap!(self.item.as_ref()).expand(
                         self.node,
                         self.accessor,
                         endpoint_id,
@@ -564,7 +564,7 @@ where
                         leaf_id,
                     );
 
-                    if !self.item.as_ref().unwrap().path().is_wildcard() {
+                    if !unwrap!(self.item.as_ref()).path().is_wildcard() {
                         // Non-wildcard path, remove the current item
                         self.item = None;
                     }
@@ -577,7 +577,7 @@ where
                 }
                 Err(status) => {
                     // Report an error status and remove the current item
-                    break Some(Ok(Err(self.item.take().unwrap().into_status(status))));
+                    break Some(Ok(Err(unwrap!(self.item.take()).into_status(status))));
                 }
             }
         }

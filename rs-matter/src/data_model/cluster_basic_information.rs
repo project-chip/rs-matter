@@ -198,11 +198,10 @@ impl BasicInfoCluster {
 
         match attr.attr_id.try_into()? {
             Attributes::NodeLabel(codec) => {
-                *self.node_label.borrow_mut() = codec
+                *self.node_label.borrow_mut() = unwrap!(codec
                     .decode(data)
                     .map_err(|_| Error::new(ErrorCode::InvalidAction))?
-                    .try_into()
-                    .unwrap();
+                    .try_into());
             }
             _ => return Err(Error::new(ErrorCode::InvalidAction)),
         }

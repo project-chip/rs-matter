@@ -127,7 +127,7 @@ impl<T, G> Maybe<T, G> {
     /// Re-initialize the `Maybe` value with a new in-place initializer.
     pub fn reinit<I: init::Init<Self>>(&mut self, value: I) {
         // Unwrap is safe because the initializer is infallible
-        Self::try_reinit(self, value).unwrap();
+        unwrap!(Self::try_reinit(self, value));
     }
 
     /// Try to re-initialize the `Maybe` value with a new in-place initializer.

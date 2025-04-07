@@ -153,16 +153,16 @@ impl<'a> TLVElement<'a> {
             TLVTagType::Anonymous => TLVTag::Anonymous,
             TLVTagType::Context => TLVTag::Context(slice[0]),
             TLVTagType::CommonPrf16 => {
-                TLVTag::CommonPrf16(u16::from_le_bytes(slice.try_into().unwrap()))
+                TLVTag::CommonPrf16(u16::from_le_bytes(unwrap!(slice.try_into())))
             }
             TLVTagType::CommonPrf32 => {
-                TLVTag::CommonPrf32(u32::from_le_bytes(slice.try_into().unwrap()))
+                TLVTag::CommonPrf32(u32::from_le_bytes(unwrap!(slice.try_into())))
             }
             TLVTagType::ImplPrf16 => {
-                TLVTag::ImplPrf16(u16::from_le_bytes(slice.try_into().unwrap()))
+                TLVTag::ImplPrf16(u16::from_le_bytes(unwrap!(slice.try_into())))
             }
             TLVTagType::ImplPrf32 => {
-                TLVTag::ImplPrf32(u32::from_le_bytes(slice.try_into().unwrap()))
+                TLVTag::ImplPrf32(u32::from_le_bytes(unwrap!(slice.try_into())))
             }
             TLVTagType::FullQual48 => TLVTag::FullQual48 {
                 vendor_id: u16::from_le_bytes([slice[0], slice[1]]),
@@ -189,18 +189,18 @@ impl<'a> TLVElement<'a> {
         let slice = self.0.container_value(control)?;
 
         let value = match control.value_type {
-            TLVValueType::S8 => TLVValue::S8(i8::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::S16 => TLVValue::S16(i16::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::S32 => TLVValue::S32(i32::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::S64 => TLVValue::S64(i64::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::U8 => TLVValue::U8(u8::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::U16 => TLVValue::U16(u16::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::U32 => TLVValue::U32(u32::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::U64 => TLVValue::U64(u64::from_le_bytes(slice.try_into().unwrap())),
+            TLVValueType::S8 => TLVValue::S8(i8::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::S16 => TLVValue::S16(i16::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::S32 => TLVValue::S32(i32::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::S64 => TLVValue::S64(i64::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::U8 => TLVValue::U8(u8::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::U16 => TLVValue::U16(u16::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::U32 => TLVValue::U32(u32::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::U64 => TLVValue::U64(u64::from_le_bytes(unwrap!(slice.try_into()))),
             TLVValueType::False => TLVValue::False,
             TLVValueType::True => TLVValue::True,
-            TLVValueType::F32 => TLVValue::F32(f32::from_le_bytes(slice.try_into().unwrap())),
-            TLVValueType::F64 => TLVValue::F64(f64::from_le_bytes(slice.try_into().unwrap())),
+            TLVValueType::F32 => TLVValue::F32(f32::from_le_bytes(unwrap!(slice.try_into()))),
+            TLVValueType::F64 => TLVValue::F64(f64::from_le_bytes(unwrap!(slice.try_into()))),
             TLVValueType::Utf8l => TLVValue::Utf8l(
                 core::str::from_utf8(slice).map_err(|_| ErrorCode::TLVTypeMismatch)?,
             ),
@@ -978,9 +978,7 @@ impl<'a> TLVSequence<'a> {
     /// the returned sub-slice will designate the start of the value field.
     #[inline(always)]
     fn value_len_start(&self, tag_type: TLVTagType) -> Result<&'a [u8], Error> {
-        Ok(self
-            .tag_start()
-            .unwrap()
+        Ok(unwrap!(self.tag_start())
             .get(tag_type.size()..)
             .ok_or(ErrorCode::TLVTypeMismatch)?)
     }
@@ -1044,10 +1042,10 @@ impl<'a> TLVSequence<'a> {
             .ok_or(ErrorCode::TLVTypeMismatch)?;
 
         let len = match size_len {
-            1 => u8::from_be_bytes(value_len_slice.try_into().unwrap()) as usize,
-            2 => u16::from_le_bytes(value_len_slice.try_into().unwrap()) as usize,
-            4 => u32::from_le_bytes(value_len_slice.try_into().unwrap()) as usize,
-            8 => u64::from_le_bytes(value_len_slice.try_into().unwrap()) as usize,
+            1 => u8::from_be_bytes(unwrap!(value_len_slice.try_into())) as usize,
+            2 => u16::from_le_bytes(unwrap!(value_len_slice.try_into())) as usize,
+            4 => u32::from_le_bytes(unwrap!(value_len_slice.try_into())) as usize,
+            8 => u64::from_le_bytes(unwrap!(value_len_slice.try_into())) as usize,
             _ => unreachable!(),
         };
 

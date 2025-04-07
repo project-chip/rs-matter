@@ -288,7 +288,7 @@ impl BluerGattPeripheral {
 
         if notifiers.len() < MAX_CONNECTIONS {
             // Unwraping is safe because we just checked the length
-            notifiers.push(notifier).map_err(|_| ()).unwrap();
+            unwrap!(notifiers.push(notifier).map_err(|_| ()));
             trace!("Notify connection from address {} started", address);
         } else {
             warn!(

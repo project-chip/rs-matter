@@ -88,7 +88,7 @@ impl ExchangeId {
                 } else {
                     let for_us = self.with_ctx(matter, |sess, exch_index| {
                         if sess.is_for_rx(&packet.peer, &packet.header.plain) {
-                            let exchange = sess.exchanges[exch_index].as_ref().unwrap();
+                            let exchange = unwrap!(sess.exchanges[exch_index].as_ref());
 
                             return Ok(exchange.is_for_rx(&packet.header.proto));
                         }
@@ -152,7 +152,7 @@ impl ExchangeId {
             .await;
 
         // TODO: Resizing might be a bit expensive with large buffers
-        packet.buf.resize_default(MAX_TX_BUF_SIZE).unwrap();
+        unwrap!(packet.buf.resize_default(MAX_TX_BUF_SIZE));
 
         packet.clear_on_drop(true);
 
@@ -180,9 +180,7 @@ impl ExchangeId {
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     async fn wait_tx<'a>(&self, matter: &'a Matter<'a>) -> Result<TxOutcome, Error> {
         if let Some(delay) = self.retrans_delay_ms(matter)? {
-            let expired = Instant::now()
-                .checked_add(Duration::from_millis(delay))
-                .unwrap();
+            let expired = unwrap!(Instant::now().checked_add(Duration::from_millis(delay)));
 
             loop {
                 let mut notification = pin!(self.internal_wait_ack(matter));
@@ -253,7 +251,7 @@ impl ExchangeId {
 
     fn retrans_delay_ms<'a>(&self, matter: &'a Matter<'a>) -> Result<Option<u64>, Error> {
         self.with_ctx(matter, |sess, exch_index| {
-            let exchange = sess.exchanges[exch_index].as_mut().unwrap();
+            let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
 
             let mut jitter_rand = [0; 1];
             matter.rand()(&mut jitter_rand);
@@ -264,7 +262,7 @@ impl ExchangeId {
 
     fn check_no_pending_retrans<'a>(&self, matter: &'a Matter<'a>) -> Result<(), Error> {
         self.with_ctx(matter, |sess, exch_index| {
-            let exchange = sess.exchanges[exch_index].as_mut().unwrap();
+            let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
 
             if exchange.mrp.is_retrans_pending() {
                 error!("Exchange {}: Retransmission pending", self.display(sess));
@@ -281,7 +279,7 @@ impl ExchangeId {
 
     fn pending_ack<'a>(&self, matter: &'a Matter<'a>) -> Result<bool, Error> {
         self.with_ctx(matter, |sess, exch_index| {
-            let exchange = sess.exchanges[exch_index].as_ref().unwrap();
+            let exchange = unwrap!(sess.exchanges[exch_index].as_ref());
 
             Ok(exchange.mrp.is_ack_pending())
         })

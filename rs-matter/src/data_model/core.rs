@@ -524,12 +524,11 @@ where
 
                     // TODO: Do a more sophisticated check whether something had actually changed w.r.t. this subscription
 
-                    let index = self
+                    let index = unwrap!(self
                         .subscriptions_buffers
                         .borrow()
                         .iter()
-                        .position(|sb| sb.subscription_id == id)
-                        .unwrap();
+                        .position(|sb| sb.subscription_id == id));
                     let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
 
                     let result = self
@@ -714,7 +713,7 @@ where
 
             // Safe to unwrap, as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, i.e. it cannot be overflown
             // by the payload of the received exchange.
-            buffer.extend_from_slice(rx.payload()).unwrap();
+            unwrap!(buffer.extend_from_slice(rx.payload()));
 
             exchange.rx_done()?;
 
@@ -727,7 +726,7 @@ where
     async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
         if let Some(mut buffer) = self.buffer(exchange).await? {
             // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-            buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE).unwrap();
+            unwrap!(buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
 
             Ok(Some(buffer))
         } else {

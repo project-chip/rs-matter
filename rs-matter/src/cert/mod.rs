@@ -288,7 +288,7 @@ impl<'a> Extension<'a> {
         }
 
         let mut string = heapless::String::new();
-        write!(
+        write_unwrap!(
             &mut string,
             "{}{}{}{}{}{}{}{}{}",
             add_if!(key_usage, KEY_USAGE_DIGITAL_SIGN, "digitalSignature "),
@@ -300,8 +300,7 @@ impl<'a> Extension<'a> {
             add_if!(key_usage, KEY_USAGE_CRL_SIGN, "CRLSign "),
             add_if!(key_usage, KEY_USAGE_ENCIPHER_ONLY, "encipherOnly "),
             add_if!(key_usage, KEY_USAGE_DECIPHER_ONLY, "decipherOnly "),
-        )
-        .unwrap();
+        );
 
         string
     }
@@ -522,12 +521,12 @@ impl<'a> DN<'a> {
             DNValue::Uint(v) => match expected_len {
                 Some(IntToStringLen::Len16) => {
                     let mut string = heapless::String::<32>::new();
-                    write!(&mut string, "{:016X}", v).unwrap();
+                    write_unwrap!(&mut string, "{:016X}", v);
                     w.utf8str("", &string)?
                 }
                 Some(IntToStringLen::Len8) => {
                     let mut string = heapless::String::<32>::new();
-                    write!(&mut string, "{:08X}", v).unwrap();
+                    write_unwrap!(&mut string, "{:08X}", v);
                     w.utf8str("", &string)?
                 }
                 _ => {
@@ -826,21 +825,21 @@ mod tests {
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_INPUT1));
-            let len = c.as_asn1(&mut asn1_buf).unwrap();
+            let len = unwrap!(c.as_asn1(&mut asn1_buf));
             assert_eq!(&test_vectors::ASN1_OUTPUT1, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_INPUT2));
-            let len = c.as_asn1(&mut asn1_buf).unwrap();
+            let len = unwrap!(c.as_asn1(&mut asn1_buf));
             assert_eq!(&test_vectors::ASN1_OUTPUT2, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_TXT_IN_DN));
-            let len = c.as_asn1(&mut asn1_buf).unwrap();
+            let len = unwrap!(c.as_asn1(&mut asn1_buf));
             assert_eq!(&test_vectors::ASN1_OUTPUT_TXT_IN_DN, &asn1_buf[..len]);
         }
     }
@@ -852,12 +851,10 @@ mod tests {
         let icac = CertRef::new(TLVElement::new(&test_vectors::ICAC1_SUCCESS));
         let rca = CertRef::new(TLVElement::new(&test_vectors::RCA1_SUCCESS));
         let a = noc.verify_chain_start();
-        a.add_cert(&icac, &mut buf)
-            .unwrap()
-            .add_cert(&rca, &mut buf)
-            .unwrap()
-            .finalise(&mut buf)
-            .unwrap();
+        unwrap!(
+            unwrap!(unwrap!(a.add_cert(&icac, &mut buf)).add_cert(&rca, &mut buf))
+                .finalise(&mut buf)
+        );
     }
 
     #[test]
@@ -871,8 +868,7 @@ mod tests {
         let a = noc.verify_chain_start();
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
-            a.add_cert(&icac, &mut buf)
-                .unwrap()
+            unwrap!(a.add_cert(&icac, &mut buf))
                 .finalise(&mut buf)
                 .map_err(|e| e.code())
         );
@@ -901,8 +897,8 @@ mod tests {
         let rca = CertRef::new(TLVElement::new(&test_vectors::RCA_FOR_NOC_NOT_AFTER_ZERO));
 
         let v = noc.verify_chain_start();
-        let v = v.add_cert(&rca, &mut buf).unwrap();
-        v.finalise(&mut buf).unwrap();
+        let v = unwrap!(v.add_cert(&rca, &mut buf));
+        unwrap!(v.finalise(&mut buf));
     }
 
     #[test]
@@ -933,14 +929,14 @@ mod tests {
         for input in test_input.iter() {
             info!("Testing next input...");
             let root = TLVElement::new(input);
-            let cert = CertRef::from_tlv(&root).unwrap();
+            let cert = unwrap!(CertRef::from_tlv(&root));
             let mut buf = [0u8; 1024];
             let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
-            cert.to_tlv(&TagType::Anonymous, &mut tw).unwrap();
+            unwrap!(cert.to_tlv(&TagType::Anonymous, &mut tw));
 
             let root2 = TLVElement::new(wb.as_slice());
-            let cert2 = CertRef::from_tlv(&root2).unwrap();
+            let cert2 = unwrap!(CertRef::from_tlv(&root2));
             assert_eq!(cert, cert2);
         }
     }
@@ -951,7 +947,7 @@ mod tests {
 
         let cert = CertRef::new(TLVElement::new(test_vectors::UNORDERED_EXTENSIONS_CHIP));
 
-        let asn1_len = cert.as_asn1(&mut buf).unwrap();
+        let asn1_len = unwrap!(cert.as_asn1(&mut buf));
         assert_eq!(&buf[..asn1_len], test_vectors::UNORDERED_EXTENSIONS_DER);
     }
 

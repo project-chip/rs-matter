@@ -366,7 +366,7 @@ impl<T: ?Sized> RefCell<T> {
                 // If a borrow occurred, then we must already have an outstanding borrow,
                 // so `borrowed_at` will be `Some`
                 #[cfg(feature = "debug_refcell")]
-                location: self.borrowed_at.get().unwrap(),
+                location: unwrap!(self.borrowed_at.get()),
             }),
         }
     }
@@ -457,7 +457,7 @@ impl<T: ?Sized> RefCell<T> {
                 // If a borrow occurred, then we must already have an outstanding borrow,
                 // so `borrowed_at` will be `Some`
                 #[cfg(feature = "debug_refcell")]
-                location: self.borrowed_at.get().unwrap(),
+                location: unwrap!(self.borrowed_at.get()),
             }),
         }
     }
@@ -552,7 +552,7 @@ impl<T: ?Sized> RefCell<T> {
                 // If a borrow occurred, then we must already have an outstanding borrow,
                 // so `borrowed_at` will be `Some`
                 #[cfg(feature = "debug_refcell")]
-                location: self.borrowed_at.get().unwrap(),
+                location: unwrap!(self.borrowed_at.get()),
             })
         }
     }

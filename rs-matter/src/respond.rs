@@ -156,10 +156,7 @@ where
         );
 
         for handler_id in 0..N {
-            handlers
-                .push(self.handle(handler_id))
-                .map_err(|_| ())
-                .unwrap(); // Cannot fail because the vector has size N
+            unwrap!(handlers.push(self.handle(handler_id)).map_err(|_| ())); // Cannot fail because the vector has size N
         }
 
         select_slice(&mut handlers).await.0

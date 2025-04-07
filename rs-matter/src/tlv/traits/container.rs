@@ -91,7 +91,7 @@ where
 
     /// Returns an iterator over the elements of the container.
     pub fn iter(&self) -> TLVContainerIter<'a, T> {
-        TLVContainerIter::new(self.element.container().unwrap().iter())
+        TLVContainerIter::new(unwrap!(self.element.container()).iter())
     }
 }
 

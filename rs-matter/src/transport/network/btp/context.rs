@@ -268,13 +268,11 @@ where
                     );
                 } else {
                     // Unwrap is safe because we checked the length above
-                    sessions
-                        .push_init(
-                            Session::process_rx_handshake(address, data, gatt_mtu)?
-                                .into_fallible::<Error>(),
-                            || ErrorCode::NoSpace.into(),
-                        )
-                        .unwrap();
+                    unwrap!(sessions.push_init(
+                        Session::process_rx_handshake(address, data, gatt_mtu)?
+                            .into_fallible::<Error>(),
+                        || ErrorCode::NoSpace.into(),
+                    ));
                 }
 
                 Ok(())

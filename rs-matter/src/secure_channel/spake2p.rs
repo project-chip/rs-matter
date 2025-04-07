@@ -112,7 +112,7 @@ impl Spake2P {
     }
 
     pub fn update_context(&mut self, buf: &[u8]) -> Result<(), Error> {
-        self.context.as_mut().unwrap().update(buf)
+        unwrap!(self.context.as_mut()).update(buf)
     }
 
     #[inline(always)]
@@ -339,10 +339,12 @@ mod tests {
             let mut cA: [u8; 32] = [0; 32];
             let mut cB: [u8; 32] = [0; 32];
             let mut TT_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
-            let mut h = crypto::Sha256::new().unwrap();
-            h.update(&t.TT[0..t.TT_len]).unwrap();
-            h.finish(&mut TT_hash).unwrap();
-            Spake2P::get_Ke_and_cAcB(&TT_hash, &t.X, &t.Y, &mut Ke, &mut cA, &mut cB).unwrap();
+            let mut h = unwrap!(crypto::Sha256::new());
+            unwrap!(h.update(&t.TT[0..t.TT_len]));
+            unwrap!(h.finish(&mut TT_hash));
+            unwrap!(Spake2P::get_Ke_and_cAcB(
+                &TT_hash, &t.X, &t.Y, &mut Ke, &mut cA, &mut cB
+            ));
             assert_eq!(Ke, t.Ke);
             assert_eq!(cA, t.cA);
             assert_eq!(cB, t.cB);

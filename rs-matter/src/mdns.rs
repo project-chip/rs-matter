@@ -214,10 +214,10 @@ impl ServiceMode {
                 let vp = Self::get_vp(dev_att.vid, dev_att.pid);
 
                 let mut sai_str = heapless::String::<5>::new();
-                write!(sai_str, "{}", dev_att.sai.unwrap_or(300)).unwrap();
+                write_unwrap!(sai_str, "{}", dev_att.sai.unwrap_or(300));
 
                 let mut sii_str = heapless::String::<5>::new();
-                write!(sii_str, "{}", dev_att.sii.unwrap_or(5000)).unwrap();
+                write_unwrap!(sii_str, "{}", dev_att.sii.unwrap_or(5000));
 
                 let txt_kvs = &[
                     ("D", discriminator_str.as_str()),
@@ -248,7 +248,7 @@ impl ServiceMode {
 
     fn get_long_service_subtype(discriminator: u16) -> heapless::String<32> {
         let mut serv_type = heapless::String::new();
-        write!(&mut serv_type, "_L{}", discriminator).unwrap();
+        write_unwrap!(&mut serv_type, "_L{}", discriminator);
 
         serv_type
     }
@@ -257,19 +257,19 @@ impl ServiceMode {
         let short = Self::compute_short_discriminator(discriminator);
 
         let mut serv_type = heapless::String::new();
-        write!(&mut serv_type, "_S{}", short).unwrap();
+        write_unwrap!(&mut serv_type, "_S{}", short);
 
         serv_type
     }
 
     fn get_discriminator_str(discriminator: u16) -> heapless::String<5> {
-        discriminator.try_into().unwrap()
+        unwrap!(discriminator.try_into())
     }
 
     fn get_vp(vid: u16, pid: u16) -> heapless::String<11> {
         let mut vp = heapless::String::new();
 
-        write!(&mut vp, "{}+{}", vid, pid).unwrap();
+        write_unwrap!(&mut vp, "{}+{}", vid, pid);
 
         vp
     }

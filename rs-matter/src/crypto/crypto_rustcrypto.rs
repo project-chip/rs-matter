@@ -128,9 +128,9 @@ impl KeyPair {
     }
 
     pub fn new_from_components(pub_key: &[u8], priv_key: &[u8]) -> Result<Self, Error> {
-        let secret_key = SecretKey::from_slice(priv_key).unwrap();
-        let encoded_point = EncodedPoint::from_bytes(pub_key).unwrap();
-        let public_key = PublicKey::from_encoded_point(&encoded_point).unwrap();
+        let secret_key = SecretKey::from_slice(priv_key)?;
+        let encoded_point = EncodedPoint::from_bytes(pub_key)?;
+        let public_key = PublicKey::from_encoded_point(&encoded_point).unwrap(); // TODO: defmt
         assert!(
             public_key == secret_key.public_key(),
             "Public key {:?} is not equal to ours {:?}",
@@ -144,9 +144,9 @@ impl KeyPair {
     }
 
     pub fn new_from_public(pub_key: &[u8]) -> Result<Self, Error> {
-        let encoded_point = EncodedPoint::from_bytes(pub_key).unwrap();
+        let encoded_point = EncodedPoint::from_bytes(pub_key)?;
         Ok(Self {
-            key: KeyType::Public(PublicKey::from_encoded_point(&encoded_point).unwrap()),
+            key: KeyType::Public(PublicKey::from_encoded_point(&encoded_point).unwrap()), // TODO: defmt
         })
     }
 
@@ -179,44 +179,46 @@ impl KeyPair {
     pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
         use p256::ecdsa::signature::Signer;
 
-        let subject = RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(
+        let subject = RdnSequence(vec![x509_cert::name::RelativeDistinguishedName(unwrap!(
             vec![x509_cert::attr::AttributeTypeAndValue {
                 // Organization name: http://www.oid-info.com/get/2.5.4.10
-                oid: x509_cert::attr::AttributeType::new_unwrap("2.5.4.10"),
-                value: x509_cert::attr::AttributeValue::new(
-                    x509_cert::der::Tag::Utf8String,
-                    "CSR".as_bytes(),
-                )
-                .unwrap(),
+                oid: Self::attr_type("2.5.4.10"),
+                value: unwrap!(
+                    x509_cert::attr::AttributeValue::new(
+                        x509_cert::der::Tag::Utf8String,
+                        "CSR".as_bytes(),
+                    ),
+                    "x509 AttrValue creation failed"
+                ),
             }]
-            .try_into()
-            .unwrap(),
-        )]);
+            .try_into(),
+            "x509 AttrValue creation failed"
+        ))]);
         let mut pubkey = MaybeUninit::<[u8; 65]>::uninit(); // TODO MEDIUM BUFFER
         let pubkey = pubkey.init_zeroed();
-        self.get_public_key(pubkey).unwrap();
+        self.get_public_key(pubkey)?;
         let info = x509_cert::request::CertReqInfo {
             version: x509_cert::request::Version::V1,
             subject,
             public_key: SubjectPublicKeyInfoOwned {
                 algorithm: AlgorithmIdentifier {
                     // ecPublicKey(1) http://www.oid-info.com/get/1.2.840.10045.2.1
-                    oid: AttributeType::new_unwrap("1.2.840.10045.2.1"),
-                    parameters: Some(
+                    oid: Self::attr_type("1.2.840.10045.2.1"),
+                    parameters: Some(unwrap!(
                         Any::new(
                             x509_cert::der::Tag::ObjectIdentifier,
                             // prime256v1 http://www.oid-info.com/get/1.2.840.10045.3.1.7
-                            AttributeType::new_unwrap("1.2.840.10045.3.1.7").as_bytes(),
-                        )
-                        .unwrap(),
-                    ),
+                            Self::attr_type("1.2.840.10045.3.1.7").as_bytes(),
+                        ),
+                        "x509 OID creation failed"
+                    )),
                 },
-                subject_public_key: BitString::from_bytes(&*pubkey).unwrap(),
+                subject_public_key: BitString::from_bytes(&*pubkey)?,
             },
             attributes: Default::default(),
         };
         let mut message = vec![];
-        info.encode(&mut VecWriter(&mut message)).unwrap();
+        info.encode(&mut VecWriter(&mut message))?;
 
         // Can't use self.sign_msg as the signature has to be in DER format
         let private_key = self.private_key()?;
@@ -229,12 +231,12 @@ impl KeyPair {
             info,
             algorithm: AlgorithmIdentifier {
                 // ecdsa-with-SHA256(2) http://www.oid-info.com/get/1.2.840.10045.4.3.2
-                oid: AttributeType::new_unwrap("1.2.840.10045.4.3.2"),
+                oid: Self::attr_type("1.2.840.10045.4.3.2"),
                 parameters: None,
             },
-            signature: BitString::from_bytes(signature).unwrap(),
+            signature: BitString::from_bytes(signature)?,
         };
-        let out = cert.to_der().unwrap();
+        let out = cert.to_der()?;
         let a = &mut out_csr[0..out.len()];
         a.copy_from_slice(&out);
 
@@ -248,8 +250,8 @@ impl KeyPair {
         Ok(len)
     }
     pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
-        let encoded_point = EncodedPoint::from_bytes(peer_pub_key).unwrap();
-        let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap();
+        let encoded_point = EncodedPoint::from_bytes(peer_pub_key)?;
+        let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap(); // TODO: defmt
         let private_key = self.private_key()?;
         let shared_secret = elliptic_curve::ecdh::diffie_hellman(
             private_key.to_nonzero_scalar(),
@@ -285,8 +287,8 @@ impl KeyPair {
     pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
         use p256::ecdsa::signature::Verifier;
 
-        let verifying_key = VerifyingKey::from_affine(self.public_key_point()).unwrap();
-        let signature = Signature::try_from(signature).unwrap();
+        let verifying_key = VerifyingKey::from_affine(self.public_key_point())?;
+        let signature = Signature::try_from(signature)?;
 
         verifying_key
             .verify(msg, &signature)
@@ -294,10 +296,17 @@ impl KeyPair {
 
         Ok(())
     }
+
+    fn attr_type(value: &str) -> AttributeType {
+        unwrap!(
+            AttributeType::new(value),
+            "x509 AttributeType creation failed"
+        )
+    }
 }
 
 pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(pass, salt, iter as u32, key).unwrap();
+    pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(pass, salt, iter as u32, key)?;
 
     Ok(())
 }

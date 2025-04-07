@@ -32,23 +32,21 @@ pub fn compute_pairing_code(comm_data: &BasicCommData) -> heapless::String<32> {
     } = comm_data;
 
     let mut digits = heapless::String::<32>::new();
-    write!(
+    write_unwrap!(
         &mut digits,
         "{}{:0>5}{:0>4}",
         (VID_PID_PRESENT << 2) | (discriminator >> 10) as u8,
         ((discriminator & 0x300) << 6) | (*password & 0x3FFF) as u16,
         *password >> 14
-    )
-    .unwrap();
+    );
 
     let mut final_digits = heapless::String::<32>::new();
-    write!(
+    write_unwrap!(
         &mut final_digits,
         "{}{}",
         digits,
         digits.calculate_verhoeff_check_digit()
-    )
-    .unwrap();
+    );
 
     final_digits
 }
@@ -56,11 +54,11 @@ pub fn compute_pairing_code(comm_data: &BasicCommData) -> heapless::String<32> {
 pub(super) fn pretty_print_pairing_code(pairing_code: &str) {
     assert!(pairing_code.len() == 11);
     let mut pretty = heapless::String::<32>::new();
-    pretty.push_str(&pairing_code[..4]).unwrap();
-    pretty.push('-').unwrap();
-    pretty.push_str(&pairing_code[4..8]).unwrap();
-    pretty.push('-').unwrap();
-    pretty.push_str(&pairing_code[8..]).unwrap();
+    unwrap!(pretty.push_str(&pairing_code[..4]));
+    unwrap!(pretty.push('-'));
+    unwrap!(pretty.push_str(&pairing_code[4..8]));
+    unwrap!(pretty.push('-'));
+    unwrap!(pretty.push_str(&pairing_code[8..]));
     info!("Pairing Code: {}", pretty);
 }
 

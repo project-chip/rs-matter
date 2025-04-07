@@ -178,7 +178,7 @@ impl<const N: usize> Subscriptions<N> {
                 .then_some((
                     sub.fabric_idx,
                     sub.peer_node_id,
-                    sub.session_id.unwrap(),
+                    unwrap!(sub.session_id),
                     sub.id,
                 ))
         })

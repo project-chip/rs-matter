@@ -156,14 +156,14 @@ impl Fabric {
         self.mdns_service_name.clear();
         for c in compressed_id {
             let mut hex = heapless::String::<4>::new();
-            write!(&mut hex, "{:02X}", c).unwrap();
-            self.mdns_service_name.push_str(&hex).unwrap();
+            write_unwrap!(&mut hex, "{:02X}", c);
+            unwrap!(self.mdns_service_name.push_str(&hex));
         }
-        self.mdns_service_name.push('-').unwrap();
+        unwrap!(self.mdns_service_name.push('-'));
         for c in self.node_id.to_be_bytes() {
             let mut hex = heapless::String::<4>::new();
-            write!(&mut hex, "{:02X}", c).unwrap();
-            self.mdns_service_name.push_str(&hex).unwrap();
+            write_unwrap!(&mut hex, "{:02X}", c);
+            unwrap!(self.mdns_service_name.push_str(&hex));
         }
 
         info!("mDNS Service name: {}", self.mdns_service_name);
@@ -483,7 +483,7 @@ impl FabricMgr {
             .map(|fabric| fabric.fab_idx().get())
             .max()
             .unwrap_or(0);
-        let fab_idx = NonZeroU8::new(if max_fab_idx < u8::MAX - 1 {
+        let fab_idx = unwrap!(NonZeroU8::new(if max_fab_idx < u8::MAX - 1 {
             // First try with the next available fabric index larger than all currently used
             max_fab_idx + 1
         } else {
@@ -495,8 +495,7 @@ impl FabricMgr {
             };
 
             fab_idx
-        })
-        .unwrap(); // We never use 0 as a fabric index, nor u8::MAX
+        })); // We never use 0 as a fabric index, nor u8::MAX
 
         self.fabrics.push_init(
             Fabric::init(fab_idx, key_pair)
@@ -505,7 +504,7 @@ impl FabricMgr {
             || ErrorCode::NoSpace.into(),
         )?;
 
-        let fabric = self.fabrics.last_mut().unwrap();
+        let fabric = unwrap!(self.fabrics.last_mut());
         self.changed = true;
 
         Ok(fabric)

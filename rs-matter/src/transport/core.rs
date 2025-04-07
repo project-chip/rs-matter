@@ -207,7 +207,7 @@ impl<'m> TransportMgr<'m> {
         // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
         // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
         // we don't have a session in the first place
-        let session = session_mgr.get(session_id).unwrap();
+        let session = unwrap!(session_mgr.get(session_id));
 
         let exch_index = session
             .add_exch(exch_id, Role::Initiator(Default::default()))
@@ -239,7 +239,7 @@ impl<'m> TransportMgr<'m> {
                 let matches = {
                     // `unwrap` is safe because the transport code is single threaded, and since we don't `await`
                     // after computing `exch_index` no code can remove the exchange from the session
-                    let exch = session.exchanges[exch_index].as_ref().unwrap();
+                    let exch = unwrap!(session.exchanges[exch_index].as_ref());
 
                     matches!(exch.role, Role::Responder(ResponderState::AcceptPending))
                         && f(session, exch, packet)
@@ -251,7 +251,7 @@ impl<'m> TransportMgr<'m> {
 
                 // `unwrap` is safe because the transport code is single threaded, and since we don't `await`
                 // after computing `exch_index` no code can remove the exchange from the session
-                let exch = session.exchanges[exch_index].as_mut().unwrap();
+                let exch = unwrap!(session.exchanges[exch_index].as_mut());
 
                 exch.role = Role::Responder(ResponderState::Owned);
 
@@ -390,7 +390,7 @@ impl<'m> TransportMgr<'m> {
 
             // TODO: Resizing might be a bit expensive with large buffers
             // Resizing to `MAX_RX_BUF_SIZE` is always safe because the size of the `buf` heapless vec `MAX_RX_BUF_SIZE`
-            rx.buf.resize_default(MAX_RX_BUF_SIZE).unwrap();
+            unwrap!(rx.buf.resize_default(MAX_RX_BUF_SIZE));
 
             let (len, peer) = Self::netw_recv(&mut recv, &mut rx.buf).await?;
 
@@ -502,9 +502,8 @@ impl<'m> TransportMgr<'m> {
                         //
                         // Also, since the transport code is single threaded, and since we don't `await`
                         // after decoding the packet, no code can the session
-                        let session = session_mgr
-                            .get_for_rx(&packet.peer, &packet.header.plain)
-                            .unwrap();
+                        let session =
+                            unwrap!(session_mgr.get_for_rx(&packet.peer, &packet.header.plain));
 
                         let ack = packet.header.plain.ctr;
 
@@ -579,16 +578,14 @@ impl<'m> TransportMgr<'m> {
                     //
                     // Also, since the transport code is single threaded, and since we don't `await`
                     // after decoding the packet, no code can the session
-                    let session_id = session_mgr
-                        .get_for_rx(&packet.peer, &packet.header.plain)
-                        .unwrap()
-                        .id;
+                    let session_id =
+                        unwrap!(session_mgr.get_for_rx(&packet.peer, &packet.header.plain)).id;
 
                     packet.header.proto.exch_id = session_mgr.get_next_exch_id();
                     packet.header.proto.set_initiator();
 
                     // See above why `unwrap` is safe
-                    let mut session = session_mgr.remove(session_id).unwrap();
+                    let mut session = unwrap!(session_mgr.remove(session_id));
                     self.session_removed.notify();
 
                     self.encode_packet(packet, Some(&mut session), None, |wb| {
@@ -679,7 +676,7 @@ impl<'m> TransportMgr<'m> {
         };
 
         // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
-        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+        let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
         if !matches!(
             exchange.role,
@@ -723,7 +720,7 @@ impl<'m> TransportMgr<'m> {
         };
 
         // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
-        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+        let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
         if exchange.role.is_dropped_state() {
             warn!(
@@ -768,7 +765,7 @@ impl<'m> TransportMgr<'m> {
 
             error!(
                 "Dropped exchange {}: Closing session because the exchange cannot be closed cleanly",
-                exchange_id.display(session_mgr.get(session_id).unwrap()) // Session exists or else we wouldn't be here
+                exchange_id.display(unwrap!(session_mgr.get(session_id))) // Session exists or else we wouldn't be here
             );
 
             self.encode_evict_session(packet, &mut session_mgr, session_id)?;
@@ -777,9 +774,9 @@ impl<'m> TransportMgr<'m> {
             // Send a standalone ACK if necessary and then close it
 
             // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
-            let session = session_mgr.get(session_id).unwrap();
+            let session = unwrap!(session_mgr.get(session_id));
             // Ditto
-            let exchange = session.exchanges[exch_index].as_mut().unwrap();
+            let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
             if exchange.mrp.is_ack_pending() {
                 self.encode_packet(packet, Some(session), Some(exch_index), |_| {
@@ -875,7 +872,7 @@ impl<'m> TransportMgr<'m> {
         // TODO: Resizing might be a bit expensive with large buffers
         // Resizing to `N` is always safe because it is a responsibility of the caller to ensure that N is <= `MAX_RX_BUF_SIZE`,
         // which is the size of `buf` heapless vec
-        packet.buf.resize_default(N).unwrap();
+        unwrap!(packet.buf.resize_default(N));
 
         let mut wb = WriteBuf::new(&mut packet.buf);
         wb.reserve(PacketHdr::HDR_RESERVE)?;
@@ -980,7 +977,7 @@ impl<'m> TransportMgr<'m> {
         packet.header.proto.set_initiator();
 
         // It is a responsibility of the caller to ensure that this method is called with a valid session ID
-        let mut session = session_mgr.remove(id).unwrap();
+        let mut session = unwrap!(session_mgr.remove(id));
         self.session_removed.notify();
 
         info!(
@@ -1206,10 +1203,10 @@ impl<const N: usize> PacketBuffer<N> {
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
-        &mut *self
-            .buffer
-            .as_mut()
-            .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
+        unwrap!(
+            &mut *self.buffer.as_mut(),
+            "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
+        )
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
@@ -1219,9 +1216,10 @@ impl<const N: usize> PacketBuffer<N> {
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_ref(&self) -> crate::utils::storage::Vec<u8, N> {
-        self.buffer
-            .as_ref()
-            .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
+        unwrap!(
+            self.buffer.as_ref(),
+            "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
+        )
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
@@ -1306,7 +1304,7 @@ impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
 
         // TODO: Resizing might be a bit expensive with large buffers
         // Resizing to `N` is always safe because the size of `buf` heapless vec is `N`
-        packet.buf.resize_default(N).unwrap();
+        unwrap!(packet.buf.resize_default(N));
 
         Some(ExternalPacketBuffer(packet))
     }

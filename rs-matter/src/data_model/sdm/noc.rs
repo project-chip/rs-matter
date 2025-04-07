@@ -410,12 +410,11 @@ impl NocCluster {
                     // Remove the fabric if we fail further down this function
                     warn!("Removing fabric {} due to failure", fab_idx.get());
 
-                    exchange
+                    unwrap!(exchange
                         .matter()
                         .fabric_mgr
                         .borrow_mut()
-                        .remove(fab_idx, &exchange.matter().transport_mgr.mdns)
-                        .unwrap();
+                        .remove(fab_idx, &exchange.matter().transport_mgr.mdns));
                 }
             });
 

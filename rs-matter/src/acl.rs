@@ -383,9 +383,7 @@ impl AclEntry {
             self.targets.reinit(Nullable::init_some(Vec::init()));
         }
 
-        self.targets
-            .as_mut()
-            .unwrap()
+        unwrap!(self.targets.as_mut())
             .push(target)
             .map_err(|_| ErrorCode::NoSpace.into())
     }

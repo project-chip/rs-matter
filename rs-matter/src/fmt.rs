@@ -235,6 +235,27 @@ macro_rules! unwrap {
 }
 
 #[cfg(feature = "defmt")]
+#[collapse_debuginfo(yes)]
+macro_rules! write_unwrap {
+    ($f:expr, $s:literal $(, $x:expr)* $(,)?) => {
+        {
+            unwrap!(write!($f, $s $(, $x)*).map_err($crate::fmt::FmtError));
+        }
+    };
+}
+
+#[cfg(not(feature = "defmt"))]
+#[collapse_debuginfo(yes)]
+macro_rules! write_unwrap {
+    ($f:expr, $s:literal $(, $x:expr)* $(,)?) => {
+        {
+            unwrap!(write!($f, $s $(, $x)*));
+        }
+    };
+}
+
+#[cfg(feature = "defmt")]
+#[collapse_debuginfo(yes)]
 macro_rules! display2format {
     ($arg:expr) => {
         ::defmt::Display2Format(&$arg)
@@ -242,6 +263,7 @@ macro_rules! display2format {
 }
 
 #[cfg(not(feature = "defmt"))]
+#[collapse_debuginfo(yes)]
 macro_rules! display2format {
     ($arg:expr) => {
         $arg
@@ -249,6 +271,7 @@ macro_rules! display2format {
 }
 
 #[cfg(feature = "defmt")]
+#[collapse_debuginfo(yes)]
 macro_rules! debug2format {
     ($arg:expr) => {
         ::defmt::Debug2Format(&$arg)
@@ -256,6 +279,7 @@ macro_rules! debug2format {
 }
 
 #[cfg(not(feature = "defmt"))]
+#[collapse_debuginfo(yes)]
 macro_rules! debug2format {
     ($arg:expr) => {
         $arg
@@ -287,5 +311,47 @@ impl LowerHex for Bytes<'_> {
 impl defmt::Format for Bytes<'_> {
     fn format(&self, fmt: defmt::Formatter) {
         defmt::write!(fmt, "{:02x}", self.0)
+    }
+}
+
+/// Support for the `unwrap!` macro for `Option` and `Result`.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct NoneError;
+
+/// Support for the `unwrap!` macro for `Option` and `Result`.
+pub trait Try {
+    type Ok;
+    type Error;
+    #[allow(unused)]
+    fn into_result(self) -> Result<Self::Ok, Self::Error>;
+}
+
+impl<T> Try for Option<T> {
+    type Ok = T;
+    type Error = NoneError;
+
+    #[inline]
+    fn into_result(self) -> Result<T, NoneError> {
+        self.ok_or(NoneError)
+    }
+}
+
+impl<T, E> Try for Result<T, E> {
+    type Ok = T;
+    type Error = E;
+
+    #[inline]
+    fn into_result(self) -> Self {
+        self
+    }
+}
+
+#[cfg(feature = "defmt")]
+pub(crate) struct FmtError(pub(crate) core::fmt::Error);
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for FmtError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{}", "FmtError")
     }
 }

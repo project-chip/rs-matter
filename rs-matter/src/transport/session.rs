@@ -256,7 +256,7 @@ impl Session {
 
         let exch_index = self.get_exch_for_rx(&rx_header.proto);
         if let Some(exch_index) = exch_index {
-            let exch = self.exchanges[exch_index].as_mut().unwrap();
+            let exch = unwrap!(self.exchanges[exch_index].as_mut());
 
             exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
 
@@ -275,7 +275,7 @@ impl Session {
                 self.add_exch(rx_header.proto.exch_id, Role::Responder(Default::default()))
             {
                 // unwrap is safe as we just created the exchange
-                let exch = self.exchanges[exch_index].as_mut().unwrap();
+                let exch = unwrap!(self.exchanges[exch_index].as_mut());
 
                 exch.post_recv(&rx_header.plain, &rx_header.proto, epoch)?;
 
@@ -294,7 +294,7 @@ impl Session {
         session_idle_interval_ms: Option<u16>,
     ) -> Result<(Address, bool), Error> {
         let ctr = if let Some(exchange_index) = exch_index {
-            let exchange = self.exchanges[exchange_index].as_mut().unwrap();
+            let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
             exchange.mrp.retrans.as_ref().map(RetransEntry::get_msg_ctr)
         } else {
             None
@@ -314,7 +314,7 @@ impl Session {
         tx_header.proto.adjust_reliability(false, &self.peer_addr);
 
         if let Some(exchange_index) = exch_index {
-            let exchange = self.exchanges[exchange_index].as_mut().unwrap();
+            let exchange = unwrap!(self.exchanges[exchange_index].as_mut());
 
             exchange.pre_send(
                 &tx_header.plain,
@@ -412,7 +412,7 @@ impl Session {
     }
 
     pub(crate) fn remove_exch(&mut self, index: usize) -> bool {
-        let exchange = self.exchanges[index].as_mut().unwrap();
+        let exchange = unwrap!(self.exchanges[index].as_mut());
         let exchange_id = ExchangeId::new(self.id, index);
 
         if exchange.mrp.is_retrans_pending() {
@@ -531,7 +531,7 @@ impl Drop for ReservedSession<'_> {
     fn drop(&mut self) {
         if self.complete {
             let mut session_mgr = self.session_mgr.borrow_mut();
-            let session = session_mgr.get(self.id).unwrap();
+            let session = unwrap!(session_mgr.get(self.id));
             session.reserved = false;
         } else {
             self.session_mgr.borrow_mut().remove(self.id);
@@ -676,7 +676,7 @@ impl SessionMgr {
                 ErrorCode::NoSpaceSessions.into()
             })?;
 
-        Ok(self.sessions.last_mut().unwrap())
+        Ok(unwrap!(self.sessions.last_mut()))
     }
 
     /// This assumes that the higher layer has taken care of doing anything required
@@ -771,7 +771,7 @@ impl SessionMgr {
 
         if let Some((id, exch_index)) = exch {
             let epoch = self.epoch;
-            let session = self.get(id).unwrap();
+            let session = unwrap!(self.get(id));
             session.update_last_used(epoch);
 
             Some((session, exch_index))
@@ -805,11 +805,11 @@ mod tests {
     #[test]
     fn test_next_sess_id_doesnt_reuse() {
         let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
-        let sess = sm.add(false, Address::default(), None).unwrap();
+        let sess = unwrap!(sm.add(false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         assert_eq!(sm.get_next_sess_id(), 3);
-        let sess = sm.add(false, Address::default(), None).unwrap();
+        let sess = unwrap!(sm.add(false, Address::default(), None));
         sess.set_local_sess_id(4);
         assert_eq!(sm.get_next_sess_id(), 5);
     }
@@ -817,7 +817,7 @@ mod tests {
     #[test]
     fn test_next_sess_id_overflows() {
         let mut sm = SessionMgr::new(dummy_epoch, dummy_rand);
-        let sess = sm.add(false, Address::default(), None).unwrap();
+        let sess = unwrap!(sm.add(false, Address::default(), None));
         sess.set_local_sess_id(1);
         assert_eq!(sm.get_next_sess_id(), 2);
         sm.next_sess_id = 65534;

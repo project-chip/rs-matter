@@ -36,6 +36,7 @@ use crate::{
     // so Crypto doesn't have to depend on Cert
     cert::{ASN1Writer, CertConsumer},
     error::{Error, ErrorCode},
+    fmt::Bytes,
     utils::rand::Rand,
 };
 
@@ -51,13 +52,11 @@ impl HmacSha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.inner
-            .update(data)
-            .map_err(|_| ErrorCode::TLSStack.into())
+        Ok(self.inner.update(data)?)
     }
 
     pub fn finish(self, out: &mut [u8]) -> Result<(), Error> {
-        self.inner.finish(out).map_err(|_| ErrorCode::TLSStack)?;
+        self.inner.finish(out)?;
         Ok(())
     }
 }
@@ -117,10 +116,7 @@ impl KeyPair {
                 error!("Error in writing CSR: None received");
                 Err(ErrorCode::Invalid.into())
             }
-            Err(e) => {
-                error!("Error in writing CSR {}", e);
-                Err(ErrorCode::TLSStack.into())
-            }
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -226,6 +222,13 @@ impl core::fmt::Debug for KeyPair {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for KeyPair {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "KeyPair")
+    }
+}
+
 fn convert_r_s_to_asn1_sign(signature: &[u8], mbedtls_sign: &mut [u8]) -> Result<usize, Error> {
     let r = &signature[0..32];
     let s = &signature[32..64];
@@ -260,8 +263,8 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
         // XXX Once, I have seen a crash in this conversion, need to dig
         if len < 32 {
             error!(
-                "Cannot deal with this: this will crash: the slice is: {:x?}",
-                signature
+                "Cannot deal with this: this will crash: the slice is: {}",
+                Bytes(signature)
             );
         }
 
@@ -299,12 +302,17 @@ fn convert_asn1_sign_to_r_s(signature: &mut [u8]) -> Result<usize, Error> {
 }
 
 pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    mbedtls::hash::pbkdf2_hmac(Type::Sha256, pass, salt, iter as u32, key)
-        .map_err(|_e| ErrorCode::TLSStack.into())
+    Ok(mbedtls::hash::pbkdf2_hmac(
+        Type::Sha256,
+        pass,
+        salt,
+        iter as u32,
+        key,
+    )?)
 }
 
 pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    Hkdf::hkdf(Type::Sha256, salt, ikm, info, key).map_err(|_e| ErrorCode::TLSStack.into())
+    Ok(Hkdf::hkdf(Type::Sha256, salt, ikm, info, key)?)
 }
 
 pub fn encrypt_in_place(
@@ -322,10 +330,10 @@ pub fn encrypt_in_place(
     let cipher = cipher.set_key_iv(key, nonce)?;
     let (data, tag) = data.split_at_mut(data_len);
     let tag = &mut tag[..super::AEAD_MIC_LEN_BYTES];
-    cipher
+
+    Ok(cipher
         .encrypt_auth_inplace(ad, data, tag)
-        .map(|(len, _)| len)
-        .map_err(|_e| ErrorCode::TLSStack.into())
+        .map(|(len, _)| len)?)
 }
 
 pub fn decrypt_in_place(
@@ -342,13 +350,9 @@ pub fn decrypt_in_place(
     let cipher = cipher.set_key_iv(key, nonce)?;
     let data_len = data.len() - super::AEAD_MIC_LEN_BYTES;
     let (data, tag) = data.split_at_mut(data_len);
-    cipher
+    Ok(cipher
         .decrypt_auth_inplace(ad, data, tag)
-        .map(|(len, _)| len)
-        .map_err(|e| {
-            error!("Error during decryption: {:?}", e);
-            ErrorCode::TLSStack.into()
-        })
+        .map(|(len, _)| len)?)
 }
 
 #[derive(Clone)]
@@ -364,12 +368,12 @@ impl Sha256 {
     }
 
     pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.ctx.update(data).map_err(|_| ErrorCode::TLSStack)?;
+        self.ctx.update(data)?;
         Ok(())
     }
 
     pub fn finish(self, digest: &mut [u8]) -> Result<(), Error> {
-        self.ctx.finish(digest).map_err(|_| ErrorCode::TLSStack)?;
+        self.ctx.finish(digest)?;
         Ok(())
     }
 }
@@ -377,5 +381,12 @@ impl Sha256 {
 impl Debug for Sha256 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         write!(f, "Sha256")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Sha256 {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "Sha256")
     }
 }
