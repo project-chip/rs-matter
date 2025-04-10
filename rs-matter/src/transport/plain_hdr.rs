@@ -89,7 +89,6 @@ impl defmt::Format for MsgFlags {
 
 // This is the unencrypted message
 #[derive(Debug, Default, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PlainHdr {
     flags: MsgFlags,
     pub sess_id: u16,
@@ -245,6 +244,29 @@ impl fmt::Display for PlainHdr {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PlainHdr {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if !self.flags.is_empty() {
+            defmt::write!(f, "{},", self.flags);
+        }
+
+        defmt::write!(f, "SID:{:x},CTR:{:x}", self.sess_id, self.ctr);
+
+        if let Some(src_nodeid) = self.get_src_nodeid() {
+            defmt::write!(f, ",SRC:{:x}", src_nodeid);
+        }
+
+        if let Some(dst_nodeid) = self.get_dst_unicast_nodeid() {
+            defmt::write!(f, ",DST:{:x}", dst_nodeid);
+        }
+
+        if let Some(dst_group_nodeid) = self.get_dst_groupcast_nodeid() {
+            defmt::write!(f, ",GRP:{:x}", dst_group_nodeid);
+        }
     }
 }
 

@@ -102,7 +102,6 @@ impl defmt::Format for ExchFlags {
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProtoHdr {
     pub exch_id: u16,
     exch_flags: ExchFlags,
@@ -311,6 +310,36 @@ impl fmt::Display for ProtoHdr {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ProtoHdr {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if !self.is_decoded() {
+            defmt::write!(f, "(encoded)");
+            return;
+        }
+
+        if !self.exch_flags.is_empty() {
+            defmt::write!(f, "{},", self.exch_flags);
+        }
+
+        defmt::write!(
+            f,
+            "EID:{:x},PROTO:{:x},OP:{:x}",
+            self.exch_id,
+            self.proto_id,
+            self.proto_opcode
+        );
+
+        if let Some(ack_msg_ctr) = self.get_ack() {
+            defmt::write!(f, ",ACTR:{:x}", ack_msg_ctr);
+        }
+
+        if let Some(vendor_id) = self.get_vendor() {
+            defmt::write!(f, ",VID:{:x}", vendor_id);
+        }
     }
 }
 
