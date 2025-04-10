@@ -48,7 +48,6 @@ pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
 
 /// An exchange identifier, uniquely identifying a session and an exchange within that session for a given Matter stack.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ExchangeId(u32);
 
 impl ExchangeId {
@@ -292,6 +291,13 @@ impl Display for ExchangeId {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for ExchangeId {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{}::{}", self.session_id(), self.exchange_index())
+    }
+}
+
 /// A display wrapper for `ExchangeId` which also displays
 /// the packet session ID, packet peer session ID and packet exchange ID.
 pub struct ExchangeIdDisplay<'a> {
@@ -441,7 +447,6 @@ impl ExchangeState {
 /// Meta-data when sending/receving messages via an Exchange.
 /// Basically, the protocol ID, the protocol opcode and whether the message should be set in a reliable manner.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MessageMeta {
     pub proto_id: u16,
     pub proto_opcode: u8,
@@ -559,6 +564,29 @@ impl Display for MessageMeta {
                 }
             }
             _ => write!(f, "{:02x}::{:02x}", self.proto_id, self.proto_opcode),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for MessageMeta {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match self.proto_id {
+            PROTO_ID_SECURE_CHANNEL => {
+                if let Ok(opcode) = self.opcode::<secure_channel::common::OpCode>() {
+                    defmt::write!(f, "SC::{:?}", opcode)
+                } else {
+                    defmt::write!(f, "SC::{:02x}", self.proto_opcode)
+                }
+            }
+            PROTO_ID_INTERACTION_MODEL => {
+                if let Ok(opcode) = self.opcode::<interaction_model::core::OpCode>() {
+                    defmt::write!(f, "IM::{:?}", opcode)
+                } else {
+                    defmt::write!(f, "IM::{:02x}", self.proto_opcode)
+                }
+            }
+            _ => defmt::write!(f, "{:02x}::{:02x}", self.proto_id, self.proto_opcode),
         }
     }
 }

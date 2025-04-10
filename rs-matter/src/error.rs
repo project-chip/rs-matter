@@ -274,7 +274,7 @@ impl From<bluer::Error> for Error {
     fn from(e: bluer::Error) -> Self {
         // Log the error given that we lose all context from the
         // original error here
-        crate::error!("Error in BTP: {}", display2format!(e));
+        error!("Error in BTP: {}", display2format!(e));
         Self::new(ErrorCode::BtpError)
     }
 }

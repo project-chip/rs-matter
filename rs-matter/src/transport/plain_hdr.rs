@@ -18,13 +18,11 @@
 use core::fmt;
 
 use crate::error::*;
-use crate::utils::bitflags::bitflags;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 
-bitflags! {
+bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Default)]
-    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub struct MsgFlags: u8 {
         const DSIZ_UNICAST_NODEID = 0x01;
         const DSIZ_GROUPCAST_NODEID = 0x02;
@@ -33,7 +31,6 @@ bitflags! {
 }
 
 impl fmt::Display for MsgFlags {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut sep = false;
         for flag in [
@@ -59,6 +56,34 @@ impl fmt::Display for MsgFlags {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for MsgFlags {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let mut sep = false;
+        for flag in [
+            Self::SRC_ADDR_PRESENT,
+            Self::DSIZ_UNICAST_NODEID,
+            Self::DSIZ_GROUPCAST_NODEID,
+        ] {
+            if self.contains(flag) {
+                if sep {
+                    defmt::write!(f, "|");
+                }
+
+                let str = match flag {
+                    Self::DSIZ_UNICAST_NODEID => "U",
+                    Self::DSIZ_GROUPCAST_NODEID => "G",
+                    Self::SRC_ADDR_PRESENT => "S",
+                    _ => "?",
+                };
+
+                defmt::write!(f, "{}", str);
+                sep = true;
+            }
+        }
     }
 }
 

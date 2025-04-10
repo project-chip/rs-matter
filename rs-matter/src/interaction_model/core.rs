@@ -30,10 +30,19 @@ use super::messages::ib::{AttrPath, DataVersionFilter};
 use super::messages::msg::{ReadReqRef, StatusResp, SubscribeReqRef, SubscribeResp, TimedReq};
 
 #[macro_export]
+#[cfg(not(feature = "defmt"))]
 macro_rules! cmd_enter {
     ($e:expr) => {{
         use owo_colors::OwoColorize;
-        info! {"{} {}", "Handling command".cyan(), $e.cyan()}
+        info! {"Got CMD {}", $e.cyan()}
+    }};
+}
+
+#[macro_export]
+#[cfg(feature = "defmt")]
+macro_rules! cmd_enter {
+    ($e:expr) => {{
+        info!("Got CMD {}", $e);
     }};
 }
 

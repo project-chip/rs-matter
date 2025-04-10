@@ -28,7 +28,6 @@ use super::{
 };
 
 #[derive(Debug, Default, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PacketHdr {
     pub plain: PlainHdr,
     pub proto: ProtoHdr,
@@ -104,5 +103,12 @@ impl PacketHdr {
 impl fmt::Display for PacketHdr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}][{}]", self.plain, self.proto)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PacketHdr {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "[{}][{}]", self.plain, self.proto)
     }
 }

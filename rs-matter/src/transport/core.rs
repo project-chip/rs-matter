@@ -1092,28 +1092,30 @@ impl<const N: usize> Packet<N> {
         })
     }
 
-    pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
-        struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
-
-        impl Display for PacketInfo<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                Packet::<0>::fmt(f, self.0, self.1)
-            }
-        }
-
+    #[cfg(feature = "defmt")]
+    pub fn display<'a>(
+        peer: &'a Address,
+        header: &'a PacketHdr,
+    ) -> impl Display + defmt::Format + 'a {
         PacketInfo(peer, header)
     }
 
+    #[cfg(not(feature = "defmt"))]
+    pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
+        PacketInfo(peer, header)
+    }
+
+    #[cfg(feature = "defmt")]
+    pub fn display_payload<'a>(
+        proto: &'a ProtoHdr,
+        buf: &'a [u8],
+    ) -> impl Display + defmt::Format + 'a {
+        DetailedPacketInfo(proto, buf)
+    }
+
+    #[cfg(not(feature = "defmt"))]
     pub fn display_payload<'a>(proto: &'a ProtoHdr, buf: &'a [u8]) -> impl Display + 'a {
-        struct PacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
-
-        impl Display for PacketInfo<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                Packet::<0>::fmt_payload(f, self.0, self.1)
-            }
-        }
-
-        PacketInfo(proto, buf)
+        DetailedPacketInfo(proto, buf)
     }
 
     fn fmt(f: &mut fmt::Formatter<'_>, peer: &Address, header: &PacketHdr) -> fmt::Result {
@@ -1126,6 +1128,17 @@ impl<const N: usize> Packet<N> {
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "defmt")]
+    fn format(f: defmt::Formatter<'_>, peer: &Address, header: &PacketHdr) {
+        defmt::write!(f, "{} {}", peer, header);
+
+        if header.proto.is_decoded() {
+            let meta = MessageMeta::from(&header.proto);
+
+            defmt::write!(f, "\n      {}", meta);
+        }
     }
 
     fn fmt_payload(f: &mut fmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) -> fmt::Result {
@@ -1149,6 +1162,27 @@ impl<const N: usize> Packet<N> {
 
         Ok(())
     }
+
+    #[cfg(feature = "defmt")]
+    fn format_payload(f: defmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) {
+        let meta = MessageMeta::from(proto);
+
+        defmt::write!(f, "{}", meta);
+
+        if meta.is_tlv() {
+            defmt::write!(
+                f,
+                "; TLV:\n----------------\n{}\n----------------\n",
+                TLVElement::new(buf)
+            );
+        } else {
+            defmt::write!(
+                f,
+                "; Payload:\n----------------\n{}\n----------------\n",
+                crate::fmt::Bytes(buf)
+            );
+        }
+    }
 }
 
 impl<const N: usize> Display for Packet<N> {
@@ -1160,7 +1194,37 @@ impl<const N: usize> Display for Packet<N> {
 #[cfg(feature = "defmt")]
 impl<const N: usize> defmt::Format for Packet<N> {
     fn format(&self, f: defmt::Formatter<'_>) {
-        defmt::Display2Format(self).format(f)
+        Self::format(f, &self.peer, &self.header)
+    }
+}
+
+struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
+
+impl Display for PacketInfo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Packet::<0>::fmt(f, self.0, self.1)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PacketInfo<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        Packet::<0>::format(f, self.0, self.1)
+    }
+}
+
+struct DetailedPacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
+
+impl Display for DetailedPacketInfo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Packet::<0>::fmt_payload(f, self.0, self.1)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for DetailedPacketInfo<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        Packet::<0>::format_payload(f, self.0, self.1)
     }
 }
 

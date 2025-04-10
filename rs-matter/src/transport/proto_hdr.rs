@@ -19,16 +19,14 @@ use core::fmt;
 
 use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
-use crate::utils::bitflags::bitflags;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::{crypto, error::*};
 
 use super::network::Address;
 
-bitflags! {
+bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Default)]
-    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub struct ExchFlags: u8 {
         const VENDOR = 0x10;
         const SECEX = 0x08;
@@ -39,7 +37,6 @@ bitflags! {
 }
 
 impl fmt::Display for ExchFlags {
-    // TODO: defmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut sep = false;
         for flag in [
@@ -69,6 +66,38 @@ impl fmt::Display for ExchFlags {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ExchFlags {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let mut sep = false;
+        for flag in [
+            Self::INITIATOR,
+            Self::ACK,
+            Self::RELIABLE,
+            Self::SECEX,
+            Self::VENDOR,
+        ] {
+            if self.contains(flag) {
+                if sep {
+                    defmt::write!(f, "|");
+                }
+
+                let str = match flag {
+                    Self::INITIATOR => "I",
+                    Self::ACK => "A",
+                    Self::RELIABLE => "R",
+                    Self::SECEX => "SX",
+                    Self::VENDOR => "V",
+                    _ => "?",
+                };
+
+                defmt::write!(f, "{}", str);
+                sep = true;
+            }
+        }
     }
 }
 
