@@ -73,6 +73,9 @@
 #![allow(async_fn_in_trait)]
 #![recursion_limit = "256"]
 
+// This mod MUST go first, so that the others see its macros.
+pub(crate) mod fmt;
+
 pub mod acl;
 pub mod cert;
 pub mod codec;

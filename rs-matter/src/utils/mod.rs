@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+pub mod bitflags;
 pub mod cell;
 pub mod epoch;
 pub mod init;

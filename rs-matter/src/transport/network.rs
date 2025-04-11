@@ -55,6 +55,22 @@ impl Display for BtAddr {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for BtAddr {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(
+            f,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.0[0],
+            self.0[1],
+            self.0[2],
+            self.0[3],
+            self.0[4],
+            self.0[5]
+        )
+    }
+}
+
 /// An enum representing a network address for all supported protocols by the Matter specification (UDP, TCP and BTP).
 #[derive(Eq, PartialEq, Copy, Clone)]
 pub enum Address {
@@ -128,6 +144,17 @@ impl Debug for Address {
             Address::Udp(addr) => writeln!(f, "{}", addr),
             Address::Tcp(addr) => writeln!(f, "{}", addr),
             Address::Btp(addr) => writeln!(f, "{:?}", addr),
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for Address {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match self {
+            Address::Udp(addr) => defmt::write!(f, "UDP {}", addr),
+            Address::Tcp(addr) => defmt::write!(f, "TCP {}", addr),
+            Address::Btp(addr) => defmt::write!(f, "BTP {}", addr),
         }
     }
 }

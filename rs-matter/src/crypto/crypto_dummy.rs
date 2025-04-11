@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::error;
-
 use crate::{
     error::{Error, ErrorCode},
     utils::rand::Rand,
@@ -28,6 +26,7 @@ pub fn hkdf_sha256(_salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> 
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Sha256 {}
 
 impl Sha256 {
@@ -64,6 +63,7 @@ impl HmacSha256 {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct KeyPair;
 
 impl KeyPair {

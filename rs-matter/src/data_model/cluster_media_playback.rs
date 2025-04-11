@@ -91,12 +91,9 @@ struct PlaybackPosition {
 }
 // Get microseconds since 2000, Jan 1, 00:00:00
 pub fn get_epoch_us() -> u64 {
-    let epoch_start = NaiveDate::from_ymd_opt(2000, 1, 1)
-        .unwrap()
-        .and_hms_micro_opt(0, 0, 0, 0)
-        .unwrap()
-        .and_local_timezone(chrono::Utc)
-        .unwrap();
+    let epoch_start = unwrap!(unwrap!(unwrap!(NaiveDate::from_ymd_opt(2000, 1, 1))
+        .and_hms_micro_opt(0, 0, 0, 0))
+        .and_local_timezone(chrono::Utc));
     DateTime::timestamp_micros(&epoch_start) as u64
 }
 

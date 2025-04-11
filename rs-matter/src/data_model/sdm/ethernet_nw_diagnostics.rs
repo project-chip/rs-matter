@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::info;
-
 use rs_matter_macros::idl_import;
 
 use strum::{EnumDiscriminants, FromRepr};
@@ -65,6 +63,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EthNwDiagCluster {
     data_ver: Dataver,
 }

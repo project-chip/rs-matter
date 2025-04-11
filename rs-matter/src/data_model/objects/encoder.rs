@@ -30,7 +30,6 @@ use crate::{
     interaction_model::messages::ib::{AttrDataTag, AttrRespTag},
     tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV},
 };
-use log::error;
 
 use super::{AttrDetails, CmdDetails, DataModelHandler};
 
@@ -358,6 +357,7 @@ impl DerefMut for CmdDataWriter<'_, '_, '_> {
 }
 
 #[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttrType<T>(PhantomData<fn() -> T>);
 
 impl<T> AttrType<T> {
@@ -387,6 +387,7 @@ impl<T> Default for AttrType<T> {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttrUtfType;
 
 impl AttrUtfType {

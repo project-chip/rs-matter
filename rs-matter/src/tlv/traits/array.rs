@@ -52,7 +52,7 @@ where
                 .map_err(|_| ErrorCode::NoSpace)?;
         }
 
-        Ok(vec.into_array().map_err(|_| ErrorCode::NoSpace).unwrap())
+        Ok(unwrap!(vec.into_array().map_err(|_| ErrorCode::NoSpace)))
     }
 }
 

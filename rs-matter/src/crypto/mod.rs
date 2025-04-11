@@ -116,13 +116,12 @@ mod tests {
 
     #[test]
     fn test_verify_msg_success() {
-        let key = KeyPair::new_from_public(&test_vectors::PUB_KEY1).unwrap();
-        key.verify_msg(&test_vectors::MSG1_SUCCESS, &test_vectors::SIGNATURE1)
-            .unwrap();
+        let key = unwrap!(KeyPair::new_from_public(&test_vectors::PUB_KEY1));
+        unwrap!(key.verify_msg(&test_vectors::MSG1_SUCCESS, &test_vectors::SIGNATURE1));
     }
     #[test]
     fn test_verify_msg_fail() {
-        let key = KeyPair::new_from_public(&test_vectors::PUB_KEY1).unwrap();
+        let key = unwrap!(KeyPair::new_from_public(&test_vectors::PUB_KEY1));
         assert_eq!(
             key.verify_msg(&test_vectors::MSG1_FAIL, &test_vectors::SIGNATURE1)
                 .map_err(|e| e.code()),

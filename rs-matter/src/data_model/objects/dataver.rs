@@ -21,7 +21,9 @@ use core::num::Wrapping;
 use crate::utils::rand::Rand;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Dataver {
+    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     ver: Cell<Wrapping<u32>>,
     changed: Cell<bool>,
 }

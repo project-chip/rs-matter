@@ -73,6 +73,13 @@ impl Display for BorrowError {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for BorrowError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "already mutably borrowed")
+    }
+}
+
 /// An error returned by [`RefCell::try_borrow_mut`].
 #[non_exhaustive]
 pub struct BorrowMutError {
@@ -94,6 +101,13 @@ impl Debug for BorrowMutError {
 impl Display for BorrowMutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt("already borrowed", f)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for BorrowMutError {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "already borrowed")
     }
 }
 
@@ -352,7 +366,7 @@ impl<T: ?Sized> RefCell<T> {
                 // If a borrow occurred, then we must already have an outstanding borrow,
                 // so `borrowed_at` will be `Some`
                 #[cfg(feature = "debug_refcell")]
-                location: self.borrowed_at.get().unwrap(),
+                location: unwrap!(self.borrowed_at.get()),
             }),
         }
     }
@@ -443,7 +457,7 @@ impl<T: ?Sized> RefCell<T> {
                 // If a borrow occurred, then we must already have an outstanding borrow,
                 // so `borrowed_at` will be `Some`
                 #[cfg(feature = "debug_refcell")]
-                location: self.borrowed_at.get().unwrap(),
+                location: unwrap!(self.borrowed_at.get()),
             }),
         }
     }
@@ -538,7 +552,7 @@ impl<T: ?Sized> RefCell<T> {
                 // If a borrow occurred, then we must already have an outstanding borrow,
                 // so `borrowed_at` will be `Some`
                 #[cfg(feature = "debug_refcell")]
-                location: self.borrowed_at.get().unwrap(),
+                location: unwrap!(self.borrowed_at.get()),
             })
         }
     }

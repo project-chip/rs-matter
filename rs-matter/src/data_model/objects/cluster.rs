@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use log::error;
 use strum::FromRepr;
 
 use crate::{
@@ -36,6 +35,7 @@ use crate::{
 use core::fmt::{self, Debug};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum GlobalElements {
     _ClusterRevision = 0xFFFD,
@@ -62,6 +62,7 @@ pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
 // methods?
 /// The Attribute Details structure records the details about the attribute under consideration.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttrDetails<'a> {
     pub node: &'a Node<'a>,
     /// The actual endpoint ID
@@ -128,6 +129,7 @@ impl AttrDetails<'_> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CmdDetails<'a> {
     pub node: &'a Node<'a>,
     pub endpoint_id: EndptId,
@@ -185,6 +187,7 @@ impl CmdDetails<'_> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Cluster<'a> {
     pub id: ClusterId,
     pub feature_map: u32,

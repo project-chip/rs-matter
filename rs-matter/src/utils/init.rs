@@ -36,7 +36,7 @@ pub trait IntoFallibleInit<T>: Init<T, Infallible> {
     fn into_fallible<E>(self) -> impl Init<T, E> {
         unsafe {
             init_from_closure(move |slot| {
-                Self::__init(self, slot).unwrap();
+                unwrap!(Self::__init(self, slot));
 
                 Ok(())
             })
@@ -61,7 +61,7 @@ impl<T> UnsafeCellInit<T> for UnsafeCell<T> {
                 let slot: *mut T = slot as _;
 
                 // Initialize the value
-                value.__init(slot).unwrap();
+                unwrap!(value.__init(slot));
 
                 Ok(())
             })
@@ -74,7 +74,7 @@ impl<T> UnsafeCellInit<T> for UnsafeCell<T> {
 pub trait InitMaybeUninit<T> {
     /// Initialize Self with the given in-place initializer.
     fn init_with<I: Init<T>>(&mut self, init: I) -> &mut T {
-        self.try_init_with(init).unwrap()
+        unwrap!(self.try_init_with(init))
     }
 
     /// Try to initialize Self with the given fallible in-place initializer.

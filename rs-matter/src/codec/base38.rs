@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn can_base38_encode() {
         assert_eq!(
-            encode_string::<{ ENCODED.len() }>(&DECODED).unwrap(),
+            unwrap!(encode_string::<{ ENCODED.len() }>(&DECODED)),
             ENCODED
         );
     }
@@ -248,7 +248,10 @@ mod tests {
     #[test]
     fn can_base38_decode() {
         assert_eq!(
-            decode_vec::<{ DECODED.len() }>(ENCODED).expect("Cannot decode base38"),
+            unwrap!(
+                decode_vec::<{ DECODED.len() }>(ENCODED),
+                "Cannot decode base38"
+            ),
             DECODED
         );
     }

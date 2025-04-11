@@ -39,14 +39,17 @@ pub type AnyContainer = ();
 
 /// A type-state that indicates that the container should be an array.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ArrayContainer;
 
 /// A type-state that indicates that the container should be a list.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ListContainer;
 
 /// A type-state that indicates that the container should be a struct.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StructContainer;
 
 /// A type alias for an array TLV container.
@@ -88,7 +91,7 @@ where
 
     /// Returns an iterator over the elements of the container.
     pub fn iter(&self) -> TLVContainerIter<'a, T> {
-        TLVContainerIter::new(self.element.container().unwrap().iter())
+        TLVContainerIter::new(unwrap!(self.element.container()).iter())
     }
 }
 
@@ -184,14 +187,36 @@ where
         for elem in self.iter() {
             if first {
                 first = false;
+                write!(f, "{elem:?}")?;
             } else {
-                write!(f, ", ")?;
+                write!(f, ", {elem:?}")?;
             }
-
-            write!(f, "{elem:?}")?;
         }
 
         write!(f, "]")
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<'a, T, C> defmt::Format for TLVContainer<'a, T, C>
+where
+    T: FromTLV<'a> + defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "[");
+
+        let mut first = true;
+
+        for elem in self.iter() {
+            if first {
+                first = false;
+                defmt::write!(f, "{:?}", elem);
+            } else {
+                defmt::write!(f, ", {:?}", elem);
+            }
+        }
+
+        defmt::write!(f, "]")
     }
 }
 
@@ -263,6 +288,7 @@ where
 /// Necessary for the few cases in the code where deserialized TLV structures are mutated -
 /// post deserialization - with custom array data.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TLVArrayOrSlice<'a, T>
 where
     T: FromTLV<'a>,
@@ -437,7 +463,7 @@ where
 //     }
 // }
 
-// impl<'a, T: Debug + ToTLV + FromTLV<'a> + Clone> Debug for TLVArray<'a, T> {
+// impl<'a, T: Debug + ToTLV + FromTLV<'a> + Clone> Debug for TLVArray<'a, T> { // TODO: defmt
 //     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 //         write!(f, "TLVArray [")?;
 //         let mut first = true;

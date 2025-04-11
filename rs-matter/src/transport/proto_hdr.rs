@@ -15,20 +15,18 @@
  *    limitations under the License.
  */
 
-use bitflags::bitflags;
 use core::fmt;
 
+use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::{crypto, error::*};
 
-use log::{trace, warn};
-
 use super::network::Address;
 
-bitflags! {
+bitflags::bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub struct ExchFlags: u8 {
         const VENDOR = 0x10;
         const SECEX = 0x08;
@@ -68,6 +66,38 @@ impl fmt::Display for ExchFlags {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ExchFlags {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let mut sep = false;
+        for flag in [
+            Self::INITIATOR,
+            Self::ACK,
+            Self::RELIABLE,
+            Self::SECEX,
+            Self::VENDOR,
+        ] {
+            if self.contains(flag) {
+                if sep {
+                    defmt::write!(f, "|");
+                }
+
+                let str = match flag {
+                    Self::INITIATOR => "I",
+                    Self::ACK => "A",
+                    Self::RELIABLE => "R",
+                    Self::SECEX => "SX",
+                    Self::VENDOR => "V",
+                    _ => "?",
+                };
+
+                defmt::write!(f, "{}", str);
+                sep = true;
+            }
+        }
     }
 }
 
@@ -228,7 +258,7 @@ impl ProtoHdr {
             self.ack_msg_ctr = parsebuf.le_u32()?;
         }
         trace!("[decode] {}", self);
-        trace!("[rx payload]: {:x?}", parsebuf.as_mut_slice());
+        trace!("[rx payload]: {}", Bytes(parsebuf.as_mut_slice()));
         Ok(())
     }
 
@@ -280,6 +310,36 @@ impl fmt::Display for ProtoHdr {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ProtoHdr {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if !self.is_decoded() {
+            defmt::write!(f, "(encoded)");
+            return;
+        }
+
+        if !self.exch_flags.is_empty() {
+            defmt::write!(f, "{},", self.exch_flags);
+        }
+
+        defmt::write!(
+            f,
+            "EID:{:x},PROTO:{:x},OP:{:x}",
+            self.exch_id,
+            self.proto_id,
+            self.proto_opcode
+        );
+
+        if let Some(ack_msg_ctr) = self.get_ack() {
+            defmt::write!(f, ",ACTR:{:x}", ack_msg_ctr);
+        }
+
+        if let Some(vendor_id) = self.get_vendor() {
+            defmt::write!(f, ",VID:{:x}", vendor_id);
+        }
     }
 }
 

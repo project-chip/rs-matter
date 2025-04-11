@@ -32,6 +32,7 @@ idl_import!(clusters = ["BasicInformation"]);
 pub use basic_information::ID;
 
 #[derive(Clone, Copy, Debug, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u16)]
 pub enum Attributes {
     DMRevision(AttrType<u8>) = 0,
@@ -197,11 +198,10 @@ impl BasicInfoCluster {
 
         match attr.attr_id.try_into()? {
             Attributes::NodeLabel(codec) => {
-                *self.node_label.borrow_mut() = codec
+                *self.node_label.borrow_mut() = unwrap!(codec
                     .decode(data)
                     .map_err(|_| Error::new(ErrorCode::InvalidAction))?
-                    .try_into()
-                    .unwrap();
+                    .try_into());
             }
             _ => return Err(Error::new(ErrorCode::InvalidAction)),
         }

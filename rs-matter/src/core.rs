@@ -40,6 +40,7 @@ pub const MATTER_PORT: u16 = 5540;
 
 /// Device basic commissioning data
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicCommData {
     /// The password which is necessary to authenticate the device in either
     /// initial commissioning, or when the basic commissioning window is opened

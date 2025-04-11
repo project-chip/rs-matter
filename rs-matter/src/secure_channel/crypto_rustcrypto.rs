@@ -58,8 +58,14 @@ pub struct CryptoSpake2 {
 impl CryptoSpake2 {
     #[allow(non_snake_case)]
     pub fn new() -> Result<Self, Error> {
-        let M = p256::EncodedPoint::from_bytes(MATTER_M_BIN).unwrap();
-        let N = p256::EncodedPoint::from_bytes(MATTER_N_BIN).unwrap();
+        let M = unwrap!(
+            p256::EncodedPoint::from_bytes(MATTER_M_BIN),
+            "Failed to create M from bytes"
+        );
+        let N = unwrap!(
+            p256::EncodedPoint::from_bytes(MATTER_N_BIN),
+            "Failed to create N from bytes"
+        );
         let L = p256::EncodedPoint::default();
         let pB = p256::EncodedPoint::default();
 
@@ -150,7 +156,7 @@ impl CryptoSpake2 {
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     pub fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
-        self.L = p256::EncodedPoint::from_bytes(l).unwrap();
+        self.L = p256::EncodedPoint::from_bytes(l)?;
         Ok(())
     }
 
@@ -206,7 +212,7 @@ impl CryptoSpake2 {
         // Y = pB
         Self::add_to_tt(&mut TT, pB)?;
 
-        let X = p256::EncodedPoint::from_bytes(pA).unwrap();
+        let X = p256::EncodedPoint::from_bytes(pA)?;
         let X = p256::AffinePoint::from_encoded_point(&X).unwrap();
         let L = p256::AffinePoint::from_encoded_point(&self.L).unwrap();
         let M = p256::AffinePoint::from_encoded_point(&self.M).unwrap();
@@ -345,15 +351,15 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_X() {
         for t in RFC_T {
-            let mut c = CryptoSpake2::new().unwrap();
+            let mut c = unwrap!(CryptoSpake2::new());
             let x = p256::Scalar::from_repr(
                 *elliptic_curve::generic_array::GenericArray::from_slice(&t.x),
             )
             .unwrap();
-            c.set_w0(&t.w0).unwrap();
+            unwrap!(c.set_w0(&t.w0));
             let P = p256::AffinePoint::GENERATOR;
             let M = p256::AffinePoint::from_encoded_point(&c.M).unwrap();
-            let r: p256::EncodedPoint = CryptoSpake2::do_add_mul(P, x, M, c.w0).unwrap();
+            let r: p256::EncodedPoint = unwrap!(CryptoSpake2::do_add_mul(P, x, M, c.w0));
             assert_eq!(&t.X, r.as_bytes());
         }
     }
@@ -400,18 +406,27 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_get_ZV_as_verifier() {
         for t in RFC_T {
-            let mut c = CryptoSpake2::new().unwrap();
+            let mut c = unwrap!(CryptoSpake2::new(), "Failed to create CryptoSpake2");
             let y = p256::Scalar::from_repr(
                 *elliptic_curve::generic_array::GenericArray::from_slice(&t.y),
             )
             .unwrap();
-            c.set_w0(&t.w0).unwrap();
-            let X = p256::EncodedPoint::from_bytes(t.X).unwrap();
+            unwrap!(c.set_w0(&t.w0), "Failed to set w0");
+            let X = unwrap!(
+                p256::EncodedPoint::from_bytes(t.X),
+                "Failed to create X from bytes"
+            );
             let X = p256::AffinePoint::from_encoded_point(&X).unwrap();
-            let L = p256::EncodedPoint::from_bytes(t.L).unwrap();
+            let L = unwrap!(
+                p256::EncodedPoint::from_bytes(t.L),
+                "Failed to create L from bytes"
+            );
             let L = p256::AffinePoint::from_encoded_point(&L).unwrap();
             let M = p256::AffinePoint::from_encoded_point(&c.M).unwrap();
-            let (Z, V) = CryptoSpake2::get_ZV_as_verifier(c.w0, L, M, X, y).unwrap();
+            let (Z, V) = unwrap!(
+                CryptoSpake2::get_ZV_as_verifier(c.w0, L, M, X, y),
+                "Failed to get ZV as verifier"
+            );
 
             assert_eq!(&t.Z, Z.as_bytes());
             assert_eq!(&t.V, V.as_bytes());

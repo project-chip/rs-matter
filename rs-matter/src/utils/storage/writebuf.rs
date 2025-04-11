@@ -19,6 +19,7 @@ use crate::error::*;
 use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WriteBuf<'a> {
     pub(crate) buf: &'a mut [u8],
     buf_size: usize,
@@ -229,13 +230,13 @@ mod tests {
     fn test_append_le_with_success() {
         let mut test_slice = [0; 22];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u8(1).unwrap();
-        buf.le_u16(65).unwrap();
-        buf.le_u32(0xcafebabe).unwrap();
-        buf.le_u64(0xcafebabecafebabe).unwrap();
-        buf.le_uint(2, 64).unwrap();
+        unwrap!(buf.le_u8(1));
+        unwrap!(buf.le_u16(65));
+        unwrap!(buf.le_u32(0xcafebabe));
+        unwrap!(buf.le_u64(0xcafebabecafebabe));
+        unwrap!(buf.le_uint(2, 64));
         assert_eq!(
             test_slice,
             [
@@ -249,7 +250,7 @@ mod tests {
     fn test_len_param() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice[..5]);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
         let _ = buf.le_u8(1);
         let _ = buf.le_u16(65);
@@ -263,9 +264,9 @@ mod tests {
     fn test_overrun() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(4).unwrap();
-        buf.le_u64(0xcafebabecafebabe).unwrap();
-        buf.le_u64(0xcafebabecafebabe).unwrap();
+        unwrap!(buf.reserve(4));
+        unwrap!(buf.le_u64(0xcafebabecafebabe));
+        unwrap!(buf.le_u64(0xcafebabecafebabe));
         // Now the buffer is fully filled up, so no further puts will happen
 
         if buf.le_u8(1).is_ok() {
@@ -289,15 +290,15 @@ mod tests {
     fn test_as_slice() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u8(1).unwrap();
-        buf.le_u16(65).unwrap();
-        buf.le_u32(0xcafebabe).unwrap();
-        buf.le_u64(0xcafebabecafebabe).unwrap();
+        unwrap!(buf.le_u8(1));
+        unwrap!(buf.le_u16(65));
+        unwrap!(buf.le_u32(0xcafebabe));
+        unwrap!(buf.le_u64(0xcafebabecafebabe));
 
         let new_slice: [u8; 3] = [0xa, 0xb, 0xc];
-        buf.prepend(&new_slice).unwrap();
+        unwrap!(buf.prepend(&new_slice));
 
         assert_eq!(
             buf.as_slice(),
@@ -312,12 +313,12 @@ mod tests {
     fn test_copy_as_slice() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u16(65).unwrap();
+        unwrap!(buf.le_u16(65));
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
-        buf.copy_from_slice(&new_slice).unwrap();
-        buf.le_u32(65).unwrap();
+        unwrap!(buf.copy_from_slice(&new_slice));
+        unwrap!(buf.le_u32(65));
         assert_eq!(
             test_slice,
             [0, 0, 0, 0, 0, 65, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 65, 0, 0, 0, 0, 0, 0, 0]
@@ -328,9 +329,9 @@ mod tests {
     fn test_copy_as_slice_overrun() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice[..7]);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u16(65).unwrap();
+        unwrap!(buf.le_u16(65));
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
         if buf.copy_from_slice(&new_slice).is_ok() {
             panic!("This should have returned error")
@@ -341,11 +342,11 @@ mod tests {
     fn test_prepend() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u16(65).unwrap();
+        unwrap!(buf.le_u16(65));
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
-        buf.prepend(&new_slice).unwrap();
+        unwrap!(buf.prepend(&new_slice));
         assert_eq!(
             test_slice,
             [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -356,9 +357,9 @@ mod tests {
     fn test_prepend_overrun() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u16(65).unwrap();
+        unwrap!(buf.le_u16(65));
         let new_slice: [u8; 6] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
         if buf.prepend(&new_slice).is_ok() {
             panic!("Prepend should return error")
@@ -369,18 +370,18 @@ mod tests {
     fn test_rewind_tail() {
         let mut test_slice = [0; 20];
         let mut buf = WriteBuf::new(&mut test_slice);
-        buf.reserve(5).unwrap();
+        unwrap!(buf.reserve(5));
 
-        buf.le_u16(65).unwrap();
+        unwrap!(buf.le_u16(65));
 
         let anchor = buf.get_tail();
 
         let new_slice: [u8; 5] = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
-        buf.copy_from_slice(&new_slice).unwrap();
+        unwrap!(buf.copy_from_slice(&new_slice));
         assert_eq!(buf.as_slice(), [65, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,]);
 
         buf.rewind_tail_to(anchor);
-        buf.le_u16(66).unwrap();
+        unwrap!(buf.le_u16(66));
         assert_eq!(buf.as_slice(), [65, 0, 66, 0,]);
     }
 }

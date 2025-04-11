@@ -244,7 +244,7 @@ pub mod raw {
             const INIT: Self = StdRawMutex(std::sync::Mutex::new(()));
 
             fn lock<R>(&self, f: impl FnOnce() -> R) -> R {
-                let _guard = self.0.lock().unwrap();
+                let _guard = unwrap!(self.0.lock(), "Mutex lock failed");
 
                 f()
             }

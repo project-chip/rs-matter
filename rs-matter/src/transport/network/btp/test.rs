@@ -48,6 +48,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum PeripheralIncoming {
     Subscribed(BtAddr),
     Unsubscribed(BtAddr),
@@ -59,6 +60,7 @@ enum PeripheralIncoming {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct PeripheralOutgoing {
     data: Vec<u8>,
     address: BtAddr,
@@ -104,12 +106,13 @@ impl Peripheral {
     async fn expect(&self, data: &[u8], addr: BtAddr) {
         let received = self.peer_receiver.recv().await.unwrap();
 
-        assert_eq!(received.data, data);
-        assert_eq!(received.address, addr);
+        ::core::assert_eq!(received.data, data);
+        ::core::assert_eq!(received.address, addr);
     }
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct IoPacket {
     data: Vec<u8>,
     address: BtAddr,
@@ -137,8 +140,8 @@ impl Io {
     async fn expect(&self, data: &[u8], addr: BtAddr) {
         let packet = self.recv.recv().await.unwrap();
 
-        assert_eq!(packet.data, data);
-        assert_eq!(packet.address, addr);
+        ::core::assert_eq!(packet.data, data);
+        ::core::assert_eq!(packet.address, addr);
     }
 }
 

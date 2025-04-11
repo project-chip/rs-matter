@@ -19,8 +19,6 @@ use core::num::NonZeroU8;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use log::{error, info};
-
 use crate::acl::{self, AclEntry};
 use crate::data_model::objects::*;
 use crate::fabric::FabricMgr;
@@ -79,6 +77,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AccessControlCluster {
     data_ver: Dataver,
 }
@@ -251,16 +250,14 @@ mod tests {
         let mut fab_mgr = FabricMgr::new();
 
         // Add fabric with ID 1
-        fab_mgr
-            .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
-            .unwrap();
+        unwrap!(fab_mgr.add_with_post_init(unwrap!(KeyPair::new(dummy_rand)), |_| Ok(())));
 
         let acl = AccessControlCluster::new(Dataver::new(0));
 
         let new = AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case);
 
-        new.to_tlv(&TLVTag::Anonymous, &mut tw).unwrap();
-        let data = get_root_node_struct(writebuf.as_slice()).unwrap();
+        unwrap!(new.to_tlv(&TLVTag::Anonymous, &mut tw));
+        let data = unwrap!(get_root_node_struct(writebuf.as_slice()));
 
         // Test, ACL has fabric index 2, but the accessing fabric is 1
         //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1

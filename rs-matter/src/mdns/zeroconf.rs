@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::mpsc::{sync_channel, SyncSender};
 
-use log::error;
-
 use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
@@ -17,7 +15,7 @@ struct MdnsEntry(SyncSender<()>);
 impl Drop for MdnsEntry {
     fn drop(&mut self) {
         if let Err(e) = self.0.send(()) {
-            error!("Deregistering mDNS entry failed: {e}");
+            error!("Deregistering mDNS entry failed: {}", debug2format!(e));
         }
     }
 }
@@ -52,7 +50,7 @@ impl<'a> MdnsImpl<'a> {
     pub fn add(&self, name: &str, mode: ServiceMode) -> Result<(), Error> {
         let _ = self.remove(name);
 
-        log::info!("Registering mDNS service {}/{:?}", name, mode);
+        info!("Registering mDNS service {}/{:?}", name, mode);
 
         mode.service(self.dev_det, self.matter_port, name, |service| {
             let service_name = service.service.strip_prefix('_').unwrap_or(service.service);
@@ -73,7 +71,7 @@ impl<'a> MdnsImpl<'a> {
                 ServiceType::new(service_name, protocol)
             }
             .map_err(|err| {
-                log::error!(
+                error!(
                     "Encountered error building service type: {}",
                     err.to_string()
                 );
@@ -95,9 +93,9 @@ impl<'a> MdnsImpl<'a> {
 
                 let mut txt_record = zeroconf::TxtRecord::new();
                 for (k, v) in txt_kvs {
-                    log::info!("mDNS TXT key {k} val {v}");
+                    info!("mDNS TXT key {} val {}", k, v);
                     if let Err(err) = txt_record.insert(&k, &v) {
-                        log::error!(
+                        error!(
                             "Encountered error inserting kv-pair into txt record {}",
                             err.to_string()
                         );
@@ -113,14 +111,14 @@ impl<'a> MdnsImpl<'a> {
                             break;
                         }
                         if let Err(err) = event_loop.poll(std::time::Duration::from_secs(1)) {
-                            log::error!(
+                            error!(
                                 "Failed to poll mDNS service event loop: {}",
                                 err.to_string()
                             );
                             break;
                         }
                     },
-                    Err(err) => log::error!(
+                    Err(err) => error!(
                         "Encountered error registering mDNS service: {}",
                         err.to_string()
                     ),
@@ -137,7 +135,7 @@ impl<'a> MdnsImpl<'a> {
 
     pub fn remove(&self, name: &str) -> Result<(), Error> {
         if self.services.borrow_mut().remove(name).is_some() {
-            log::info!("Deregistering mDNS service {}", name);
+            info!("Deregistering mDNS service {}", name);
         }
 
         Ok(())

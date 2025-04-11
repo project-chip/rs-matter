@@ -54,6 +54,7 @@ pub type AsOptional = ();
 
 /// A tag for `Maybe` that makes it behave as a nullable type per the TLV spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AsNullable;
 
 /// Represents optional values as per the TLV spec.

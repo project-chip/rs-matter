@@ -30,14 +30,24 @@ use super::messages::ib::{AttrPath, DataVersionFilter};
 use super::messages::msg::{ReadReqRef, StatusResp, SubscribeReqRef, SubscribeResp, TimedReq};
 
 #[macro_export]
+#[cfg(not(feature = "defmt"))]
 macro_rules! cmd_enter {
     ($e:expr) => {{
         use owo_colors::OwoColorize;
-        info! {"{} {}", "Handling command".cyan(), $e.cyan()}
+        info! {"Got CMD {}", $e.cyan()}
+    }};
+}
+
+#[macro_export]
+#[cfg(feature = "defmt")]
+macro_rules! cmd_enter {
+    ($e:expr) => {{
+        info!("Got CMD {}", $e);
     }};
 }
 
 #[derive(FromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum IMStatusCode {
     Success = 0,
     Failure = 1,
@@ -110,6 +120,7 @@ impl ToTLV for IMStatusCode {
 }
 
 #[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpCode {
     Reserved = 0,
     StatusResponse = 1,
@@ -150,6 +161,7 @@ pub const PROTO_ID_INTERACTION_MODEL: u16 = 0x01;
 /// A wrapper enum for `ReadReq` and `SubscribeReq` that allows downstream code to
 /// treat the two in a unified manner with regards to `OpCode::ReportDataResp` type responses.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportDataReq<'a> {
     Read(&'a ReadReqRef<'a>),
     Subscribe(&'a SubscribeReqRef<'a>),
@@ -189,9 +201,7 @@ impl StatusResp {
 
 impl TimedReq {
     pub fn timeout_instant(&self, epoch: Epoch) -> Duration {
-        epoch()
-            .checked_add(Duration::from_millis(self.timeout as _))
-            .unwrap()
+        unwrap!(epoch().checked_add(Duration::from_millis(self.timeout as _)))
     }
 }
 

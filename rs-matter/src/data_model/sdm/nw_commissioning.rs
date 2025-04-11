@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use bitflags::bitflags;
-
 use strum::FromRepr;
 
 use crate::data_model::objects::{
@@ -26,6 +24,7 @@ use crate::data_model::objects::{
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
+use crate::utils::bitflags::bitflags;
 use crate::{attribute_enum, bitflags_tlv, command_enum};
 
 pub const ID: u32 = 0x0031;
@@ -46,6 +45,7 @@ pub enum Attributes {
 attribute_enum!(Attributes);
 
 #[derive(Debug, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Commands {
     ScanNetworks = 0x00,
@@ -157,7 +157,8 @@ pub const THR_CLUSTER: Cluster<'static> = cluster(FeatureMap::Thread);
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct WiFiSecurity: u8 {
         const UNENCRYPTED = 0x01;
         const WEP = 0x02;
@@ -170,6 +171,7 @@ bitflags! {
 bitflags_tlv!(WiFiSecurity, u8);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum WifiBand {
     B2G4 = 0,
     B3G65 = 1,
@@ -180,6 +182,7 @@ pub enum WifiBand {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct ScanNetworksRequest<'a> {
     pub ssid: Option<OctetStr<'a>>,
@@ -187,6 +190,7 @@ pub struct ScanNetworksRequest<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct ScanNetworksResponse<'a> {
     pub status: NetworkCommissioningStatus,
@@ -196,6 +200,7 @@ pub struct ScanNetworksResponse<'a> {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ScanNetworksResponseTag {
     Status = 0,
     DebugText = 1,
@@ -204,6 +209,7 @@ pub enum ScanNetworksResponseTag {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct AddWifiNetworkRequest<'a> {
     pub ssid: OctetStr<'a>,
@@ -212,6 +218,7 @@ pub struct AddWifiNetworkRequest<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct AddThreadNetworkRequest<'a> {
     pub op_dataset: OctetStr<'a>,
@@ -219,6 +226,7 @@ pub struct AddThreadNetworkRequest<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct RemoveNetworkRequest<'a> {
     pub network_id: OctetStr<'a>,
@@ -226,6 +234,7 @@ pub struct RemoveNetworkRequest<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct NetworkConfigResponse<'a> {
     pub status: NetworkCommissioningStatus,
@@ -236,6 +245,7 @@ pub struct NetworkConfigResponse<'a> {
 pub type ConnectNetworkRequest<'a> = RemoveNetworkRequest<'a>;
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct ReorderNetworkRequest<'a> {
     pub network_id: OctetStr<'a>,
@@ -244,6 +254,7 @@ pub struct ReorderNetworkRequest<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct ConnectNetworkResponse<'a> {
     pub status: NetworkCommissioningStatus,
@@ -252,6 +263,7 @@ pub struct ConnectNetworkResponse<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct WiFiInterfaceScanResult<'a> {
     pub security: WiFiSecurity,
@@ -263,6 +275,7 @@ pub struct WiFiInterfaceScanResult<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct ThreadInterfaceScanResult<'a> {
     pub pan_id: u16,
@@ -276,6 +289,7 @@ pub struct ThreadInterfaceScanResult<'a> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EthNwCommCluster {
     data_ver: Dataver,
 }
@@ -347,6 +361,7 @@ impl EthNwCommCluster {
 }
 
 #[derive(Debug, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct NwInfo<'a> {
     pub network_id: OctetStr<'a>,
@@ -361,6 +376,7 @@ struct NwMetaInfo<'a> {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromRepr, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum NetworkCommissioningStatus {
     Success = 0,

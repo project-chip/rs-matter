@@ -25,6 +25,7 @@ use crate::{
 use core::fmt::Write;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ASN1Writer<'a> {
     buf: &'a mut [u8],
     // The current write offset in the buffer
@@ -267,13 +268,16 @@ impl CertConsumer for ASN1Writer<'_> {
     fn utctime(&mut self, _tag: &str, epoch: u64) -> Result<(), Error> {
         let matter_epoch = MATTER_EPOCH_SECS + epoch;
 
-        let dt = OffsetDateTime::from_unix_timestamp(matter_epoch as _).unwrap();
+        let dt = unwrap!(
+            OffsetDateTime::from_unix_timestamp(matter_epoch as _),
+            "DateTimeError"
+        );
 
         let mut time_str: heapless::String<32> = heapless::String::<32>::new();
 
         if dt.year() >= 2050 {
             // If year is >= 2050, ASN.1 requires it to be Generalised Time
-            write!(
+            write_unwrap!(
                 &mut time_str,
                 "{:04}{:02}{:02}{:02}{:02}{:02}Z",
                 dt.year(),
@@ -282,11 +286,10 @@ impl CertConsumer for ASN1Writer<'_> {
                 dt.hour(),
                 dt.minute(),
                 dt.second()
-            )
-            .unwrap();
+            );
             self.write_str(0x18, time_str.as_bytes())
         } else {
-            write!(
+            write_unwrap!(
                 &mut time_str,
                 "{:02}{:02}{:02}{:02}{:02}{:02}Z",
                 dt.year() % 100,
@@ -295,8 +298,7 @@ impl CertConsumer for ASN1Writer<'_> {
                 dt.hour(),
                 dt.minute(),
                 dt.second()
-            )
-            .unwrap();
+            );
             self.write_str(0x17, time_str.as_bytes())
         }
     }

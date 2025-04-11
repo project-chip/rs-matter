@@ -24,7 +24,6 @@ use crate::{
 };
 
 use byteorder::{ByteOrder, LittleEndian};
-use log::error;
 use mbedtls::{
     bignum::Mpi,
     ecp::EcPoint,

@@ -17,8 +17,6 @@
 
 use core::mem::MaybeUninit;
 
-use log::error;
-
 use crate::{
     error::*,
     respond::ExchangeHandler,

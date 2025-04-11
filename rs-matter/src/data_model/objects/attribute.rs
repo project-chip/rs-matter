@@ -16,15 +16,18 @@
  */
 #![allow(clippy::bad_bit_mask)]
 
+use core::fmt::{self, Debug};
+
 use crate::data_model::objects::GlobalElements;
 
 use super::{AttrId, Privilege};
-use bitflags::bitflags;
-use core::fmt::{self, Debug};
+
+use crate::utils::bitflags::bitflags;
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct Access: u16 {
         // These must match the bits in the Privilege object :-|
         const NEED_VIEW = 0x00001;
@@ -75,7 +78,8 @@ impl Access {
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct Quality: u8 {
         const NONE = 0x00;
         const SCENE = 0x01;      // Short: S
@@ -92,6 +96,7 @@ bitflags! {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Attribute {
     pub id: AttrId,
     pub quality: Quality,

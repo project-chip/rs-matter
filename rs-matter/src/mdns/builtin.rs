@@ -6,8 +6,6 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
-use log::{info, warn};
-
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{
@@ -74,7 +72,7 @@ impl<'a> MdnsImpl<'a> {
 
         services.retain(|(name, _)| name != service);
         services
-            .push((service.try_into().unwrap(), mode))
+            .push((unwrap!(service.try_into()), mode))
             .map_err(|_| ErrorCode::NoSpace)?;
 
         self.notification.notify();
@@ -182,7 +180,7 @@ impl<'a> MdnsImpl<'a> {
                 let len = host.broadcast(self, &mut buf, 60)?;
 
                 if len > 0 {
-                    info!("Broadcasting mDNS entry to {addr}");
+                    info!("Broadcasting mDNS entry to {}", addr);
                     send.send_to(&buf[..len], Address::Udp(addr)).await?;
                 }
             }
@@ -220,7 +218,7 @@ impl<'a> MdnsImpl<'a> {
                 let (len, delay) = match host.respond(self, &rx[..len], &mut tx, 60) {
                     Ok((len, delay)) => (len, delay),
                     Err(err) => {
-                        warn!("mDNS protocol error {err} while replying to {addr}");
+                        warn!("mDNS protocol error {} while replying to {}", err, addr);
                         continue;
                     }
                 };
@@ -254,15 +252,18 @@ impl<'a> MdnsImpl<'a> {
                             // Generate a delay between 20 and 120 ms, as per spec
                             let delay_ms = 20 + (b[0] as u32 * 100 / 256);
 
-                            info!("Replying to mDNS query from {addr} on {reply_addr}, delay {delay_ms}ms");
+                            info!(
+                                "Replying to mDNS query from {} on {}, delay {}ms",
+                                addr, reply_addr, delay_ms
+                            );
                             Timer::after(Duration::from_millis(delay_ms as _)).await;
                         } else {
-                            info!("Replying to mDNS query from {addr} on {reply_addr}");
+                            info!("Replying to mDNS query from {} on {}", addr, reply_addr);
                         }
 
                         send.send_to(&tx[..len], Address::Udp(reply_addr)).await?;
                     } else {
-                        info!("Cannot reply to mDNS query from {addr}: no suitable broadcast address found");
+                        info!("Cannot reply to mDNS query from {}: no suitable broadcast address found", addr);
                     }
                 }
             }

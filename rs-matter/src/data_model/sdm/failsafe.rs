@@ -18,10 +18,6 @@
 use core::num::NonZeroU8;
 use core::time::Duration;
 
-use bitflags::bitflags;
-
-use log::error;
-
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
@@ -30,6 +26,7 @@ use crate::interaction_model::core::IMStatusCode;
 use crate::mdns::Mdns;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
+use crate::utils::bitflags::bitflags;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
@@ -38,7 +35,8 @@ use crate::utils::storage::Vec;
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct NocFlags: u8 {
         const ADD_CSR_REQ_RECVD = 0x01;
         const UPDATE_CSR_REQ_RECVD = 0x02;
@@ -208,7 +206,7 @@ impl FailSafe {
 
         self.add_flags(NocFlags::ADD_CSR_REQ_RECVD);
 
-        Ok(self.key_pair.as_ref().unwrap())
+        Ok(unwrap!(self.key_pair.as_ref()))
     }
 
     pub fn update_csr_req(&mut self, session_mode: &SessionMode) -> Result<&KeyPair, Error> {
@@ -228,7 +226,7 @@ impl FailSafe {
 
         self.add_flags(NocFlags::UPDATE_CSR_REQ_RECVD);
 
-        Ok(self.key_pair.as_ref().unwrap())
+        Ok(unwrap!(self.key_pair.as_ref()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -264,7 +262,7 @@ impl FailSafe {
 
         fabric_mgr.borrow_mut().update(
             fab_idx,
-            self.key_pair.take().unwrap(),
+            unwrap!(self.key_pair.take()),
             &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
@@ -311,7 +309,7 @@ impl FailSafe {
         let fab_idx = fabric_mgr
             .borrow_mut()
             .add(
-                self.key_pair.take().unwrap(),
+                unwrap!(self.key_pair.take()),
                 &self.root_ca,
                 noc,
                 icac.unwrap_or(&[]),

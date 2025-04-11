@@ -279,7 +279,7 @@ fn dm_handler<'a>(
                     rssi: 0,
                 },
             )),
-            false,
+            &false,
             matter.rand(),
         )
         .chain(

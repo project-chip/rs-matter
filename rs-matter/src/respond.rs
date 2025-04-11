@@ -20,8 +20,6 @@ use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
 
-use log::{error, info};
-
 use crate::data_model::core::{DataModel, IMBuffer};
 use crate::data_model::objects::DataModelHandler;
 use crate::data_model::subscriptions::Subscriptions;
@@ -148,7 +146,7 @@ where
 
     /// Run the responder with a given number of handlers.
     pub async fn run<const N: usize>(&self) -> Result<(), Error> {
-        info!("{}: Creating {N} handlers", self.name);
+        info!("{}: Creating {} handlers", self.name, N);
 
         let mut handlers = heapless::Vec::<_, N>::new();
         info!(
@@ -158,10 +156,7 @@ where
         );
 
         for handler_id in 0..N {
-            handlers
-                .push(self.handle(handler_id))
-                .map_err(|_| ())
-                .unwrap(); // Cannot fail because the vector has size N
+            unwrap!(handlers.push(self.handle(handler_id)).map_err(|_| ())); // Cannot fail because the vector has size N
         }
 
         select_slice(&mut handlers).await.0
@@ -181,26 +176,44 @@ where
     pub async fn respond_once(&self, handler_id: impl Display) -> Result<(), Error> {
         let mut exchange = Exchange::accept_after(self.matter, self.respond_after_ms).await?;
 
-        ::log::log!(
-            self.log_level(),
-            "{}: Handler {handler_id} / exchange {}: Starting",
-            self.name,
-            exchange.id()
-        );
+        if self.log_warn() {
+            warn!(
+                "{}: Handler {} / exchange {}: Starting",
+                self.name,
+                display2format!(&handler_id),
+                exchange.id()
+            );
+        } else {
+            info!(
+                "{}: Handler {} / exchange {}: Starting",
+                self.name,
+                display2format!(&handler_id),
+                exchange.id()
+            );
+        }
 
         let result = self.handler.handle(&mut exchange).await;
 
         if let Err(err) = &result {
             error!(
-                "{}: Handler {handler_id} / exchange {}: Abandoned because of error {err:?}",
+                "{}: Handler {} / exchange {}: Abandoned because of error {:?}",
                 self.name,
+                display2format!(&handler_id),
+                exchange.id(),
+                err
+            );
+        } else if self.log_warn() {
+            warn!(
+                "{}: Handler {} / exchange {}: Completed",
+                self.name,
+                display2format!(&handler_id),
                 exchange.id()
             );
         } else {
-            ::log::log!(
-                self.log_level(),
-                "{}: Handler {handler_id} / exchange {}: Completed",
+            info!(
+                "{}: Handler {} / exchange {}: Completed",
                 self.name,
+                display2format!(&handler_id),
                 exchange.id()
             );
         }
@@ -208,12 +221,8 @@ where
         result
     }
 
-    fn log_level(&self) -> log::Level {
-        if self.respond_after_ms > 0 {
-            log::Level::Warn
-        } else {
-            log::Level::Info
-        }
+    fn log_warn(&self) -> bool {
+        self.respond_after_ms > 0
     }
 }
 

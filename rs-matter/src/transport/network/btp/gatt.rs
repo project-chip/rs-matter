@@ -135,6 +135,7 @@ impl AdvData {
 /// the Matter BTP protocol, but is otherwise not really having the ambition to model all
 /// possible events of a generic GATT peripheral, which would result in a much larger API surface.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattPeripheralEvent<'a> {
     /// A GATT central has subscribed for notifications from characteristic `C2`.
     /// In other words, the GATT central is now ready to receive BTP packets.

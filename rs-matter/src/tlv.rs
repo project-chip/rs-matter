@@ -39,6 +39,7 @@ mod write;
 
 /// Represents the TLV tag type encoded in the control byte of each TLV element.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, num_derive::FromPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TLVTagType {
     Anonymous = 0,
@@ -85,6 +86,7 @@ impl fmt::Display for TLVTagType {
 
 /// Represents the TLV value type encoded in the control byte of each TLV element.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, num_derive::FromPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TLVValueType {
     S8 = 0,
@@ -233,6 +235,7 @@ impl fmt::Display for TLVValueType {
 
 /// Represents the control byte of a TLV element (i.e. the tag type and the value type).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TLVControl {
     pub tag_type: TLVTagType,
     pub value_type: TLVValueType,
@@ -326,6 +329,7 @@ impl fmt::Display for TLVControl {
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TLV<'a> {
     pub tag: TLVTag,
     pub value: TLVValue<'a>,
@@ -565,6 +569,7 @@ pub type TagType = TLVTag;
 ///
 /// A `TLVTag` can be constructed programmatically, or returned from a `TLVElement`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TLVTag {
     Anonymous,
     Context(u8),
@@ -752,6 +757,7 @@ pub type ElementType<'a> = TLVValue<'a>;
 /// Unlike a `TLVElement` however, a `TLVValue` does not represent a complete container,
 /// but rather, its beginning or end.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TLVValue<'a> {
     S8(i8),
     S16(i16),

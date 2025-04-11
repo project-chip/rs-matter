@@ -17,19 +17,15 @@
 
 use core::fmt;
 
-use bitflags::bitflags;
-
-use log::trace;
-
 use crate::error::{Error, ErrorCode};
 use crate::utils::storage::WriteBuf;
 
-bitflags! {
+bitflags::bitflags! {
     /// Models the flags in the BTP header.
     ///
     /// Consult the Matter Core Specification for more information.
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub struct BtpFlags: u8 {
         const HANDSHAKE = 0x40;
         const MANAGEMENT = 0x20;
@@ -74,6 +70,40 @@ impl fmt::Display for BtpFlags {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for BtpFlags {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let mut sep = false;
+        for flag in [
+            Self::HANDSHAKE,
+            Self::MANAGEMENT,
+            Self::ACK,
+            Self::BEGINNING_SEGMENT,
+            Self::CONTINUE,
+            Self::ENDING_SEGMENT,
+        ] {
+            if self.contains(flag) {
+                if sep {
+                    defmt::write!(f, "|");
+                }
+
+                let str = match flag {
+                    Self::HANDSHAKE => "H",
+                    Self::MANAGEMENT => "M",
+                    Self::ACK => "A",
+                    Self::BEGINNING_SEGMENT => "B",
+                    Self::CONTINUE => "C",
+                    Self::ENDING_SEGMENT => "E",
+                    _ => "?",
+                };
+
+                defmt::write!(f, "{}", str);
+                sep = true;
+            }
+        }
     }
 }
 
@@ -350,8 +380,34 @@ impl fmt::Display for BtpHdr {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for BtpHdr {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if !self.flags.is_empty() {
+            defmt::write!(f, "{}", self.flags);
+        }
+
+        if let Some(opcode) = self.get_opcode() {
+            defmt::write!(f, ",OP:{:x}", opcode);
+        }
+
+        if let Some(ack_num) = self.get_ack() {
+            defmt::write!(f, ",ACTR:{:x}", ack_num);
+        }
+
+        if let Some(seq_num) = self.get_seq() {
+            defmt::write!(f, ",CTR:{:x}", seq_num);
+        }
+
+        if let Some(msg_len) = self.get_msg_len() {
+            defmt::write!(f, ",LEN:{:x}", msg_len);
+        }
+    }
+}
+
 /// Models the BTP handshake request.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandshakeReq {
     /// The versions supported by the BTP handshake request.
     versions: u32,
@@ -425,6 +481,7 @@ impl HandshakeReq {
 
 /// Models the BTP handshake response.
 #[derive(Debug, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HandshakeResp {
     /// The version of the BTP protocol supported by the responder.
     pub version: u8,

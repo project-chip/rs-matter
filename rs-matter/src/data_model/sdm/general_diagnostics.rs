@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::info;
-
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
@@ -71,6 +69,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GenDiagCluster {
     data_ver: Dataver,
 }

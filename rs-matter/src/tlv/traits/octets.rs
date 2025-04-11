@@ -48,6 +48,7 @@ pub type OctetStrOwned<const N: usize> = OctetsOwned<N>;
 ///
 /// When deserializing, this type grabs the octet slice directly from the `TLVElement`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(transparent)]
 pub struct Octets<'a>(pub &'a [u8]);
 
@@ -84,6 +85,7 @@ impl ToTLV for Octets<'_> {
 /// Newtype for owned byte arrays with a fixed maximum length
 /// (represented by a `Vec<u8, N>`)
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(transparent)]
 pub struct OctetsOwned<const N: usize> {
     pub vec: Vec<u8, N>,

@@ -21,6 +21,7 @@ use crate::utils::init::{init, Init};
 
 /// A ring buffer of a fixed capacity `N` using owned storage.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RingBuf<const N: usize> {
     buf: crate::utils::storage::Vec<u8, N>,
     start: usize,
@@ -63,7 +64,7 @@ impl<const N: usize> RingBuf<N> {
     #[inline(always)]
     pub fn push(&mut self, data: &[u8]) -> usize {
         // Unwrap is safe because the max size of the buffer is N
-        self.buf.resize_default(N).unwrap();
+        unwrap!(self.buf.resize_default(N));
 
         let mut offset = 0;
 
@@ -96,7 +97,7 @@ impl<const N: usize> RingBuf<N> {
     #[inline(always)]
     pub fn push_byte(&mut self, data: u8) -> usize {
         // Unwrap is safe because the max size of the buffer is N
-        self.buf.resize_default(N).unwrap();
+        unwrap!(self.buf.resize_default(N));
 
         self.buf[self.end] = data;
 

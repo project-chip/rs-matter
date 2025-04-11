@@ -126,7 +126,7 @@ where
 
             match result {
                 Either::First(index) => {
-                    let buffer = &mut unsafe { self.pool.get().as_mut() }.unwrap()[index];
+                    let buffer = &mut unwrap!(unsafe { self.pool.get().as_mut() })[index];
 
                     Some(PooledBuffer {
                         index,
@@ -147,8 +147,8 @@ where
             });
 
             index.map(|index| {
-                let buffers = unsafe { self.pool.get().as_mut() }.unwrap();
-                buffers.resize_default(N).unwrap();
+                let buffers = unwrap!(unsafe { self.pool.get().as_mut() });
+                unwrap!(buffers.resize_default(N));
 
                 let buffer = &mut buffers[index];
 

@@ -17,8 +17,6 @@
 
 use core::cell::RefCell;
 
-use log::info;
-
 use rs_matter_macros::{FromTLV, ToTLV};
 
 use strum::{EnumDiscriminants, FromRepr};
@@ -95,6 +93,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum WiFiSecurity {
     Unspecified = 0,
@@ -106,6 +105,7 @@ pub enum WiFiSecurity {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum WiFiVersion {
     A = 0,
@@ -117,6 +117,7 @@ pub enum WiFiVersion {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum AssociationFailure {
     Unknown = 0,
@@ -126,6 +127,7 @@ pub enum AssociationFailure {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ConnectionStatus {
     Connected = 0,
@@ -133,6 +135,7 @@ pub enum ConnectionStatus {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WifiNwDiagData {
     pub bssid: [u8; 6],
     pub security_type: WiFiSecurity,
@@ -143,6 +146,7 @@ pub struct WifiNwDiagData {
 
 /// A cluster implementing the Matter Wifi Diagnostics Cluster.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct WifiNwDiagCluster {
     data_ver: Dataver,
     data: RefCell<WifiNwDiagData>,
