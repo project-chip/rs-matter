@@ -54,7 +54,6 @@ enum PeripheralIncoming {
     Unsubscribed(BtAddr),
     Write {
         address: BtAddr,
-        #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
         data: Vec<u8>,
         gatt_mtu: Option<u16>,
     },
@@ -63,7 +62,6 @@ enum PeripheralIncoming {
 #[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct PeripheralOutgoing {
-    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     data: Vec<u8>,
     address: BtAddr,
 }
@@ -116,7 +114,6 @@ impl Peripheral {
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct IoPacket {
-    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     data: Vec<u8>,
     address: BtAddr,
 }

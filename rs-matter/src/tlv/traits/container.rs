@@ -187,11 +187,10 @@ where
         for elem in self.iter() {
             if first {
                 first = false;
+                write!(f, "{elem:?}")?;
             } else {
-                write!(f, ", ")?;
+                write!(f, ", {elem:?}")?;
             }
-
-            write!(f, "{elem:?}")?;
         }
 
         write!(f, "]")
@@ -201,10 +200,23 @@ where
 #[cfg(feature = "defmt")]
 impl<'a, T, C> defmt::Format for TLVContainer<'a, T, C>
 where
-    T: FromTLV<'a> + fmt::Debug,
+    T: FromTLV<'a> + defmt::Format,
 {
     fn format(&self, f: defmt::Formatter<'_>) {
-        defmt::Debug2Format(self).format(f)
+        defmt::write!(f, "[");
+
+        let mut first = true;
+
+        for elem in self.iter() {
+            if first {
+                first = false;
+                defmt::write!(f, "{:?}", elem);
+            } else {
+                defmt::write!(f, ", {:?}", elem);
+            }
+        }
+
+        defmt::write!(f, "]")
     }
 }
 

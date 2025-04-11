@@ -1010,8 +1010,8 @@ mod tests {
     #[derive(Debug)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     enum AnswerDetails<'a> {
-        A(#[cfg_attr(feature = "defmt", defmt(Display2Format))] Ipv4Addr),
-        Aaaa(#[cfg_attr(feature = "defmt", defmt(Display2Format))] Ipv6Addr),
+        A(Ipv4Addr),
+        Aaaa(Ipv6Addr),
         Srv { port: u16, target: &'a str },
         Ptr(&'a str),
         Txt(&'a [(&'a str, &'a str)]),

@@ -76,7 +76,7 @@ impl Display for BorrowError {
 #[cfg(feature = "defmt")]
 impl defmt::Format for BorrowError {
     fn format(&self, f: defmt::Formatter<'_>) {
-        display2format!(self).format(f)
+        defmt::write!(f, "already mutably borrowed")
     }
 }
 
@@ -107,7 +107,7 @@ impl Display for BorrowMutError {
 #[cfg(feature = "defmt")]
 impl defmt::Format for BorrowMutError {
     fn format(&self, f: defmt::Formatter<'_>) {
-        display2format!(self).format(f)
+        defmt::write!(f, "already borrowed")
     }
 }
 

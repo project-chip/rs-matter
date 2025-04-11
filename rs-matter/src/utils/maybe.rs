@@ -38,10 +38,8 @@ use super::init;
 /// one of the provided init constructors, and then use one of the `as_ref`, `as_mut`,
 /// `as_deref` and `as_deref_mut` methods to access the wrapped value.
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Maybe<T, G = ()> {
     some: bool,
-    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
     value: MaybeUninit<T>,
     _tag: PhantomData<G>,
 }
@@ -269,6 +267,20 @@ where
 {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.as_ref().hash(state)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<T, G> defmt::Format for Maybe<T, G>
+where
+    T: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if self.is_none() {
+            defmt::write!(f, "None")
+        } else {
+            defmt::write!(f, "Some({})", unsafe { self.value.assume_init_ref() })
+        }
     }
 }
 

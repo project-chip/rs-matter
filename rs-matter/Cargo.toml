@@ -18,7 +18,7 @@ examples = ["std", "async-io", "async-compat", "embassy-time-queue-utils/generic
 os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
-alloc = []
+alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "sec1", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
@@ -36,7 +36,7 @@ num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
 strum = { version = "0.26", features = ["derive"], default-features = false }
 log = { version = "0.4", optional = true }
-defmt = { version = "0.3", optional = true }
+defmt = { version = "0.3", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
 safemem = { version = "0.3", default-features = false }
 owo-colors = "4"

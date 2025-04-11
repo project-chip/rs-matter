@@ -180,7 +180,7 @@ impl<'a> MdnsImpl<'a> {
                 let len = host.broadcast(self, &mut buf, 60)?;
 
                 if len > 0 {
-                    info!("Broadcasting mDNS entry to {}", display2format!(addr));
+                    info!("Broadcasting mDNS entry to {}", addr);
                     send.send_to(&buf[..len], Address::Udp(addr)).await?;
                 }
             }
@@ -254,22 +254,16 @@ impl<'a> MdnsImpl<'a> {
 
                             info!(
                                 "Replying to mDNS query from {} on {}, delay {}ms",
-                                display2format!(addr),
-                                display2format!(reply_addr),
-                                delay_ms
+                                addr, reply_addr, delay_ms
                             );
                             Timer::after(Duration::from_millis(delay_ms as _)).await;
                         } else {
-                            info!(
-                                "Replying to mDNS query from {} on {}",
-                                display2format!(addr),
-                                display2format!(reply_addr)
-                            );
+                            info!("Replying to mDNS query from {} on {}", addr, reply_addr);
                         }
 
                         send.send_to(&tx[..len], Address::Udp(reply_addr)).await?;
                     } else {
-                        info!("Cannot reply to mDNS query from {}: no suitable broadcast address found", display2format!(addr));
+                        info!("Cannot reply to mDNS query from {}: no suitable broadcast address found", addr);
                     }
                 }
             }

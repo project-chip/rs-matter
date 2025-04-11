@@ -152,9 +152,9 @@ impl Debug for Address {
 impl defmt::Format for Address {
     fn format(&self, f: defmt::Formatter<'_>) {
         match self {
-            Address::Udp(addr) => defmt::write!(f, "UDP {}", defmt::Display2Format(addr)),
-            Address::Tcp(addr) => defmt::write!(f, "TCP {}", defmt::Display2Format(addr)),
-            Address::Btp(addr) => defmt::write!(f, "BTP {}", defmt::Display2Format(addr)),
+            Address::Udp(addr) => defmt::write!(f, "UDP {}", addr),
+            Address::Tcp(addr) => defmt::write!(f, "TCP {}", addr),
+            Address::Btp(addr) => defmt::write!(f, "BTP {}", addr),
         }
     }
 }
