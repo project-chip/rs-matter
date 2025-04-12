@@ -143,7 +143,6 @@ pub mod msg {
     }
 
     impl fmt::Debug for SubscribeReqRef<'_> {
-        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("SubscribeReqRef")
                 .field("keep_subs", &self.keep_subs())
@@ -155,6 +154,23 @@ pub mod msg {
                 .field("fabric_filtered", &self.fabric_filtered())
                 .field("dataver_filters", &self.dataver_filters())
                 .finish()
+        }
+    }
+
+    #[cfg(feature = "defmt")]
+    impl defmt::Format for SubscribeReqRef<'_> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            defmt::write!(f,
+                "SubscribeReqRef {{\n  keep_subs: {:?},\n  min_int_floor: {:?},\n  max_int_ceil: {:?},\n  attr_requests: {:?},\n  event_requests: {:?},\n  event_filters: {:?},\n  fabric_filtered: {:?},\n  dataver_filters: {:?},\n}}",
+                self.keep_subs(),
+                self.min_int_floor(),
+                self.max_int_ceil(),
+                self.attr_requests(),
+                self.event_requests(),
+                self.event_filters(),
+                self.fabric_filtered(),
+                self.dataver_filters(),
+            )
         }
     }
 
@@ -237,13 +253,24 @@ pub mod msg {
     }
 
     impl fmt::Debug for InvReqRef<'_> {
-        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("InvReqRef")
                 .field("suppress_response", &self.suppress_response())
                 .field("timed_request", &self.timed_request())
                 .field("inv_requests", &self.inv_requests())
                 .finish()
+        }
+    }
+
+    #[cfg(feature = "defmt")]
+    impl defmt::Format for InvReqRef<'_> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            defmt::write!(f,
+                "InvReqRef {{\n  suppress_response: {:?},\n  timed_request: {:?},\n  inv_requests: {:?},\n}}",
+                self.suppress_response(),
+                self.timed_request(),
+                self.inv_requests(),
+            )
         }
     }
 
@@ -307,7 +334,6 @@ pub mod msg {
     }
 
     impl fmt::Debug for ReadReqRef<'_> {
-        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("ReadReqRef")
                 .field("attr_requests", &self.attr_requests())
@@ -316,6 +342,20 @@ pub mod msg {
                 .field("fabric_filtered", &self.fabric_filtered())
                 .field("dataver_filters", &self.dataver_filters())
                 .finish()
+        }
+    }
+
+    #[cfg(feature = "defmt")]
+    impl defmt::Format for ReadReqRef<'_> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            defmt::write!(f,
+                "ReadReqRef {{\n  attr_requests: {:?},\n  event_requests: {:?},\n  event_filters: {:?},\n  fabric_filtered: {:?},\n  dataver_filters: {:?},\n}}",
+                self.attr_requests(),
+                self.event_requests(),
+                self.event_filters(),
+                self.fabric_filtered(),
+                self.dataver_filters(),
+            )
         }
     }
 
@@ -396,7 +436,6 @@ pub mod msg {
     }
 
     impl fmt::Debug for WriteReqRef<'_> {
-        // TODO: defmt
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("WriteReqRef")
                 .field("supress_response", &self.supress_response())
@@ -404,6 +443,19 @@ pub mod msg {
                 .field("write_requests", &self.write_requests())
                 .field("more_chunked", &self.more_chunked())
                 .finish()
+        }
+    }
+
+    #[cfg(feature = "defmt")]
+    impl defmt::Format for WriteReqRef<'_> {
+        fn format(&self, f: defmt::Formatter<'_>) {
+            defmt::write!(f,
+                "WriteReqRef {{\n  supress_response: {:?},\n  timed_request: {:?},\n  write_requests: {:?},\n  more_chunked: {:?},\n}}",
+                self.supress_response(),
+                self.timed_request(),
+                self.write_requests(),
+                self.more_chunked(),
+            )
         }
     }
 

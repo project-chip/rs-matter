@@ -42,7 +42,7 @@ jobs:
         run: cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log -- -Dwarnings
 
       - name: Clippy | defmt
-        run: cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt -- -Dwarnings
+        run: export DEFMT_LOG=trace;cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt -- -Dwarnings
 
       - name: Build
         run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log

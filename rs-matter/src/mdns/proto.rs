@@ -211,7 +211,7 @@ impl Host<'_> {
         let mut replied = false;
 
         for question in message.question() {
-            trace!("Handling question {:?}", question);
+            trace!("Handling question {:?}", debug2format!(question));
 
             let question = question?;
 
