@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::error;
-
 use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::transport::exchange::Exchange;

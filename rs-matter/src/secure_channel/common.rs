@@ -27,6 +27,7 @@ use super::status_report::{GeneralCode, StatusReport};
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
 
 #[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum OpCode {
     MsgCounterSyncReq = 0x00,
     MsgCounterSyncResp = 0x01,
@@ -70,6 +71,7 @@ impl From<OpCode> for MessageMeta {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SCStatusCodes {
     SessionEstablishmentSuccess = 0,
     NoSharedTrustRoots = 1,

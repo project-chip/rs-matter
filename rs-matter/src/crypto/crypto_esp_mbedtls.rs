@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use log::error;
+use crate::error;
 
 use crate::error::{Error, ErrorCode};
 use crate::utils::rand::Rand;
@@ -62,6 +62,7 @@ impl HmacSha256 {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct KeyPair {}
 
 impl KeyPair {

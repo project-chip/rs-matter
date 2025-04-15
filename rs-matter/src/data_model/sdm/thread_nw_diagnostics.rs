@@ -17,8 +17,6 @@
 
 use core::net::Ipv6Addr;
 
-use log::info;
-
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
@@ -203,6 +201,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum RoutingRole {
     Unspecified = 0,
@@ -215,6 +214,7 @@ pub enum RoutingRole {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum NetworkFault {
     Unspecified = 0,
@@ -224,6 +224,7 @@ pub enum NetworkFault {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ConnectionStatus {
     Connected = 0,
@@ -231,6 +232,7 @@ pub enum ConnectionStatus {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NeightborTable {
     pub ext_address: u64,
     pub age: u32,
@@ -249,6 +251,7 @@ pub struct NeightborTable {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RouteTable {
     pub ext_address: u64,
     pub rloc16: u16,
@@ -263,12 +266,14 @@ pub struct RouteTable {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SecurityPolicy {
     pub rotation_time: u16,
     pub flags: u16,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OperationalDatasetComponents {
     pub active_timestamp_present: bool,
     pub pending_timestamp_present: bool,

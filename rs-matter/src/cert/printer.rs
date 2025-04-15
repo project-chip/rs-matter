@@ -125,7 +125,10 @@ impl CertConsumer for CertPrinter<'_, '_> {
     fn utctime(&mut self, tag: &str, epoch: u64) -> Result<(), Error> {
         let matter_epoch = MATTER_EPOCH_SECS + epoch;
 
-        let dt = OffsetDateTime::from_unix_timestamp(matter_epoch as _).unwrap();
+        let dt = unwrap!(
+            OffsetDateTime::from_unix_timestamp(matter_epoch as _),
+            "Invalid time value"
+        );
 
         let _ = writeln!(self.f, "{} {} {:?}", SPACE[self.level], tag, dt);
         Ok(())

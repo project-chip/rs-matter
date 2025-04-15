@@ -15,17 +15,14 @@
  *    limitations under the License.
  */
 
-use crate::{
-    error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV},
-};
-use log::error;
-
-use bitflags::bitflags;
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::utils::bitflags::bitflags;
 
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct Privilege: u8 {
         const V = 0x01;
         const O = 0x02;

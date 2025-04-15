@@ -19,8 +19,6 @@ use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
-use log::{error, info, warn};
-
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::cert::CertRef;
@@ -28,6 +26,7 @@ use crate::crypto::{self, KeyPair};
 use crate::data_model::objects::*;
 use crate::data_model::sdm::dev_att;
 use crate::fabric::MAX_SUPPORTED_FABRICS;
+use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV, UtfStr};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
@@ -94,6 +93,7 @@ pub enum Attributes {
 attribute_enum!(Attributes);
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct NocResp<'a> {
     status_code: u8,
@@ -102,6 +102,7 @@ struct NocResp<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct AddNocReq<'a> {
     noc_value: OctetStr<'a>,
@@ -112,6 +113,7 @@ struct AddNocReq<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct CsrReq<'a> {
     nonce: OctetStr<'a>,
@@ -119,23 +121,27 @@ struct CsrReq<'a> {
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct CommonReq<'a> {
     str: OctetStr<'a>,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct UpdateFabricLabelReq<'a> {
     label: UtfStr<'a>,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct CertChainReq {
     cert_type: u8,
 }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RemoveFabricReq {
     fab_idx: NonZeroU8,
 }
@@ -193,6 +199,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct NocCluster {
     data_ver: Dataver,
 }
@@ -403,12 +410,11 @@ impl NocCluster {
                     // Remove the fabric if we fail further down this function
                     warn!("Removing fabric {} due to failure", fab_idx.get());
 
-                    exchange
+                    unwrap!(exchange
                         .matter()
                         .fabric_mgr
                         .borrow_mut()
-                        .remove(fab_idx, &exchange.matter().transport_mgr.mdns)
-                        .unwrap();
+                        .remove(fab_idx, &exchange.matter().transport_mgr.mdns));
                 }
             });
 
@@ -569,7 +575,7 @@ impl NocCluster {
         cmd_enter!("AddTrustedRootCert");
 
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Trusted Cert: {:x?}", req.str);
+        info!("Received Trusted Cert: {}", Bytes(&req.str));
 
         exchange.with_session(|sess| {
             exchange

@@ -17,13 +17,12 @@
 
 use core::fmt::{self, Write};
 
-use log::error;
-
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
 use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
 use crate::utils::epoch::MATTER_CERT_DOESNT_EXPIRE;
 use crate::utils::iter::TryFindIterator;
@@ -62,6 +61,7 @@ pub enum CertTag {
 }
 
 #[derive(FromPrimitive, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EcCurveIdValue {
     Prime256V1 = 1,
 }
@@ -71,6 +71,7 @@ pub fn get_ec_curve_id(algo: u8) -> Option<EcCurveIdValue> {
 }
 
 #[derive(FromPrimitive, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PubKeyAlgoValue {
     EcPubKey = 1,
 }
@@ -80,6 +81,7 @@ pub fn get_pubkey_algo(algo: u8) -> Option<PubKeyAlgoValue> {
 }
 
 #[derive(FromPrimitive, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SignAlgoValue {
     ECDSAWithSHA256 = 1,
 }
@@ -89,6 +91,7 @@ pub fn get_sign_algo(algo: u8) -> Option<SignAlgoValue> {
 }
 
 #[derive(Default, Debug, Clone, FromTLV, ToTLV, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct BasicConstraints {
     is_ca: bool,
@@ -110,6 +113,7 @@ impl BasicConstraints {
 }
 
 // #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 // #[repr(u8)]
 // enum ExtTag {
 //     BasicConstraints = 1,
@@ -121,6 +125,7 @@ impl BasicConstraints {
 // }
 
 #[derive(Debug, Clone, FromTLV, ToTLV, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1, lifetime = "'a", datatype = "naked", unordered)]
 enum Extension<'a> {
     BasicConstraints(BasicConstraints),
@@ -195,7 +200,7 @@ impl<'a> Extension<'a> {
                 Self::encode_extension_end(w)?;
             }
             Extension::FutureExtensions(t) => {
-                error!("Future Extensions Not Yet Supported: {:x?}", t.0)
+                error!("Future Extensions Not Yet Supported: {}", Bytes(t.0))
             }
         }
 
@@ -283,7 +288,7 @@ impl<'a> Extension<'a> {
         }
 
         let mut string = heapless::String::new();
-        write!(
+        write_unwrap!(
             &mut string,
             "{}{}{}{}{}{}{}{}{}",
             add_if!(key_usage, KEY_USAGE_DIGITAL_SIGN, "digitalSignature "),
@@ -295,8 +300,7 @@ impl<'a> Extension<'a> {
             add_if!(key_usage, KEY_USAGE_CRL_SIGN, "CRLSign "),
             add_if!(key_usage, KEY_USAGE_ENCIPHER_ONLY, "encipherOnly "),
             add_if!(key_usage, KEY_USAGE_DECIPHER_ONLY, "decipherOnly "),
-        )
-        .unwrap();
+        );
 
         string
     }
@@ -319,6 +323,7 @@ impl<'a> Extension<'a> {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromPrimitive)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 enum DNTag {
     CommonName = 1,
@@ -346,6 +351,7 @@ enum DNTag {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum DNValue<'a> {
     Uint(u64),
     Utf8(&'a str),
@@ -353,6 +359,7 @@ enum DNValue<'a> {
 }
 
 #[derive(FromTLV, ToTLV, Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 struct DN<'a>(TLVElement<'a>);
 
@@ -514,12 +521,12 @@ impl<'a> DN<'a> {
             DNValue::Uint(v) => match expected_len {
                 Some(IntToStringLen::Len16) => {
                     let mut string = heapless::String::<32>::new();
-                    write!(&mut string, "{:016X}", v).unwrap();
+                    write_unwrap!(&mut string, "{:016X}", v);
                     w.utf8str("", &string)?
                 }
                 Some(IntToStringLen::Len8) => {
                     let mut string = heapless::String::<32>::new();
-                    write!(&mut string, "{:08X}", v).unwrap();
+                    write_unwrap!(&mut string, "{:08X}", v);
                     w.utf8str("", &string)?
                 }
                 _ => {
@@ -547,6 +554,7 @@ enum IntToStringLen {
 }
 
 #[derive(FromTLV, ToTLV, Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct CertRef<'a>(TLVElement<'a>);
 
@@ -766,9 +774,10 @@ impl<'a> CertVerifier<'a> {
         k.verify_msg(asn1, self.cert.signature()?)
             .inspect_err(|e| {
                 error!(
-                    "Error {e} in signature verification of certificate: {:x?} by {:x?}",
-                    self.cert.get_subject_key_id(),
-                    parent.get_subject_key_id()
+                    "Error {} in signature verification of certificate: {:?} by {:?}",
+                    e,
+                    self.cert.get_subject_key_id().map(Bytes),
+                    parent.get_subject_key_id().map(Bytes)
                 );
             })?;
 
@@ -806,8 +815,6 @@ pub trait CertConsumer {
 
 #[cfg(test)]
 mod tests {
-    use log::info;
-
     use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
     use crate::utils::storage::WriteBuf;
 
@@ -818,21 +825,21 @@ mod tests {
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_INPUT1));
-            let len = c.as_asn1(&mut asn1_buf).unwrap();
+            let len = unwrap!(c.as_asn1(&mut asn1_buf));
             assert_eq!(&test_vectors::ASN1_OUTPUT1, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_INPUT2));
-            let len = c.as_asn1(&mut asn1_buf).unwrap();
+            let len = unwrap!(c.as_asn1(&mut asn1_buf));
             assert_eq!(&test_vectors::ASN1_OUTPUT2, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_TXT_IN_DN));
-            let len = c.as_asn1(&mut asn1_buf).unwrap();
+            let len = unwrap!(c.as_asn1(&mut asn1_buf));
             assert_eq!(&test_vectors::ASN1_OUTPUT_TXT_IN_DN, &asn1_buf[..len]);
         }
     }
@@ -844,12 +851,10 @@ mod tests {
         let icac = CertRef::new(TLVElement::new(&test_vectors::ICAC1_SUCCESS));
         let rca = CertRef::new(TLVElement::new(&test_vectors::RCA1_SUCCESS));
         let a = noc.verify_chain_start();
-        a.add_cert(&icac, &mut buf)
-            .unwrap()
-            .add_cert(&rca, &mut buf)
-            .unwrap()
-            .finalise(&mut buf)
-            .unwrap();
+        unwrap!(
+            unwrap!(unwrap!(a.add_cert(&icac, &mut buf)).add_cert(&rca, &mut buf))
+                .finalise(&mut buf)
+        );
     }
 
     #[test]
@@ -863,8 +868,7 @@ mod tests {
         let a = noc.verify_chain_start();
         assert_eq!(
             Err(ErrorCode::InvalidAuthKey),
-            a.add_cert(&icac, &mut buf)
-                .unwrap()
+            unwrap!(a.add_cert(&icac, &mut buf))
                 .finalise(&mut buf)
                 .map_err(|e| e.code())
         );
@@ -893,8 +897,8 @@ mod tests {
         let rca = CertRef::new(TLVElement::new(&test_vectors::RCA_FOR_NOC_NOT_AFTER_ZERO));
 
         let v = noc.verify_chain_start();
-        let v = v.add_cert(&rca, &mut buf).unwrap();
-        v.finalise(&mut buf).unwrap();
+        let v = unwrap!(v.add_cert(&rca, &mut buf));
+        unwrap!(v.finalise(&mut buf));
     }
 
     #[test]
@@ -925,14 +929,14 @@ mod tests {
         for input in test_input.iter() {
             info!("Testing next input...");
             let root = TLVElement::new(input);
-            let cert = CertRef::from_tlv(&root).unwrap();
+            let cert = unwrap!(CertRef::from_tlv(&root));
             let mut buf = [0u8; 1024];
             let mut wb = WriteBuf::new(&mut buf);
             let mut tw = TLVWriter::new(&mut wb);
-            cert.to_tlv(&TagType::Anonymous, &mut tw).unwrap();
+            unwrap!(cert.to_tlv(&TagType::Anonymous, &mut tw));
 
             let root2 = TLVElement::new(wb.as_slice());
-            let cert2 = CertRef::from_tlv(&root2).unwrap();
+            let cert2 = unwrap!(CertRef::from_tlv(&root2));
             assert_eq!(cert, cert2);
         }
     }
@@ -943,7 +947,7 @@ mod tests {
 
         let cert = CertRef::new(TLVElement::new(test_vectors::UNORDERED_EXTENSIONS_CHIP));
 
-        let asn1_len = cert.as_asn1(&mut buf).unwrap();
+        let asn1_len = unwrap!(cert.as_asn1(&mut buf));
         assert_eq!(&buf[..asn1_len], test_vectors::UNORDERED_EXTENSIONS_DER);
     }
 

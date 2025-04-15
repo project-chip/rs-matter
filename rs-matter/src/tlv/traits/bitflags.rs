@@ -30,9 +30,9 @@ macro_rules! bitflags_tlv {
     ($enum_name:ident, $type:ident) => {
         impl<'a> $crate::tlv::FromTLV<'a> for $enum_name {
             fn from_tlv(element: &$crate::tlv::TLVElement<'a>) -> Result<Self, Error> {
-                Ok(Self::from_bits_retain($crate::tlv::TLVElement::$type(
-                    element,
-                )?))
+                Self::from_bits($crate::tlv::TLVElement::$type(element)?).ok_or_else(|| {
+                    $crate::error::Error::from($crate::error::ErrorCode::InvalidData)
+                })
             }
         }
 

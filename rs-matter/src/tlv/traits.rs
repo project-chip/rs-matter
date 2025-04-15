@@ -177,7 +177,7 @@ mod tests {
     fn test_from_tlv<'a, T: FromTLV<'a> + PartialEq + Debug>(data: &'a [u8], expected: T) {
         let root = TLVElement::new(data);
         let test = T::from_tlv(&root).unwrap();
-        assert_eq!(test, expected);
+        ::core::assert_eq!(test, expected);
 
         let test_init = T::init_from_tlv(root);
 
@@ -185,7 +185,7 @@ mod tests {
 
         let test = test.try_init_with(test_init).unwrap();
 
-        assert_eq!(*test, expected);
+        ::core::assert_eq!(*test, expected);
     }
 
     fn test_to_tlv<T: ToTLV>(t: T, expected: &[u8]) {
@@ -210,7 +210,7 @@ mod tests {
             }
         }
 
-        assert_eq!(writebuf.as_slice(), expected);
+        ::core::assert_eq!(writebuf.as_slice(), expected);
     }
 
     #[derive(ToTLV)]
@@ -231,6 +231,7 @@ mod tests {
     }
 
     #[derive(FromTLV, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct TestDeriveSimple {
         a: u16,
         b: u32,
@@ -245,6 +246,7 @@ mod tests {
     }
 
     #[derive(FromTLV, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[tlvargs(lifetime = "'a")]
     struct TestDeriveStr<'a> {
         a: u16,
@@ -263,6 +265,7 @@ mod tests {
     }
 
     #[derive(FromTLV, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct TestDeriveOption {
         a: u16,
         b: Option<u16>,
@@ -282,6 +285,7 @@ mod tests {
     }
 
     #[derive(FromTLV, ToTLV, Debug, PartialEq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct TestDeriveFabScoped {
         a: u16,
         #[tagval(0xFE)]
@@ -305,6 +309,7 @@ mod tests {
     }
 
     #[derive(ToTLV, FromTLV, PartialEq, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     enum TestDeriveEnum {
         ValueA(u32),
         ValueB(u32),

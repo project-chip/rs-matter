@@ -24,6 +24,7 @@ use crate::{
 
 #[allow(dead_code)]
 #[derive(FromPrimitive, PartialEq, Eq, Debug, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GeneralCode {
     Success = 0,
     Failure = 1,
@@ -46,6 +47,7 @@ pub enum GeneralCode {
 
 /// Represents a Status Report message, as per "Appendix D: Status Report Messages" of the Matter Spec.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct StatusReport<'a> {
     pub general_code: GeneralCode,
     pub proto_id: u32,

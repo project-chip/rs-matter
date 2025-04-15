@@ -20,6 +20,7 @@ use core::fmt;
 use super::{Cluster, DeviceType, EndptId};
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Endpoint<'a> {
     pub id: EndptId,
     pub device_types: &'a [DeviceType],

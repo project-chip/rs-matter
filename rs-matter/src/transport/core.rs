@@ -23,10 +23,9 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
-use log::{debug, error, info, trace, warn};
-
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::mdns::{MdnsImpl, MdnsService};
 use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 use crate::secure_channel::status_report::StatusReport;
@@ -208,7 +207,7 @@ impl<'m> TransportMgr<'m> {
         // `unwrap` is safe because we know we have a session or else the early return from above would've triggered
         // The reason why we call `get_for_node` twice is to ensure that we don't waste an `exch_id` in case
         // we don't have a session in the first place
-        let session = session_mgr.get(session_id).unwrap();
+        let session = unwrap!(session_mgr.get(session_id));
 
         let exch_index = session
             .add_exch(exch_id, Role::Initiator(Default::default()))
@@ -240,7 +239,7 @@ impl<'m> TransportMgr<'m> {
                 let matches = {
                     // `unwrap` is safe because the transport code is single threaded, and since we don't `await`
                     // after computing `exch_index` no code can remove the exchange from the session
-                    let exch = session.exchanges[exch_index].as_ref().unwrap();
+                    let exch = unwrap!(session.exchanges[exch_index].as_ref());
 
                     matches!(exch.role, Role::Responder(ResponderState::AcceptPending))
                         && f(session, exch, packet)
@@ -252,7 +251,7 @@ impl<'m> TransportMgr<'m> {
 
                 // `unwrap` is safe because the transport code is single threaded, and since we don't `await`
                 // after computing `exch_index` no code can remove the exchange from the session
-                let exch = session.exchanges[exch_index].as_mut().unwrap();
+                let exch = unwrap!(session.exchanges[exch_index].as_mut());
 
                 exch.role = Role::Responder(ResponderState::Owned);
 
@@ -391,7 +390,7 @@ impl<'m> TransportMgr<'m> {
 
             // TODO: Resizing might be a bit expensive with large buffers
             // Resizing to `MAX_RX_BUF_SIZE` is always safe because the size of the `buf` heapless vec `MAX_RX_BUF_SIZE`
-            rx.buf.resize_default(MAX_RX_BUF_SIZE).unwrap();
+            unwrap!(rx.buf.resize_default(MAX_RX_BUF_SIZE));
 
             let (len, peer) = Self::netw_recv(&mut recv, &mut rx.buf).await?;
 
@@ -409,7 +408,7 @@ impl<'m> TransportMgr<'m> {
                 }
                 Err(e) => {
                     // Drop the packet and report the unexpected error
-                    error!("UNEXPECTED RX ERROR: {e:?}");
+                    error!("UNEXPECTED RX ERROR: {:?}", e);
                 }
             }
         }
@@ -463,7 +462,7 @@ impl<'m> TransportMgr<'m> {
                     wait
                 }
                 Err(e) => {
-                    error!("UNEXPECTED RX ERROR: {e:?}");
+                    error!("UNEXPECTED RX ERROR: {:?}", e);
                     false
                 }
             };
@@ -493,7 +492,7 @@ impl<'m> TransportMgr<'m> {
                 if !packet.peer.is_reliable()
                     && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                 {
-                    info!("\n>>RCV {packet}\n      => Duplicate, sending ACK");
+                    info!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
                     {
                         let mut session_mgr = self.session_mgr.borrow_mut();
@@ -503,9 +502,8 @@ impl<'m> TransportMgr<'m> {
                         //
                         // Also, since the transport code is single threaded, and since we don't `await`
                         // after decoding the packet, no code can the session
-                        let session = session_mgr
-                            .get_for_rx(&packet.peer, &packet.header.plain)
-                            .unwrap();
+                        let session =
+                            unwrap!(session_mgr.get_for_rx(&packet.peer, &packet.header.plain));
 
                         let ack = packet.header.plain.ctr;
 
@@ -520,14 +518,17 @@ impl<'m> TransportMgr<'m> {
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
                 } else {
-                    info!("\n>>RCV {packet}\n      => Duplicate, discarding");
+                    info!("\n>>RCV {}\n      => Duplicate, discarding", packet);
                 }
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
                 if !packet.header.plain.is_encrypted()
                     && MessageMeta::from(&packet.header.proto).is_new_session()
                 {
-                    warn!("\n>>RCV {packet}\n      => No space for a new unencrypted session, sending Busy");
+                    warn!(
+                        "\n>>RCV {}\n      => No space for a new unencrypted session, sending Busy",
+                        packet
+                    );
 
                     let ack = packet.header.plain.ctr;
 
@@ -552,7 +553,8 @@ impl<'m> TransportMgr<'m> {
                     }
                 } else {
                     error!(
-                        "\n>>RCV {packet}\n      => No space for a new encrypted session, dropping"
+                        "\n>>RCV {}\n      => No space for a new encrypted session, dropping",
+                        packet
                     );
                 }
             }
@@ -563,7 +565,10 @@ impl<'m> TransportMgr<'m> {
                 //   wait for ACK and retransmit without releasing the RX buffer, potentially
                 //   blocking all other interactions
 
-                error!("\n>>RCV {packet}\n      => No space for a new exchange, closing session");
+                error!(
+                    "\n>>RCV {}\n      => No space for a new exchange, closing session",
+                    packet
+                );
 
                 {
                     let mut session_mgr = self.session_mgr.borrow_mut();
@@ -573,16 +578,14 @@ impl<'m> TransportMgr<'m> {
                     //
                     // Also, since the transport code is single threaded, and since we don't `await`
                     // after decoding the packet, no code can the session
-                    let session_id = session_mgr
-                        .get_for_rx(&packet.peer, &packet.header.plain)
-                        .unwrap()
-                        .id;
+                    let session_id =
+                        unwrap!(session_mgr.get_for_rx(&packet.peer, &packet.header.plain)).id;
 
                     packet.header.proto.exch_id = session_mgr.get_next_exch_id();
                     packet.header.proto.set_initiator();
 
                     // See above why `unwrap` is safe
-                    let mut session = session_mgr.remove(session_id).unwrap();
+                    let mut session = unwrap!(session_mgr.remove(session_id));
                     self.session_removed.notify();
 
                     self.encode_packet(packet, Some(&mut session), None, |wb| {
@@ -594,20 +597,26 @@ impl<'m> TransportMgr<'m> {
                     .await?;
             }
             Err(e) if matches!(e.code(), ErrorCode::NoExchange) => {
-                warn!("\n>>RCV {packet}\n      => No valid exchange found, dropping");
+                warn!(
+                    "\n>>RCV {}\n      => No valid exchange found, dropping",
+                    packet
+                );
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSession) => {
-                warn!("\n>>RCV {packet}\n      => No valid session found, dropping");
+                warn!(
+                    "\n>>RCV {}\n      => No valid session found, dropping",
+                    packet
+                );
             }
             Err(e) => {
-                error!("\n>>RCV {packet}\n      => Error ({e:?}), dropping");
+                error!("\n>>RCV {}\n      => Error ({:?}), dropping", packet, e);
             }
             Ok(new_exchange) => {
                 let meta = MessageMeta::from(&packet.header.proto);
 
                 if meta.is_standalone_ack() {
                     // No need to propagate this further
-                    info!("\n>>RCV {packet}\n      => Standalone Ack, dropping");
+                    info!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
                 } else if meta.is_sc_status()
                     && matches!(
                         Self::is_close_session(&mut packet.buf[packet.payload_start..]),
@@ -615,7 +624,8 @@ impl<'m> TransportMgr<'m> {
                     )
                 {
                     warn!(
-                        "\n>>RCV {packet}\n      => Close session received, removing this session"
+                        "\n>>RCV {}\n      => Close session received, removing this session",
+                        packet
                     );
 
                     let mut session_mgr = self.session_mgr.borrow_mut();
@@ -628,7 +638,8 @@ impl<'m> TransportMgr<'m> {
                     }
                 } else {
                     info!(
-                        "\n>>RCV {packet}\n      => Processing{}",
+                        "\n>>RCV {}\n      => Processing{}",
+                        packet,
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
@@ -665,7 +676,7 @@ impl<'m> TransportMgr<'m> {
         };
 
         // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
-        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+        let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
         if !matches!(
             exchange.role,
@@ -675,7 +686,10 @@ impl<'m> TransportMgr<'m> {
             return false;
         }
 
-        warn!("\n----- {packet}\n => Accept timeout, marking exchange as dropped");
+        warn!(
+            "\n----- {}\n => Accept timeout, marking exchange as dropped",
+            packet
+        );
 
         exchange.role = Role::Responder(ResponderState::Dropped);
         packet.buf.clear();
@@ -692,25 +706,26 @@ impl<'m> TransportMgr<'m> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
         let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
-            warn!("\n----- {packet}\n => No session, dropping");
+            warn!("\n----- {}\n => No session, dropping", packet);
 
             packet.buf.clear();
             return true;
         };
 
         let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
-            warn!("\n----- {packet}\n => No exchange, dropping");
+            warn!("\n----- {}\n => No exchange, dropping", packet);
 
             packet.buf.clear();
             return true;
         };
 
         // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
-        let exchange = session.exchanges[exch_index].as_mut().unwrap();
+        let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
         if exchange.role.is_dropped_state() {
             warn!(
-                "\n----- {packet}\n => Owned by orphaned dropped {}, dropping packet",
+                "\n----- {}\n => Owned by orphaned dropped {}, dropping packet",
+                packet,
                 ExchangeId::new(session.id, exch_index)
             );
 
@@ -750,7 +765,7 @@ impl<'m> TransportMgr<'m> {
 
             error!(
                 "Dropped exchange {}: Closing session because the exchange cannot be closed cleanly",
-                exchange_id.display(session_mgr.get(session_id).unwrap()) // Session exists or else we wouldn't be here
+                exchange_id.display(unwrap!(session_mgr.get(session_id))) // Session exists or else we wouldn't be here
             );
 
             self.encode_evict_session(packet, &mut session_mgr, session_id)?;
@@ -759,9 +774,9 @@ impl<'m> TransportMgr<'m> {
             // Send a standalone ACK if necessary and then close it
 
             // `unwrap` is safe because we know we have a session and an exchange, or else the early returns from above would've triggered
-            let session = session_mgr.get(session_id).unwrap();
+            let session = unwrap!(session_mgr.get(session_id));
             // Ditto
-            let exchange = session.exchanges[exch_index].as_mut().unwrap();
+            let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
             if exchange.mrp.is_ack_pending() {
                 self.encode_packet(packet, Some(session), Some(exch_index), |_| {
@@ -857,7 +872,7 @@ impl<'m> TransportMgr<'m> {
         // TODO: Resizing might be a bit expensive with large buffers
         // Resizing to `N` is always safe because it is a responsibility of the caller to ensure that N is <= `MAX_RX_BUF_SIZE`,
         // which is the size of `buf` heapless vec
-        packet.buf.resize_default(N).unwrap();
+        unwrap!(packet.buf.resize_default(N));
 
         let mut wb = WriteBuf::new(&mut packet.buf);
         wb.reserve(PacketHdr::HDR_RESERVE)?;
@@ -962,7 +977,7 @@ impl<'m> TransportMgr<'m> {
         packet.header.proto.set_initiator();
 
         // It is a responsibility of the caller to ensure that this method is called with a valid session ID
-        let mut session = session_mgr.remove(id).unwrap();
+        let mut session = unwrap!(session_mgr.remove(id));
         self.session_removed.notify();
 
         info!(
@@ -995,12 +1010,12 @@ impl<'m> TransportMgr<'m> {
     {
         match recv.recv_from(buf).await {
             Ok((len, addr)) => {
-                debug!("\n>>RCV {} {}B:\n     {:02x?}", addr, len, &buf[..len]);
+                debug!("\n>>RCV {} {}B:\n     {}", addr, len, Bytes(&buf[..len]));
 
                 Ok((len, addr))
             }
             Err(e) => {
-                error!("FAILED network recv: {e:?}");
+                error!("FAILED network recv: {:?}", e);
 
                 Err(e)
             }
@@ -1019,21 +1034,22 @@ impl<'m> TransportMgr<'m> {
         match send.lock().await.send_to(data, peer).await {
             Ok(_) => {
                 debug!(
-                    "\n<<SND {} {}B{}: {:02x?}",
+                    "\n<<SND {} {}B{}: {}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
-                    data
+                    Bytes(data)
                 );
 
                 Ok(())
             }
             Err(e) => {
                 error!(
-                    "\n<<SND {} {}B{} !FAILED!: {e:?}",
+                    "\n<<SND {} {}B{} !FAILED!: {:?}",
                     peer,
                     data.len(),
                     if system { " (system)" } else { "" },
+                    e
                 );
 
                 // Do not return an error as that would unroll the main `rs-matter` loop
@@ -1076,28 +1092,30 @@ impl<const N: usize> Packet<N> {
         })
     }
 
-    pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
-        struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
-
-        impl Display for PacketInfo<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                Packet::<0>::fmt(f, self.0, self.1)
-            }
-        }
-
+    #[cfg(feature = "defmt")]
+    pub fn display<'a>(
+        peer: &'a Address,
+        header: &'a PacketHdr,
+    ) -> impl Display + defmt::Format + 'a {
         PacketInfo(peer, header)
     }
 
+    #[cfg(not(feature = "defmt"))]
+    pub fn display<'a>(peer: &'a Address, header: &'a PacketHdr) -> impl Display + 'a {
+        PacketInfo(peer, header)
+    }
+
+    #[cfg(feature = "defmt")]
+    pub fn display_payload<'a>(
+        proto: &'a ProtoHdr,
+        buf: &'a [u8],
+    ) -> impl Display + defmt::Format + 'a {
+        DetailedPacketInfo(proto, buf)
+    }
+
+    #[cfg(not(feature = "defmt"))]
     pub fn display_payload<'a>(proto: &'a ProtoHdr, buf: &'a [u8]) -> impl Display + 'a {
-        struct PacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
-
-        impl Display for PacketInfo<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                Packet::<0>::fmt_payload(f, self.0, self.1)
-            }
-        }
-
-        PacketInfo(proto, buf)
+        DetailedPacketInfo(proto, buf)
     }
 
     fn fmt(f: &mut fmt::Formatter<'_>, peer: &Address, header: &PacketHdr) -> fmt::Result {
@@ -1110,6 +1128,17 @@ impl<const N: usize> Packet<N> {
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "defmt")]
+    fn format(f: defmt::Formatter<'_>, peer: &Address, header: &PacketHdr) {
+        defmt::write!(f, "{} {}", peer, header);
+
+        if header.proto.is_decoded() {
+            let meta = MessageMeta::from(&header.proto);
+
+            defmt::write!(f, "\n      {}", meta);
+        }
     }
 
     fn fmt_payload(f: &mut fmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) -> fmt::Result {
@@ -1133,11 +1162,69 @@ impl<const N: usize> Packet<N> {
 
         Ok(())
     }
+
+    #[cfg(feature = "defmt")]
+    fn format_payload(f: defmt::Formatter<'_>, proto: &ProtoHdr, buf: &[u8]) {
+        let meta = MessageMeta::from(proto);
+
+        defmt::write!(f, "{}", meta);
+
+        if meta.is_tlv() {
+            defmt::write!(
+                f,
+                "; TLV:\n----------------\n{}\n----------------\n",
+                TLVElement::new(buf)
+            );
+        } else {
+            defmt::write!(
+                f,
+                "; Payload:\n----------------\n{}\n----------------\n",
+                crate::fmt::Bytes(buf)
+            );
+        }
+    }
 }
 
 impl<const N: usize> Display for Packet<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Self::fmt(f, &self.peer, &self.header)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<const N: usize> defmt::Format for Packet<N> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        Self::format(f, &self.peer, &self.header)
+    }
+}
+
+struct PacketInfo<'a>(&'a Address, &'a PacketHdr);
+
+impl Display for PacketInfo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Packet::<0>::fmt(f, self.0, self.1)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for PacketInfo<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        Packet::<0>::format(f, self.0, self.1)
+    }
+}
+
+struct DetailedPacketInfo<'a>(&'a ProtoHdr, &'a [u8]);
+
+impl Display for DetailedPacketInfo<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Packet::<0>::fmt_payload(f, self.0, self.1)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for DetailedPacketInfo<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        Packet::<0>::format_payload(f, self.0, self.1)
     }
 }
 
@@ -1180,10 +1267,10 @@ impl<const N: usize> PacketBuffer<N> {
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_mut(&mut self) -> &mut crate::utils::storage::Vec<u8, N> {
-        &mut *self
-            .buffer
-            .as_mut()
-            .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
+        unwrap!(
+            &mut *self.buffer.as_mut(),
+            "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
+        )
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
@@ -1193,9 +1280,10 @@ impl<const N: usize> PacketBuffer<N> {
 
     #[cfg(all(feature = "large-buffers", feature = "alloc"))]
     pub fn buf_ref(&self) -> crate::utils::storage::Vec<u8, N> {
-        self.buffer
-            .as_ref()
-            .expect("Buffer is not allocated. Did you forget to call `initialize_buffers`?")
+        unwrap!(
+            self.buffer.as_ref(),
+            "Buffer is not allocated. Did you forget to call `initialize_buffers`?"
+        )
     }
 
     #[cfg(not(all(feature = "large-buffers", feature = "alloc")))]
@@ -1280,7 +1368,7 @@ impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
 
         // TODO: Resizing might be a bit expensive with large buffers
         // Resizing to `N` is always safe because the size of `buf` heapless vec is `N`
-        packet.buf.resize_default(N).unwrap();
+        unwrap!(packet.buf.resize_default(N));
 
         Some(ExternalPacketBuffer(packet))
     }

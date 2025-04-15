@@ -920,6 +920,16 @@ where
     }
 }
 
+#[cfg(feature = "defmt")]
+impl<T, const N: usize> defmt::Format for Vec<T, N>
+where
+    T: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        <[T] as defmt::Format>::format(self, f)
+    }
+}
+
 impl<const N: usize> fmt::Write for Vec<u8, N> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         match self.extend_from_slice(s.as_bytes()) {
@@ -1001,7 +1011,7 @@ impl<T, const N: usize> FromIterator<T> for Vec<T, N> {
     {
         let mut vec = Vec::new();
         for i in iter {
-            vec.push(i).ok().expect("Vec::from_iter overflow");
+            unwrap!(vec.push(i).ok(), "Vec::from_iter overflow");
         }
         vec
     }
@@ -1583,17 +1593,17 @@ mod tests {
         assert_eq!(v[0], 17);
 
         // Old values aren't changed when growing
-        v.resize(2, 18).unwrap();
+        unwrap!(v.resize(2, 18));
         assert_eq!(v[0], 17);
         assert_eq!(v[1], 18);
 
         // Old values aren't changed when length unchanged
-        v.resize(2, 0).unwrap();
+        unwrap!(v.resize(2, 0));
         assert_eq!(v[0], 17);
         assert_eq!(v[1], 18);
 
         // Old values aren't changed when shrinking
-        v.resize(1, 0).unwrap();
+        unwrap!(v.resize(1, 0));
         assert_eq!(v[0], 17);
     }
 
@@ -1603,14 +1613,14 @@ mod tests {
 
         // resize_default is implemented using resize, so just check the
         // correct value is being written.
-        v.resize_default(1).unwrap();
+        unwrap!(v.resize_default(1));
         assert_eq!(v[0], 0);
     }
 
     #[test]
     fn write() {
         let mut v: Vec<u8, 4> = Vec::new();
-        write!(v, "{:x}", 1234).unwrap();
+        write_unwrap!(v, "{:x}", 1234);
         assert_eq!(&v[..], b"4d2");
     }
 
@@ -1618,10 +1628,10 @@ mod tests {
     fn extend_from_slice() {
         let mut v: Vec<u8, 4> = Vec::new();
         assert_eq!(v.len(), 0);
-        v.extend_from_slice(&[1, 2]).unwrap();
+        unwrap!(v.extend_from_slice(&[1, 2]));
         assert_eq!(v.len(), 2);
         assert_eq!(v.as_slice(), &[1, 2]);
-        v.extend_from_slice(&[3]).unwrap();
+        unwrap!(v.extend_from_slice(&[3]));
         assert_eq!(v.len(), 3);
         assert_eq!(v.as_slice(), &[1, 2, 3]);
         assert!(v.extend_from_slice(&[4, 5]).is_err());
@@ -1632,7 +1642,7 @@ mod tests {
     #[test]
     fn from_slice() {
         // Successful construction
-        let v: Vec<u8, 4> = Vec::from_slice(&[1, 2, 3]).unwrap();
+        let v: Vec<u8, 4> = unwrap!(Vec::from_slice(&[1, 2, 3]));
         assert_eq!(v.len(), 3);
         assert_eq!(v.as_slice(), &[1, 2, 3]);
 
@@ -1642,7 +1652,7 @@ mod tests {
 
     #[test]
     fn starts_with() {
-        let v: Vec<_, 8> = Vec::from_slice(b"ab").unwrap();
+        let v: Vec<_, 8> = unwrap!(Vec::from_slice(b"ab"));
         assert!(v.starts_with(&[]));
         assert!(v.starts_with(b""));
         assert!(v.starts_with(b"a"));
@@ -1654,7 +1664,7 @@ mod tests {
 
     #[test]
     fn ends_with() {
-        let v: Vec<_, 8> = Vec::from_slice(b"ab").unwrap();
+        let v: Vec<_, 8> = unwrap!(Vec::from_slice(b"ab"));
         assert!(v.ends_with(&[]));
         assert!(v.ends_with(b""));
         assert!(v.ends_with(b"b"));

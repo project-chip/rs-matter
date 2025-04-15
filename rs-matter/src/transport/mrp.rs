@@ -15,8 +15,6 @@
  *    limitations under the License.
  */
 
-use log::{error, warn};
-
 use crate::error::*;
 use crate::utils::epoch::Epoch;
 
@@ -32,6 +30,7 @@ const MRP_BACKOFF_MARGIN: (u64, u64) = (11, 10); // 1.1
 const MRP_JITTER_RAND_MAX: u8 = u8::MAX;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RetransEntry {
     /// The retransmission delay interval in milliseconds
     base_delay_interval_ms: u16,
@@ -96,6 +95,7 @@ impl RetransEntry {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AckEntry {
     // The msg counter that we should acknowledge
     pub(crate) msg_ctr: u32,
@@ -117,6 +117,7 @@ impl AckEntry {
 }
 
 #[derive(Default, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ReliableMessage {
     pub(crate) retrans: Option<RetransEntry>,
     pub(crate) ack: Option<AckEntry>,
@@ -169,7 +170,10 @@ impl ReliableMessage {
             if let Some(retrans) = &mut self.retrans {
                 if retrans.pre_send(tx_plain.ctr).is_err() {
                     // Too many retransmissions, give up
-                    error!("Packet {tx_plain}{tx_proto}: Too many retransmissions. Giving up");
+                    error!(
+                        "Packet {}{}: Too many retransmissions. Giving up",
+                        tx_plain, tx_proto
+                    );
 
                     self.retrans = None;
                     self.ack = None;

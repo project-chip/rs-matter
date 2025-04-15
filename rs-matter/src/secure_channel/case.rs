@@ -17,8 +17,6 @@
 
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
-use log::{error, trace};
-
 use crate::{
     alloc,
     cert::CertRef,
@@ -39,6 +37,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CaseSession {
     peer_sessid: u16,
     local_sessid: u16,
@@ -168,18 +167,14 @@ impl Case {
                     // Only now do we add this message to the TT Hash
                     let mut peer_catids: NocCatIds = Default::default();
                     initiator_noc.get_cat_ids(&mut peer_catids)?;
-                    case_session
-                        .tt_hash
-                        .as_mut()
-                        .unwrap()
-                        .update(exchange.rx()?.payload())?;
+                    unwrap!(case_session.tt_hash.as_mut()).update(exchange.rx()?.payload())?;
 
                     let mut session_keys =
                         MaybeUninit::<[u8; 3 * crypto::SYMM_KEY_LEN_BYTES]>::uninit(); // TODO MEDIM BUFFER
                     let session_keys = session_keys.init_zeroed();
                     Case::get_session_keys(
                         fabric.ipk().op_key(),
-                        case_session.tt_hash.as_ref().unwrap(),
+                        unwrap!(case_session.tt_hash.as_ref()),
                         &case_session.shared_secret,
                         session_keys,
                     )?;
@@ -194,7 +189,7 @@ impl Case {
                         peer_addr,
                         SessionMode::Case {
                             // Unwrapping is safe, because if the fabric index was 0, we would not be in here
-                            fab_idx: NonZeroU8::new(case_session.local_fabric_idx).unwrap(),
+                            fab_idx: unwrap!(NonZeroU8::new(case_session.local_fabric_idx)),
                             cat_ids: peer_catids,
                         },
                         Some(&session_keys[0..16]),
@@ -253,12 +248,8 @@ impl Case {
         case_session.peer_sessid = r.initiator_sessid;
         case_session.local_sessid = local_sessid;
         case_session.tt_hash = Some(Sha256::new()?);
-        case_session
-            .tt_hash
-            .as_mut()
-            .unwrap()
-            .update(exchange.rx()?.payload())?;
-        case_session.local_fabric_idx = local_fabric_idx.unwrap().get();
+        unwrap!(case_session.tt_hash.as_mut()).update(exchange.rx()?.payload())?;
+        case_session.local_fabric_idx = unwrap!(local_fabric_idx).get();
         if r.peer_pub_key.0.len() != crypto::EC_POINT_LEN_BYTES {
             error!("Invalid public key length");
             Err(ErrorCode::Invalid)?;
@@ -331,11 +322,7 @@ impl Case {
                 tw.end_container()?;
 
                 if !hash_updated {
-                    case_session
-                        .tt_hash
-                        .as_mut()
-                        .unwrap()
-                        .update(tw.as_slice())?;
+                    unwrap!(case_session.tt_hash.as_mut()).update(tw.as_slice())?;
                     hash_updated = true;
                 }
 
@@ -409,11 +396,11 @@ impl Case {
             Err(ErrorCode::NoSpace)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
-        salt.extend_from_slice(ipk).unwrap();
+        unwrap!(salt.extend_from_slice(ipk));
         let tt = tt.clone();
         let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
         tt.finish(&mut tt_hash)?;
-        salt.extend_from_slice(&tt_hash).unwrap();
+        unwrap!(salt.extend_from_slice(&tt_hash));
         //        println!("Session Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &SEKEYS_INFO, key)
@@ -431,7 +418,7 @@ impl Case {
         let mut sigma3_key = [0_u8; crypto::SYMM_KEY_LEN_BYTES];
         Case::get_sigma3_key(
             ipk,
-            case_session.tt_hash.as_ref().unwrap(),
+            unwrap!(case_session.tt_hash.as_ref()),
             &case_session.shared_secret,
             &mut sigma3_key,
         )?;
@@ -457,13 +444,13 @@ impl Case {
             Err(ErrorCode::NoSpace)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
-        salt.extend_from_slice(ipk).unwrap();
+        unwrap!(salt.extend_from_slice(ipk));
 
         let tt = tt.clone();
 
         let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
         tt.finish(&mut tt_hash)?;
-        salt.extend_from_slice(&tt_hash).unwrap();
+        unwrap!(salt.extend_from_slice(&tt_hash));
         //        println!("Sigma3Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &S3K_INFO, key)
@@ -484,15 +471,15 @@ impl Case {
             Err(ErrorCode::NoSpace)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
-        salt.extend_from_slice(ipk).unwrap();
-        salt.extend_from_slice(our_random).unwrap();
-        salt.extend_from_slice(&case_session.our_pub_key).unwrap();
+        unwrap!(salt.extend_from_slice(ipk));
+        unwrap!(salt.extend_from_slice(our_random));
+        unwrap!(salt.extend_from_slice(&case_session.our_pub_key));
 
-        let tt = case_session.tt_hash.as_ref().unwrap().clone();
+        let tt = unwrap!(case_session.tt_hash.as_ref()).clone();
 
         let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
         tt.finish(&mut tt_hash)?;
-        salt.extend_from_slice(&tt_hash).unwrap();
+        unwrap!(salt.extend_from_slice(&tt_hash));
         //        println!("Sigma2Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), &case_session.shared_secret, &S2K_INFO, key)

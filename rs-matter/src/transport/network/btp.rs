@@ -24,14 +24,13 @@ use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_time::{Duration, Instant, Timer};
 
-use log::trace;
-
 use context::LockError;
 
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend};
 use crate::utils::init::{init, Init};
 use crate::utils::select::Coalesce;
@@ -228,7 +227,8 @@ where
                 offset = new_offset;
 
                 trace!(
-                    "Sent {slice:02x?} bytes to address {}",
+                    "Sent {} bytes to address {}",
+                    Bytes(slice),
                     session_lock.address()
                 );
 
@@ -297,7 +297,8 @@ where
                 self.gatt.indicate(slice, session_lock.address()).await?;
 
                 trace!(
-                    "Sent {slice:02x?} bytes to address {}",
+                    "Sent {} bytes to address {}",
+                    Bytes(slice),
                     session_lock.address()
                 );
             }
@@ -314,7 +315,7 @@ where
         let mut buf = self.send_buf.lock().await;
 
         // Unwrap is safe because the max size of the buffer is MAX_PDU_SIZE
-        buf.resize_default(MAX_BTP_SEGMENT_SIZE).unwrap();
+        unwrap!(buf.resize_default(MAX_BTP_SEGMENT_SIZE));
 
         buf
     }

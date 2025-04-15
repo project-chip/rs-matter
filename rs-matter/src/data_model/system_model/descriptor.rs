@@ -55,6 +55,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 };
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct StandardPartsMatcher;
 
 impl PartsMatcher for StandardPartsMatcher {
@@ -64,6 +65,7 @@ impl PartsMatcher for StandardPartsMatcher {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct AggregatorPartsMatcher;
 
 impl PartsMatcher for AggregatorPartsMatcher {

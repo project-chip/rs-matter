@@ -23,7 +23,6 @@ use core::time::Duration;
 
 use embassy_futures::select::select3;
 use embassy_time::{Instant, Timer};
-use log::{debug, error, info, warn};
 
 use crate::interaction_model::messages::ib::AttrStatus;
 use crate::utils::storage::pooled::BufferAccess;
@@ -388,7 +387,10 @@ where
                 .borrow_mut()
                 .retain(|sb| sb.fabric_idx != fabric_idx || sb.peer_node_id != peer_node_id);
 
-            info!("All subscriptions for [F:{fabric_idx:x},P:{peer_node_id:x}] removed");
+            info!(
+                "All subscriptions for [F:{:x},P:{:x}] removed",
+                fabric_idx, peer_node_id
+            );
         }
 
         let max_int_secs = core::cmp::max(req.max_int_ceil()?, 40); // Say we need at least 4 secs for potential latencies
@@ -432,7 +434,10 @@ where
                 })
                 .await?;
 
-            info!("Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} created");
+            info!(
+                "Subscription [F:{:x},P:{:x}]::{} created",
+                fabric_idx, peer_node_id, id
+            );
 
             if self.subscriptions.mark_reported(id) {
                 let _ = self
@@ -477,7 +482,11 @@ where
                     .retain(|sb| sb.subscription_id != id);
 
                 info!(
-                    "Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed since its session ({session_id}) had been removed too"
+                    "Subscription [F:{:x},P:{:x}]::{} removed since its session ({}) had been removed too",
+                    fabric_idx,
+                    peer_node_id,
+                    id,
+                    session_id
                 );
             }
 
@@ -491,7 +500,8 @@ where
                     .retain(|sb| sb.subscription_id != id);
 
                 info!(
-                    "Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed due to inactivity"
+                    "Subscription [F:{:x},P:{:x}]::{} removed due to inactivity",
+                    fabric_idx, peer_node_id, id
                 );
             }
 
@@ -500,7 +510,8 @@ where
 
                 if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
                     info!(
-                        "About to report data for subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id}"
+                        "About to report data for subscription [F:{:x},P:{:x}]::{}",
+                        fabric_idx, peer_node_id, id
                     );
 
                     let subscribed = Cell::new(false);
@@ -513,12 +524,11 @@ where
 
                     // TODO: Do a more sophisticated check whether something had actually changed w.r.t. this subscription
 
-                    let index = self
+                    let index = unwrap!(self
                         .subscriptions_buffers
                         .borrow()
                         .iter()
-                        .position(|sb| sb.subscription_id == id)
-                        .unwrap();
+                        .position(|sb| sb.subscription_id == id));
                     let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
 
                     let result = self
@@ -585,7 +595,10 @@ where
 
             Ok(primed)
         } else {
-            error!("No TX buffer available for processing subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id}");
+            error!(
+                "No TX buffer available for processing subscription [F:{:x},P:{:x}]::{}",
+                fabric_idx, peer_node_id, id
+            );
 
             Ok(false)
         }
@@ -676,7 +689,10 @@ where
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
                 if !Self::recv_status_success(exchange).await? {
-                    info!("Subscription [F:{fabric_idx:x},P:{peer_node_id:x}]::{id} removed during reporting");
+                    info!(
+                        "Subscription [F:{:x},P:{:x}]::{} removed during reporting",
+                        fabric_idx, peer_node_id, id
+                    );
                     return Ok(false);
                 }
 
@@ -697,7 +713,7 @@ where
 
             // Safe to unwrap, as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, i.e. it cannot be overflown
             // by the payload of the received exchange.
-            buffer.extend_from_slice(rx.payload()).unwrap();
+            unwrap!(buffer.extend_from_slice(rx.payload()));
 
             exchange.rx_done()?;
 
@@ -710,7 +726,7 @@ where
     async fn tx_buffer(&self, exchange: &mut Exchange<'_>) -> Result<Option<B::Buffer<'a>>, Error> {
         if let Some(mut buffer) = self.buffer(exchange).await? {
             // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
-            buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE).unwrap();
+            unwrap!(buffer.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
 
             Ok(Some(buffer))
         } else {
@@ -736,7 +752,8 @@ where
 
         if opcode != OpCode::StatusResponse as u8 {
             warn!(
-                "Got opcode {opcode:02x}, while expecting status code {:02x}",
+                "Got opcode {:02x}, while expecting status code {:02x}",
+                opcode,
                 OpCode::StatusResponse as u8
             );
 

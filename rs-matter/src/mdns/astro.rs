@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 
 use astro_dnssd::{DNSServiceBuilder, RegisteredDnsService};
 
-use log::info;
-
 use crate::data_model::cluster_basic_information::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;

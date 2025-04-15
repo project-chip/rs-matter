@@ -125,7 +125,7 @@ impl<T, G> Maybe<T, G> {
     /// Re-initialize the `Maybe` value with a new in-place initializer.
     pub fn reinit<I: init::Init<Self>>(&mut self, value: I) {
         // Unwrap is safe because the initializer is infallible
-        Self::try_reinit(self, value).unwrap();
+        unwrap!(Self::try_reinit(self, value));
     }
 
     /// Try to re-initialize the `Maybe` value with a new in-place initializer.
@@ -267,6 +267,20 @@ where
 {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.as_ref().hash(state)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<T, G> defmt::Format for Maybe<T, G>
+where
+    T: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        if self.is_none() {
+            defmt::write!(f, "None")
+        } else {
+            defmt::write!(f, "Some({})", unsafe { self.value.assume_init_ref() })
+        }
     }
 }
 

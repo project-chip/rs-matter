@@ -12,16 +12,18 @@ license = "Apache-2.0"
 rust-version = "1.83"
 
 [features]
-default = ["os", "rustcrypto"]
-#default = ["os", "mbedtls"] mbedtls is broken since several months - check the root cause
+default = ["os", "rustcrypto", "log"]
+#default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 examples = ["std", "async-io", "async-compat", "embassy-time-queue-utils/generic-queue-64"]
 os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
-alloc = []
+alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:mbedtls"]
-rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
+rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "sec1", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
+defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt"]
+log = ["dep:log", "embassy-time/log"]
 large-buffers = [] # TCP support
 
 [dependencies]
@@ -33,7 +35,8 @@ num = { version = "0.4", default-features = false }
 num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
 strum = { version = "0.26", features = ["derive"], default-features = false }
-log = "0.4"
+log = { version = "0.4", optional = true }
+defmt = { version = "0.3", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
 safemem = { version = "0.3", default-features = false }
 owo-colors = "4"
@@ -63,6 +66,7 @@ hkdf = { version = "0.12", optional = true }
 aes = { version = "0.8", optional = true }
 ccm = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
 p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
+sec1 = { version = "0.7", default-features = false, optional = true }
 elliptic-curve = { version = "0.13", optional = true }
 crypto-bigint = { version = "0.5", default-features = false, optional = true }
 rand_core = { version = "0.6", default-features = false, optional = true }

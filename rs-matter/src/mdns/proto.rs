@@ -1,8 +1,6 @@
 use core::fmt::Write;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
-use bitflags::bitflags;
-
 use domain::base::header::Flags;
 use domain::base::iana::{Class, Opcode, Rcode};
 use domain::base::message::ShortMessage;
@@ -14,9 +12,8 @@ use domain::dep::octseq::Truncate;
 use domain::dep::octseq::{OctetsBuilder, ShortBuf};
 use domain::rdata::{Aaaa, Ptr, Srv, Txt, A};
 
-use log::trace;
-
 use crate::error::{Error, ErrorCode};
+use crate::utils::bitflags::bitflags;
 
 use super::Service;
 
@@ -90,7 +87,8 @@ where
 // What additional data to be set in the mDNS reply
 bitflags! {
     #[repr(transparent)]
-    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
     pub struct AdditionalData: u8 {
         const IPS = 0x01;
         const SRV = 0x02;
@@ -213,7 +211,7 @@ impl Host<'_> {
         let mut replied = false;
 
         for question in message.question() {
-            trace!("Handling question {:?}", question);
+            trace!("Handling question {:?}", debug2format!(question));
 
             let question = question?;
 
@@ -432,7 +430,10 @@ impl Host<'_> {
             let octets = self.ip.octets();
 
             answer.push((
-                Self::host_fqdn(self.hostname, false).unwrap(),
+                unwrap!(
+                    Self::host_fqdn(self.hostname, false),
+                    "FQDN creation failed"
+                ),
                 dns_class_with_flush(Class::IN),
                 ttl_sec,
                 A::from_octets(octets[0], octets[1], octets[2], octets[3]),
@@ -449,7 +450,10 @@ impl Host<'_> {
     {
         if !self.ipv6.is_unspecified() {
             answer.push((
-                Self::host_fqdn(self.hostname, false).unwrap(),
+                unwrap!(
+                    Self::host_fqdn(self.hostname, false),
+                    "FQDN creation failed"
+                ),
                 dns_class_with_flush(Class::IN),
                 ttl_sec,
                 Aaaa::new(self.ipv6.octets().into()),
@@ -463,7 +467,7 @@ impl Host<'_> {
         let suffix = if suffix { "." } else { "" };
 
         let mut host_fqdn = heapless::String::<60>::new();
-        write!(host_fqdn, "{}.local{}", hostname, suffix,).unwrap();
+        write_unwrap!(host_fqdn, "{}.local{}", hostname, suffix);
 
         Name::<heapless::Vec<u8, 64>>::from_chars(host_fqdn.chars())
     }
@@ -481,10 +485,15 @@ impl Service<'_> {
         T: Composer,
     {
         answer.push((
-            self.service_fqdn(false).unwrap(),
+            unwrap!(self.service_fqdn(false), "FQDN creation failed"),
             dns_class_with_flush(Class::IN),
             ttl_sec,
-            Srv::new(0, 0, self.port, Host::host_fqdn(hostname, false).unwrap()),
+            Srv::new(
+                0,
+                0,
+                self.port,
+                unwrap!(Host::host_fqdn(hostname, false), "FQDN creation failed"),
+            ),
         ))
     }
 
@@ -494,10 +503,10 @@ impl Service<'_> {
         T: Composer,
     {
         answer.push((
-            self.service_type_fqdn(false).unwrap(),
+            unwrap!(self.service_type_fqdn(false), "FQDN creation failed"),
             Class::IN,
             ttl_sec,
-            Ptr::new(self.service_fqdn(false).unwrap()),
+            Ptr::new(unwrap!(self.service_fqdn(false), "FQDN creation failed")),
         ))
     }
 
@@ -507,10 +516,13 @@ impl Service<'_> {
         T: Composer,
     {
         answer.push((
-            Self::dns_sd_fqdn(false).unwrap(),
+            unwrap!(Self::dns_sd_fqdn(false), "FQDN creation failed"),
             dns_class_with_flush(Class::IN),
             ttl_sec,
-            Ptr::new(self.service_type_fqdn(false).unwrap()),
+            Ptr::new(unwrap!(
+                self.service_type_fqdn(false),
+                "FQDN creation failed"
+            )),
         ))
     }
 
@@ -557,10 +569,13 @@ impl Service<'_> {
         // authority of dns_sd_fqdn: there may be answers from other devices on
         // the network as well.
         answer.push((
-            self.service_subtype_fqdn(service_subtype, false).unwrap(),
+            unwrap!(
+                self.service_subtype_fqdn(service_subtype, false),
+                "FQDN creation failed"
+            ),
             Class::IN,
             ttl_sec,
-            Ptr::new(self.service_fqdn(false).unwrap()),
+            Ptr::new(unwrap!(self.service_fqdn(false), "FQDN creation failed")),
         ))
     }
 
@@ -575,10 +590,13 @@ impl Service<'_> {
         T: Composer,
     {
         answer.push((
-            Self::dns_sd_fqdn(false).unwrap(),
+            unwrap!(Self::dns_sd_fqdn(false), "FQDN creation failed"),
             Class::IN,
             ttl_sec,
-            Ptr::new(self.service_subtype_fqdn(service_subtype, false).unwrap()),
+            Ptr::new(unwrap!(
+                self.service_subtype_fqdn(service_subtype, false),
+                "FQDN creation failed"
+            )),
         ))
     }
 
@@ -588,9 +606,14 @@ impl Service<'_> {
         T: Composer,
     {
         if self.txt_kvs.is_empty() {
-            let txt = Txt::from_octets(&[0]).unwrap();
+            let txt = unwrap!(Txt::from_octets(&[0]), "Failed to create TXT record");
 
-            answer.push((self.service_fqdn(false).unwrap(), Class::IN, ttl_sec, txt))
+            answer.push((
+                unwrap!(self.service_fqdn(false), "FQDN creation failed"),
+                Class::IN,
+                ttl_sec,
+                txt,
+            ))
         } else {
             let mut octets = heapless::Vec::<_, 256>::new();
 
@@ -603,10 +626,10 @@ impl Service<'_> {
                 octets.append_slice(v.as_bytes())?;
             }
 
-            let txt = Txt::from_octets(&octets).unwrap();
+            let txt = unwrap!(Txt::from_octets(&octets), "Failed to create TXT record");
 
             answer.push((
-                self.service_fqdn(false).unwrap(),
+                unwrap!(self.service_fqdn(false), "FQDN creation failed"),
                 dns_class_with_flush(Class::IN),
                 ttl_sec,
                 txt,
@@ -618,12 +641,14 @@ impl Service<'_> {
         let suffix = if suffix { "." } else { "" };
 
         let mut service_fqdn = heapless::String::<60>::new();
-        write!(
+        write_unwrap!(
             service_fqdn,
             "{}.{}.{}.local{}",
-            self.name, self.service, self.protocol, suffix,
-        )
-        .unwrap();
+            self.name,
+            self.service,
+            self.protocol,
+            suffix,
+        );
 
         Name::<heapless::Vec<u8, 64>>::from_chars(service_fqdn.chars())
     }
@@ -632,12 +657,13 @@ impl Service<'_> {
         let suffix = if suffix { "." } else { "" };
 
         let mut service_type_fqdn = heapless::String::<60>::new();
-        write!(
+        write_unwrap!(
             service_type_fqdn,
             "{}.{}.local{}",
-            self.service, self.protocol, suffix,
-        )
-        .unwrap();
+            self.service,
+            self.protocol,
+            suffix,
+        );
 
         Name::<heapless::Vec<u8, 64>>::from_chars(service_type_fqdn.chars())
     }
@@ -650,12 +676,14 @@ impl Service<'_> {
         let suffix = if suffix { "." } else { "" };
 
         let mut service_subtype_fqdn = heapless::String::<40>::new();
-        write!(
+        write_unwrap!(
             service_subtype_fqdn,
             "{}._sub.{}.{}.local{}",
-            service_subtype, self.service, self.protocol, suffix,
-        )
-        .unwrap();
+            service_subtype,
+            self.service,
+            self.protocol,
+            suffix,
+        );
 
         Name::<heapless::Vec<u8, 64>>::from_chars(service_subtype_fqdn.chars())
     }
@@ -917,10 +945,7 @@ mod tests {
             for (questions, expected_answers, expected_additional) in self.tests {
                 let data = Question::prep(&mut buf1, self.host.id, questions);
 
-                let (len, _) = self
-                    .host
-                    .respond(self.services, data, &mut buf2, 0)
-                    .unwrap();
+                let (len, _) = unwrap!(self.host.respond(self.services, data, &mut buf2, 0));
 
                 if len > 0 {
                     Answer::validate(
@@ -938,14 +963,19 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct Question<'a> {
         name: &'a str,
+        #[cfg_attr(feature = "defmt", defmt(Display2Format))]
         qtype: Rtype,
     }
 
     impl Question<'_> {
         fn prep<'b>(buf: &'b mut [u8], id: u16, questions: &[Question]) -> &'b [u8] {
-            let message = MessageBuilder::from_target(Buf(buf, 0)).unwrap();
+            let message = unwrap!(
+                MessageBuilder::from_target(Buf(buf, 0)),
+                "Failed to create message builder"
+            );
 
             let mut qb = message.question();
 
@@ -960,10 +990,15 @@ mod tests {
             header.set_flags(flags);
 
             for question in questions {
-                let dname =
-                    Name::<heapless::Vec<u8, 64>>::from_chars(question.name.chars()).unwrap();
+                let dname = unwrap!(
+                    Name::<heapless::Vec<u8, 64>>::from_chars(question.name.chars()),
+                    "Failed to convert question name"
+                );
 
-                qb.push((dname, question.qtype, Class::IN)).unwrap();
+                unwrap!(
+                    qb.push((dname, question.qtype, Class::IN)),
+                    "Failed to push question"
+                );
             }
 
             let len = qb.finish().as_ref().len();
@@ -973,6 +1008,7 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     enum AnswerDetails<'a> {
         A(Ipv4Addr),
         Aaaa(Ipv6Addr),
@@ -982,6 +1018,7 @@ mod tests {
     }
 
     #[derive(Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     struct Answer<'a> {
         owner: &'a str,
         details: AnswerDetails<'a>,
@@ -994,12 +1031,15 @@ mod tests {
             expected_answers: &[Answer],
             expected_additional: &[Answer],
         ) {
-            let message = Message::from_octets(data).unwrap();
+            let message = unwrap!(
+                Message::from_octets(data),
+                "Failed to convert data to message"
+            );
 
             let header = message.header();
-            assert_eq!(header.id(), expected_id);
-            assert_eq!(header.opcode(), Opcode::QUERY);
-            assert_eq!(header.rcode(), Rcode::NOERROR);
+            ::core::assert_eq!(header.id(), expected_id);
+            ::core::assert_eq!(header.opcode(), Opcode::QUERY);
+            ::core::assert_eq!(header.rcode(), Rcode::NOERROR);
 
             Answer::validate_section(&message.answer().unwrap(), expected_answers);
             Answer::validate_section(&message.additional().unwrap(), expected_additional);
@@ -1024,16 +1064,16 @@ mod tests {
                         &Name::<heapless::Vec<u8, 64>>::from_chars(expected.owner.chars()).unwrap()
                     ),
                     "OWNER {} (answer) != {} (expected)",
-                    answer.owner(),
+                    display2format!(answer.owner()),
                     expected.owner
                 );
 
                 match (answer.data(), &expected.details) {
                     (AllRecordData::A(a), AnswerDetails::A(ip)) => {
-                        assert_eq!(Ipv4Addr::from(a.addr().octets()), *ip);
+                        ::core::assert_eq!(Ipv4Addr::from(a.addr().octets()), *ip);
                     }
                     (AllRecordData::Aaaa(a), AnswerDetails::Aaaa(ip)) => {
-                        assert_eq!(Ipv6Addr::from(a.addr().octets()), *ip);
+                        ::core::assert_eq!(Ipv6Addr::from(a.addr().octets()), *ip);
                     }
                     (AllRecordData::Srv(s), AnswerDetails::Srv { port, target }) => {
                         assert_eq!(s.port(), *port);
@@ -1042,7 +1082,7 @@ mod tests {
                                 &Name::<heapless::Vec<u8, 64>>::from_chars(target.chars()).unwrap()
                             ),
                             "SRV {} (answer) != {} (expected)",
-                            s.target(),
+                            display2format!(s.target()),
                             target
                         );
                     }
@@ -1052,7 +1092,7 @@ mod tests {
                                 &Name::<heapless::Vec<u8, 64>>::from_chars(name.chars()).unwrap()
                             ),
                             "PTR {} (answer) != {} (expected)",
-                            p.ptrdname(),
+                            display2format!(p.ptrdname()),
                             name,
                         );
                     }
@@ -1084,20 +1124,21 @@ mod tests {
                         }
 
                         if let Some((k, v)) = kvs.next() {
-                            panic!("Missing TXT string {k}={v} for {}", expected.owner);
+                            panic!("Missing TXT string {}={} for {}", k, v, expected.owner);
                         }
                     }
-                    other => panic!("Unexpected record type: {:?}", other),
+                    other => panic!("Unexpected record type: {:?}", debug2format!(&other)),
                 }
             }
 
             if let Some(answer) = answers.next() {
-                let answer = answer
-                    .unwrap()
-                    .to_any_record::<AllRecordData<_, _>>()
-                    .unwrap();
+                let answer = unwrap!(
+                    unwrap!(answer, "Failed to unwrap answer")
+                        .to_any_record::<AllRecordData<_, _>>(),
+                    "Failed to convert answer to any record"
+                );
 
-                panic!("Unexpected answer {:?}", answer);
+                panic!("Unexpected answer {:?}", debug2format!(&answer));
             }
 
             if let Some(expected) = expectations.next() {

@@ -21,7 +21,6 @@ use crate::{
 };
 
 use byteorder::{ByteOrder, LittleEndian};
-use log::error;
 use openssl::{
     bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcPoint, EcPointRef, PointConversionForm},

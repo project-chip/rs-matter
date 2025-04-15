@@ -20,8 +20,6 @@ use core::num::Wrapping;
 
 use embassy_time::{Duration, Instant};
 
-use log::{info, warn};
-
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::btp::session::packet::{HandshakeReq, HandshakeResp};
 use crate::transport::network::btp::{GATT_HEADER_SIZE, MAX_MTU, MIN_MTU};
@@ -43,6 +41,7 @@ pub(crate) const BTP_CONN_IDLE_TIMEOUT_SECS: u16 = 30;
 
 /// Represents the three possible states of each BTP session
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum SessionState {
     /// The session was just created as a result of a remote peer writing a BTP Handshake Request SDU
     /// to characteristic `C1`.
@@ -56,6 +55,7 @@ enum SessionState {
 
 /// Represents the sending window of a BTP session, as per the Matter Core spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct SendWindow {
     /// The negotiated window size
     window_size: u8,
@@ -155,6 +155,7 @@ const MAX_MESSAGE_SIZE: usize = MAX_RX_PACKET_SIZE * 2;
 
 /// Represents the receiving window of a BTP session, as per the Matter Core spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct RecvWindow {
     /// A ring-buffer holding all received BTP segment' payloads, including not been fully processed yet
     buf: RingBuf<MAX_MESSAGE_SIZE>,
@@ -231,7 +232,7 @@ impl RecvWindow {
         self.buf.push(payload);
         self.level -= 1;
         // Unwrap is safe because we are only processing BTP data segments here and they always have a sequence number
-        self.ack_seq = hdr.get_seq().unwrap();
+        self.ack_seq = unwrap!(hdr.get_seq());
         self.ack_level += 1;
         self.received_at = Instant::now();
 
@@ -300,7 +301,7 @@ impl RecvWindow {
             || hdr.get_ack().is_some()
         // Handshake packets must not have an ACK
         {
-            warn!("RX handshake integrity failure: {hdr}");
+            warn!("RX handshake integrity failure: {}", hdr);
             return Err(ErrorCode::InvalidData.into());
         }
 
@@ -364,6 +365,7 @@ impl RecvWindow {
 
 /// Represents a BTP Session, as per the MAtter Core spec.
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Session {
     address: BtAddr,
     state: SessionState,
@@ -511,8 +513,8 @@ impl Session {
         let mtu = if gatt_mtu.map(|gatt_mtu| gatt_mtu != req.mtu).unwrap_or(true) {
             if let Some(gatt_mtu) = gatt_mtu {
                 warn!(
-                    "MTU mismatch: GATT MTU: {gatt_mtu}, BTP MTU: {}, will use MTU: {MIN_MTU}",
-                    req.mtu
+                    "MTU mismatch: GATT MTU: {}, BTP MTU: {}, will use MTU: {}",
+                    gatt_mtu, req.mtu, MIN_MTU
                 );
             }
 
@@ -535,7 +537,7 @@ impl Session {
             min(MAX_MESSAGE_SIZE as u16 / mtu / 2, 255) as u8,
         );
 
-        info!("\n>>RCV (BTP IO) {address} [{hdr}]\n      HANDSHAKE REQ {req:?}\nSelected version: {version}, MTU: {mtu}, window size: {window_size}");
+        info!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, req, version, mtu, window_size);
 
         Ok(Self::init(address, version, mtu, window_size))
     }
@@ -548,8 +550,9 @@ impl Session {
         let payload = iter.as_slice();
 
         info!(
-            "\n>>RCV (BTP IO) {} [{hdr}]\n      READ {}B",
+            "\n>>RCV (BTP IO) {} [{}]\n      READ {}B",
             self.address,
+            hdr,
             payload.len()
         );
 
@@ -574,8 +577,8 @@ impl Session {
         hdr.set_opcode(Some(0x6c));
 
         info!(
-            "\n<<SND (BTP IO) {} [{hdr}]\n      HANDSHAKE RESP {resp:?}",
-            self.address
+            "\n<<SND (BTP IO) {} [{}]\n      HANDSHAKE RESP {:?}",
+            self.address, hdr, resp
         );
 
         hdr.encode(&mut wb)?;
@@ -644,8 +647,9 @@ impl Session {
         wb.append(segment_data)?;
 
         info!(
-            "\n<<SND (BTP IO) {} [{hdr}]\n      WRITE {}B",
+            "\n<<SND (BTP IO) {} [{}]\n      WRITE {}B",
             self.address,
+            hdr,
             segment_data.len()
         );
 

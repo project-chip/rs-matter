@@ -32,12 +32,11 @@ use bluer::Uuid;
 
 use embassy_futures::select::{select, select_slice, Either};
 
-use log::{info, trace, warn};
-
 use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 
 use crate::error::{Error, ErrorCode};
+use crate::fmt::Bytes;
 use crate::transport::network::btp::MIN_MTU;
 use crate::transport::network::{btp::context::MAX_BTP_SESSIONS, BtAddr};
 use crate::utils::init::{init_from_closure, Init};
@@ -182,7 +181,7 @@ impl BluerGattPeripheral {
                                     let address = BtAddr(req.device_address.0);
                                     let data = &new_value;
 
-                                    trace!("Got write request from {address}: {data:02x?}");
+                                    trace!("Got write request from {}: {}", address, Bytes(data));
 
                                     // Notify the BTP protocol implementation for the write
                                     callback_w(GattPeripheralEvent::Write {
@@ -268,7 +267,7 @@ impl BluerGattPeripheral {
 
         result?;
 
-        trace!("Indicated {data:02x?} bytes to address {address}");
+        trace!("Indicated {} bytes to address {}", Bytes(data), address);
 
         Ok(())
     }
@@ -289,10 +288,13 @@ impl BluerGattPeripheral {
 
         if notifiers.len() < MAX_CONNECTIONS {
             // Unwraping is safe because we just checked the length
-            notifiers.push(notifier).map_err(|_| ()).unwrap();
-            trace!("Notify connection from address {address} started");
+            unwrap!(notifiers.push(notifier).map_err(|_| ()));
+            trace!("Notify connection from address {} started", address);
         } else {
-            warn!("Notifiers limit reached; ignoring notifier from address {address}");
+            warn!(
+                "Notifiers limit reached; ignoring notifier from address {}",
+                address
+            );
         }
 
         drop(notifiers);
@@ -376,7 +378,7 @@ impl BluerGattPeripheral {
                         // Notify the BTP protocol implementation
                         callback(GattPeripheralEvent::NotifyUnsubscribed(address));
 
-                        trace!("Notify connection from address {address} stopped");
+                        trace!("Notify connection from address {} stopped", address);
                     }
                 }
             }

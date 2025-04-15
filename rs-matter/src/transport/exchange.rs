@@ -21,8 +21,6 @@ use core::pin::pin;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_time::{Duration, Instant, Timer};
 
-use log::{debug, error, info, warn};
-
 use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
 use crate::interaction_model::{self, core::PROTO_ID_INTERACTION_MODEL};
@@ -89,7 +87,7 @@ impl ExchangeId {
                 } else {
                     let for_us = self.with_ctx(matter, |sess, exch_index| {
                         if sess.is_for_rx(&packet.peer, &packet.header.plain) {
-                            let exchange = sess.exchanges[exch_index].as_ref().unwrap();
+                            let exchange = unwrap!(sess.exchanges[exch_index].as_ref());
 
                             return Ok(exchange.is_for_rx(&packet.header.proto));
                         }
@@ -153,7 +151,7 @@ impl ExchangeId {
             .await;
 
         // TODO: Resizing might be a bit expensive with large buffers
-        packet.buf.resize_default(MAX_TX_BUF_SIZE).unwrap();
+        unwrap!(packet.buf.resize_default(MAX_TX_BUF_SIZE));
 
         packet.clear_on_drop(true);
 
@@ -181,9 +179,7 @@ impl ExchangeId {
     /// (say, because of lack of resources or a hard networking error), the method will return an error.
     async fn wait_tx<'a>(&self, matter: &'a Matter<'a>) -> Result<TxOutcome, Error> {
         if let Some(delay) = self.retrans_delay_ms(matter)? {
-            let expired = Instant::now()
-                .checked_add(Duration::from_millis(delay))
-                .unwrap();
+            let expired = unwrap!(Instant::now().checked_add(Duration::from_millis(delay)));
 
             loop {
                 let mut notification = pin!(self.internal_wait_ack(matter));
@@ -233,7 +229,7 @@ impl ExchangeId {
         if let Some(session) = session_mgr.get(self.session_id()) {
             f(session, self.exchange_index())
         } else {
-            warn!("Exchange {self}: No session");
+            warn!("Exchange {}: No session", self);
             Err(ErrorCode::NoSession.into())
         }
     }
@@ -254,7 +250,7 @@ impl ExchangeId {
 
     fn retrans_delay_ms<'a>(&self, matter: &'a Matter<'a>) -> Result<Option<u64>, Error> {
         self.with_ctx(matter, |sess, exch_index| {
-            let exchange = sess.exchanges[exch_index].as_mut().unwrap();
+            let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
 
             let mut jitter_rand = [0; 1];
             matter.rand()(&mut jitter_rand);
@@ -265,7 +261,7 @@ impl ExchangeId {
 
     fn check_no_pending_retrans<'a>(&self, matter: &'a Matter<'a>) -> Result<(), Error> {
         self.with_ctx(matter, |sess, exch_index| {
-            let exchange = sess.exchanges[exch_index].as_mut().unwrap();
+            let exchange = unwrap!(sess.exchanges[exch_index].as_mut());
 
             if exchange.mrp.is_retrans_pending() {
                 error!("Exchange {}: Retransmission pending", self.display(sess));
@@ -282,7 +278,7 @@ impl ExchangeId {
 
     fn pending_ack<'a>(&self, matter: &'a Matter<'a>) -> Result<bool, Error> {
         self.with_ctx(matter, |sess, exch_index| {
-            let exchange = sess.exchanges[exch_index].as_ref().unwrap();
+            let exchange = unwrap!(sess.exchanges[exch_index].as_ref());
 
             Ok(exchange.mrp.is_ack_pending())
         })
@@ -292,6 +288,13 @@ impl ExchangeId {
 impl Display for ExchangeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}::{}", self.session_id(), self.exchange_index())
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for ExchangeId {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{}::{}", self.session_id(), self.exchange_index())
     }
 }
 
@@ -323,7 +326,30 @@ impl Display for ExchangeIdDisplay<'_> {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for ExchangeIdDisplay<'_> {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        let state = self.session.exchanges[self.id.exchange_index()].as_ref();
+
+        if let Some(state) = state {
+            defmt::write!(
+                f,
+                "{} [SID:{:x},RSID:{:x},EID:{:x}]",
+                self.id,
+                self.session.get_local_sess_id(),
+                self.session.get_peer_sess_id(),
+                state.exch_id
+            )
+        } else {
+            // This should never happen, as that would mean we have invalid exchange index
+            // but let's not crash when displaying that
+            defmt::write!(f, "{}???", self.id)
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum InitiatorState {
     #[default]
     Owned,
@@ -331,6 +357,7 @@ pub(crate) enum InitiatorState {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum ResponderState {
     #[default]
     AcceptPending,
@@ -339,6 +366,7 @@ pub(crate) enum ResponderState {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum Role {
     Initiator(InitiatorState),
     Responder(ResponderState),
@@ -361,6 +389,7 @@ impl Role {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct ExchangeState {
     pub(crate) exch_id: u16,
     pub(crate) role: Role,
@@ -539,6 +568,29 @@ impl Display for MessageMeta {
     }
 }
 
+#[cfg(feature = "defmt")]
+impl defmt::Format for MessageMeta {
+    fn format(&self, f: defmt::Formatter<'_>) {
+        match self.proto_id {
+            PROTO_ID_SECURE_CHANNEL => {
+                if let Ok(opcode) = self.opcode::<secure_channel::common::OpCode>() {
+                    defmt::write!(f, "SC::{:?}", opcode)
+                } else {
+                    defmt::write!(f, "SC::{:02x}", self.proto_opcode)
+                }
+            }
+            PROTO_ID_INTERACTION_MODEL => {
+                if let Ok(opcode) = self.opcode::<interaction_model::core::OpCode>() {
+                    defmt::write!(f, "IM::{:?}", opcode)
+                } else {
+                    defmt::write!(f, "IM::{:02x}", self.proto_opcode)
+                }
+            }
+            _ => defmt::write!(f, "{:02x}::{:02x}", self.proto_id, self.proto_opcode),
+        }
+    }
+}
+
 /// An RX message pending on an `Exchange` instance.
 pub struct RxMessage<'a>(PacketAccess<'a, MAX_RX_BUF_SIZE>);
 
@@ -659,6 +711,7 @@ impl TxMessage<'_> {
 
 /// Outcome from calling `Exchange::wait_tx`
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TxOutcome {
     /// The other side has acknowledged the last message or the last message was not using the MRP protocol
     /// Stop re-sending.
