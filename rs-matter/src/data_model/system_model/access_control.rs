@@ -25,7 +25,7 @@ use crate::fabric::FabricMgr;
 use crate::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, error::*};
+use crate::{attribute_enum, cluster_attrs, error::*};
 
 pub const ID: u32 = 0x001F;
 
@@ -43,10 +43,9 @@ attribute_enum!(Attributes);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
             AttributesDiscriminants::Acl as u16,
             Access::RWFA,
@@ -72,8 +71,9 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[],
+    ),
+    accepted_commands: &[],
+    generated_commands: &[],
 };
 
 #[derive(Debug, Clone)]

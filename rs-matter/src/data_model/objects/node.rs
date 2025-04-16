@@ -436,14 +436,14 @@ where
 
                     if path.cluster.is_none() || path.cluster == Some(cluster.id) {
                         let cluster_leaves_len = if command {
-                            cluster.commands.len()
+                            cluster.accepted_commands.len()
                         } else {
                             cluster.attributes.len()
                         };
 
                         while (self.leaf_index as usize) < cluster_leaves_len {
                             let leaf_id = if command {
-                                cluster.commands[self.leaf_index as usize]
+                                cluster.accepted_commands[self.leaf_index as usize]
                             } else {
                                 cluster.attributes[self.leaf_index as usize].id as _
                             };

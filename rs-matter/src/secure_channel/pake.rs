@@ -223,7 +223,7 @@ impl Pake {
         self.handle_pasepake3(exchange, session, spake2p).await?;
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_fabrics_maybe_changed();
+        exchange.matter().notify_persist();
 
         self.clear_timeout(exchange);
 

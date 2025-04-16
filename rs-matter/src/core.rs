@@ -18,7 +18,7 @@
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::data_model::{
-    cluster_basic_information::BasicInfoConfig,
+    cluster_basic_information::{BasicInfoConfig, BasicInfoSettings},
     sdm::{dev_att::DevAttDataFetcher, failsafe::FailSafe},
 };
 use crate::error::*;
@@ -54,6 +54,7 @@ pub struct Matter<'a> {
     pub fabric_mgr: RefCell<FabricMgr>, // Public for tests
     pub(crate) pase_mgr: RefCell<PaseMgr>,
     pub(crate) failsafe: RefCell<FailSafe>,
+    pub(crate) basic_info_settings: RefCell<BasicInfoSettings>,
     pub transport_mgr: TransportMgr<'a>, // Public for tests
     persist_notification: Notification<NoopRawMutex>,
     epoch: Epoch,
@@ -122,6 +123,7 @@ impl<'a> Matter<'a> {
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new(epoch, rand)),
             transport_mgr: TransportMgr::new(mdns, dev_det, port, epoch, rand),
+            basic_info_settings: RefCell::new(BasicInfoSettings::new()),
             persist_notification: Notification::new(),
             epoch,
             rand,
@@ -189,6 +191,7 @@ impl<'a> Matter<'a> {
                 pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
                 failsafe: RefCell::new(FailSafe::new(epoch, rand)),
                 transport_mgr <- TransportMgr::init(mdns, dev_det, port, epoch, rand),
+                basic_info_settings <- RefCell::init(BasicInfoSettings::init()),
                 persist_notification: Notification::new(),
                 epoch,
                 rand,
@@ -274,6 +277,18 @@ impl<'a> Matter<'a> {
         self.fabric_mgr.borrow().is_changed()
     }
 
+    pub fn load_basic_info(&self, data: &[u8]) -> Result<(), Error> {
+        self.basic_info_settings.borrow_mut().load(data)
+    }
+
+    pub fn store_basic_info<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        self.basic_info_settings.borrow_mut().store(buf)
+    }
+
+    pub fn basic_info_changed(&self) -> bool {
+        self.basic_info_settings.borrow().changed
+    }
+
     /// Return `true` if there is at least one commissioned fabric
     //
     // TODO:
@@ -346,10 +361,10 @@ impl<'a> Matter<'a> {
         S: NetworkSend,
         R: NetworkReceive,
     {
-        if !self.is_commissioned() {
-            self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
-                .await?;
-        }
+        // if !self.is_commissioned() {
+        self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
+            .await?;
+        // }
 
         self.run_transport(send, recv).await
     }
@@ -390,24 +405,24 @@ impl<'a> Matter<'a> {
             .await
     }
 
-    /// Notify that the ACLs or Fabrics _might_ have changed
-    /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs or Fabrics.
+    /// Notify that the ACLs, Fabrics or Basic Info _might_ have changed
+    /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs, Fabrics or Basic Info.
     ///
     /// The default IM and SC handlers (`DataModel` and `SecureChannel`) do call this method after processing the messages.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub fn notify_fabrics_maybe_changed(&self) {
-        if self.fabrics_changed() {
+    pub fn notify_persist(&self) {
+        if self.fabrics_changed() || self.basic_info_changed() {
             self.persist_notification.notify();
         }
     }
 
-    /// A hook for user persistence code to wait for potential changes in ACLs and/or Fabrics.
-    /// Once this future resolves, user code is supposed to inspect ACLs and Fabrics for changes, and
+    /// A hook for user persistence code to wait for potential changes in ACLs, Fabrics or basic info.
+    /// Once this future resolves, user code is supposed to inspect ACLs, Fabrics and basic info for changes, and
     /// if there are changes, persist them.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub async fn wait_fabrics_changed(&self) {
+    pub async fn wait_persist(&self) {
         self.persist_notification.wait().await
     }
 }

@@ -33,7 +33,7 @@ use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::{attribute_enum, command_enum};
+use rs_matter::{attribute_enum, cluster_attrs, command_enum};
 
 pub const WRITE_LIST_MAX: usize = 5;
 
@@ -69,10 +69,9 @@ pub enum RespCommands {
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
             AttributesDiscriminants::Att1 as u16,
             Access::RV,
@@ -98,8 +97,9 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::WRITE.union(Access::NEED_ADMIN),
             Quality::NONE,
         ),
-    ],
-    commands: &[Commands::EchoReq as _],
+    ),
+    accepted_commands: &[Commands::EchoReq as _],
+    generated_commands: &[RespCommands::EchoResp as _],
 };
 
 /// This is used in the tests to validate any settings that may have happened

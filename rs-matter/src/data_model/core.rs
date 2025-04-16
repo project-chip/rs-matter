@@ -132,7 +132,7 @@ where
         }
 
         exchange.acknowledge().await?;
-        exchange.matter().notify_fabrics_maybe_changed();
+        exchange.matter().notify_persist();
 
         Ok(())
     }

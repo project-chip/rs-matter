@@ -52,6 +52,7 @@ static DEV_DET: BasicInfoConfig = BasicInfoConfig {
     vid: 0xFFF1,
     pid: 0x8001,
     hw_ver: 2,
+    hw_ver_str: "2",
     sw_ver: 1,
     sw_ver_str: "1",
     serial_no: "aabbccdd",
@@ -94,9 +95,18 @@ fn main() -> Result<(), Error> {
 }
 
 fn run() -> Result<(), Error> {
-    env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
+    // env_logger::init_from_env(
+    //     env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    // );
+
+    env_logger::builder()
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "{}: {}", record.level(), record.args())
+        })
+        .target(env_logger::Target::Stdout)
+        .filter_level(::log::LevelFilter::Info)
+        .init();
 
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
@@ -281,7 +291,7 @@ async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
             .filter_map(|ia| {
                 ia.address
                     .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                    .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
+                    //.filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
                     .map(|ipv6| (ia.interface_name, ipv6))
             })
             .filter_map(|(iname, ipv6)| {

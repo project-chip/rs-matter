@@ -22,7 +22,7 @@ use strum::{EnumDiscriminants, FromRepr};
 use crate::data_model::objects::*;
 use crate::tlv::{FromTLV, TLVElement, ToTLV, Utf8Str};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cmd_enter};
+use crate::{attribute_enum, cluster_attrs, cmd_enter};
 use crate::{command_enum, error::*};
 
 idl_import!(clusters = ["GeneralCommissioning"]);
@@ -119,10 +119,9 @@ struct RegulatoryConfig<'a> {
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
             AttributesDiscriminants::BreadCrumb as u16,
             Access::READ.union(Access::WRITE).union(Access::NEED_ADMIN),
@@ -148,11 +147,16 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[
+    ),
+    accepted_commands: &[
         Commands::ArmFailSafe as _,
         Commands::SetRegulatoryConfig as _,
         Commands::CommissioningComplete as _,
+    ],
+    generated_commands: &[
+        RespCommands::ArmFailsafeResp as _,
+        RespCommands::SetRegulatoryConfigResp as _,
+        RespCommands::CommissioningCompleteResp as _,
     ],
 };
 

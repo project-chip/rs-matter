@@ -19,12 +19,12 @@ use core::fmt::Debug;
 
 use strum::FromRepr;
 
-use crate::attribute_enum;
 use crate::data_model::objects::*;
 use crate::error::Error;
 use crate::tlv::TLVTag;
 use crate::tlv::{TLVWrite, TLVWriter, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
+use crate::{attribute_enum, cluster_attrs};
 
 pub const ID: u32 = 0x001D;
 
@@ -42,16 +42,16 @@ attribute_enum!(Attributes);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(Attributes::DeviceTypeList as u16, Access::RV, Quality::NONE),
         Attribute::new(Attributes::ServerList as u16, Access::RV, Quality::NONE),
         Attribute::new(Attributes::PartsList as u16, Access::RV, Quality::NONE),
         Attribute::new(Attributes::ClientList as u16, Access::RV, Quality::NONE),
-    ],
-    commands: &[],
+    ),
+    accepted_commands: &[],
+    generated_commands: &[],
 };
 
 #[derive(Debug)]

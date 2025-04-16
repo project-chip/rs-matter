@@ -23,7 +23,7 @@ use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, command_enum};
+use crate::{attribute_enum, cluster_attrs, command_enum};
 
 pub const ID: u32 = 0x0036;
 
@@ -107,10 +107,9 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
             AttributesDiscriminants::Channel as u16,
             Access::RV,
@@ -196,8 +195,9 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[CommandsDiscriminants::ResetCounts as _],
+    ),
+    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
+    generated_commands: &[],
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV, FromRepr)]

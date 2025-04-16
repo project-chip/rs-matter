@@ -19,13 +19,13 @@ use strum::FromRepr;
 
 use crate::data_model::objects::{
     Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, ChangeNotifier,
-    Cluster, Dataver, Handler, NonBlockingHandler, Quality, ATTRIBUTE_LIST, FEATURE_MAP,
+    Cluster, Dataver, Handler, NonBlockingHandler, Quality,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::bitflags::bitflags;
-use crate::{attribute_enum, bitflags_tlv, command_enum};
+use crate::{attribute_enum, bitflags_tlv, cluster_attrs, command_enum};
 
 pub const ID: u32 = 0x0031;
 
@@ -105,11 +105,10 @@ pub const ATTR_LAST_CONNECT_ERROR_VALUE: Attribute = Attribute::new(
 const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
     Cluster {
         id: ID as _,
+        revision: 1,
         feature_map: feature_map as u32,
         attributes: match feature_map {
-            FeatureMap::Wifi | FeatureMap::Thread => &[
-                FEATURE_MAP,
-                ATTRIBUTE_LIST,
+            FeatureMap::Wifi | FeatureMap::Thread => cluster_attrs!(
                 ATTR_MAX_NETWORKS,
                 ATTR_NETWORKS,
                 ATTR_SCAN_MAX_TIME_SECS,
@@ -118,10 +117,8 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
                 ATTR_LAST_NETWORKING_STATUS,
                 ATTR_LAST_NETWORK_ID,
                 ATTR_LAST_CONNECT_ERROR_VALUE,
-            ],
-            FeatureMap::Ethernet => &[
-                FEATURE_MAP,
-                ATTRIBUTE_LIST,
+            ),
+            FeatureMap::Ethernet => cluster_attrs!(
                 ATTR_MAX_NETWORKS,
                 ATTR_NETWORKS,
                 ATTR_CONNECT_MAX_TIME_SECS,
@@ -129,9 +126,9 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
                 ATTR_LAST_NETWORKING_STATUS,
                 ATTR_LAST_NETWORK_ID,
                 ATTR_LAST_CONNECT_ERROR_VALUE,
-            ],
+            ),
         },
-        commands: match feature_map {
+        accepted_commands: match feature_map {
             FeatureMap::Wifi => &[
                 Commands::ScanNetworks as _,
                 Commands::AddOrUpdateWifiNetwork as _,
@@ -146,6 +143,11 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
                 Commands::ConnectNetwork as _,
                 Commands::ReorderNetwork as _,
             ],
+            FeatureMap::Ethernet => &[],
+        },
+        generated_commands: match feature_map {
+            FeatureMap::Wifi => &[ResponseCommands::ScanNetworksResponse as _],
+            FeatureMap::Thread => &[ResponseCommands::ScanNetworksResponse as _],
             FeatureMap::Ethernet => &[],
         },
     }

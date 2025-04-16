@@ -117,7 +117,7 @@ impl Attribute {
     }
 
     pub fn is_system_attr(attr_id: AttrId) -> bool {
-        attr_id >= (GlobalElements::ServerGenCmd as AttrId)
+        attr_id >= (GlobalElements::GeneratedCmdList as AttrId)
     }
 }
 
