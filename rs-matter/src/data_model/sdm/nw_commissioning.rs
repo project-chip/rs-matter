@@ -30,7 +30,7 @@ use crate::{attribute_enum, bitflags_tlv, cluster_attrs, command_enum};
 pub const ID: u32 = 0x0031;
 
 #[derive(FromRepr)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     MaxNetworks = 0x00,
     Networks = 0x01,
@@ -74,30 +74,24 @@ pub enum FeatureMap {
 }
 
 pub const ATTR_MAX_NETWORKS: Attribute =
-    Attribute::new(Attributes::MaxNetworks as u16, Access::RA, Quality::F);
+    Attribute::new(Attributes::MaxNetworks as _, Access::RA, Quality::F);
 pub const ATTR_NETWORKS: Attribute =
-    Attribute::new(Attributes::Networks as u16, Access::RA, Quality::NONE);
+    Attribute::new(Attributes::Networks as _, Access::RA, Quality::NONE);
 pub const ATTR_SCAN_MAX_TIME_SECS: Attribute =
-    Attribute::new(Attributes::ScanMaxTimeSecs as u16, Access::RV, Quality::F);
-pub const ATTR_CONNECT_MAX_TIME_SECS: Attribute = Attribute::new(
-    Attributes::ConnectMaxTimeSecs as u16,
-    Access::RV,
-    Quality::F,
-);
-pub const ATTR_INTERFACE_ENABLED: Attribute = Attribute::new(
-    Attributes::InterfaceEnabled as u16,
-    Access::RWVA,
-    Quality::N,
-);
+    Attribute::new(Attributes::ScanMaxTimeSecs as _, Access::RV, Quality::F);
+pub const ATTR_CONNECT_MAX_TIME_SECS: Attribute =
+    Attribute::new(Attributes::ConnectMaxTimeSecs as _, Access::RV, Quality::F);
+pub const ATTR_INTERFACE_ENABLED: Attribute =
+    Attribute::new(Attributes::InterfaceEnabled as _, Access::RWVA, Quality::N);
 pub const ATTR_LAST_NETWORKING_STATUS: Attribute = Attribute::new(
-    Attributes::LastNetworkingStatus as u16,
+    Attributes::LastNetworkingStatus as _,
     Access::RA,
     Quality::X,
 );
 pub const ATTR_LAST_NETWORK_ID: Attribute =
-    Attribute::new(Attributes::LastNetworkID as u16, Access::RA, Quality::X);
+    Attribute::new(Attributes::LastNetworkID as _, Access::RA, Quality::X);
 pub const ATTR_LAST_CONNECT_ERROR_VALUE: Attribute = Attribute::new(
-    Attributes::LastConnectErrorValue as u16,
+    Attributes::LastConnectErrorValue as _,
     Access::RA,
     Quality::X,
 );
@@ -106,7 +100,7 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
     Cluster {
         id: ID as _,
         revision: 1,
-        feature_map: feature_map as u32,
+        feature_map: feature_map as _,
         attributes: match feature_map {
             FeatureMap::Wifi | FeatureMap::Thread => cluster_attrs!(
                 ATTR_MAX_NETWORKS,

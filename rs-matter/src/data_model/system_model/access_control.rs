@@ -30,7 +30,7 @@ use crate::{attribute_enum, cluster_attrs, error::*};
 pub const ID: u32 = 0x001F;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     Acl(()) = 0,
     Extension(()) = 1,
@@ -47,27 +47,27 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::Acl as u16,
+            AttributesDiscriminants::Acl as _,
             Access::RWFA,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::Extension as u16,
+            AttributesDiscriminants::Extension as _,
             Access::RWFA,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::SubjectsPerEntry as u16,
+            AttributesDiscriminants::SubjectsPerEntry as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::TargetsPerEntry as u16,
+            AttributesDiscriminants::TargetsPerEntry as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::EntriesPerFabric as u16,
+            AttributesDiscriminants::EntriesPerFabric as _,
             Access::RV,
             Quality::FIXED,
         ),

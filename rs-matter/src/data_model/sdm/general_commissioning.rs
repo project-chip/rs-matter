@@ -33,7 +33,7 @@ pub use general_commissioning::RegulatoryLocationTypeEnum;
 pub use general_commissioning::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     BreadCrumb(AttrType<u64>) = 0,
     BasicCommissioningInfo(()) = 1,
@@ -46,7 +46,7 @@ attribute_enum!(Attributes);
 
 command_enum!(Commands);
 
-#[repr(u16)]
+#[repr(u32)]
 pub enum RespCommands {
     ArmFailsafeResp = 0x01,
     SetRegulatoryConfigResp = 0x03,
@@ -123,27 +123,27 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::BreadCrumb as u16,
+            AttributesDiscriminants::BreadCrumb as _,
             Access::READ.union(Access::WRITE).union(Access::NEED_ADMIN),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::RegConfig as u16,
+            AttributesDiscriminants::RegConfig as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::LocationCapability as u16,
+            AttributesDiscriminants::LocationCapability as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::BasicCommissioningInfo as u16,
+            AttributesDiscriminants::BasicCommissioningInfo as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SupportsConcurrentConnection as u16,
+            AttributesDiscriminants::SupportsConcurrentConnection as _,
             Access::RV,
             Quality::FIXED,
         ),

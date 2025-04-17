@@ -36,7 +36,7 @@ pub use on_off::Commands;
 pub use on_off::CommandsDiscriminants;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     OnOff(AttrType<bool>) = 0x0,
 }
@@ -49,7 +49,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     revision: 1,
     feature_map: 0,
     attributes: cluster_attrs!(Attribute::new(
-        AttributesDiscriminants::OnOff as u16,
+        AttributesDiscriminants::OnOff as _,
         Access::RV,
         Quality::SN,
     ),),

@@ -26,7 +26,7 @@ use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
 pub const ID: u32 = 0x0033;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     NetworkInterfaces(()) = 0x00,
     RebootCount(AttrType<u16>) = 0x01,
@@ -49,17 +49,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::NetworkInterfaces as u16,
+            AttributesDiscriminants::NetworkInterfaces as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::RebootCount as u16,
+            AttributesDiscriminants::RebootCount as _,
             Access::RV,
             Quality::PERSISTENT,
         ),
         Attribute::new(
-            AttributesDiscriminants::TestEventTriggersEnabled as u16,
+            AttributesDiscriminants::TestEventTriggersEnabled as _,
             Access::RV,
             Quality::NONE,
         ),

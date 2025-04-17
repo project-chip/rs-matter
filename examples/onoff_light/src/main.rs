@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
         // e.g., an opt-level of "0" will require a several times' larger stack.
         //
         // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(45 * 1024)
+        .stack_size(450 * 1024)
         .spawn(run)
         .unwrap();
 

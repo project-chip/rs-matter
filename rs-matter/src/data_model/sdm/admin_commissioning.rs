@@ -37,7 +37,7 @@ pub enum WindowStatus {
 
 #[derive(Clone, Debug, FromRepr, EnumDiscriminants)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     WindowStatus(AttrType<u8>) = 0,
     AdminFabricIndex(AttrType<Nullable<u8>>) = 1,
@@ -62,17 +62,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::WindowStatus as u16,
+            AttributesDiscriminants::WindowStatus as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AdminFabricIndex as u16,
+            AttributesDiscriminants::AdminFabricIndex as _,
             Access::RV,
             Quality::NULLABLE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AdminVendorId as u16,
+            AttributesDiscriminants::AdminVendorId as _,
             Access::RV,
             Quality::NULLABLE,
         ),

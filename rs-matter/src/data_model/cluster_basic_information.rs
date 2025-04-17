@@ -43,7 +43,7 @@ pub struct CapabilityMinima {
 
 #[derive(Clone, Copy, Debug, FromRepr)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     DMRevision(AttrType<u8>) = 0,
     VendorName(AttrUtfType) = 1,
@@ -177,77 +177,77 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::DMRevision as u16,
+            AttributesDiscriminants::DMRevision as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::VendorName as u16,
+            AttributesDiscriminants::VendorName as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::VendorId as u16,
+            AttributesDiscriminants::VendorId as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ProductName as u16,
+            AttributesDiscriminants::ProductName as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ProductId as u16,
+            AttributesDiscriminants::ProductId as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::NodeLabel as u16,
+            AttributesDiscriminants::NodeLabel as _,
             Access::RWVM,
             Quality::N,
         ),
         Attribute::new(
-            AttributesDiscriminants::Location as u16,
+            AttributesDiscriminants::Location as _,
             Access::RWVA,
             Quality::N,
         ),
         Attribute::new(
-            AttributesDiscriminants::HwVer as u16,
+            AttributesDiscriminants::HwVer as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::HwVerString as u16,
+            AttributesDiscriminants::HwVerString as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SwVer as u16,
+            AttributesDiscriminants::SwVer as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SwVerString as u16,
+            AttributesDiscriminants::SwVerString as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SerialNo as u16,
+            AttributesDiscriminants::SerialNo as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::CapabilityMinima as u16,
+            AttributesDiscriminants::CapabilityMinima as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SpecificationVersion as u16,
+            AttributesDiscriminants::SpecificationVersion as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::MaxPathsPerInvoke as u16,
+            AttributesDiscriminants::MaxPathsPerInvoke as _,
             Access::RV,
             Quality::FIXED,
         ),

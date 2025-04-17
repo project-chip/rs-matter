@@ -36,7 +36,7 @@ use core::fmt::{self, Debug};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u16)]
+#[repr(u32)]
 pub enum GlobalElements {
     ClusterRevision = 0xFFFD,
     FeatureMap = 0xFFFC,
@@ -338,14 +338,14 @@ impl<'a> Cluster<'a> {
     fn encode_attribute_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         tw.start_array(tag)?;
         for a in self.attributes.iter().filter(|a| !a.is_system()) {
-            tw.u16(&TLVTag::Anonymous, a.id)?;
+            tw.u32(&TLVTag::Anonymous, a.id)?;
         }
 
-        tw.u16(&TLVTag::Anonymous, GlobalElements::GeneratedCmdList as _)?;
-        tw.u16(&TLVTag::Anonymous, GlobalElements::AcceptedCmdList as _)?;
-        tw.u16(&TLVTag::Anonymous, GlobalElements::AttributeList as _)?;
-        tw.u16(&TLVTag::Anonymous, GlobalElements::FeatureMap as _)?;
-        tw.u16(&TLVTag::Anonymous, GlobalElements::ClusterRevision as _)?;
+        tw.u32(&TLVTag::Anonymous, GlobalElements::GeneratedCmdList as _)?;
+        tw.u32(&TLVTag::Anonymous, GlobalElements::AcceptedCmdList as _)?;
+        tw.u32(&TLVTag::Anonymous, GlobalElements::AttributeList as _)?;
+        tw.u32(&TLVTag::Anonymous, GlobalElements::FeatureMap as _)?;
+        tw.u32(&TLVTag::Anonymous, GlobalElements::ClusterRevision as _)?;
 
         tw.end_container()
     }

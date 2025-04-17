@@ -32,7 +32,7 @@ pub use ethernet_network_diagnostics::CommandsDiscriminants;
 pub use ethernet_network_diagnostics::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     PacketRxCount(AttrType<u64>) = 0x02,
     PacketTxCount(AttrType<u64>) = 0x03,
@@ -48,12 +48,12 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::PacketRxCount as u16,
+            AttributesDiscriminants::PacketRxCount as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::PacketTxCount as u16,
+            AttributesDiscriminants::PacketTxCount as _,
             Access::RV,
             Quality::FIXED,
         ),

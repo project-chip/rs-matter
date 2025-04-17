@@ -30,7 +30,7 @@ use crate::{attribute_enum, cluster_attrs, command_enum};
 pub const ID: u32 = 0x0036;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     Bssid = 0x00,
     SecurityType(AttrType<WiFiSecurity>) = 0x01,
@@ -63,27 +63,27 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::Bssid as u16,
+            AttributesDiscriminants::Bssid as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::SecurityType as u16,
+            AttributesDiscriminants::SecurityType as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::WifiVersion as u16,
+            AttributesDiscriminants::WifiVersion as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ChannelNumber as u16,
+            AttributesDiscriminants::ChannelNumber as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::Rssi as u16,
+            AttributesDiscriminants::Rssi as _,
             Access::RV,
             Quality::FIXED,
         ),

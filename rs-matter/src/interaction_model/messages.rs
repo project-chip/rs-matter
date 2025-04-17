@@ -736,11 +736,7 @@ pub mod ib {
             Self {
                 endpoint: path.endpoint,
                 cluster: path.cluster,
-                attr: if let Some(leaf) = path.leaf {
-                    Some(leaf as u16)
-                } else {
-                    None
-                },
+                attr: path.leaf,
                 tag_compression: None,
                 node: None,
                 list_index: None,
