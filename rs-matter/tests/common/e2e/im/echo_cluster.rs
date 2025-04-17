@@ -27,7 +27,6 @@ use strum::{EnumDiscriminants, FromRepr};
 use rs_matter::data_model::objects::{
     Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, Cluster,
     CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, NonBlockingHandler, Quality,
-    ATTRIBUTE_LIST, FEATURE_MAP,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
@@ -43,7 +42,7 @@ pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
 pub const ID: u32 = 0xABCD;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     Att1(AttrType<u16>) = 0,
     Att2(AttrType<u16>) = 1,
@@ -73,27 +72,27 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     feature_map: 0,
     attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::Att1 as u16,
+            AttributesDiscriminants::Att1 as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::Att2 as u16,
+            AttributesDiscriminants::Att2 as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AttWrite as u16,
+            AttributesDiscriminants::AttWrite as _,
             Access::WRITE.union(Access::NEED_ADMIN),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AttCustom as u16,
+            AttributesDiscriminants::AttCustom as _,
             Access::READ.union(Access::NEED_VIEW),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AttWriteList as u16,
+            AttributesDiscriminants::AttWriteList as _,
             Access::WRITE.union(Access::NEED_ADMIN),
             Quality::NONE,
         ),

@@ -81,22 +81,22 @@ pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
 macro_rules! cluster_attrs {
     () => {
         &[
-            $crate::data_model::objects::CLUSTER_REVISION,
-            $crate::data_model::objects::FEATURE_MAP,
-            $crate::data_model::objects::ATTRIBUTE_LIST,
-            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
             $crate::data_model::objects::GENERATED_COMMAND_LIST,
+            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
+            $crate::data_model::objects::ATTRIBUTE_LIST,
+            $crate::data_model::objects::FEATURE_MAP,
+            $crate::data_model::objects::CLUSTER_REVISION,
         ]
     };
     ($attr0:expr $(, $attr:expr)* $(,)?) => {
         &[
-            $crate::data_model::objects::CLUSTER_REVISION,
-            $crate::data_model::objects::FEATURE_MAP,
-            $crate::data_model::objects::ATTRIBUTE_LIST,
-            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
-            $crate::data_model::objects::GENERATED_COMMAND_LIST,
             $attr0,
             $($attr,)*
+            $crate::data_model::objects::GENERATED_COMMAND_LIST,
+            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
+            $crate::data_model::objects::ATTRIBUTE_LIST,
+            $crate::data_model::objects::FEATURE_MAP,
+            $crate::data_model::objects::CLUSTER_REVISION,
         ]
     }
 }
@@ -351,11 +351,11 @@ impl<'a> Cluster<'a> {
     }
 
     fn encode_accepted_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
-        Self::encode_command_ids(tag, tw, &self.accepted_commands)
+        Self::encode_command_ids(tag, tw, self.accepted_commands)
     }
 
     fn encode_generated_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
-        Self::encode_command_ids(tag, tw, &self.generated_commands)
+        Self::encode_command_ids(tag, tw, self.generated_commands)
     }
 
     fn encode_command_ids<W: TLVWrite>(
@@ -381,29 +381,29 @@ impl core::fmt::Display for Cluster<'_> {
             if index > 0 {
                 write!(f, ", {}", attr)?;
             } else {
-                write!(f, ", {}", attr)?;
+                write!(f, "{}", attr)?;
             }
         }
 
-        write!(f, " ], acc-cmds [")?;
+        write!(f, "], acc-cmds [")?;
         for (index, cmd) in self.accepted_commands.iter().enumerate() {
             if index > 0 {
                 write!(f, ", {}", cmd)?;
             } else {
-                write!(f, ", {}", cmd)?;
+                write!(f, "{}", cmd)?;
             }
         }
 
-        write!(f, " ], gen-cmds [")?;
+        write!(f, "], gen-cmds [")?;
         for (index, cmd) in self.generated_commands.iter().enumerate() {
             if index > 0 {
                 write!(f, ", {}", cmd)?;
             } else {
-                write!(f, ", {}", cmd)?;
+                write!(f, "{}", cmd)?;
             }
         }
 
-        write!(f, " ]")
+        write!(f, "]")
     }
 }
 
@@ -417,28 +417,28 @@ impl defmt::Format for Cluster<'_> {
             if index > 0 {
                 defmt::write!(f, ", {}", attr);
             } else {
-                defmt::write!(f, ", {}", attr);
+                defmt::write!(f, "{}", attr);
             }
         }
 
-        defmt::write!(f, " ], acc-cmds [");
+        defmt::write!(f, "], acc-cmds [");
         for (index, cmd) in self.accepted_commands.iter().enumerate() {
             if index > 0 {
-                write!(f, ", {}", cmd)?;
+                defmt::write!(f, ", {}", cmd);
             } else {
-                write!(f, ", {}", cmd)?;
+                defmt::write!(f, "{}", cmd);
             }
         }
 
-        defmt::write!(f, " ], gen-cmds [");
+        defmt::write!(f, "], gen-cmds [");
         for (index, cmd) in self.generated_commands.iter().enumerate() {
             if index > 0 {
                 defmt::write!(f, ", {}", cmd);
             } else {
-                defmt::write!(f, ", {}", cmd);
+                defmt::write!(f, "{}", cmd);
             }
         }
 
-        defmt::write!(f, " ]")
+        defmt::write!(f, "]")
     }
 }

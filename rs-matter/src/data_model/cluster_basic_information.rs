@@ -171,6 +171,12 @@ impl BasicInfoSettings {
     }
 }
 
+impl Default for BasicInfoSettings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,

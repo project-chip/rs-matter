@@ -361,10 +361,12 @@ impl<'a> Matter<'a> {
         S: NetworkSend,
         R: NetworkReceive,
     {
-        // if !self.is_commissioned() {
-        self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
-            .await?;
-        // }
+        // TODO: Figure out why chip-tool-tests expect the device to still be in commissioning mode
+        // post device reboot, even if it was already commissioned
+        if !self.is_commissioned() {
+            self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
+                .await?;
+        }
 
         self.run_transport(send, recv).await
     }

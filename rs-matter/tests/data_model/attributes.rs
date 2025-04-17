@@ -171,87 +171,109 @@ fn test_read_wc_endpoint_wc_attribute() {
     let wc_ep_wc_attr = GenericPath::new(None, Some(echo_cluster::ID), None);
     let input = &[AttrPath::new(&wc_ep_wc_attr)];
 
-    let attr_list: &[u16] = &[
-        GlobalElements::FeatureMap as u16,
-        GlobalElements::AttributeList as u16,
-        echo_cluster::AttributesDiscriminants::Att1 as u16,
-        echo_cluster::AttributesDiscriminants::Att2 as u16,
-        echo_cluster::AttributesDiscriminants::AttWrite as u16,
-        echo_cluster::AttributesDiscriminants::AttCustom as u16,
-        echo_cluster::AttributesDiscriminants::AttWriteList as u16,
+    let attr_list: &[u32] = &[
+        echo_cluster::AttributesDiscriminants::Att1 as _,
+        echo_cluster::AttributesDiscriminants::Att2 as _,
+        echo_cluster::AttributesDiscriminants::AttWrite as _,
+        echo_cluster::AttributesDiscriminants::AttCustom as _,
+        echo_cluster::AttributesDiscriminants::AttWriteList as _,
+        GlobalElements::GeneratedCmdList as _,
+        GlobalElements::AcceptedCmdList as _,
+        GlobalElements::AttributeList as _,
+        GlobalElements::FeatureMap as _,
+        GlobalElements::ClusterRevision as _,
     ];
 
+    let gen_cmd_list: &[u32] = &[echo_cluster::RespCommands::EchoResp as _];
+
+    let acc_cmd_list: &[u32] = &[echo_cluster::Commands::EchoReq as _];
+
     let expected = &[
-        attr_data!(0, echo_cluster::ID, GlobalElements::FeatureMap, Some(&0u8)),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            echo_cluster::AttributesDiscriminants::Att1,
+            Some(&0x1234u16)
+        ),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            echo_cluster::AttributesDiscriminants::Att2,
+            Some(&0x5678u16)
+        ),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            echo_cluster::AttributesDiscriminants::AttCustom,
+            Some(&echo_cluster::ATTR_CUSTOM_VALUE)
+        ),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            GlobalElements::GeneratedCmdList,
+            Some(&gen_cmd_list)
+        ),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            GlobalElements::AcceptedCmdList,
+            Some(&acc_cmd_list)
+        ),
         attr_data!(
             0,
             echo_cluster::ID,
             GlobalElements::AttributeList,
             Some(&attr_list)
         ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
-            ),
+        attr_data!(0, echo_cluster::ID, GlobalElements::FeatureMap, Some(&0u8)),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            GlobalElements::ClusterRevision,
+            Some(&1u8)
+        ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            echo_cluster::AttributesDiscriminants::Att1,
             Some(&0x1234u16)
         ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
-            ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            echo_cluster::AttributesDiscriminants::Att2,
             Some(&0x5678u16)
         ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(0),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
-            ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            echo_cluster::AttributesDiscriminants::AttCustom,
             Some(&echo_cluster::ATTR_CUSTOM_VALUE)
         ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(1),
-                Some(echo_cluster::ID),
-                Some(GlobalElements::FeatureMap as u32),
-            ),
-            Some(&0u8)
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            GlobalElements::GeneratedCmdList,
+            Some(&gen_cmd_list)
         ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(1),
-                Some(echo_cluster::ID),
-                Some(GlobalElements::AttributeList as u32),
-            ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            GlobalElements::AcceptedCmdList,
+            Some(&acc_cmd_list)
+        ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            GlobalElements::AttributeList,
             Some(&attr_list)
         ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(1),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
-            ),
-            Some(&0x1234u16)
-        ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(1),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
-            ),
-            Some(&0x5678u16)
-        ),
-        attr_data_path!(
-            GenericPath::new(
-                Some(1),
-                Some(echo_cluster::ID),
-                Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
-            ),
-            Some(&echo_cluster::ATTR_CUSTOM_VALUE)
+        attr_data!(1, echo_cluster::ID, GlobalElements::FeatureMap, Some(&0u8)),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            GlobalElements::ClusterRevision,
+            Some(&1u8)
         ),
     ];
     ImEngine::read_reqs(input, expected);

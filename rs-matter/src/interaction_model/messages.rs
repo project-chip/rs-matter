@@ -744,7 +744,7 @@ pub mod ib {
         }
 
         pub fn to_gp(&self) -> GenericPath {
-            GenericPath::new(self.endpoint, self.cluster, self.attr.map(|x| x as u32))
+            GenericPath::new(self.endpoint, self.cluster, self.attr)
         }
     }
 

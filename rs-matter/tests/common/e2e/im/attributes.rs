@@ -59,9 +59,9 @@ macro_rules! attr_data {
     ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
         $crate::attr_data_path!(
             rs_matter::interaction_model::messages::GenericPath::new(
-                Some($endpoint),
-                Some($cluster),
-                Some($attr as _)
+                Some($endpoint as u16),
+                Some($cluster as u32),
+                Some($attr as u32)
             ),
             $data
         )

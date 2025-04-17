@@ -87,7 +87,7 @@ fn main() -> Result<(), Error> {
         // e.g., an opt-level of "0" will require a several times' larger stack.
         //
         // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(450 * 1024)
+        .stack_size(45 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -95,18 +95,19 @@ fn main() -> Result<(), Error> {
 }
 
 fn run() -> Result<(), Error> {
-    // env_logger::init_from_env(
-    //     env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    // );
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
 
-    env_logger::builder()
-        .format(|buf, record| {
-            use std::io::Write;
-            writeln!(buf, "{}: {}", record.level(), record.args())
-        })
-        .target(env_logger::Target::Stdout)
-        .filter_level(::log::LevelFilter::Info)
-        .init();
+    // NOTE: chip-tool tests need the log to go to `stdout` instead
+    // env_logger::builder()
+    //     .format(|buf, record| {
+    //         use std::io::Write;
+    //         writeln!(buf, "{}: {}", record.level(), record.args())
+    //     })
+    //     .target(env_logger::Target::Stdout)
+    //     .filter_level(::log::LevelFilter::Info)
+    //     .init();
 
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
@@ -291,7 +292,6 @@ async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
             .filter_map(|ia| {
                 ia.address
                     .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                    //.filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
                     .map(|ipv6| (ia.interface_name, ipv6))
             })
             .filter_map(|(iname, ipv6)| {
