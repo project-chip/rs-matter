@@ -699,8 +699,10 @@ mod test {
                 &[DeviceType { dtype: 0, drev: 0 }],
                 &[Cluster::new(
                     0,
+                    1,
                     0,
                     &[Attribute::new(0, Access::all(), Quality::all())],
+                    &[],
                     &[],
                 )],
             )],
@@ -805,14 +807,18 @@ mod test {
                     &[
                         Cluster::new(
                             1,
+                            1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[],
                             &[],
                         ),
                         Cluster::new(
                             10,
+                            1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[],
                             &[],
                         ),
                     ],
@@ -823,17 +829,21 @@ mod test {
                     &[
                         Cluster::new(
                             1,
+                            1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[],
                             &[],
                         ),
                         Cluster::new(
                             20,
+                            1,
                             0,
                             &[
                                 Attribute::new(20, Access::all(), Quality::all()),
                                 Attribute::new(30, Access::all(), Quality::all()),
                             ],
+                            &[],
                             &[],
                         ),
                     ],
