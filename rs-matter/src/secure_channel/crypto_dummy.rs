@@ -21,7 +21,6 @@ use crate::{
 };
 
 #[allow(non_snake_case)]
-
 pub struct CryptoSpake2 {}
 
 impl CryptoSpake2 {
