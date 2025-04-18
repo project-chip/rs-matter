@@ -163,7 +163,7 @@ fn enum_definition(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
 }
 
 fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
-    let field_type_scalar = field_type_scalar(f, krate);
+    let field_type_scalar = field_type_scalar(f, krate, false);
 
     if f.is_list {
         quote!(#krate::tlv::TLVArray<#field_type_scalar>)
@@ -172,10 +172,21 @@ fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
     }
 }
 
-fn field_type_scalar(f: &DataType, krate: &Ident) -> TokenStream {
+fn field_type_scalar(f: &DataType, krate: &Ident, anon_lifetime: bool) -> TokenStream {
+    field_type_builtin_scalar(f, krate, anon_lifetime).unwrap_or_else(|| {
+        let ident = Ident::new(f.name.as_str(), Span::call_site());
+        quote!(#ident)
+    })
+}
+
+fn field_type_builtin_scalar(
+    f: &DataType,
+    krate: &Ident,
+    anon_lifetime: bool,
+) -> Option<TokenStream> {
     // NOTE: f.max_length is not used (i.e. we do not limit or check string length limit)
 
-    match f.name.as_str() {
+    Some(match f.name.as_str() {
         "enum8" | "int8u" | "bitmap8" => quote!(u8),
         "enum16" | "int16u" | "bitmap16" => quote!(u16),
         "int32u" | "bitmap32" => quote!(u32),
@@ -223,23 +234,29 @@ fn field_type_scalar(f: &DataType, krate: &Ident) -> TokenStream {
 
         // Items with lifetime. If updating this, remember to add things to
         // [needs_lifetime]
-        "char_string" => quote!(#krate::tlv::UtfStr<'a>),
-        "long_char_string" => quote!(#krate::tlv::UtfStr<'a>),
-        "octet_string" => quote!(#krate::tlv::OctetStr<'a>),
-        "long_octet_string" => quote!(#krate::tlv::OctetStr<'a>),
+        "char_string" | "long_char_string" => {
+            if anon_lifetime {
+                quote!(#krate::tlv::Utf8Str<'_>)
+            } else {
+                quote!(#krate::tlv::Utf8Str<'a>)
+            }
+        }
+        "octet_string" | "long_octet_string" => {
+            if anon_lifetime {
+                quote!(#krate::tlv::OctetStr<'_>)
+            } else {
+                quote!(#krate::tlv::OctetStr<'a>)
+            }
+        }
 
-        // Several structs and unsupported bits.
-        // TODO: at least strings should be supported
+        // Unsupported bits.
         "ipadr" | "ipv4adr" | "ipv6adr" | "ipv6pre" | "hwadr" | "semtag" | "tod" | "date" => {
             panic!("Unsupported field type {}", f.name)
         }
 
         // Assume anything else is some struct/enum/bitmap and report as-is
-        other => {
-            let ident = Ident::new(other, Span::call_site());
-            quote!(#ident)
-        }
-    }
+        _ => return None,
+    })
 }
 
 fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> TokenStream {
@@ -306,6 +323,99 @@ fn struct_tag_field_definition(f: &StructField) -> TokenStream {
     )
 }
 
+fn struct_field_builder_definition(
+    f: &StructField,
+    cluster: &Cluster,
+    parent_name: Ident,
+    next_code: usize,
+    context: &IdlGenerateContext,
+) -> TokenStream {
+    let doc_comment = struct_field_comment(f);
+    let krate = context.rs_matter_crate.clone();
+
+    let code = Literal::u8_unsuffixed(f.field.code as u8);
+
+    let parent = quote!(#parent_name<P, #code>);
+    let next_parent = quote!(#parent_name<P, #next_code>);
+
+    let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+
+    if cluster
+        .structs
+        .iter()
+        .all(|s| s.id != f.field.data_type.name)
+    {
+        // TODO: Arrays
+
+        let mut field_type = field_type_scalar(&f.field.data_type, &krate, true);
+
+        if f.is_nullable {
+            field_type = quote!(#krate::tlv::Nullable<#field_type>);
+        }
+
+        if f.is_optional {
+            field_type = quote!(Option<#field_type>);
+        }
+
+        quote!(
+            impl<P> #parent
+            where
+                P: #krate::tlv::TLVBuilderParent,
+            {
+                #doc_comment
+                pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
+                    use #krate::tlv::ToTLV;
+
+                    value.to_tlv(
+                        &#krate::tlv::TLVTag::Context(#code),
+                        self.0.writer(),
+                    )?;
+
+                    Ok(#parent_name(self.0))
+                }
+            }
+        )
+    } else {
+        let ident = Ident::new(
+            &format!(
+                "{}{}Builder",
+                f.field.data_type.name.as_str(),
+                if f.field.data_type.is_list {
+                    "Array"
+                } else {
+                    ""
+                }
+            ),
+            Span::call_site(),
+        );
+
+        let mut field_type = quote!(#ident<#next_parent>);
+
+        if f.is_nullable {
+            field_type = quote!(#krate::tlv::NullableBuilder<#field_type>);
+        }
+
+        if f.is_optional {
+            field_type = quote!(#krate::tlv::OptionalBuilder<#field_type>);
+        }
+
+        quote!(
+            impl<P> #parent
+            where
+                P: #krate::tlv::TLVBuilderParent,
+            {
+                #doc_comment
+                pub fn #name(self) -> Result<#field_type, #krate::error::Error> {
+                    #krate::tlv::TLVBuilder::new(
+                        #parent_name(self.0),
+                        &#krate::tlv::TLVTag::Context(#code),
+                    )
+                }
+            }
+        )
+    }
+}
+
 fn struct_field_comment(f: &StructField) -> TokenStream {
     match f.maturity {
         rs_matter_data_model::ApiMaturity::Provisional => quote!(#[doc="provisional"]),
@@ -369,9 +479,6 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
 ///
 /// Provides the raw `enum FooTag { }` declaration.
 fn struct_tag_definition(s: &Struct) -> TokenStream {
-    // NOTE: s.is_fabric_scoped not directly handled as the IDL
-    //       will have fabric_idx with ID 254 automatically added.
-
     let name = Ident::new(&format!("{}Tag", s.id), Span::call_site());
 
     let fields = s.fields.iter().map(struct_tag_field_definition);
@@ -381,6 +488,164 @@ fn struct_tag_definition(s: &Struct) -> TokenStream {
         #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         #[repr(u8)]
         pub enum #name { #(#fields)* }
+    )
+}
+
+fn struct_builder_definition(
+    s: &Struct,
+    cluster: &Cluster,
+    context: &IdlGenerateContext,
+) -> TokenStream {
+    let name = Ident::new(&format!("{}Builder", s.id), Span::call_site());
+    let name_array = Ident::new(&format!("{}ArrayBuilder", s.id), Span::call_site());
+
+    let start_code = s
+        .fields
+        .iter()
+        .map(|field| field.field.code as usize)
+        .next()
+        .unwrap_or(0);
+    let finish_code = s
+        .fields
+        .iter()
+        .map(|field| field.field.code as usize)
+        .max()
+        .map(|code| code + 1)
+        .unwrap_or(0);
+
+    let fields = s
+        .fields
+        .iter()
+        .zip(
+            s.fields
+                .iter()
+                .skip(1)
+                .map(|f| f.field.code as usize)
+                .chain(core::iter::once(finish_code)),
+        )
+        .map(|(f, next_code)| {
+            struct_field_builder_definition(f, cluster, name.clone(), next_code, context)
+        });
+    let krate = context.rs_matter_crate.clone();
+
+    quote!(
+        pub struct #name<P, const F: usize = #start_code>(P);
+
+        impl<P> #name<P>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            #[doc="Create a new instance of #name"]
+            pub fn new(mut parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+                use #krate::tlv::TLVWrite;
+
+                parent.writer().start_struct(tag)?;
+
+                Ok(Self(parent))
+            }
+        }
+
+        #(#fields)*
+
+        impl<P> #name<P, #finish_code>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            #[doc="Finish the builder"]
+            pub fn finish(mut self) -> Result<P, #krate::error::Error> {
+                use #krate::tlv::TLVWrite;
+
+                self.0.writer().end_container()?;
+
+                Ok(self.0)
+            }
+        }
+
+        impl<P, const F: usize> #krate::tlv::TLVBuilderParent for #name<P, F>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            type Write = P::Write;
+
+            fn writer(&mut self) -> &mut P::Write {
+                self.0.writer()
+            }
+
+            fn into_writer(self) -> Self::Write {
+                self.0.into_writer()
+            }
+        }
+
+        impl<P> #krate::tlv::TLVBuilder<P> for #name<P>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            fn new(parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+                Self::new(parent, tag)
+            }
+
+            fn into_writer(self) -> P::Write {
+                self.0.into_writer()
+            }
+        }
+
+        pub struct #name_array<P>(P);
+
+        impl<P> #name_array<P>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            #[doc="Create a new instance of #name_array"]
+            pub fn new(mut parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+                use #krate::tlv::TLVWrite;
+
+                parent.writer().start_array(tag)?;
+
+                Ok(Self(parent))
+            }
+
+            #[doc="Push a new element into the array"]
+            pub fn push(self) -> Result<#name<#name_array<P>>, #krate::error::Error> {
+                #krate::tlv::TLVBuilder::new(#name_array(self.0), &#krate::tlv::TLVTag::Anonymous)
+            }
+
+            #[doc="Finish the array and return the parent"]
+            pub fn finish(mut self) -> Result<P, #krate::error::Error> {
+                use #krate::tlv::TLVWrite;
+
+                self.0.writer().end_container()?;
+
+                Ok(self.0)
+            }
+        }
+
+        impl<P> #krate::tlv::TLVBuilderParent for #name_array<P>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            type Write = P::Write;
+
+            fn writer(&mut self) -> &mut P::Write {
+                self.0.writer()
+            }
+
+            fn into_writer(self) -> Self::Write {
+                self.0.into_writer()
+            }
+        }
+
+        impl<P> #krate::tlv::TLVBuilder<P> for #name_array<P>
+        where
+            P: #krate::tlv::TLVBuilderParent,
+        {
+            fn new(parent: P, tag: &#krate::tlv::TLVTag) -> Result<Self, #krate::error::Error> {
+                Self::new(parent, tag)
+            }
+
+            fn into_writer(self) -> P::Write {
+                self.0.into_writer()
+            }
+        }
     )
 }
 
@@ -416,6 +681,11 @@ pub fn server_side_cluster_generate(
 
     let struct_tag_declarations = cluster.structs.iter().map(struct_tag_definition);
 
+    let struct_builder_declarations = cluster
+        .structs
+        .iter()
+        .map(|s| struct_builder_definition(s, cluster, context));
+
     quote!(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
@@ -427,6 +697,8 @@ pub fn server_side_cluster_generate(
             #(#struct_declarations)*
 
             #(#struct_tag_declarations)*
+
+            #(#struct_builder_declarations)*
 
             #[derive(strum::FromRepr, strum::EnumDiscriminants)]
             #[repr(u32)]
@@ -837,11 +1109,11 @@ mod tests {
                 )]
                 #[tlvargs(lifetime = "'a")]
                 pub struct WithStringMember<'a> {
-                    short_string: rs_matter_crate::tlv::UtfStr<'a>,
-                    long_string: rs_matter_crate::tlv::UtfStr<'a>,
-                    opt_str: Option<rs_matter_crate::tlv::UtfStr<'a>>,
+                    short_string: rs_matter_crate::tlv::Utf8Str<'a>,
+                    long_string: rs_matter_crate::tlv::Utf8Str<'a>,
+                    opt_str: Option<rs_matter_crate::tlv::Utf8Str<'a>>,
                     opt_nul_str:
-                        Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::UtfStr<'a>>>,
+                        Option<rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'a>>>,
                 }
             )
         );

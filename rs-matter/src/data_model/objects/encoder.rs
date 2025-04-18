@@ -160,6 +160,10 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
         Ok(())
     }
 
+    pub fn writer(&mut self) -> &mut TLVWriter<'b, 'c> {
+        self.tw
+    }
+
     fn reset(&mut self) {
         self.tw.rewind_to(self.anchor);
     }

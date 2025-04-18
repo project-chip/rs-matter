@@ -23,6 +23,7 @@ use super::{
     TLVWrite, TLV,
 };
 
+pub use builder::*;
 pub use container::*;
 pub use maybe::*;
 pub use octets::*;
@@ -31,6 +32,7 @@ pub use str::*;
 
 mod array;
 mod bitflags;
+mod builder;
 mod container;
 mod maybe;
 mod octets;
