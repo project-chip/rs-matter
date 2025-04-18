@@ -15,22 +15,22 @@
  *    limitations under the License.
  */
 
+use crate::cluster_attrs;
 use crate::data_model::objects::{Cluster, Handler};
 use crate::error::{Error, ErrorCode};
 use crate::transport::exchange::Exchange;
 
-use super::objects::{
-    AttrDataEncoder, AttrDetails, ChangeNotifier, Dataver, NonBlockingHandler, ATTRIBUTE_LIST,
-    FEATURE_MAP,
-};
+use super::objects::{AttrDataEncoder, AttrDetails, ChangeNotifier, Dataver, NonBlockingHandler};
 
 const CLUSTER_NETWORK_COMMISSIONING_ID: u32 = 0x0031;
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: CLUSTER_NETWORK_COMMISSIONING_ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[FEATURE_MAP, ATTRIBUTE_LIST],
-    commands: &[],
+    attributes: cluster_attrs!(),
+    accepted_commands: &[],
+    generated_commands: &[],
 };
 
 pub struct TemplateCluster {

@@ -23,7 +23,7 @@ use crate::data_model::objects::*;
 use crate::error::Error;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cmd_enter, command_enum};
+use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
 
 idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
 
@@ -32,7 +32,7 @@ pub use ethernet_network_diagnostics::CommandsDiscriminants;
 pub use ethernet_network_diagnostics::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     PacketRxCount(AttrType<u64>) = 0x02,
     PacketTxCount(AttrType<u64>) = 0x03,
@@ -44,22 +44,22 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::PacketRxCount as u16,
+            AttributesDiscriminants::PacketRxCount as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::PacketTxCount as u16,
+            AttributesDiscriminants::PacketTxCount as _,
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[CommandsDiscriminants::ResetCounts as _],
+    ),
+    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
+    generated_commands: &[],
 };
 
 #[derive(Debug, Clone)]

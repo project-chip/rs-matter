@@ -180,8 +180,11 @@ impl<'a> MdnsImpl<'a> {
                 let len = host.broadcast(self, &mut buf, 60)?;
 
                 if len > 0 {
-                    info!("Broadcasting mDNS entry to {}", addr);
-                    send.send_to(&buf[..len], Address::Udp(addr)).await?;
+                    if let Err(e) = send.send_to(&buf[..len], Address::Udp(addr)).await {
+                        warn!("Failed to send mDNS broadcast to {}: {}", addr, e);
+                    } else {
+                        info!("Broadcasting mDNS entry to {}", addr);
+                    }
                 }
             }
         }

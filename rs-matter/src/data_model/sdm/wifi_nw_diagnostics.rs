@@ -25,12 +25,12 @@ use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, command_enum};
+use crate::{attribute_enum, cluster_attrs, command_enum};
 
 pub const ID: u32 = 0x0036;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     Bssid = 0x00,
     SecurityType(AttrType<WiFiSecurity>) = 0x01,
@@ -59,37 +59,37 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::Bssid as u16,
+            AttributesDiscriminants::Bssid as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::SecurityType as u16,
+            AttributesDiscriminants::SecurityType as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::WifiVersion as u16,
+            AttributesDiscriminants::WifiVersion as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ChannelNumber as u16,
+            AttributesDiscriminants::ChannelNumber as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::Rssi as u16,
+            AttributesDiscriminants::Rssi as _,
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[CommandsDiscriminants::ResetCounts as _],
+    ),
+    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
+    generated_commands: &[],
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]

@@ -104,6 +104,7 @@ fn run() -> Result<(), Error> {
         vid: 0xFFF1,
         pid: 0x8000,
         hw_ver: 2,
+        hw_ver_str: "2",
         sw_ver: 1,
         sw_ver_str: "1",
         serial_no: "aabbccdd",

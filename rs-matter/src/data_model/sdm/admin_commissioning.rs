@@ -22,7 +22,7 @@ use strum::{EnumDiscriminants, FromRepr};
 use crate::data_model::objects::*;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cmd_enter};
+use crate::{attribute_enum, cluster_attrs, cmd_enter};
 use crate::{command_enum, error::*};
 
 pub const ID: u32 = 0x003C;
@@ -37,7 +37,7 @@ pub enum WindowStatus {
 
 #[derive(Clone, Debug, FromRepr, EnumDiscriminants)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     WindowStatus(AttrType<u8>) = 0,
     AdminFabricIndex(AttrType<Nullable<u8>>) = 1,
@@ -58,31 +58,31 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::WindowStatus as u16,
+            AttributesDiscriminants::WindowStatus as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AdminFabricIndex as u16,
+            AttributesDiscriminants::AdminFabricIndex as _,
             Access::RV,
             Quality::NULLABLE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AdminVendorId as u16,
+            AttributesDiscriminants::AdminVendorId as _,
             Access::RV,
             Quality::NULLABLE,
         ),
-    ],
-    commands: &[
+    ),
+    accepted_commands: &[
         Commands::OpenCommWindow as _,
         Commands::OpenBasicCommWindow as _,
         Commands::RevokeComm as _,
     ],
+    generated_commands: &[],
 };
 
 #[derive(FromTLV)]

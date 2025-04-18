@@ -77,6 +77,7 @@ impl E2eRunner {
         vid: 1,
         pid: 1,
         hw_ver: 1,
+        hw_ver_str: "1",
         sw_ver: 1,
         sw_ver_str: "1",
         serial_no: "E2E",
