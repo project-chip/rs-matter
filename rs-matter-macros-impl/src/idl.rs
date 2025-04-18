@@ -94,24 +94,40 @@ fn bitmap_definition(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
     };
     let name = Ident::new(&b.id, Span::call_site());
 
-    let items = b.entries.iter().map(|c| {
-        let constant_name = Ident::new(&idl_id_to_constant_name(&c.id), Span::call_site());
-        let constant_value = Literal::i64_unsuffixed(c.code as i64);
-        quote!(
-          const #constant_name = #constant_value;
-        )
-    });
+    let items = b
+        .entries
+        .iter()
+        .map(|c| {
+            let constant_name = Ident::new(&idl_id_to_constant_name(&c.id), Span::call_site());
+            let constant_value = Literal::i64_unsuffixed(c.code as i64);
+            quote!(
+              const #constant_name = #constant_value;
+            )
+        })
+        .collect::<Vec<_>>();
+
     let krate = context.rs_matter_crate.clone();
 
     quote!(
-       bitflags::bitflags! {
-         #[repr(transparent)]
-         #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-         pub struct #name : #base_type {
-           #(#items)*
-         }
-       }
-       #krate::bitflags_tlv!(#name, #base_type);
+        #[cfg(not(feature = "defmt"))]
+        bitflags::bitflags! {
+            #[repr(transparent)]
+            #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
+            pub struct #name: #base_type {
+                #(#items)*
+            }
+        }
+
+        #[cfg(feature = "defmt")]
+        defmt::bitflags! {
+            #[repr(transparent)]
+            #[derive(Default)]
+            pub struct #name: #base_type {
+                #(#items)*
+            }
+        }
+
+        #krate::bitflags_tlv!(#name, #base_type);
     )
 }
 
@@ -130,18 +146,19 @@ fn enum_definition(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
         let constant_name = Ident::new(&idl_id_to_enum_name(&c.id), Span::call_site());
         let constant_value = Literal::i64_unsuffixed(c.code as i64);
         quote!(
-          #[enumval(#constant_value)]
-          #constant_name = #constant_value
+            #[enumval(#constant_value)]
+            #constant_name = #constant_value
         )
     });
     let krate = context.rs_matter_crate.clone();
 
     quote!(
-      #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
-      #[repr(#base_type)]
-      pub enum #name {
-        #(#items),*
-      }
+        #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        #[repr(#base_type)]
+        pub enum #name {
+            #(#items),*
+        }
     )
 }
 
@@ -313,6 +330,7 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         pub struct #name<'a>(#krate::tlv::TLVElement<'a>);
 
         impl<'a> #name<'a> {
@@ -360,6 +378,7 @@ fn struct_tag_definition(s: &Struct) -> TokenStream {
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
         #[repr(u8)]
         pub enum #name { #(#fields)* }
     )
