@@ -339,7 +339,7 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
                 Self(element)
             }
 
-            pub const fn tlv_element(&self) -> &TLVElement<'a> {
+            pub const fn tlv_element(&self) -> &#krate::tlv::TLVElement<'a> {
                 &self.0
             }
 
@@ -353,11 +353,11 @@ fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
         }
 
         impl #krate::tlv::ToTLV for #name<'_> {
-            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, tw: W) -> Result<(), Error> {
+            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, tw: W) -> Result<(), #krate::error::Error> {
                 self.0.to_tlv(tag, tw)
             }
 
-            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, Error>> {
+            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
                 self.0.tlv_iter(tag)
             }
         }
@@ -416,15 +416,9 @@ pub fn server_side_cluster_generate(
 
     let struct_tag_declarations = cluster.structs.iter().map(struct_tag_definition);
 
-    let krate = context.rs_matter_crate.clone();
-
     quote!(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
-
-            // USE declarations because bitflags_tlv! macro has no crate context
-            use #krate::error::Error;
-            use #krate::tlv::{TLVElement, ToTLV, FromTLV, TLVWriter, TagType};
 
             #(#bitmap_declarations)*
 

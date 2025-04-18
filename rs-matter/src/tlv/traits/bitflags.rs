@@ -29,7 +29,9 @@
 macro_rules! bitflags_tlv {
     ($enum_name:ident, $type:ident) => {
         impl<'a> $crate::tlv::FromTLV<'a> for $enum_name {
-            fn from_tlv(element: &$crate::tlv::TLVElement<'a>) -> Result<Self, Error> {
+            fn from_tlv(
+                element: &$crate::tlv::TLVElement<'a>,
+            ) -> Result<Self, $crate::error::Error> {
                 Self::from_bits($crate::tlv::TLVElement::$type(element)?).ok_or_else(|| {
                     $crate::error::Error::from($crate::error::ErrorCode::InvalidData)
                 })
@@ -41,14 +43,14 @@ macro_rules! bitflags_tlv {
                 &self,
                 tag: &$crate::tlv::TLVTag,
                 mut tw: W,
-            ) -> Result<(), Error> {
+            ) -> Result<(), $crate::error::Error> {
                 tw.$type(tag, self.bits())
             }
 
             fn tlv_iter(
                 &self,
                 tag: $crate::tlv::TLVTag,
-            ) -> impl Iterator<Item = Result<$crate::tlv::TLV, Error>> {
+            ) -> impl Iterator<Item = Result<$crate::tlv::TLV, $crate::error::Error>> {
                 $crate::tlv::TLV::$type(tag, self.bits()).into_tlv_iter()
             }
         }
