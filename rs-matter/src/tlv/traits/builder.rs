@@ -1,0 +1,762 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! ```ignore
+//! pub struct FooBuilder<P, const F: usize> {
+//!     p: P,
+//! }
+//!
+//! impl<P> FooBuilder<P, 0>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+//!         p.writer().start_struct(tag)?;
+//!        
+//!         Ok(Self { p })
+//!     }
+//!
+//!     pub fn field1(mut self, value: i32) -> Result<FooBuilder<P, 1>, Error> {
+//!         self.p.writer().i32(&TLVTag::Context(0), value)?;
+//!        
+//!         Ok(FooBuilder {
+//!             p: self.p,
+//!         })
+//!     }
+//! }
+//!
+//! impl<P> FooBuilder<P, 1>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn field2(mut self, value: u8) -> Result<FooBuilder<P, 2>, Error> {
+//!         value.to_tlv(&TLVTag::Context(1), self.p.writer())?;
+//!
+//!         Ok(FooBuilder {
+//!             p: self.p,
+//!         })
+//!     }
+//! }
+//!
+//! impl<P> FooBuilder<P, 2>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn field3(self) -> Result<BarBuilder<FooBuilder<P, 3>, 0>, Error> {
+//!         BarBuilder::new(FooBuilder { p: self.p }, &TLVTag::Context(2))
+//!     }
+//! }
+//!
+//! impl<P> FooBuilder<P, 3>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn finish(mut self) -> Result<P, Error> {
+//!         self.p.writer().end_container()?;
+//!
+//!         Ok(self.p)
+//!     }
+//! }
+//!
+//! impl<P, const F: usize> TLVBuilderParent for FooBuilder<P, F>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     type Write = P::Write;
+//!
+//!     fn writer(&mut self) -> &mut Self::Write {
+//!         self.p.writer()
+//!     }
+//!
+//!     fn into_writer(self) -> Self::Write {
+//!         self.p.into_writer()
+//!     }
+//! }
+//!
+//! impl<P> TLVBuilder<P> for FooBuilder<P, 0>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+//!         Self::new(parent, tag)
+//!     }
+//! }
+//!
+//! pub struct FooArrayBuilder<P> {
+//!     p: P,
+//! }
+//!
+//! impl<P> FooArrayBuilder<P>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+//!         p.writer().start_array(&tag)?;
+//!
+//!         Ok(Self { p })
+//!     }
+//!
+//!     pub fn push(self) -> Result<FooBuilder<Self, 0>, Error> {
+//!         FooBuilder::new(self, &TLVTag::Anonymous)
+//!     }
+//!
+//!     pub fn end(mut self) -> Result<P, Error> {
+//!         self.p.writer().end_container()?;
+//!
+//!         Ok(self.p)
+//!     }
+//! }
+//!
+//! impl<P> TLVBuilderParent for FooArrayBuilder<P>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     type Write = P::Write;
+//!
+//!     fn writer(&mut self) -> &mut Self::Write {
+//!         self.p.writer()
+//!     }
+//!
+//!     fn into_writer(self) -> Self::Write {
+//!         self.p.into_writer()
+//!     }
+//! }
+//!
+//! impl<P> TLVBuilder<P> for FooArrayBuilder<P>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+//!         Self::new(parent, tag)
+//!     }
+//! }
+//!
+//! pub struct BarBuilder<P, const F: usize> {
+//!     p: P,
+//! }
+//!
+//! impl<P> BarBuilder<P, 0>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+//!         p.writer().start_struct(tag)?;
+//!        
+//!         Ok(Self { p })
+//!     }
+//!
+//!     pub fn field1(mut self, value: i32) -> Result<BarBuilder<P, 1>, Error> {
+//!         self.p.writer().i32(&TLVTag::Context(0), value)?;
+//!
+//!         Ok(BarBuilder {
+//!             p: self.p,
+//!         })
+//!     }
+//! }
+//!
+//! impl<P> BarBuilder<P, 1>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     pub fn finish(mut self) -> Result<P, Error> {
+//!         self.p.writer().end_container()?;
+//!
+//!         Ok(self.p)
+//!     }
+//! }
+//!
+//! impl<P, const F: usize> TLVBuilderParent for BarBuilder<P, F>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     type Write = P::Write;
+//!
+//!     fn writer(&mut self) -> &mut Self::Write {
+//!         self.p.writer()
+//!     }
+//!
+//!     fn into_writer(self) -> Self::Write {
+//!         self.p.into_writer()
+//!     }
+//! }
+//!
+//! impl<P> TLVBuilder<P> for BarBuilder<P, 0>
+//! where
+//!     P: TLVBuilderParent,
+//! {
+//!     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+//!         Self::new(parent, tag)
+//!     }
+//! }
+//!```
+
+use core::marker::PhantomData;
+
+use crate::error::Error;
+use crate::tlv::{TLVTag, TLVWrite};
+
+use super::{Octets, ToTLV, Utf8Str};
+
+/// Each `TLVBuilder<P>` trait implementation has a parent - `P`
+/// which should implement the `TLVBuilderParent` trait.
+///
+/// The `TLVBuilderParent` trait is used to provide a way for the
+/// `TLVBuilder` to access the `TLVWrite` trait methods.
+///
+/// Also - by convention - once a `TLVBuilder` implementation has finished,
+/// it should return its parent type `P`.
+pub trait TLVBuilderParent: Sized {
+    /// The type of the writer.
+    type Write: TLVWrite;
+
+    /// Return a mutable reference to the writer.
+    fn writer(&mut self) -> &mut Self::Write;
+
+    /// Convert itself into the writer.
+    fn into_writer(self) -> Self::Write;
+}
+
+/// The `TLVBuilder` trait is used to implement a TLV builder for a certain TLV type.
+///
+/// A TLV builder is a helper struct that allows for user-friendly writing of the
+/// TLV type into a `TLVWrite` implementation.
+pub trait TLVBuilder<P>: Sized
+where
+    P: TLVBuilderParent,
+{
+    /// Create a new TLV builder for the given parent and tag.
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error>;
+
+    /// Convert itself into a writer.
+    ///
+    /// Should be used when the user prefers to use the raw `TLVWrite`
+    /// interface to write the TLV type.
+    fn into_writer(self) -> P::Write;
+}
+
+pub struct TLVWriteParent<W>(W);
+
+impl<W> TLVWriteParent<W> {
+    /// Create a new `TLVWriteParent` for the given writer.
+    pub const fn new(writer: W) -> Self {
+        Self(writer)
+    }
+}
+
+impl<W> TLVBuilderParent for TLVWriteParent<W>
+where
+    W: TLVWrite,
+{
+    type Write = W;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        &mut self.0
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.0
+    }
+}
+
+/// The `ToTLVBuilder` is a helper struct that allows for user-friendly writing of
+/// a TLV type that implements the `ToTLV` trait into a `TLVWrite` implementation.
+///
+/// This implementation is useful when the `T` type implements `ToTLV`.
+///
+/// Note that this implementation should be avoided when `T` has a large size, as it
+/// needs the `T` instance to be materialized prior to writing into the TLV.
+pub struct ToTLVBuilder<P, T> {
+    parent: P,
+    tag: TLVTag,
+    _t: PhantomData<fn() -> T>,
+}
+
+impl<P, T> ToTLVBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: ToTLV + 'static,
+{
+    /// Create a new `ToTLVBuilder` for the given parent.
+    pub fn new(parent: P, tag: &TLVTag) -> Self {
+        Self {
+            parent,
+            tag: tag.clone(),
+            _t: PhantomData,
+        }
+    }
+
+    /// Write the TLV type into the writer.
+    pub fn set(mut self, tlv: &T) -> Result<P, Error> {
+        tlv.to_tlv(&self.tag, self.parent.writer())?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P, T> TLVBuilderParent for ToTLVBuilder<P, T>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.parent.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.parent.into_writer()
+    }
+}
+
+impl<P, T> TLVBuilder<P> for ToTLVBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: ToTLV + 'static,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Ok(Self::new(parent, tag))
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.parent.into_writer()
+    }
+}
+
+/// The `ToTLVArrayBuilder` is a helper struct that allows for user-friendly writing of
+/// a TLV array into a `TLVWrite` implementation.
+///
+/// This implementation is useful when the `T` elements of the array implement `ToTLV`.
+///
+/// Note that this implementation should be avoided when `T` has a large size, as it
+/// needs the `T` instances to be materialized prior to writing into the array.
+pub struct ToTLVArrayBuilder<P, T> {
+    _t: PhantomData<fn() -> T>,
+    parent: P,
+}
+
+impl<P, T> ToTLVArrayBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: ToTLV + 'static,
+{
+    /// Create a new TLV array builder for the given parent and tag.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_array(tag)?;
+
+        Ok(Self {
+            parent: p,
+            _t: PhantomData,
+        })
+    }
+
+    /// Push a new element into the array.
+    pub fn push(&mut self, tlv: &T) -> Result<(), Error> {
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())
+    }
+
+    /// Finish the array and return the parent.
+    pub fn finish(mut self) -> Result<P, Error> {
+        self.parent.writer().end_container()?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P, T> TLVBuilderParent for ToTLVArrayBuilder<P, T>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.parent.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.parent.into_writer()
+    }
+}
+
+impl<P, T> TLVBuilder<P> for ToTLVArrayBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: ToTLV + 'static,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.parent.into_writer()
+    }
+}
+
+pub struct Utf8StrBuilder<P> {
+    parent: P,
+    tag: TLVTag,
+}
+
+impl<P> Utf8StrBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    /// Create a new `ToTLVBuilder` for the given parent.
+    pub fn new(parent: P, tag: &TLVTag) -> Self {
+        Self {
+            parent,
+            tag: tag.clone(),
+        }
+    }
+
+    /// Write the TLV type into the writer.
+    pub fn set(mut self, tlv: Utf8Str<'_>) -> Result<P, Error> {
+        tlv.to_tlv(&self.tag, self.parent.writer())?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P> TLVBuilderParent for Utf8StrBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.parent.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.parent.into_writer()
+    }
+}
+
+impl<P> TLVBuilder<P> for Utf8StrBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Ok(Self::new(parent, tag))
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.parent.into_writer()
+    }
+}
+
+/// The `ToTLVArrayBuilder` is a helper struct that allows for user-friendly writing of
+/// a TLV array into a `TLVWrite` implementation.
+///
+/// This implementation is useful when the `T` elements of the array implement `ToTLV`.
+///
+/// Note that this implementation should be avoided when `T` has a large size, as it
+/// needs the `T` instances to be materialized prior to writing into the array.
+pub struct Utf8StrArrayBuilder<P> {
+    parent: P,
+}
+
+impl<P> Utf8StrArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    /// Create a new TLV array builder for the given parent and tag.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_array(tag)?;
+
+        Ok(Self { parent: p })
+    }
+
+    /// Push a new element into the array.
+    pub fn push(&mut self, tlv: Utf8Str<'_>) -> Result<(), Error> {
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())
+    }
+
+    /// Finish the array and return the parent.
+    pub fn finish(mut self) -> Result<P, Error> {
+        self.parent.writer().end_container()?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P> TLVBuilderParent for Utf8StrArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.parent.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.parent.into_writer()
+    }
+}
+
+impl<P> TLVBuilder<P> for Utf8StrArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.parent.into_writer()
+    }
+}
+
+pub struct OctetsBuilder<P> {
+    parent: P,
+    tag: TLVTag,
+}
+
+impl<P> OctetsBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    /// Create a new `ToTLVBuilder` for the given parent.
+    pub fn new(parent: P, tag: &TLVTag) -> Self {
+        Self {
+            parent,
+            tag: tag.clone(),
+        }
+    }
+
+    /// Write the TLV type into the writer.
+    pub fn set(mut self, tlv: Octets<'_>) -> Result<P, Error> {
+        tlv.to_tlv(&self.tag, self.parent.writer())?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P> TLVBuilderParent for OctetsBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.parent.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.parent.into_writer()
+    }
+}
+
+impl<P> TLVBuilder<P> for OctetsBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Ok(Self::new(parent, tag))
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.parent.into_writer()
+    }
+}
+
+/// The `ToTLVArrayBuilder` is a helper struct that allows for user-friendly writing of
+/// a TLV array into a `TLVWrite` implementation.
+///
+/// This implementation is useful when the `T` elements of the array implement `ToTLV`.
+///
+/// Note that this implementation should be avoided when `T` has a large size, as it
+/// needs the `T` instances to be materialized prior to writing into the array.
+pub struct OctetsArrayBuilder<P> {
+    parent: P,
+}
+
+impl<P> OctetsArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    /// Create a new TLV array builder for the given parent and tag.
+    pub fn new(mut p: P, tag: &TLVTag) -> Result<Self, Error> {
+        p.writer().start_array(tag)?;
+
+        Ok(Self { parent: p })
+    }
+
+    /// Push a new element into the array.
+    pub fn push(&mut self, tlv: Octets<'_>) -> Result<(), Error> {
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())
+    }
+
+    /// Finish the array and return the parent.
+    pub fn finish(mut self) -> Result<P, Error> {
+        self.parent.writer().end_container()?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P> TLVBuilderParent for OctetsArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.parent.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.parent.into_writer()
+    }
+}
+
+impl<P> TLVBuilder<P> for OctetsArrayBuilder<P>
+where
+    P: TLVBuilderParent,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Self::new(parent, tag)
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.parent.into_writer()
+    }
+}
+
+/// A builder for a nullable TLV type.
+pub struct NullableBuilder<P, T> {
+    p: P,
+    tag: TLVTag,
+    _t: PhantomData<fn() -> T>,
+}
+
+impl<P, T> NullableBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: TLVBuilder<P>,
+{
+    /// Create a new nullable TLV builder for the given parent and tag.
+    pub fn new(p: P, tag: &TLVTag) -> Self {
+        Self {
+            p,
+            tag: tag.clone(),
+            _t: PhantomData,
+        }
+    }
+
+    /// Write a null value into the TLV and return the parent.
+    pub fn null(mut self) -> Result<P, Error> {
+        self.p.writer().null(&self.tag)?;
+
+        Ok(self.p)
+    }
+
+    /// Create and return the builder for the non-null value.
+    pub fn non_null(self) -> Result<T, Error> {
+        T::new(self.p, &self.tag)
+    }
+}
+
+impl<P, T> TLVBuilderParent for NullableBuilder<P, T>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.p.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.p.into_writer()
+    }
+}
+
+impl<P, T> TLVBuilder<P> for NullableBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: TLVBuilder<P>,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Ok(Self::new(parent, tag))
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.p.into_writer()
+    }
+}
+
+/// A builder for an optional TLV type.
+pub struct OptionalBuilder<P, T> {
+    p: P,
+    tag: TLVTag,
+    _t: PhantomData<fn() -> T>,
+}
+
+impl<P, T> OptionalBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: TLVBuilder<P>,
+{
+    /// Create a new optional TLV builder for the given parent and tag.
+    pub fn new(p: P, tag: &TLVTag) -> Self {
+        Self {
+            p,
+            tag: tag.clone(),
+            _t: PhantomData,
+        }
+    }
+
+    /// Skip writing the TLV type and return the parent.
+    pub fn none(self) -> P {
+        self.p
+    }
+
+    /// Create and return the builder for the non-optional value.
+    pub fn some(self) -> Result<T, Error> {
+        T::new(self.p, &self.tag)
+    }
+}
+
+impl<P, T> TLVBuilderParent for OptionalBuilder<P, T>
+where
+    P: TLVBuilderParent,
+{
+    type Write = P::Write;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        self.p.writer()
+    }
+
+    fn into_writer(self) -> Self::Write {
+        self.p.into_writer()
+    }
+}
+
+impl<P, T> TLVBuilder<P> for OptionalBuilder<P, T>
+where
+    P: TLVBuilderParent,
+    T: TLVBuilder<P>,
+{
+    fn new(parent: P, tag: &TLVTag) -> Result<Self, Error> {
+        Ok(Self::new(parent, tag))
+    }
+
+    fn into_writer(self) -> P::Write {
+        self.p.into_writer()
+    }
+}
