@@ -33,7 +33,13 @@ impl IdlGenerateContext {
 /// assert_eq!(idl_id_to_constant_name("ThisIsATest"), "THIS_IS_A_TEST");
 /// ```
 pub fn idl_id_to_constant_name(s: &str) -> String {
-    s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake)
+    let str = s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake);
+    let char = str.chars().next().unwrap();
+    if !char.is_alphabetic() {
+        format!("C{}", str)
+    } else {
+        str
+    }
 }
 
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
@@ -51,6 +57,10 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
     s.to_case(Case::Snake)
 }
 
+pub fn idl_field_name_to_rs_type_name(s: &str) -> String {
+    s.to_case(Case::Camel)
+}
+
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
 /// enum names
 ///
@@ -64,7 +74,13 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
 /// assert_eq!(idl_id_to_enum_name("ThisIsATest"), "ThisIsATest");
 /// ```
 pub fn idl_id_to_enum_name(s: &str) -> String {
-    s.strip_prefix('k').unwrap_or(s).into()
+    let str = s.strip_prefix('k').unwrap_or(s).to_string();
+    let char = str.chars().next().unwrap();
+    if !char.is_alphabetic() {
+        format!("V{}", str)
+    } else {
+        str
+    }
 }
 
 /// Creates the token stream corresponding to a bitmap definition.
@@ -130,11 +146,16 @@ fn enum_definition(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
 }
 
 fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
-    if f.is_list {
-        // TODO: this needs implementation
-        panic!("Code generation of LIST structure field support not yet implemented.");
-    }
+    let field_type_scalar = field_type_scalar(f, krate);
 
+    if f.is_list {
+        quote!(#krate::tlv::TLVArray<#field_type_scalar>)
+    } else {
+        field_type_scalar
+    }
+}
+
+fn field_type_scalar(f: &DataType, krate: &Ident) -> TokenStream {
     // NOTE: f.max_length is not used (i.e. we do not limit or check string length limit)
 
     match f.name.as_str() {
@@ -146,9 +167,13 @@ fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
         "int16s" => quote!(i16),
         "int32s" => quote!(i32),
         "int64s" => quote!(i64),
+        "single" => quote!(f32),
+        "double" => quote!(f64),
         "boolean" => quote!(bool),
 
         // Spec section 7.19.2 - derived data types
+        "priority" => quote!(u8),
+        "status" => quote!(u8),
         "percent" => quote!(u8),
         "percent100ths" => quote!(u16),
         "epoch_us" => quote!(u64),
@@ -200,31 +225,14 @@ fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
     }
 }
 
-fn needs_lifetime(f: &StructField) -> bool {
-    if f.field.data_type.is_list {
-        return true;
-    }
-
-    // TODO: partial heuristic here, we likely want to add some more things as needed
-    matches!(
-        f.field.data_type.name.as_str(),
-        "char_string" | "long_char_string" | "long_octet_string" | "octet_string"
-    )
-}
-
 fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
 
-    let doc_comment = match f.maturity {
-        rs_matter_data_model::ApiMaturity::Provisional => quote!(#[doc="provisional"]),
-        rs_matter_data_model::ApiMaturity::Internal => quote!(#[doc="internal"]),
-        rs_matter_data_model::ApiMaturity::Deprecated => quote!(#[doc="deprecated"]),
-        _ => quote!(),
-    };
+    let doc_comment = struct_field_comment(f);
     let krate = context.rs_matter_crate.clone();
 
-    let _code = Literal::u8_unsuffixed(f.field.code as u8);
+    let code = Literal::u8_unsuffixed(f.field.code as u8);
     let field_type = field_type(&f.field.data_type, &krate);
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
 
@@ -240,56 +248,120 @@ fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> Tok
         field_type
     };
 
+    if f.is_optional {
+        quote!(
+            #doc_comment
+            pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
+                let element = self.0.structure()?.find_ctx(#code)?;
+
+                if element.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(#krate::tlv::FromTLV::from_tlv(&element)?))
+                }
+            }
+        )
+    } else {
+        quote!(
+            #doc_comment
+            pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
+                #krate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(#code)?)
+            }
+        )
+    }
+}
+
+fn struct_tag_field_definition(f: &StructField) -> TokenStream {
+    // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
+    // fabric_sensitive seems to be specific to fabric_scoped structs
+
+    let doc_comment = struct_field_comment(f);
+
+    let code = Literal::u8_unsuffixed(f.field.code as u8);
+    let name = Ident::new(
+        &idl_field_name_to_rs_type_name(&f.field.id),
+        Span::call_site(),
+    );
+
     quote!(
-      #doc_comment
-      // #[tagval(#code)] - TODO: add this once we support to/from TLV
-      #name: #field_type
+        #doc_comment
+        #name = #code,
     )
+}
+
+fn struct_field_comment(f: &StructField) -> TokenStream {
+    match f.maturity {
+        rs_matter_data_model::ApiMaturity::Provisional => quote!(#[doc="provisional"]),
+        rs_matter_data_model::ApiMaturity::Internal => quote!(#[doc="internal"]),
+        rs_matter_data_model::ApiMaturity::Deprecated => quote!(#[doc="deprecated"]),
+        _ => quote!(),
+    }
 }
 
 /// Creates the token stream corresponding to a structure
 /// definition.
 ///
-/// Provides the raw `struct Foo { ... }` declaration.
+/// Provides the raw `struct Foo<'a>(TLVElement<'a>); impl<'a> Foo<'a> { ... }` declaration.
 fn struct_definition(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
 
     let name = Ident::new(&s.id, Span::call_site());
 
-    // TODO:
-    //  - add handling for array types (including no_std support)
-    // Complex example:
-    //
-    //    struct Complex {
-    //      octet_string<32> networkID = 0;
-    //      boolean connected = 1;
-    //      optional nullable octet_string<20> networkIdentifier = 2;
-    //      group_id groupList[] = 3;
-    //      nullable int8u capacity = 4;
-    //    }
-
-    // Check if the fields themselves need a lifetime. The lifetime right now in the macro
-    // is ALWAYS 'a
-    let struct_header = if s.fields.iter().any(needs_lifetime) {
-        quote! (
-            #[tlvargs(lifetime = "'a")]
-            pub struct #name<'a>
-        )
-    } else {
-        quote!(
-            pub struct #name
-        )
-    };
-
     let fields = s.fields.iter().map(|f| struct_field_definition(f, context));
     let krate = context.rs_matter_crate.clone();
 
     quote!(
-        #[derive(Debug, PartialEq, Eq, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
-        #struct_header {
-           #(#fields),*
+        #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+        pub struct #name<'a>(#krate::tlv::TLVElement<'a>);
+
+        impl<'a> #name<'a> {
+            #[doc="Create a new instance of #name"]
+            pub const fn new(element: #krate::tlv::TLVElement<'a>) -> Self {
+                Self(element)
+            }
+
+            pub const fn tlv_element(&self) -> &TLVElement<'a> {
+                &self.0
+            }
+
+            #(#fields)*
         }
+
+        impl<'a> #krate::tlv::FromTLV<'a> for #name<'a> {
+            fn from_tlv(element: &#krate::tlv::TLVElement<'a>) -> Result<Self, #krate::error::Error> {
+                Ok(Self::new(element.clone()))
+            }
+        }
+
+        impl #krate::tlv::ToTLV for #name<'_> {
+            fn to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, tw: W) -> Result<(), Error> {
+                self.0.to_tlv(tag, tw)
+            }
+
+            fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, Error>> {
+                self.0.tlv_iter(tag)
+            }
+        }
+    )
+}
+
+/// Creates the token stream corresponding to a structure
+/// tag definition.
+///
+/// Provides the raw `enum FooTag { }` declaration.
+fn struct_tag_definition(s: &Struct) -> TokenStream {
+    // NOTE: s.is_fabric_scoped not directly handled as the IDL
+    //       will have fabric_idx with ID 254 automatically added.
+
+    let name = Ident::new(&format!("{}Tag", s.id), Span::call_site());
+
+    let fields = s.fields.iter().map(struct_tag_field_definition);
+
+    quote!(
+        #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+        #[repr(u8)]
+        pub enum #name { #(#fields)* }
     )
 }
 
@@ -315,11 +387,15 @@ pub fn server_side_cluster_generate(
         .bitmaps
         .iter()
         .map(|c| bitmap_definition(c, context));
+
     let enum_declarations = cluster.enums.iter().map(|c| enum_definition(c, context));
+
     let struct_declarations = cluster
         .structs
         .iter()
         .map(|s| struct_definition(s, context));
+
+    let struct_tag_declarations = cluster.structs.iter().map(struct_tag_definition);
 
     let krate = context.rs_matter_crate.clone();
 
@@ -336,6 +412,8 @@ pub fn server_side_cluster_generate(
             #(#enum_declarations)*
 
             #(#struct_declarations)*
+
+            #(#struct_tag_declarations)*
 
             #[derive(strum::FromRepr, strum::EnumDiscriminants)]
             #[repr(u32)]

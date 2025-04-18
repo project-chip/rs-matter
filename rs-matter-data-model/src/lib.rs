@@ -51,7 +51,7 @@ pub struct Bitmap {
     pub entries: Vec<ConstantEntry>,
 }
 
-/// A generic type such as integers, strings, enums etc.
+/// A generic type such as integers, strings, enums, structs etc.
 ///
 /// Supports information if this is repeated/list as well
 /// as a maximum length (if applicable).
