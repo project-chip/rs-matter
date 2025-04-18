@@ -75,8 +75,8 @@ macro_rules! totlv_for_nonzero {
     };
 }
 
-fromtlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
+fromtlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 bool);
 fromtlv_for_nonzero!(i8:core::num::NonZeroI8 u8:core::num::NonZeroU8 i16:core::num::NonZeroI16 u16:core::num::NonZeroU16 i32:core::num::NonZeroI32 u32:core::num::NonZeroU32 i64:core::num::NonZeroI64 u64:core::num::NonZeroU64);
 
-totlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 bool);
+totlv_for!(i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 bool);
 totlv_for_nonzero!(i8:core::num::NonZeroI8 u8:core::num::NonZeroU8 i16:core::num::NonZeroI16 u16:core::num::NonZeroU16 i32:core::num::NonZeroI32 u32:core::num::NonZeroU32 i64:core::num::NonZeroI64 u64:core::num::NonZeroU64);
