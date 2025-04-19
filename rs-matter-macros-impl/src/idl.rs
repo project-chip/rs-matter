@@ -791,6 +791,50 @@ pub fn server_side_cluster_generate(
         .iter()
         .map(|s| struct_builder_definition(s, cluster, context));
 
+    let attributes_meta_data = cluster.attributes.iter().map(|attr| {
+        let attr_name = Ident::new(
+            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+            Span::call_site(),
+        );
+
+        quote!(
+            #krate::data_model::objects::Attribute::new(
+                AttributeId::#attr_name as _,
+                #krate::data_model::objects::Access::RV,
+                #krate::data_model::objects::Quality::SN,
+            ),
+        )
+    });
+
+    let commands_meta_data = cluster.commands.iter().map(|cmd| {
+        let command_name = Ident::new(&cmd.id, Span::call_site());
+
+        quote!(CommandId::#command_name as _,)
+    });
+
+    let command_responses_meta_data = cluster.structs.iter().filter_map(|s| {
+        if matches!(s.struct_type, StructType::Response(_)) {
+            let command_name = Ident::new(&s.id, Span::call_site());
+
+            Some(quote!(CommandResponseId::#command_name as _,))
+        } else {
+            None
+        }
+    });
+
+    let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
+
+    let cluster_meta_data = quote!(
+        pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = #krate::data_model::objects::Cluster {
+            id: ID as _,
+            revision: #cluster_revision,
+            feature_map: 0, // TODO
+            attributes: &[#(#attributes_meta_data)*],
+            accepted_commands: &[#(#commands_meta_data)*],
+            generated_commands: &[#(#command_responses_meta_data)*],
+        };
+    );
+
     quote!(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
@@ -810,6 +854,8 @@ pub fn server_side_cluster_generate(
             #commands
 
             #command_responses
+
+            #cluster_meta_data
         }
     )
 }
