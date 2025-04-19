@@ -45,74 +45,34 @@ static PART_1: &[TestAttrResp<'static>] = &[
     attr_data!(0, 29, GlobalElements::AttributeList, None),
     attr_data!(0, 29, GlobalElements::FeatureMap, None),
     attr_data!(0, 29, GlobalElements::ClusterRevision, None),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::DMRevision, None),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::VendorName, None),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::VendorId, None),
-    attr_data!(
-        0,
-        40,
-        basic_info::AttributesDiscriminants::ProductName,
-        None
-    ),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::ProductId, None),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::NodeLabel, None),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::Location, None),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::HwVer, None),
-    attr_data!(
-        0,
-        40,
-        basic_info::AttributesDiscriminants::HwVerString,
-        None
-    ),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::SwVer, None),
-    attr_data!(
-        0,
-        40,
-        basic_info::AttributesDiscriminants::SwVerString,
-        None
-    ),
-    attr_data!(0, 40, basic_info::AttributesDiscriminants::SerialNo, None),
-    attr_data!(
-        0,
-        40,
-        basic_info::AttributesDiscriminants::CapabilityMinima,
-        None
-    ),
-    attr_data!(
-        0,
-        40,
-        basic_info::AttributesDiscriminants::SpecificationVersion,
-        None
-    ),
-    attr_data!(
-        0,
-        40,
-        basic_info::AttributesDiscriminants::MaxPathsPerInvoke,
-        None
-    ),
+    attr_data!(0, 40, basic_info::AttributeId::DataModelRevision, None),
+    attr_data!(0, 40, basic_info::AttributeId::VendorName, None),
+    attr_data!(0, 40, basic_info::AttributeId::VendorID, None),
+    attr_data!(0, 40, basic_info::AttributeId::ProductName, None),
+    attr_data!(0, 40, basic_info::AttributeId::ProductID, None),
+    attr_data!(0, 40, basic_info::AttributeId::NodeLabel, None),
+    attr_data!(0, 40, basic_info::AttributeId::Location, None),
+    attr_data!(0, 40, basic_info::AttributeId::HardwareVersion, None),
+    attr_data!(0, 40, basic_info::AttributeId::HardwareVersionString, None),
+    attr_data!(0, 40, basic_info::AttributeId::SoftwareVersion, None),
+    attr_data!(0, 40, basic_info::AttributeId::SoftwareVersionString, None),
+    attr_data!(0, 40, basic_info::AttributeId::SerialNumber, None),
+    attr_data!(0, 40, basic_info::AttributeId::CapabilityMinima, None),
+    attr_data!(0, 40, basic_info::AttributeId::SpecificationVersion, None),
+    attr_data!(0, 40, basic_info::AttributeId::MaxPathsPerInvoke, None),
     attr_data!(0, 40, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 40, GlobalElements::AcceptedCmdList, None),
     attr_data!(0, 40, GlobalElements::AttributeList, None),
     attr_data!(0, 40, GlobalElements::FeatureMap, None),
     attr_data!(0, 40, GlobalElements::ClusterRevision, None),
-    attr_data!(0, 48, gen_comm::AttributesDiscriminants::BreadCrumb, None),
-    attr_data!(0, 48, gen_comm::AttributesDiscriminants::RegConfig, None),
+    attr_data!(0, 48, gen_comm::AttributeId::Breadcrumb, None),
+    attr_data!(0, 48, gen_comm::AttributeId::RegulatoryConfig, None),
+    attr_data!(0, 48, gen_comm::AttributeId::LocationCapability, None),
+    attr_data!(0, 48, gen_comm::AttributeId::BasicCommissioningInfo, None),
     attr_data!(
         0,
         48,
-        gen_comm::AttributesDiscriminants::LocationCapability,
-        None
-    ),
-    attr_data!(
-        0,
-        48,
-        gen_comm::AttributesDiscriminants::BasicCommissioningInfo,
-        None
-    ),
-    attr_data!(
-        0,
-        48,
-        gen_comm::AttributesDiscriminants::SupportsConcurrentConnection,
+        gen_comm::AttributeId::SupportsConcurrentConnection,
         None
     ),
     attr_data!(0, 48, GlobalElements::GeneratedCmdList, None),
@@ -217,7 +177,7 @@ static PART_3: &[TestAttrResp<'static>] = &[
     attr_data!(1, 29, GlobalElements::AttributeList, None),
     attr_data!(1, 29, GlobalElements::FeatureMap, None),
     attr_data!(1, 29, GlobalElements::ClusterRevision, None),
-    attr_data!(1, 6, onoff::AttributesDiscriminants::OnOff, None),
+    attr_data!(1, 6, onoff::AttributeId::OnOff, None),
     attr_data!(1, 6, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
     attr_data!(1, 6, GlobalElements::AttributeList, None),

@@ -746,7 +746,7 @@ pub fn server_side_cluster_generate(
     cluster: &Cluster,
     context: &IdlGenerateContext,
 ) -> TokenStream {
-    let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
+    //let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
     let krate = context.rs_matter_crate.clone();
 
@@ -936,12 +936,26 @@ pub fn server_side_cluster_generate(
             let (attr_type, builder) = field_type_resp(&attr.field.field.data_type, attr.field.is_nullable, attr.field.is_optional, parent, cluster, &krate);
 
             if builder {
+                if attr.field.is_optional {
+                    quote!(
+                        fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, exchange: &#krate::transport::exchange::Exchange<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                            Ok(builder.none())
+                        }
+                    )
+                } else {
+                    quote!(
+                        fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, exchange: &#krate::transport::exchange::Exchange<'_>, builder: #attr_type) -> Result<P, #krate::error::Error>;
+                    )
+                }
+            } else if attr.field.is_optional {
                 quote!(
-                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, builder: #attr_type) -> Result<P, #krate::error::Error>;
+                    fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, ) -> Result<#attr_type, #krate::error::Error> {
+                        Ok(None)
+                    }
                 )
             } else {
                 quote!(
-                    fn #attr_name(&self) -> Result<#attr_type, #krate::error::Error>;
+                    fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, ) -> Result<#attr_type, #krate::error::Error>;
                 )
             }
         });
@@ -959,79 +973,115 @@ pub fn server_side_cluster_generate(
 
             let attr_type = field_type_req(&attr.field.field.data_type, &krate, true);
 
-            quote!(
-                fn #attr_name(&self, value: #attr_type) -> Result<(), #krate::error::Error>;
+            if attr.field.is_optional {
+                quote!(
+                    fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
+                        Ok(())
+                    }
+                )
+            } else {
+                quote!(
+                    fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, value: #attr_type) -> Result<(), #krate::error::Error>;
+                )
+            }
+        });
+
+    let handler_command_methods = cluster.commands.iter().map(|cmd| {
+        let cmd_name = Ident::new(
+            &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
+            Span::call_site(),
+        );
+
+        let field_req = cmd.input.as_ref().map(|id| {
+            field_type_req(
+                &DataType {
+                    name: id.clone(),
+                    is_list: false,
+                    max_length: None,
+                },
+                &krate,
+                false,
             )
         });
 
-    let handler_command_methods = cluster.commands
-            .iter()
-            .map(|cmd| {
-                let cmd_name = Ident::new(
-                    &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
-                    Span::call_site(),
-                );
+        let cmd_output = (cmd.output != "DefaultSuccess").then(|| cmd.output.clone());
 
-                let field_req = cmd.input.as_ref().map(|id| field_type_req(
-                    &DataType {
-                        name: id.clone(),
-                        is_list: false,
-                        max_length: None,
-                    },
-                    &krate,
-                    false,
-                ));
+        let field_resp = cmd_output.map(|output| {
+            field_type_resp(
+                &DataType {
+                    name: output.clone(),
+                    is_list: false,
+                    max_length: None,
+                },
+                false,
+                false,
+                quote!(P),
+                cluster,
+                &krate,
+            )
+        });
 
-                let cmd_output = (cmd.output != "DefaultSuccess").then(|| cmd.output.clone());
-
-                let field_resp = cmd_output.map(|output| field_type_resp(
-                    &DataType {
-                        name: output.clone(),
-                        is_list: false,
-                        max_length: None,
-                    },
-                    false,
-                    false,
-                    quote!(P),
-                    cluster,
-                    &krate,
-                ));
-
-                if let Some(field_req) = field_req {
-                    if let Some((field_resp, field_resp_builder)) = field_resp {
-                        if field_resp_builder {
-                            quote!(
-                                fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(&self, request: #field_req) -> Result<#field_resp, #krate::error::Error>;
-                            )
-                        } else {
-                            quote!(
-                                fn #cmd_name(&self, request: #field_req) -> Result<#field_resp, #krate::error::Error>;
-                            )
-                        }
-                    } else {
-                        quote!(
-                            fn #cmd_name(&self, request: #field_req) -> Result<(), #krate::error::Error>;
-                        )
-                    }
-                } else if let Some((field_resp, field_resp_builder)) = field_resp {
-                    if field_resp_builder {
-                        quote!(
-                            fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(&self) -> Result<#field_resp, #krate::error::Error>;
-                        )
-                    } else {
-                        quote!(
-                            fn #cmd_name(&self) -> Result<#field_resp, #krate::error::Error>;
-                        )
-                    }
+        if let Some(field_req) = field_req {
+            if let Some((field_resp, field_resp_builder)) = field_resp {
+                if field_resp_builder {
+                    quote!(
+                        fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                            &self,
+                            exchange: &#krate::transport::exchange::Exchange<'_>,
+                            request: #field_req,
+                            response: #field_resp,
+                        ) -> Result<P, #krate::error::Error>;
+                    )
                 } else {
                     quote!(
-                        fn #cmd_name(&self) -> Result<(), #krate::error::Error>;
+                        fn #cmd_name(
+                            &self,
+                            exchange: &#krate::transport::exchange::Exchange<'_>,
+                            request: #field_req,
+                        ) -> Result<#field_resp, #krate::error::Error>;
                     )
                 }
-            });
+            } else {
+                quote!(
+                    fn #cmd_name(
+                        &self,
+                        exchange: &#krate::transport::exchange::Exchange<'_>,
+                        request: #field_req,
+                    ) -> Result<(), #krate::error::Error>;
+                )
+            }
+        } else if let Some((field_resp, field_resp_builder)) = field_resp {
+            if field_resp_builder {
+                quote!(
+                    fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                        &self,
+                        exchange: &#krate::transport::exchange::Exchange<'_>,
+                        response: #field_resp,
+                    ) -> Result<P, #krate::error::Error>;
+                )
+            } else {
+                quote!(
+                    fn #cmd_name(
+                        &self,
+                        exchange: &#krate::transport::exchange::Exchange<'_>,
+                    ) -> Result<#field_resp, #krate::error::Error>;
+                )
+            }
+        } else {
+            quote!(
+                fn #cmd_name(
+                    &self,
+                    exchange: &#krate::transport::exchange::Exchange<'_>,
+                ) -> Result<(), #krate::error::Error>;
+            )
+        }
+    });
 
     let handler = quote!(
         pub trait #handler_name {
+            fn dataver(&self) -> u32;
+            fn dataver_changed(&self);
+
             #(#handler_attribute_methods)*
 
             #(#handler_attribute_write_methods)*
@@ -1040,30 +1090,313 @@ pub fn server_side_cluster_generate(
         }
     );
 
-    quote!(
-        mod #cluster_module_name {
-            pub const ID: u32 = #cluster_code;
+    let handler_adaptor_attribute_match = cluster
+        .attributes
+        .iter()
+        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .map(|attr| {
+            let attr_name = Ident::new(
+                &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+                Span::call_site(),
+            );
 
-            #(#bitmap_declarations)*
+            let attr_method_name = Ident::new(
+                &idl_field_name_to_rs_name(&attr.field.field.id),
+                Span::call_site(),
+            );
 
-            #(#enum_declarations)*
+            let parent = quote!(P);
 
-            #(#struct_declarations)*
+            let (_, builder) = field_type_resp(
+                &attr.field.field.data_type,
+                attr.field.is_nullable,
+                attr.field.is_optional,
+                parent,
+                cluster,
+                &krate,
+            );
 
-            #(#struct_tag_declarations)*
+            if builder {
+                quote!(
+                    AttributeId::#attr_name => {
+                        self.0.#attr_method_name(exchange, #krate::tlv::TLVBuilder::new(
+                            #krate::tlv::TLVWriteParent::new(writer.writer()),
+                            &#krate::data_model::objects::AttrDataWriter::TAG,
+                        )?)?;
 
-            #(#struct_builder_declarations)*
+                        writer.complete()
+                    }
+                )
+            } else {
+                quote!(
+                    AttributeId::#attr_name => writer.set(self.0.#attr_method_name(exchange)?),
+                )
+            }
+        });
 
-            #attributes
+    let handler_adaptor_attribute_write_match = cluster.attributes
+        .iter()
+        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .filter(|attr| !attr.is_read_only)
+        .map(|attr| {
+            let attr_name = Ident::new(
+                &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+                Span::call_site(),
+            );
 
-            #commands
+            let attr_method_name = Ident::new(
+                &format!("set_{}", &idl_field_name_to_rs_name(&attr.field.field.id)),
+                Span::call_site(),
+            );
 
-            #command_responses
+            quote!(
+                AttributeId::#attr_name => self.0.#attr_method_name(exchange, #krate::tlv::FromTLV::from_tlv(&data)?)?,
+            )
+        });
 
-            #cluster_meta_data
+    let handler_adaptor_command_match = cluster.commands.iter().map(|cmd| {
+        let cmd_name = Ident::new(
+            &idl_attribute_name_to_enum_variant_name(&cmd.id),
+            Span::call_site(),
+        );
 
-            #handler
+        let cmd_method_name = Ident::new(
+            &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
+            Span::call_site(),
+        );
+
+        let field_req = cmd
+            .input
+            .as_ref()
+            .map(|id| {
+                field_type_req(
+                    &DataType {
+                        name: id.clone(),
+                        is_list: false,
+                        max_length: None,
+                    },
+                    &krate,
+                    false,
+                )
+            })
+            .is_some();
+
+        let cmd_output = (cmd.output != "DefaultSuccess")
+            .then(|| {
+                cluster
+                    .structs
+                    .iter()
+                    .filter(|s| s.id == cmd.output)
+                    .filter_map(|s| {
+                        if let StructType::Response(code) = s.struct_type {
+                            Some(code)
+                        } else {
+                            None
+                        }
+                    })
+                    .next()
+                    .map(|code| (cmd.output.clone(), code))
+            })
+            .flatten();
+
+        let field_resp = cmd_output.map(|(output, code)| {
+            let (_, builder) = field_type_resp(
+                &DataType {
+                    name: output.clone(),
+                    is_list: false,
+                    max_length: None,
+                },
+                false,
+                false,
+                quote!(P),
+                cluster,
+                &krate,
+            );
+
+            (code as u32, builder)
+        });
+
+        if field_req {
+            if let Some((field_resp_cmd_code, field_resp_builder)) = field_resp {
+                if field_resp_builder {
+                    quote!(
+                        CommandId::#cmd_name => {
+                            let mut writer = encoder.with_command(#field_resp_cmd_code)?;
+
+                            self.0.#cmd_method_name(
+                                exchange,
+                                #krate::tlv::FromTLV::from_tlv(&data)?,
+                                #krate::tlv::TLVBuilder::new(
+                                    #krate::tlv::TLVWriteParent::new(writer.writer()),
+                                    &#krate::data_model::objects::AttrDataWriter::TAG,
+                                )?
+                            )?;
+
+                            writer.complete()?
+                        }
+                    )
+                } else {
+                    quote!(
+                        CommandId::#cmd_name => {
+                            encoder
+                                .with_command(#field_resp_cmd_code)?
+                                .set(self.0.#cmd_method_name(
+                                    exchange
+                                    #krate::tlv::FromTLV::from_tlv(&data)?,
+                                )?)?
+                        }
+                    )
+                }
+            } else {
+                quote!(
+                    CommandId::#cmd_name => self.0.#cmd_method_name(
+                        exchange,
+                        #krate::tlv::FromTLV::from_tlv(&data)?,
+                    )?,
+                )
+            }
+        } else if let Some((field_resp_cmd_code, field_resp_builder)) = field_resp {
+            if field_resp_builder {
+                quote!(
+                    CommandId::#cmd_name => {
+                        let mut writer = encoder.with_command(#field_resp_cmd_code)?;
+
+                        self.0.#cmd_method_name(
+                            exchange,
+                            #krate::tlv::TLVBuilder::new(
+                                #krate::tlv::TLVWriteParent::new(writer.writer()),
+                                &#krate::data_model::objects::AttrDataWriter::TAG,
+                            )?,
+                        )?;
+
+                        writer.complete()?
+                    }
+                )
+            } else {
+                quote!(quote!(
+                    CommandId::#cmd_name => {
+                        encoder
+                            .with_command(#field_resp_cmd_code)?
+                            .set(self.0.#cmd_method_name(exchange)?)?
+                    }
+                ))
+            }
+        } else {
+            quote!(
+                CommandId::#cmd_name => self.0.#cmd_method_name(exchange)?,
+            )
         }
+    });
+
+    let handler_adaptor_name =
+        Ident::new(&format!("{}HandlerAdaptor", cluster.id), Span::call_site());
+
+    let handler_adaptor = quote!(
+        pub struct #handler_adaptor_name<T>(T);
+
+        impl<T> #handler_adaptor_name<T> {
+            pub const fn new(handler: T) -> Self {
+                Self(handler)
+            }
+        }
+
+        impl<T> #krate::data_model::objects::Handler for #handler_adaptor_name<T>
+        where
+            T: #handler_name,
+        {
+            fn read(
+                &self,
+                exchange: &#krate::transport::exchange::Exchange,
+                attr: &#krate::data_model::objects::AttrDetails,
+                encoder: #krate::data_model::objects::AttrDataEncoder,
+            ) -> Result<(), #krate::error::Error> {
+                if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
+                    if attr.is_system() {
+                        CLUSTER.read(attr.attr_id, writer)
+                    } else {
+                        match AttributeId::try_from(attr.attr_id)? {
+                            #(#handler_adaptor_attribute_match)*
+                            #[allow(unreachable_code)]
+                            _ => Err(#krate::error::ErrorCode::AttributeNotFound.into()),
+                        }
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+
+            #[allow(unreachable_code)]
+            fn write(
+                &self,
+                exchange: &#krate::transport::exchange::Exchange,
+                attr: &#krate::data_model::objects::AttrDetails,
+                data: #krate::data_model::objects::AttrData,
+            ) -> Result<(), #krate::error::Error> {
+                let data = data.with_dataver(self.0.dataver())?;
+
+                if attr.is_system() {
+                    return Err(#krate::error::ErrorCode::InvalidAction.into())
+                }
+
+                match AttributeId::try_from(attr.attr_id)? {
+                    #(#handler_adaptor_attribute_write_match)*
+                    _ => return Err(#krate::error::ErrorCode::AttributeNotFound.into()),
+                }
+
+                self.0.dataver_changed();
+
+                Ok(())
+            }
+
+            #[allow(unreachable_code)]
+            fn invoke(
+                &self,
+                exchange: &#krate::transport::exchange::Exchange,
+                cmd: &#krate::data_model::objects::CmdDetails,
+                data: &#krate::tlv::TLVElement,
+                encoder: #krate::data_model::objects::CmdDataEncoder,
+            ) -> Result<(), #krate::error::Error> {
+                match CommandId::try_from(cmd.cmd_id)? {
+                    #(#handler_adaptor_command_match)*
+                    _ => return Err(#krate::error::ErrorCode::CommandNotFound.into()),
+                }
+
+                self.0.dataver_changed();
+
+                Ok(())
+            }
+        }
+
+        impl<T> #krate::data_model::objects::NonBlockingHandler for #handler_adaptor_name<T>
+        where
+            T: #handler_name,
+        {}
+    );
+
+    quote!(
+        pub const ID: u32 = #cluster_code;
+
+        #(#bitmap_declarations)*
+
+        #(#enum_declarations)*
+
+        #(#struct_declarations)*
+
+        #(#struct_tag_declarations)*
+
+        #(#struct_builder_declarations)*
+
+        #attributes
+
+        #commands
+
+        #command_responses
+
+        #cluster_meta_data
+
+        #handler
+
+        #handler_adaptor
     )
 }
 

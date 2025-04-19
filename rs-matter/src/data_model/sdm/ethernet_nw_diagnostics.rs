@@ -17,140 +17,42 @@
 
 use rs_matter_macros::idl_import;
 
-use strum::{EnumDiscriminants, FromRepr};
-
-use crate::data_model::objects::*;
+use crate::data_model::objects::Dataver;
 use crate::error::Error;
-use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter};
 
 idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
-
-pub use ethernet_network_diagnostics::{CommandId, ID};
-
-#[derive(FromRepr, EnumDiscriminants)]
-#[repr(u32)]
-pub enum Attributes {
-    PacketRxCount(AttrType<u64>) = 0x02,
-    PacketTxCount(AttrType<u64>) = 0x03,
-}
-
-attribute_enum!(Attributes);
-
-pub const CLUSTER: Cluster<'static> = Cluster {
-    id: ID as _,
-    revision: 1,
-    feature_map: 0,
-    attributes: cluster_attrs!(
-        Attribute::new(
-            AttributesDiscriminants::PacketRxCount as _,
-            Access::RV,
-            Quality::NONE,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::PacketTxCount as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-    ),
-    accepted_commands: &[CommandId::ResetCounts as _],
-    generated_commands: &[],
-};
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EthNwDiagCluster {
-    data_ver: Dataver,
+    dataver: Dataver,
 }
 
 impl EthNwDiagCluster {
-    pub const fn new(data_ver: Dataver) -> Self {
-        Self { data_ver }
-    }
-
-    pub fn read(
-        &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
-            if attr.is_system() {
-                CLUSTER.read(attr.attr_id, writer)
-            } else {
-                match attr.attr_id.try_into()? {
-                    Attributes::PacketRxCount(codec) => codec.encode(writer, 1),
-                    Attributes::PacketTxCount(codec) => codec.encode(writer, 1),
-                }
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn write(
-        &self,
-        _exchange: &Exchange,
-        _attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let _data = data.with_dataver(self.data_ver.get())?;
-
-        self.data_ver.changed();
-
-        Ok(())
-    }
-
-    pub fn invoke(
-        &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        _data: &TLVElement,
-        _encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        match cmd.cmd_id.try_into()? {
-            CommandId::ResetCounts => {
-                cmd_enter!("ResetCounts: Not yet supported");
-            }
-        }
-
-        self.data_ver.changed();
-
-        Ok(())
+    pub const fn new(dataver: Dataver) -> Self {
+        Self { dataver }
     }
 }
 
-impl Handler for EthNwDiagCluster {
-    fn read(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        EthNwDiagCluster::read(self, exchange, attr, encoder)
+impl EthernetNetworkDiagnosticsHandler for EthNwDiagCluster {
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        EthNwDiagCluster::write(self, exchange, attr, data)
+    fn dataver_changed(&self) {
+        self.dataver.changed();
     }
 
-    fn invoke(
-        &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        EthNwDiagCluster::invoke(self, exchange, cmd, data, encoder)
+    fn packet_rx_count(&self, _exchange: &Exchange<'_>) -> Result<Option<u64>, Error> {
+        Ok(Some(1)) // TODO
     }
-}
 
-// TODO: Might be removed once the `on` member is externalized
-impl NonBlockingHandler for EthNwDiagCluster {}
+    fn packet_tx_count(&self, _exchange: &Exchange<'_>) -> Result<Option<u64>, Error> {
+        Ok(Some(1)) // TODO
+    }
 
-impl ChangeNotifier<()> for EthNwDiagCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
+    fn handle_reset_counts(&self, _exchange: &Exchange<'_>) -> Result<(), Error> {
+        Ok(()) // TODO
     }
 }
