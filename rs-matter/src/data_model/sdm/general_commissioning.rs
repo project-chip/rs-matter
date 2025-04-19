@@ -17,301 +17,195 @@
 
 use rs_matter_macros::idl_import;
 
-use strum::{EnumDiscriminants, FromRepr};
-
-use crate::data_model::objects::*;
-use crate::error::*;
-use crate::tlv::{FromTLV, TLVElement, ToTLV, Utf8Str};
+use crate::data_model::objects::Dataver;
+use crate::error::{Error, ErrorCode};
+use crate::tlv::TLVBuilderParent;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter};
 
 idl_import!(clusters = ["GeneralCommissioning"]);
-
-pub use general_commissioning::{
-    CommandId, CommandResponseId, CommissioningErrorEnum, RegulatoryLocationTypeEnum, ID,
-};
-
-#[derive(FromRepr, EnumDiscriminants)]
-#[repr(u32)]
-pub enum Attributes {
-    BreadCrumb(AttrType<u64>) = 0,
-    BasicCommissioningInfo(()) = 1,
-    RegConfig(AttrType<u8>) = 2,
-    LocationCapability(AttrType<u8>) = 3,
-    SupportsConcurrentConnection(AttrType<bool>) = 4,
-}
-
-attribute_enum!(Attributes);
-
-#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
-struct CommonResponse<'a> {
-    error_code: u8,
-    debug_txt: Utf8Str<'a>,
-}
 
 impl CommissioningErrorEnum {
     fn map(result: Result<(), Error>) -> Result<Self, Error> {
         match result {
-            Ok(()) => Ok(CommissioningErrorEnum::OK),
+            Ok(()) => Ok(Self::OK),
             Err(err) => match err.code() {
-                ErrorCode::Busy | ErrorCode::NocInvalidFabricIndex => {
-                    Ok(CommissioningErrorEnum::BusyWithOtherAdmin)
-                }
-                ErrorCode::GennCommInvalidAuthentication => {
-                    Ok(CommissioningErrorEnum::InvalidAuthentication)
-                }
-                ErrorCode::FailSafeRequired => Ok(CommissioningErrorEnum::NoFailSafe),
+                ErrorCode::Busy | ErrorCode::NocInvalidFabricIndex => Ok(Self::BusyWithOtherAdmin),
+                ErrorCode::GennCommInvalidAuthentication => Ok(Self::InvalidAuthentication),
+                ErrorCode::FailSafeRequired => Ok(Self::NoFailSafe),
                 _ => Err(err),
             },
         }
     }
 }
 
-#[derive(Debug, FromTLV, ToTLV, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct FailSafeParams {
-    expiry_len: u16,
-    bread_crumb: u64,
-}
-
-#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct BasicCommissioningInfo {
-    pub expiry_len: u16,
-    pub max_cmltv_failsafe_secs: u16,
-}
-
-impl BasicCommissioningInfo {
-    pub const fn new() -> Self {
-        // TODO: Arch-Specific
-        Self {
-            expiry_len: 120,
-            max_cmltv_failsafe_secs: 120,
-        }
-    }
-}
-
-impl Default for BasicCommissioningInfo {
-    fn default() -> Self {
-        BasicCommissioningInfo::new()
-    }
-}
-
-#[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
-struct RegulatoryConfig<'a> {
-    #[tagval(1)]
-    country_code: Utf8Str<'a>,
-}
-
-pub const CLUSTER: Cluster<'static> = Cluster {
-    id: ID as _,
-    revision: 1,
-    feature_map: 0,
-    attributes: cluster_attrs!(
-        Attribute::new(
-            AttributesDiscriminants::BreadCrumb as _,
-            Access::READ.union(Access::WRITE).union(Access::NEED_ADMIN),
-            Quality::NONE,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::RegConfig as _,
-            Access::RV,
-            Quality::NONE,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::LocationCapability as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::BasicCommissioningInfo as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::SupportsConcurrentConnection as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-    ),
-    accepted_commands: &[
-        CommandId::ArmFailSafe as _,
-        CommandId::SetRegulatoryConfig as _,
-        CommandId::CommissioningComplete as _,
-    ],
-    generated_commands: &[
-        CommandResponseId::ArmFailSafeResponse as _,
-        CommandResponseId::SetRegulatoryConfigResponse as _,
-        CommandResponseId::CommissioningCompleteResponse as _,
-    ],
-};
+// impl BasicCommissioningInfo {
+//     pub const fn new() -> Self {
+//         // TODO: Arch-Specific
+//         Self {
+//             expiry_len: 120,
+//             max_cmltv_failsafe_secs: 120,
+//         }
+//     }
+// }
 
 /// A trait indicating whether the device supports concurrent connection
 /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
-pub trait ConcurrentConnectionPolicy {
+pub trait CommissioningPolicy {
     /// Return true if the device supports concurrent connection.
     fn concurrent_connection_supported(&self) -> bool;
+
+    fn failsafe_expiry_len_secs(&self) -> u16;
+
+    fn failsafe_max_cml_secs(&self) -> u16;
+
+    fn regulatory_config(&self) -> RegulatoryLocationTypeEnum;
+
+    fn location_cap(&self) -> RegulatoryLocationTypeEnum;
 }
 
-impl<T> ConcurrentConnectionPolicy for &T
+impl<T> CommissioningPolicy for &T
 where
-    T: ConcurrentConnectionPolicy,
+    T: CommissioningPolicy,
 {
     fn concurrent_connection_supported(&self) -> bool {
         (*self).concurrent_connection_supported()
     }
+
+    fn failsafe_expiry_len_secs(&self) -> u16 {
+        (*self).failsafe_expiry_len_secs()
+    }
+
+    fn failsafe_max_cml_secs(&self) -> u16 {
+        (*self).failsafe_max_cml_secs()
+    }
+
+    fn regulatory_config(&self) -> RegulatoryLocationTypeEnum {
+        (*self).regulatory_config()
+    }
+
+    fn location_cap(&self) -> RegulatoryLocationTypeEnum {
+        (*self).location_cap()
+    }
 }
 
-impl ConcurrentConnectionPolicy for bool {
+impl CommissioningPolicy for bool {
     fn concurrent_connection_supported(&self) -> bool {
         *self
+    }
+
+    fn failsafe_expiry_len_secs(&self) -> u16 {
+        120
+    }
+
+    fn failsafe_max_cml_secs(&self) -> u16 {
+        120
+    }
+
+    fn regulatory_config(&self) -> RegulatoryLocationTypeEnum {
+        RegulatoryLocationTypeEnum::IndoorOutdoor
+    }
+
+    fn location_cap(&self) -> RegulatoryLocationTypeEnum {
+        RegulatoryLocationTypeEnum::IndoorOutdoor
     }
 }
 
 #[derive(Clone)]
 pub struct GenCommCluster<'a> {
-    data_ver: Dataver,
-    basic_comm_info: BasicCommissioningInfo,
-    concurrent_connection_policy: &'a dyn ConcurrentConnectionPolicy,
+    dataver: Dataver,
+    commissioning_policy: &'a dyn CommissioningPolicy,
 }
 
 impl<'a> GenCommCluster<'a> {
-    pub const fn new(
-        data_ver: Dataver,
-        basic_comm_info: BasicCommissioningInfo,
-        concurrent_connection_policy: &'a dyn ConcurrentConnectionPolicy,
-    ) -> Self {
+    pub const fn new(dataver: Dataver, commissioning_policy: &'a dyn CommissioningPolicy) -> Self {
         Self {
-            data_ver,
-            basic_comm_info,
-            concurrent_connection_policy,
+            dataver,
+            commissioning_policy,
         }
     }
+}
 
-    pub fn read(
-        &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
-            if attr.is_system() {
-                CLUSTER.read(attr.attr_id, writer)
-            } else {
-                match attr.attr_id.try_into()? {
-                    Attributes::BreadCrumb(codec) => codec.encode(writer, 0),
-                    // TODO: Arch-Specific
-                    Attributes::RegConfig(codec) => {
-                        codec.encode(writer, RegulatoryLocationTypeEnum::IndoorOutdoor as _)
-                    }
-                    // TODO: Arch-Specific
-                    Attributes::LocationCapability(codec) => {
-                        codec.encode(writer, RegulatoryLocationTypeEnum::IndoorOutdoor as _)
-                    }
-                    Attributes::BasicCommissioningInfo(_) => {
-                        self.basic_comm_info
-                            .to_tlv(&AttrDataWriter::TAG, &mut *writer)?;
-                        writer.complete()
-                    }
-                    Attributes::SupportsConcurrentConnection(codec) => codec.encode(
-                        writer,
-                        self.concurrent_connection_policy
-                            .concurrent_connection_supported(),
-                    ),
-                }
-            }
-        } else {
-            Ok(())
-        }
+impl GeneralCommissioningHandler for GenCommCluster<'_> {
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
     }
 
-    pub fn invoke(
-        &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        match cmd.cmd_id.try_into()? {
-            CommandId::ArmFailSafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
-            CommandId::SetRegulatoryConfig => {
-                self.handle_command_setregulatoryconfig(exchange, data, encoder)?
-            }
-            CommandId::CommissioningComplete => {
-                self.handle_command_commissioningcomplete(exchange, encoder)?;
-            }
-        }
-
-        self.data_ver.changed();
-
-        Ok(())
+    fn dataver_changed(&self) {
+        self.dataver.changed();
     }
 
-    fn handle_command_armfailsafe(
+    fn breadcrumb(&self, _exchange: &Exchange<'_>) -> Result<u64, Error> {
+        Ok(0) // TODO
+    }
+
+    fn set_breadcrumb(&self, _exchange: &Exchange<'_>, _value: u64) -> Result<(), Error> {
+        Ok(()) // TODO
+    }
+
+    fn basic_commissioning_info<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        cmd_enter!("ARM Fail Safe");
+        _exchange: &Exchange<'_>,
+        builder: BasicCommissioningInfoBuilder<P>,
+    ) -> Result<P, Error> {
+        builder
+            .fail_safe_expiry_length_seconds(self.commissioning_policy.failsafe_expiry_len_secs())?
+            .max_cumulative_failsafe_seconds(self.commissioning_policy.failsafe_max_cml_secs())?
+            .finish()
+    }
 
-        let p = FailSafeParams::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received fail safe params: {:?}", p);
+    fn regulatory_config(
+        &self,
+        _exchange: &Exchange<'_>,
+    ) -> Result<RegulatoryLocationTypeEnum, Error> {
+        Ok(RegulatoryLocationTypeEnum::IndoorOutdoor)
+    }
 
+    fn location_capability(
+        &self,
+        _exchange: &Exchange<'_>,
+    ) -> Result<RegulatoryLocationTypeEnum, Error> {
+        Ok(self.commissioning_policy.location_cap())
+    }
+
+    fn supports_concurrent_connection(&self, _exchange: &Exchange<'_>) -> Result<bool, Error> {
+        Ok(self.commissioning_policy.concurrent_connection_supported())
+    }
+
+    fn handle_arm_fail_safe<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange<'_>,
+        request: ArmFailSafeRequest,
+        response: ArmFailSafeResponseBuilder<P>,
+    ) -> Result<P, Error> {
         let status = CommissioningErrorEnum::map(exchange.with_session(|sess| {
             exchange
                 .matter()
                 .failsafe
                 .borrow_mut()
-                .arm(p.expiry_len, sess.get_session_mode())
+                .arm(request.expiry_length_seconds()?, sess.get_session_mode())
         }))?;
 
-        let cmd_data = CommonResponse {
-            error_code: status as _,
-            debug_txt: "",
-        };
-
-        encoder
-            .with_command(CommandResponseId::ArmFailSafeResponse as _)?
-            .set(cmd_data)?;
-
-        Ok(())
+        response.error_code(status)?.debug_text("")?.finish()
     }
 
-    fn handle_command_setregulatoryconfig(
+    fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
-        _exchange: &Exchange,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        cmd_enter!("Set Regulatory Config");
-
-        let cfg = RegulatoryConfig::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received reg cfg: {:?}", cfg);
-
-        let cmd_data = CommonResponse {
-            error_code: 0,
-            debug_txt: "",
-        };
-
-        encoder
-            .with_command(CommandResponseId::SetRegulatoryConfigResponse as _)?
-            .set(cmd_data)?;
-
-        Ok(())
+        _exchange: &Exchange<'_>,
+        _request: SetRegulatoryConfigRequest,
+        response: SetRegulatoryConfigResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        // TODO
+        response
+            .error_code(CommissioningErrorEnum::OK)?
+            .debug_text("")?
+            .finish()
     }
 
-    fn handle_command_commissioningcomplete(
+    fn handle_commissioning_complete<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        cmd_enter!("Commissioning Complete");
-
+        exchange: &Exchange<'_>,
+        response: CommissioningCompleteResponseBuilder<P>,
+    ) -> Result<P, Error> {
         let status = CommissioningErrorEnum::map(exchange.with_session(|sess| {
             exchange
                 .matter()
@@ -330,44 +224,6 @@ impl<'a> GenCommCluster<'a> {
                 .disable_pase_session(&exchange.matter().transport_mgr.mdns)?;
         }
 
-        let cmd_data = CommonResponse {
-            error_code: status as _,
-            debug_txt: "",
-        };
-
-        encoder
-            .with_command(CommandResponseId::CommissioningCompleteResponse as _)?
-            .set(cmd_data)?;
-
-        Ok(())
-    }
-}
-
-impl Handler for GenCommCluster<'_> {
-    fn read(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        GenCommCluster::read(self, exchange, attr, encoder)
-    }
-
-    fn invoke(
-        &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        GenCommCluster::invoke(self, exchange, cmd, data, encoder)
-    }
-}
-
-impl NonBlockingHandler for GenCommCluster<'_> {}
-
-impl ChangeNotifier<()> for GenCommCluster<'_> {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
+        response.error_code(status)?.debug_text("")?.finish()
     }
 }

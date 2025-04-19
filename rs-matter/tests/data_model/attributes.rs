@@ -149,14 +149,14 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
     let wc_ep_onoff = GenericPath::new(
         None,
         Some(cluster_on_off::ID),
-        Some(cluster_on_off::AttributesDiscriminants::OnOff as u32),
+        Some(cluster_on_off::AttributeId::OnOff as u32),
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
     let expected = &[attr_data!(
         1,
         cluster_on_off::ID,
-        cluster_on_off::AttributesDiscriminants::OnOff,
+        cluster_on_off::AttributeId::OnOff,
         Some(&false)
     )];
     ImEngine::read_reqs(input, expected);

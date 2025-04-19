@@ -19,54 +19,23 @@ use core::cell::Cell;
 
 use rs_matter_macros::idl_import;
 
-use strum::{EnumDiscriminants, FromRepr};
-
 use crate::error::Error;
-use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter};
 
-use super::objects::*;
+use super::objects::Dataver;
 
 idl_import!(clusters = ["OnOff"]);
 
-pub use on_off::{AttributeId, CommandId, ID};
-
-#[derive(FromRepr, EnumDiscriminants)]
-#[repr(u32)]
-pub enum Attributes {
-    OnOff(AttrType<bool>) = 0x0,
-}
-
-attribute_enum!(Attributes);
-
-pub const CLUSTER: Cluster<'static> = Cluster {
-    id: ID as _,
-    revision: 1,
-    feature_map: 0,
-    attributes: cluster_attrs!(Attribute::new(
-        AttributeId::OnOff as _,
-        Access::RV,
-        Quality::SN,
-    ),),
-    accepted_commands: &[
-        CommandId::Off as _,
-        CommandId::On as _,
-        CommandId::Toggle as _,
-    ],
-    generated_commands: &[],
-};
-
 #[derive(Clone)]
 pub struct OnOffCluster {
-    data_ver: Dataver,
+    dataver: Dataver,
     on: Cell<bool>,
 }
 
 impl OnOffCluster {
-    pub const fn new(data_ver: Dataver) -> Self {
+    pub const fn new(dataver: Dataver) -> Self {
         Self {
-            data_ver,
+            dataver,
             on: Cell::new(false),
         }
     }
@@ -78,107 +47,59 @@ impl OnOffCluster {
     pub fn set(&self, on: bool) {
         if self.on.get() != on {
             self.on.set(on);
-            self.data_ver.changed();
+            self.dataver.changed();
         }
-    }
-
-    pub fn read(
-        &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
-            if attr.is_system() {
-                CLUSTER.read(attr.attr_id, writer)
-            } else {
-                match attr.attr_id.try_into()? {
-                    Attributes::OnOff(codec) => codec.encode(writer, self.on.get()),
-                }
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn write(
-        &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let data = data.with_dataver(self.data_ver.get())?;
-
-        match attr.attr_id.try_into()? {
-            Attributes::OnOff(codec) => self.set(codec.decode(data)?),
-        }
-
-        self.data_ver.changed();
-
-        Ok(())
-    }
-
-    pub fn invoke(
-        &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        _data: &TLVElement,
-        _encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        match cmd.cmd_id.try_into()? {
-            CommandId::Off => {
-                cmd_enter!("Off");
-                self.set(false);
-            }
-            CommandId::On => {
-                cmd_enter!("On");
-                self.set(true);
-            }
-            CommandId::Toggle => {
-                cmd_enter!("Toggle");
-                self.set(!self.on.get());
-            }
-            CommandId::OffWithEffect
-            | CommandId::OnWithRecallGlobalScene
-            | CommandId::OnWithTimedOff => todo!(),
-        }
-
-        self.data_ver.changed();
-
-        Ok(())
     }
 }
 
-impl Handler for OnOffCluster {
-    fn read(
+impl OnOffHandler for OnOffCluster {
+    fn dataver(&self) -> u32 {
+        self.dataver.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.dataver.changed();
+    }
+
+    fn on_off(&self, _exchange: &Exchange) -> Result<bool, Error> {
+        Ok(self.on.get())
+    }
+
+    fn handle_off(&self, _exchange: &Exchange) -> Result<(), Error> {
+        self.set(false);
+        Ok(())
+    }
+
+    fn handle_on(&self, _exchange: &Exchange) -> Result<(), Error> {
+        self.set(true);
+        Ok(())
+    }
+
+    fn handle_toggle(&self, _exchange: &Exchange) -> Result<(), Error> {
+        self.set(!self.on.get());
+        Ok(())
+    }
+
+    fn handle_off_with_effect(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        _exchange: &Exchange,
+        _request: OffWithEffectRequest,
     ) -> Result<(), Error> {
-        OnOffCluster::read(self, exchange, attr, encoder)
+        // TODO
+        Ok(())
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        OnOffCluster::write(self, exchange, attr, data)
+    fn handle_on_with_recall_global_scene(&self, _exchange: &Exchange) -> Result<(), Error> {
+        // TODO
+        Ok(())
     }
 
-    fn invoke(
+    fn handle_on_with_timed_off(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        _exchange: &Exchange,
+        _request: OnWithTimedOffRequest,
     ) -> Result<(), Error> {
-        OnOffCluster::invoke(self, exchange, cmd, data, encoder)
-    }
-}
-
-// TODO: Might be removed once the `on` member is externalized
-impl NonBlockingHandler for OnOffCluster {}
-
-impl ChangeNotifier<()> for OnOffCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
+        // TODO
+        Ok(())
     }
 }

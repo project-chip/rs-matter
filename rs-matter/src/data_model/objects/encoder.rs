@@ -283,7 +283,7 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
         }
     }
 
-    pub fn with_command(mut self, cmd: u16) -> Result<CmdDataWriter<'a, 'b, 'c>, Error> {
+    pub fn with_command(mut self, cmd: u32) -> Result<CmdDataWriter<'a, 'b, 'c>, Error> {
         let mut writer = CmdDataWriter::new(self.tracker, self.tw);
 
         writer.start_struct(&TLVTag::Anonymous)?;
@@ -331,6 +331,10 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
         self.tracker.complete();
 
         Ok(())
+    }
+
+    pub fn writer(&mut self) -> &mut TLVWriter<'b, 'c> {
+        self.tw
     }
 
     fn reset(&mut self) {

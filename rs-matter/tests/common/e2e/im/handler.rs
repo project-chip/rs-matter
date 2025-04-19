@@ -16,7 +16,7 @@
  */
 
 use rs_matter::data_model::cluster_basic_information;
-use rs_matter::data_model::cluster_on_off::{self, OnOffCluster};
+use rs_matter::data_model::cluster_on_off::{self, OnOffCluster, OnOffHandlerAdaptor};
 use rs_matter::data_model::device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails, Dataver,
@@ -41,7 +41,7 @@ use super::echo_cluster::{self, EchoCluster};
 
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a>(
-    handler_chain_type!(OnOffCluster, EchoCluster, DescriptorCluster<'static>, EchoCluster | EthRootEndpointHandler<'a>),
+    handler_chain_type!(OnOffHandlerAdaptor<OnOffCluster>, EchoCluster, DescriptorCluster<'static>, EchoCluster | EthRootEndpointHandler<'a>),
 );
 
 impl<'a> E2eTestHandler<'a> {
@@ -94,7 +94,7 @@ impl<'a> E2eTestHandler<'a> {
             .chain(
                 1,
                 cluster_on_off::ID,
-                OnOffCluster::new(Dataver::new_rand(matter.rand())),
+                OnOffHandlerAdaptor::new(OnOffCluster::new(Dataver::new_rand(matter.rand()))),
             );
 
         Self(handler)
