@@ -15,72 +15,24 @@
  *    limitations under the License.
  */
 
+use core::str::FromStr;
+
 use rs_matter_macros::idl_import;
 
-use strum::FromRepr;
-
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
+use crate::tlv::{
+    FromTLV, OptionalBuilder, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder,
+};
 use crate::transport::exchange::Exchange;
+use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
-use crate::{attribute_enum, cluster_attrs};
 
-use super::objects::*;
+use super::objects::Dataver;
 
 idl_import!(clusters = ["BasicInformation"]);
 
-pub use basic_information::ID;
-
 const SUPPORTED_MATTER_SPEC_VERSION: u32 = 0x01000000;
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CapabilityMinima {
-    pub case_sessions_per_fabric: u16,
-    pub subscriptions_per_fabric: u16,
-}
-
-#[derive(Clone, Copy, Debug, FromRepr)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u32)]
-pub enum Attributes {
-    DMRevision(AttrType<u8>) = 0,
-    VendorName(AttrUtfType) = 1,
-    VendorId(AttrType<u16>) = 2,
-    ProductName(AttrUtfType) = 3,
-    ProductId(AttrType<u16>) = 4,
-    NodeLabel(AttrUtfType) = 5,
-    Location(AttrUtfType) = 6,
-    HwVer(AttrType<u16>) = 7,
-    HwVerString(AttrUtfType) = 8,
-    SwVer(AttrType<u32>) = 9,
-    SwVerString(AttrUtfType) = 0xa,
-    SerialNo(AttrUtfType) = 0x0f,
-    CapabilityMinima(AttrType<CapabilityMinima>) = 0x13,
-    SpecificationVersion(AttrType<u32>) = 0x15,
-    MaxPathsPerInvoke(AttrType<u16>) = 0x16,
-}
-
-attribute_enum!(Attributes);
-
-pub enum AttributesDiscriminants {
-    DMRevision = 0,
-    VendorName = 1,
-    VendorId = 2,
-    ProductName = 3,
-    ProductId = 4,
-    NodeLabel = 5,
-    Location = 6,
-    HwVer = 7,
-    HwVerString = 8,
-    SwVer = 9,
-    SwVerString = 0xa,
-    SerialNo = 0x0f,
-    CapabilityMinima = 0x13,
-    SpecificationVersion = 0x15,
-    MaxPathsPerInvoke = 0x16,
-}
 
 /// Basic infomration which is immutable
 /// (i.e. valid for the lifetime of the device firmware)
@@ -177,215 +129,231 @@ impl Default for BasicInfoSettings {
     }
 }
 
-pub const CLUSTER: Cluster<'static> = Cluster {
-    id: ID as _,
-    revision: 1,
-    feature_map: 0,
-    attributes: cluster_attrs!(
-        Attribute::new(
-            AttributesDiscriminants::DMRevision as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::VendorName as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::VendorId as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::ProductName as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::ProductId as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::NodeLabel as _,
-            Access::RWVM,
-            Quality::N,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::Location as _,
-            Access::RWVA,
-            Quality::N,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::HwVer as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::HwVerString as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::SwVer as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::SwVerString as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::SerialNo as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::CapabilityMinima as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::SpecificationVersion as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-        Attribute::new(
-            AttributesDiscriminants::MaxPathsPerInvoke as _,
-            Access::RV,
-            Quality::FIXED,
-        ),
-    ),
-    accepted_commands: &[],
-    generated_commands: &[],
-};
-
 #[derive(Clone)]
-pub struct BasicInfoCluster {
-    data_ver: Dataver,
-}
+pub struct BasicInfoCluster(Dataver);
 
 impl BasicInfoCluster {
-    pub fn new(data_ver: Dataver) -> Self {
-        Self { data_ver }
+    pub fn new(dataver: Dataver) -> Self {
+        Self(dataver)
     }
 
-    pub fn read(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
-            if attr.is_system() {
-                CLUSTER.read(attr.attr_id, writer)
-            } else {
-                let cfg = exchange.matter().dev_det();
-                let info = &exchange.matter().basic_info_settings;
-
-                match attr.attr_id.try_into()? {
-                    Attributes::DMRevision(codec) => codec.encode(writer, 1),
-                    Attributes::VendorName(codec) => codec.encode(writer, cfg.vendor_name),
-                    Attributes::VendorId(codec) => codec.encode(writer, cfg.vid),
-                    Attributes::ProductName(codec) => codec.encode(writer, cfg.product_name),
-                    Attributes::ProductId(codec) => codec.encode(writer, cfg.pid),
-                    Attributes::NodeLabel(codec) => {
-                        codec.encode(writer, info.borrow().node_label.as_str())
-                    }
-                    Attributes::Location(codec) => codec.encode(
-                        writer,
-                        info.borrow()
-                            .location
-                            .as_ref()
-                            .map(|location| location.as_str())
-                            .unwrap_or("XX"),
-                    ),
-                    Attributes::HwVer(codec) => codec.encode(writer, cfg.hw_ver),
-                    Attributes::HwVerString(codec) => codec.encode(writer, cfg.hw_ver_str),
-                    Attributes::SwVer(codec) => codec.encode(writer, cfg.sw_ver),
-                    Attributes::SwVerString(codec) => codec.encode(writer, cfg.sw_ver_str),
-                    Attributes::SerialNo(codec) => codec.encode(writer, cfg.serial_no),
-                    Attributes::CapabilityMinima(codec) => {
-                        codec.encode(
-                            writer,
-                            CapabilityMinima {
-                                // Minimum that should be supported as per spec
-                                // TODO: Report real values
-                                // TODO: Restrict # of case sessions per fabric in the code
-                                case_sessions_per_fabric: 3,
-                                // Minimum that should be supported as per spec
-                                // TODO: Report real values
-                                // TODO: Restrict # of subscriptions per fabric in the code
-                                subscriptions_per_fabric: 3,
-                            },
-                        )
-                    }
-                    Attributes::SpecificationVersion(codec) => {
-                        codec.encode(writer, SUPPORTED_MATTER_SPEC_VERSION)
-                    }
-                    // TODO: Report a real value
-                    Attributes::MaxPathsPerInvoke(codec) => codec.encode(writer, 1),
-                }
-            }
-        } else {
-            Ok(())
-        }
+    fn config<'a>(exchange: &'a Exchange) -> &'a BasicInfoConfig<'a> {
+        exchange.matter().dev_det()
     }
 
-    pub fn write(
+    fn settings<'a>(exchange: &'a Exchange) -> &'a RefCell<BasicInfoSettings> {
+        &exchange.matter().basic_info_settings
+    }
+}
+
+impl BasicInformationHandler for BasicInfoCluster {
+    fn dataver(&self) -> u32 {
+        self.0.get()
+    }
+
+    fn dataver_changed(&self) {
+        self.0.changed();
+    }
+
+    fn data_model_revision(&self, _exchange: &Exchange) -> Result<u16, Error> {
+        Ok(0) // TODO
+    }
+
+    fn vendor_id(&self, exchange: &Exchange) -> Result<u16, Error> {
+        Ok(Self::config(exchange).vid)
+    }
+
+    fn vendor_name<P: TLVBuilderParent>(
         &self,
         exchange: &Exchange,
-        attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let data = data.with_dataver(self.data_ver.get())?;
-        let info = &exchange.matter().basic_info_settings;
+        out: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        out.set(Self::config(exchange).vendor_name)
+    }
 
-        match attr.attr_id.try_into()? {
-            Attributes::NodeLabel(codec) => {
-                info.borrow_mut().node_label = unwrap!(codec
-                    .decode(data)
-                    .map_err(|_| Error::new(ErrorCode::InvalidAction))?
-                    .try_into());
-                info.borrow_mut().changed = true;
-            }
-            Attributes::Location(codec) => {
-                info.borrow_mut().location = Some(unwrap!(codec
-                    .decode(data)
-                    .map_err(|_| Error::new(ErrorCode::InvalidAction))?
-                    .try_into()));
-                info.borrow_mut().changed = true;
-            }
-            _ => return Err(Error::new(ErrorCode::InvalidAction)),
+    fn product_id(&self, exchange: &Exchange) -> Result<u16, Error> {
+        Ok(Self::config(exchange).pid)
+    }
+
+    fn product_name<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange,
+        out: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        out.set(Self::config(exchange).product_name)
+    }
+
+    fn serial_number<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange,
+        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+    ) -> Result<P, Error> {
+        out.some()?.set(Self::config(exchange).serial_no)
+    }
+
+    fn hardware_version(&self, exchange: &Exchange) -> Result<u16, Error> {
+        Ok(Self::config(exchange).hw_ver)
+    }
+
+    fn hardware_version_string<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange,
+        out: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        out.set(Self::config(exchange).hw_ver_str)
+    }
+
+    fn software_version(&self, exchange: &Exchange) -> Result<u32, Error> {
+        Ok(Self::config(exchange).sw_ver)
+    }
+
+    fn software_version_string<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange,
+        out: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        out.set(Self::config(exchange).sw_ver_str)
+    }
+
+    fn node_label<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange,
+        out: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        out.set(Self::settings(exchange).borrow().node_label.as_str())
+    }
+
+    fn set_node_label(&self, exchange: &Exchange, label: &str) -> Result<(), Error> {
+        if label.len() > 32 {
+            return Err(ErrorCode::InvalidAction.into());
         }
 
-        self.data_ver.changed();
+        let mut settings = Self::settings(exchange).borrow_mut();
+        settings.node_label.clear();
+        settings
+            .node_label
+            .push_str(label)
+            .map_err(|_| ErrorCode::NoSpace)?;
+        settings.changed = true;
+
+        settings.changed = true;
+        exchange.matter().notify_persist();
 
         Ok(())
     }
-}
 
-impl Handler for BasicInfoCluster {
-    fn read(
+    fn location<P: TLVBuilderParent>(
         &self,
         exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        out: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        let settings = Self::settings(exchange).borrow();
+        out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
+    }
+
+    fn set_location(&self, exchange: &Exchange, location: &str) -> Result<(), Error> {
+        if location.len() != 2 {
+            return Err(ErrorCode::InvalidAction.into());
+        }
+
+        let mut settings = Self::settings(exchange).borrow_mut();
+        if location == "XX" {
+            settings.location = None;
+        } else {
+            settings.location = Some(unwrap!(heapless::String::<2>::from_str(location)));
+            settings.changed = true;
+        }
+
+        settings.changed = true;
+        exchange.matter().notify_persist();
+
+        Ok(())
+    }
+
+    fn capability_minima<P: TLVBuilderParent>(
+        &self,
+        _exchange: &Exchange,
+        out: CapabilityMinimaStructBuilder<P>,
+    ) -> Result<P, Error> {
+        // TODO: Report real values
+        out.case_sessions_per_fabric(3)?
+            .subscriptions_per_fabric(3)?
+            .finish()
+    }
+
+    fn specification_version(&self, _exchange: &Exchange) -> Result<u32, Error> {
+        Ok(SUPPORTED_MATTER_SPEC_VERSION)
+    }
+
+    fn max_paths_per_invoke(&self, _exchange: &Exchange) -> Result<u16, Error> {
+        Ok(1) // TODO: Report real value
+    }
+
+    fn manufacturing_date<P: TLVBuilderParent>(
+        &self,
+        _exchange: &Exchange,
+        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+    ) -> Result<P, Error> {
+        Ok(out.none())
+    }
+
+    fn part_number<P: TLVBuilderParent>(
+        &self,
+        _exchange: &Exchange,
+        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+    ) -> Result<P, Error> {
+        Ok(out.none())
+    }
+
+    fn product_url<P: TLVBuilderParent>(
+        &self,
+        _exchange: &Exchange,
+        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+    ) -> Result<P, Error> {
+        Ok(out.none())
+    }
+
+    fn product_label<P: TLVBuilderParent>(
+        &self,
+        exchange: &Exchange,
+        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+    ) -> Result<P, Error> {
+        out.some()?.set(Self::config(exchange).product_name)
+    }
+
+    fn product_appearance<P: TLVBuilderParent>(
+        &self,
+        _exchange: &Exchange,
+        out: OptionalBuilder<P, ProductAppearanceStructBuilder<P>>,
+    ) -> Result<P, Error> {
+        Ok(out.none())
+    }
+
+    fn reachable(&self, _exchange: &Exchange) -> Result<Option<bool>, Error> {
+        Ok(None)
+    }
+
+    fn unique_id<P: TLVBuilderParent>(
+        &self,
+        _exchange: &Exchange,
+        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+    ) -> Result<P, Error> {
+        Ok(out.none())
+    }
+
+    fn local_config_disabled(&self, _exchange: &Exchange) -> Result<Option<bool>, Error> {
+        Ok(None)
+    }
+
+    fn set_local_config_disabled(
+        &self,
+        _exchange: &Exchange,
+        _disabled: bool,
     ) -> Result<(), Error> {
-        BasicInfoCluster::read(self, exchange, attr, encoder)
+        Err(ErrorCode::InvalidAction.into())
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        BasicInfoCluster::write(self, exchange, attr, data)
-    }
-}
-
-impl NonBlockingHandler for BasicInfoCluster {}
-
-impl ChangeNotifier<()> for BasicInfoCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
+    fn handle_mfg_specific_ping(&self, _exchange: &Exchange) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
     }
 }
