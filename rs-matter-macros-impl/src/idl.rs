@@ -1,3 +1,5 @@
+use core::panic;
+
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
@@ -170,8 +172,8 @@ fn enum_definition(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
     )
 }
 
-fn field_type(f: &DataType, krate: &Ident) -> TokenStream {
-    let field_type_scalar = field_type_scalar(f, krate, false);
+fn field_type_req(f: &DataType, krate: &Ident, anon_lifetime: bool) -> TokenStream {
+    let field_type_scalar = field_type_scalar(f, krate, anon_lifetime);
 
     if f.is_list {
         quote!(#krate::tlv::TLVArray<#field_type_scalar>)
@@ -267,6 +269,89 @@ fn field_type_builtin_scalar(
     })
 }
 
+fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<TokenStream> {
+    if f.is_octet_string() || f.is_utf8_string() {
+        return None;
+    }
+
+    if let Some(stream) = field_type_builtin_scalar(f, krate, false) {
+        return Some(stream);
+    }
+
+    if cluster.structs.iter().all(|s| s.id != f.name) {
+        let ident = Ident::new(f.name.as_str(), Span::call_site());
+        return Some(quote!(#ident));
+    }
+
+    None
+}
+
+fn field_type_resp(
+    data_type: &DataType,
+    nullable: bool,
+    optional: bool,
+    parent: TokenStream,
+    cluster: &Cluster,
+    krate: &Ident,
+) -> (TokenStream, bool) {
+    let (mut typ, builder) = if let Some(copy) = field_type_copy(data_type, cluster, krate) {
+        if data_type.is_list {
+            (quote!(#krate::tlv::ToTLVArrayBuilder<#parent, #copy>), true)
+        } else {
+            (quote!(#copy), false)
+        }
+    } else if data_type.is_octet_string() {
+        (
+            if data_type.is_list {
+                quote!(#krate::tlv::OctetsArrayBuilder<#parent>)
+            } else {
+                quote!(#krate::tlv::OctetsBuilder<#parent>)
+            },
+            true,
+        )
+    } else if data_type.is_utf8_string() {
+        (
+            if data_type.is_list {
+                quote!(#krate::tlv::Utf8StrArrayBuilder<#parent>)
+            } else {
+                quote!(#krate::tlv::Utf8StrBuilder<#parent>)
+            },
+            true,
+        )
+    } else {
+        let ident = Ident::new(
+            &format!(
+                "{}{}Builder",
+                data_type.name.as_str(),
+                if data_type.is_list { "Array" } else { "" }
+            ),
+            Span::call_site(),
+        );
+
+        (quote!(#ident<#parent>), true)
+    };
+
+    if builder {
+        if nullable {
+            typ = quote!(#krate::tlv::NullableBuilder<#parent, #typ>);
+        }
+
+        if optional {
+            typ = quote!(#krate::tlv::OptionalBuilder<#parent, #typ>);
+        }
+    } else {
+        if nullable {
+            typ = quote!(#krate::tlv::Nullable<#typ>);
+        }
+
+        if optional {
+            typ = quote!(Option<#typ>);
+        }
+    }
+
+    (typ, builder)
+}
+
 fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
@@ -275,7 +360,7 @@ fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> Tok
     let krate = context.rs_matter_crate.clone();
 
     let code = Literal::u8_unsuffixed(f.field.code as u8);
-    let field_type = field_type(&f.field.data_type, &krate);
+    let field_type = field_type_req(&f.field.data_type, &krate, false);
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
 
     let field_type = if f.is_nullable {
@@ -835,6 +920,126 @@ pub fn server_side_cluster_generate(
         };
     );
 
+    let handler_name = Ident::new(&format!("{}Handler", cluster.id), Span::call_site());
+
+    let handler_attribute_methods = cluster.attributes
+        .iter()
+        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .map(|attr| {
+            let attr_name = Ident::new(
+                &idl_field_name_to_rs_name(&attr.field.field.id),
+                Span::call_site(),
+            );
+
+            let parent = quote!(P);
+
+            let (attr_type, builder) = field_type_resp(&attr.field.field.data_type, attr.field.is_nullable, attr.field.is_optional, parent, cluster, &krate);
+
+            if builder {
+                quote!(
+                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, builder: #attr_type) -> Result<P, #krate::error::Error>;
+                )
+            } else {
+                quote!(
+                    fn #attr_name(&self) -> Result<#attr_type, #krate::error::Error>;
+                )
+            }
+        });
+
+    let handler_attribute_write_methods = cluster
+        .attributes
+        .iter()
+        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .filter(|attr| !attr.is_read_only)
+        .map(|attr| {
+            let attr_name = Ident::new(
+                &format!("set_{}", &idl_field_name_to_rs_name(&attr.field.field.id)),
+                Span::call_site(),
+            );
+
+            let attr_type = field_type_req(&attr.field.field.data_type, &krate, true);
+
+            quote!(
+                fn #attr_name(&self, value: #attr_type) -> Result<(), #krate::error::Error>;
+            )
+        });
+
+    let handler_command_methods = cluster.commands
+            .iter()
+            .map(|cmd| {
+                let cmd_name = Ident::new(
+                    &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
+                    Span::call_site(),
+                );
+
+                let field_req = cmd.input.as_ref().map(|id| field_type_req(
+                    &DataType {
+                        name: id.clone(),
+                        is_list: false,
+                        max_length: None,
+                    },
+                    &krate,
+                    false,
+                ));
+
+                let cmd_output = (cmd.output != "DefaultSuccess").then(|| cmd.output.clone());
+
+                let field_resp = cmd_output.map(|output| field_type_resp(
+                    &DataType {
+                        name: output.clone(),
+                        is_list: false,
+                        max_length: None,
+                    },
+                    false,
+                    false,
+                    quote!(P),
+                    cluster,
+                    &krate,
+                ));
+
+                if let Some(field_req) = field_req {
+                    if let Some((field_resp, field_resp_builder)) = field_resp {
+                        if field_resp_builder {
+                            quote!(
+                                fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(&self, request: #field_req) -> Result<#field_resp, #krate::error::Error>;
+                            )
+                        } else {
+                            quote!(
+                                fn #cmd_name(&self, request: #field_req) -> Result<#field_resp, #krate::error::Error>;
+                            )
+                        }
+                    } else {
+                        quote!(
+                            fn #cmd_name(&self, request: #field_req) -> Result<(), #krate::error::Error>;
+                        )
+                    }
+                } else if let Some((field_resp, field_resp_builder)) = field_resp {
+                    if field_resp_builder {
+                        quote!(
+                            fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(&self) -> Result<#field_resp, #krate::error::Error>;
+                        )
+                    } else {
+                        quote!(
+                            fn #cmd_name(&self) -> Result<#field_resp, #krate::error::Error>;
+                        )
+                    }
+                } else {
+                    quote!(
+                        fn #cmd_name(&self) -> Result<(), #krate::error::Error>;
+                    )
+                }
+            });
+
+    let handler = quote!(
+        pub trait #handler_name {
+            #(#handler_attribute_methods)*
+
+            #(#handler_attribute_write_methods)*
+
+            #(#handler_command_methods)*
+        }
+    );
+
     quote!(
         mod #cluster_module_name {
             pub const ID: u32 = #cluster_code;
@@ -856,6 +1061,8 @@ pub fn server_side_cluster_generate(
             #command_responses
 
             #cluster_meta_data
+
+            #handler
         }
     )
 }
