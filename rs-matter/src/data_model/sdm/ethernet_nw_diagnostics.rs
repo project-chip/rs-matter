@@ -23,13 +23,11 @@ use crate::data_model::objects::*;
 use crate::error::Error;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
+use crate::{attribute_enum, cluster_attrs, cmd_enter};
 
 idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
 
-pub use ethernet_network_diagnostics::Commands;
-pub use ethernet_network_diagnostics::CommandsDiscriminants;
-pub use ethernet_network_diagnostics::ID;
+pub use ethernet_network_diagnostics::{CommandId, ID};
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u32)]
@@ -39,8 +37,6 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
-
-command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
@@ -58,7 +54,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
     ),
-    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
+    accepted_commands: &[CommandId::ResetCounts as _],
     generated_commands: &[],
 };
 
@@ -114,7 +110,7 @@ impl EthNwDiagCluster {
         _encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::ResetCounts => {
+            CommandId::ResetCounts => {
                 cmd_enter!("ResetCounts: Not yet supported");
             }
         }

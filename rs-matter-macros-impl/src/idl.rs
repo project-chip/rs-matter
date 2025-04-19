@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
-use rs_matter_data_model::{Bitmap, Cluster, DataType, Enum, Struct, StructField};
+use rs_matter_data_model::{Bitmap, Cluster, DataType, Enum, Struct, StructField, StructType};
 
 /// Some context data for IDL generation
 ///
@@ -59,6 +59,14 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
 
 pub fn idl_field_name_to_rs_type_name(s: &str) -> String {
     s.to_case(Case::Camel)
+}
+
+pub fn idl_attribute_name_to_enum_variant_name(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
 }
 
 /// Converts a idl identifier (like `kFoo`) into a name suitable for
@@ -655,15 +663,112 @@ pub fn server_side_cluster_generate(
 ) -> TokenStream {
     let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
-    let mut commands = Vec::new();
+    let krate = context.rs_matter_crate.clone();
 
-    for cmd in cluster.commands.iter() {
-        let command_name = Ident::new(&cmd.id, Span::call_site());
-        let command_code = Literal::i64_unsuffixed(cmd.code as i64);
-        commands.push(quote!(
-            #command_name = #command_code
-        ));
-    }
+    let attributes = cluster
+        .attributes
+        .iter()
+        .map(|attr| {
+            let attr_name = Ident::new(
+                &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+                Span::call_site(),
+            );
+            let attr_code = Literal::i64_unsuffixed(attr.field.field.code as i64);
+
+            quote!(
+                #attr_name = #attr_code
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let attributes = if attributes.is_empty() {
+        quote!()
+    } else {
+        quote!(
+            #[derive(strum::FromRepr)]
+            #[repr(u32)]
+            pub enum AttributeId {
+                #(#attributes),*
+            }
+
+            impl core::convert::TryFrom<#krate::data_model::objects::AttrId> for AttributeId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                    AttributeId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::AttributeNotFound.into())
+                }
+            }
+        )
+    };
+
+    let commands = cluster
+        .commands
+        .iter()
+        .map(|cmd| {
+            let command_name = Ident::new(&cmd.id, Span::call_site());
+            let command_code = Literal::i64_unsuffixed(cmd.code as i64);
+
+            quote!(
+                #command_name = #command_code
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let commands = if commands.is_empty() {
+        quote!()
+    } else {
+        quote!(
+            #[derive(strum::FromRepr)]
+            #[repr(u32)]
+            pub enum CommandId {
+                #(#commands),*
+            }
+
+            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                    CommandId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::CommandNotFound.into())
+                }
+            }
+        )
+    };
+
+    let command_responses = cluster
+        .structs
+        .iter()
+        .filter_map(|s| {
+            if let StructType::Response(code) = s.struct_type {
+                let command_name = Ident::new(&s.id, Span::call_site());
+                let command_code = Literal::i64_unsuffixed(code as i64);
+                Some(quote!(
+                    #command_name = #command_code
+                ))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let command_responses = if command_responses.is_empty() {
+        quote!()
+    } else {
+        quote!(
+            #[derive(strum::FromRepr)]
+            #[repr(u32)]
+            pub enum CommandResponseId {
+                #(#command_responses),*
+            }
+
+            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandResponseId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                    CommandResponseId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::CommandNotFound.into())
+                }
+            }
+        )
+    };
 
     let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
 
@@ -700,11 +805,11 @@ pub fn server_side_cluster_generate(
 
             #(#struct_builder_declarations)*
 
-            #[derive(strum::FromRepr, strum::EnumDiscriminants)]
-            #[repr(u32)]
-            pub enum Commands {
-                #(#commands),*
-            }
+            #attributes
+
+            #commands
+
+            #command_responses
         }
     )
 }

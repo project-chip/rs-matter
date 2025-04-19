@@ -116,12 +116,12 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     let target = CmdPath::new(
         None,
         Some(cluster_on_off::ID),
-        Some(cluster_on_off::CommandsDiscriminants::On as u32),
+        Some(cluster_on_off::CommandId::On as u32),
     );
     let expected_path = CmdPath::new(
         Some(1),
         Some(cluster_on_off::ID),
-        Some(cluster_on_off::CommandsDiscriminants::On as u32),
+        Some(cluster_on_off::CommandId::On as u32),
     );
     let input = &[cmd_data!(target, 1)];
     let expected = &[TestCmdResp::Status(CmdStatus::new(

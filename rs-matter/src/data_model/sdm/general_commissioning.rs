@@ -20,17 +20,16 @@ use rs_matter_macros::idl_import;
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
+use crate::error::*;
 use crate::tlv::{FromTLV, TLVElement, ToTLV, Utf8Str};
 use crate::transport::exchange::Exchange;
 use crate::{attribute_enum, cluster_attrs, cmd_enter};
-use crate::{command_enum, error::*};
 
 idl_import!(clusters = ["GeneralCommissioning"]);
 
-pub use general_commissioning::Commands;
-pub use general_commissioning::CommissioningErrorEnum;
-pub use general_commissioning::RegulatoryLocationTypeEnum;
-pub use general_commissioning::ID;
+pub use general_commissioning::{
+    CommandId, CommandResponseId, CommissioningErrorEnum, RegulatoryLocationTypeEnum, ID,
+};
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u32)]
@@ -43,15 +42,6 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
-
-command_enum!(Commands);
-
-#[repr(u32)]
-pub enum RespCommands {
-    ArmFailsafeResp = 0x01,
-    SetRegulatoryConfigResp = 0x03,
-    CommissioningCompleteResp = 0x05,
-}
 
 #[derive(Debug, Clone, FromTLV, ToTLV, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -149,14 +139,14 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         ),
     ),
     accepted_commands: &[
-        Commands::ArmFailSafe as _,
-        Commands::SetRegulatoryConfig as _,
-        Commands::CommissioningComplete as _,
+        CommandId::ArmFailSafe as _,
+        CommandId::SetRegulatoryConfig as _,
+        CommandId::CommissioningComplete as _,
     ],
     generated_commands: &[
-        RespCommands::ArmFailsafeResp as _,
-        RespCommands::SetRegulatoryConfigResp as _,
-        RespCommands::CommissioningCompleteResp as _,
+        CommandResponseId::ArmFailSafeResponse as _,
+        CommandResponseId::SetRegulatoryConfigResponse as _,
+        CommandResponseId::CommissioningCompleteResponse as _,
     ],
 };
 
@@ -247,11 +237,11 @@ impl<'a> GenCommCluster<'a> {
         encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::ArmFailSafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
-            Commands::SetRegulatoryConfig => {
+            CommandId::ArmFailSafe => self.handle_command_armfailsafe(exchange, data, encoder)?,
+            CommandId::SetRegulatoryConfig => {
                 self.handle_command_setregulatoryconfig(exchange, data, encoder)?
             }
-            Commands::CommissioningComplete => {
+            CommandId::CommissioningComplete => {
                 self.handle_command_commissioningcomplete(exchange, encoder)?;
             }
         }
@@ -286,7 +276,7 @@ impl<'a> GenCommCluster<'a> {
         };
 
         encoder
-            .with_command(RespCommands::ArmFailsafeResp as _)?
+            .with_command(CommandResponseId::ArmFailSafeResponse as _)?
             .set(cmd_data)?;
 
         Ok(())
@@ -309,7 +299,7 @@ impl<'a> GenCommCluster<'a> {
         };
 
         encoder
-            .with_command(RespCommands::SetRegulatoryConfigResp as _)?
+            .with_command(CommandResponseId::SetRegulatoryConfigResponse as _)?
             .set(cmd_data)?;
 
         Ok(())
@@ -346,7 +336,7 @@ impl<'a> GenCommCluster<'a> {
         };
 
         encoder
-            .with_command(RespCommands::CommissioningCompleteResp as _)?
+            .with_command(CommandResponseId::CommissioningCompleteResponse as _)?
             .set(cmd_data)?;
 
         Ok(())

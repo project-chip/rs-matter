@@ -24,16 +24,13 @@ use strum::{EnumDiscriminants, FromRepr};
 use crate::error::Error;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
+use crate::{attribute_enum, cluster_attrs, cmd_enter};
 
 use super::objects::*;
 
 idl_import!(clusters = ["OnOff"]);
 
-pub use on_off::ID;
-
-pub use on_off::Commands;
-pub use on_off::CommandsDiscriminants;
+pub use on_off::{AttributeId, CommandId, ID};
 
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u32)]
@@ -42,21 +39,20 @@ pub enum Attributes {
 }
 
 attribute_enum!(Attributes);
-command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
     attributes: cluster_attrs!(Attribute::new(
-        AttributesDiscriminants::OnOff as _,
+        AttributeId::OnOff as _,
         Access::RV,
         Quality::SN,
     ),),
     accepted_commands: &[
-        CommandsDiscriminants::Off as _,
-        CommandsDiscriminants::On as _,
-        CommandsDiscriminants::Toggle as _,
+        CommandId::Off as _,
+        CommandId::On as _,
+        CommandId::Toggle as _,
     ],
     generated_commands: &[],
 };
@@ -130,21 +126,21 @@ impl OnOffCluster {
         _encoder: CmdDataEncoder,
     ) -> Result<(), Error> {
         match cmd.cmd_id.try_into()? {
-            Commands::Off => {
+            CommandId::Off => {
                 cmd_enter!("Off");
                 self.set(false);
             }
-            Commands::On => {
+            CommandId::On => {
                 cmd_enter!("On");
                 self.set(true);
             }
-            Commands::Toggle => {
+            CommandId::Toggle => {
                 cmd_enter!("Toggle");
                 self.set(!self.on.get());
             }
-            Commands::OffWithEffect
-            | Commands::OnWithRecallGlobalScene
-            | Commands::OnWithTimedOff => todo!(),
+            CommandId::OffWithEffect
+            | CommandId::OnWithRecallGlobalScene
+            | CommandId::OnWithTimedOff => todo!(),
         }
 
         self.data_ver.changed();
