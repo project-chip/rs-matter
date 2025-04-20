@@ -19,14 +19,26 @@ use quote::quote;
 
 use rs_matter_data_model::{Cluster, DataType};
 
-pub fn field_type(f: &DataType, nullable: bool, optional: bool, krate: &Ident) -> TokenStream {
+pub fn field_type(
+    f: &DataType,
+    nullable: bool,
+    optional: bool,
+    cluster: &Cluster,
+    krate: &Ident,
+) -> TokenStream {
     let mut field_type = field_type_scalar(f, krate, true).unwrap_or_else(|| {
         let ident = Ident::new(f.name.as_str(), Span::call_site());
-        quote!(#ident)
+
+        let structure = cluster.structs.iter().any(|s| s.id == f.name);
+        if structure {
+            quote!(#ident<'_>)
+        } else {
+            quote!(#ident)
+        }
     });
 
     if f.is_list {
-        field_type = quote!(#krate::tlv::TLVArray<#field_type>);
+        field_type = quote!(#krate::tlv::TLVArray<'_, #field_type>);
     }
 
     if nullable {
