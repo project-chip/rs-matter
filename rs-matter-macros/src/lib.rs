@@ -21,7 +21,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Group, Ident, Punct};
 use quote::quote;
 use rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL;
-use rs_matter_macros_impl::idl::{server_side_cluster_generate, IdlGenerateContext};
+use rs_matter_macros_impl::idl::{cluster, IdlGenerateContext};
 use syn::{parse::Parse, parse_macro_input, DeriveInput};
 
 fn get_crate_name() -> String {
@@ -139,18 +139,18 @@ pub fn idl_import(item: TokenStream) -> TokenStream {
     let idl = rs_matter_data_model::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
     let context = IdlGenerateContext::new(input.rs_matter_crate);
 
-    let streams = idl
+    let clusters = idl
         .clusters
         .iter()
         .filter(|c| match input.clusters {
             Some(ref v) => v.contains(&c.id),
             None => true,
         })
-        .map(|cluster| server_side_cluster_generate(cluster, &context));
+        .map(|c| cluster(c, &context));
 
     quote!(
         // IDL-generated code:
-        #(#streams)*
+        #(#clusters)*
     )
     .into()
 }
