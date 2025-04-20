@@ -59,8 +59,13 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let command_response_id = cluster::command_response_id(cluster, context);
     let cluster_meta = cluster::cluster(cluster, context);
 
-    let handler = handler::handler(cluster, context);
-    let handler_adaptor = handler::handler_adaptor(cluster, context);
+    let handler = handler::handler(false, false, cluster, context);
+    let handler_inherent_impl = handler::handler(false, true, cluster, context);
+    let handler_adaptor = handler::handler_adaptor(false, cluster, context);
+
+    let async_handler = handler::handler(true, false, cluster, context);
+    let async_handler_inherent_impl = handler::handler(true, true, cluster, context);
+    let async_handler_adaptor = handler::handler_adaptor(true, cluster, context);
 
     let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
 
@@ -87,7 +92,15 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 
         #handler
 
+        #handler_inherent_impl
+
         #handler_adaptor
+
+        #async_handler
+
+        #async_handler_inherent_impl
+
+        #async_handler_adaptor
     )
 }
 
