@@ -32,7 +32,10 @@ pub fn struct_tags(cluster: &Cluster) -> TokenStream {
 }
 
 pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    let structs = cluster.structs.iter().map(|s| structure(s, context));
+    let structs = cluster
+        .structs
+        .iter()
+        .map(|s| structure(s, cluster, context));
 
     quote!(
         #(#structs)*
@@ -46,7 +49,7 @@ pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 pub fn struct_tag(s: &Struct) -> TokenStream {
     let name = Ident::new(&format!("{}Tag", s.id), Span::call_site());
 
-    let fields = s.fields.iter().map(struct_tag_field_definition);
+    let fields = s.fields.iter().map(struct_tag_field);
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
@@ -60,13 +63,13 @@ pub fn struct_tag(s: &Struct) -> TokenStream {
 /// definition.
 ///
 /// Provides the raw `struct Foo<'a>(TLVElement<'a>); impl<'a> Foo<'a> { ... }` declaration.
-fn structure(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
+fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
 
     let name = Ident::new(&s.id, Span::call_site());
 
-    let fields = s.fields.iter().map(|f| struct_field_definition(f, context));
+    let fields = s.fields.iter().map(|f| struct_field(f, cluster, context));
     let krate = context.rs_matter_crate.clone();
 
     quote!(
@@ -105,7 +108,7 @@ fn structure(s: &Struct, context: &IdlGenerateContext) -> TokenStream {
     )
 }
 
-fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> TokenStream {
+fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
 
@@ -113,7 +116,13 @@ fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> Tok
     let krate = context.rs_matter_crate.clone();
 
     let code = Literal::u8_unsuffixed(f.field.code as u8);
-    let field_type = field_type(&f.field.data_type, f.is_nullable, f.is_optional, &krate);
+    let field_type = field_type(
+        &f.field.data_type,
+        f.is_nullable,
+        f.is_optional,
+        cluster,
+        &krate,
+    );
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
 
     if f.is_optional {
@@ -139,7 +148,7 @@ fn struct_field_definition(f: &StructField, context: &IdlGenerateContext) -> Tok
     }
 }
 
-fn struct_tag_field_definition(f: &StructField) -> TokenStream {
+fn struct_tag_field(f: &StructField) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
 
