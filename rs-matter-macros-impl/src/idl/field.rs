@@ -14,11 +14,22 @@
  * limitations under the License.
  */
 
+//! A module for converting IDL field types to Rust types.
+
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, DataType};
 
+/// Return a stream representing the Rust type that corresponds to the given
+/// IDL type.
+///
+/// # Arguments
+/// - `f`: The IDL type.
+/// - `nullable`: Whether the type is nullable.
+/// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
+/// - `cluster`: The cluster to which the type belongs.
+/// - `krate`: The crate name.
 pub fn field_type(
     f: &DataType,
     nullable: bool,
@@ -26,7 +37,7 @@ pub fn field_type(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let mut field_type = field_type_scalar(f, krate, true).unwrap_or_else(|| {
+    let mut field_type = field_type_builtin(f, krate, true).unwrap_or_else(|| {
         let ident = Ident::new(f.name.as_str(), Span::call_site());
 
         let structure = cluster.structs.iter().any(|s| s.id == f.name);
@@ -52,7 +63,25 @@ pub fn field_type(
     field_type
 }
 
-pub fn field_type_out(
+/// Return a stream representing the Rust type builder that corresponds to the given
+/// IDL type.
+///
+/// # Arguments
+/// - `data_type`: The IDL type.
+/// - `nullable`: Whether the type is nullable.
+/// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
+/// - `strings_as_builders`: Whether to return a builder for Utf8 and octet strings.
+/// - `parent`: The parent type for the returned builder (usually `P`)
+/// - `cluster`: The cluster to which the type belongs.
+/// - `krate`: The crate name.
+///
+/// # Returns
+/// A tuple containing the Rust type and a boolean indicating whether the returned type is actually a builder.
+///
+/// IDL types which are scalar (like bitmaps, enums, integers and so on) do not need to use the Rust
+/// builder pattern, because they implement `Copy`, have a small memory footprint and can be passed
+/// by value.
+pub fn field_type_builder(
     data_type: &DataType,
     nullable: bool,
     optional: bool,
@@ -120,8 +149,22 @@ pub fn field_type_out(
     (typ, builder)
 }
 
+/// Return a stream representing the Rust type that corresponds to the given
+/// IDL type.
+///
+/// # Arguments
+/// - `f`: The IDL type.
+/// - `cluster`: The cluster to which the type belongs.
+/// - `krate`: The crate name.
+///
+/// # Returns
+/// `Some` stream representing the Rust type that corresponds to the given IDL type,
+/// or `None` if the IDL type is not a `Copy` type (i.e. a container type like a struct or an array)
+///
+/// Note that this function always treats IDL Utf8 and octet strings as `Copy` types,
+/// however callers should be careful as in some contexts this is fine, while in others - it isn't.
 fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<TokenStream> {
-    if let Some(stream) = field_type_scalar(f, krate, true) {
+    if let Some(stream) = field_type_builtin(f, krate, true) {
         return Some(stream);
     }
 
@@ -133,7 +176,20 @@ fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<Tok
     None
 }
 
-fn field_type_scalar(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Option<TokenStream> {
+/// Return a stream representing the Rust type that corresponds to the given
+/// IDL built-in type.
+///
+/// # Arguments
+/// - `f`: The IDL type.
+/// - `krate`: The crate name.
+/// - `anon_lifetime`: Whether to use an anonymous (`'_`) lifetime for the returned Rust type or
+///   a regular one (`'a`)
+///   Only relevant when the built-in type is a Utf string or octet string.
+///
+/// # Returns
+/// `Some` stream representing the Rust type that corresponds to the given IDL built-in type,
+/// or `None` if the IDL type is not a built-in type.
+fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Option<TokenStream> {
     // NOTE: f.max_length is not used (i.e. we do not limit or check string length limit)
 
     Some(match f.name.as_str() {
@@ -204,7 +260,7 @@ fn field_type_scalar(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Option
             panic!("Unsupported field type {}", f.name)
         }
 
-        // Assume anything else is some struct/enum/bitmap and report as-is
+        // Everything else is a struct, enum or bitmap which are not built-in types
         _ => return None,
     })
 }

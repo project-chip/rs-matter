@@ -45,6 +45,9 @@ impl IdlGenerateContext {
     }
 }
 
+/// Return a token stream containing Rust types corresponding to all definitions
+/// in the provided IDL cluster:
+///
 pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     //let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
 
