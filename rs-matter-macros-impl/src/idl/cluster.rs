@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+//! A module for generating the cluster metadata for a given IDL cluster.
+//!
+//! In other words, the `Cluster<'static>` static instance as well as simple enums for
+//! the IDs of the cluster attributes, commands and command responses.
+
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
@@ -22,6 +27,8 @@ use rs_matter_data_model::{Cluster, StructType};
 use super::id::idl_attribute_name_to_enum_variant_name;
 use super::IdlGenerateContext;
 
+/// Return a TokenStream containing a simple enum with variants for each
+/// attribute in the given IDL cluster.
 pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
@@ -62,6 +69,8 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
     }
 }
 
+/// Return a TokenStream containing a simple enum with variants for each
+/// command in the given IDL cluster.
 pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
@@ -99,6 +108,8 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
     }
 }
 
+/// Return a TokenStream containing a simple enum with variants for each
+/// command response in the given IDL cluster.
 pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
@@ -139,6 +150,10 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
     }
 }
 
+/// Return a TokenStream containing a constant `CLUSTER` object of type `Cluster` for the given IDL cluster.
+///
+/// The `CLUSTER` object contains the cluster ID, revision, feature map, attributes, accepted commands, and generated commands
+/// - basically, the cluster meta-data that `rs-matter` needs in order do path expansion and access checks on the cluster.
 pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 

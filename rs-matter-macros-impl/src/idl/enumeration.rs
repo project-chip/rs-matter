@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
+//! A module for generating Rust types corresponding to enum definitions in an IDL cluster.
+
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, Enum};
 
-use crate::idl::id::idl_id_to_enum_name;
-
+use super::id::idl_id_to_enum_variant_name;
 use super::IdlGenerateContext;
 
+/// Create the token stream corresponding to all enum definitions in the provided IDL cluster.
 pub fn enums(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let enums = cluster.enums.iter().map(|c| enumeration(c, context));
 
@@ -31,7 +33,7 @@ pub fn enums(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     )
 }
 
-/// Creates the token stream corresponding to an enum definition.
+/// Create the token stream corresponding to an enum definition.
 ///
 /// Essentially `enum Foo { kValue.... = ...}`
 fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
@@ -43,7 +45,7 @@ fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
     let name = Ident::new(&e.id, Span::call_site());
 
     let items = e.entries.iter().map(|c| {
-        let constant_name = Ident::new(&idl_id_to_enum_name(&c.id), Span::call_site());
+        let constant_name = Ident::new(&idl_id_to_enum_variant_name(&c.id), Span::call_site());
         let constant_value = Literal::i64_unsuffixed(c.code as i64);
         quote!(
             #[enumval(#constant_value)]

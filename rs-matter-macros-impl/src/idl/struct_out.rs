@@ -14,16 +14,21 @@
  * limitations under the License.
  */
 
+//! A module for generating Rust builder types corresponding to structures
+//! in an IDL cluster.
+
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, Struct, StructField};
 
-use super::field::field_type_out;
+use super::field::field_type_builder;
 use super::id::idl_field_name_to_rs_name;
 use super::struct_in::struct_field_comment;
 use super::IdlGenerateContext;
 
+/// Return the token stream of all structure builders corresponding
+/// to the structures defined by the provided IDL cluster.
 pub fn struct_builders(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let struct_builders = cluster
         .structs
@@ -35,6 +40,15 @@ pub fn struct_builders(cluster: &Cluster, context: &IdlGenerateContext) -> Token
     )
 }
 
+/// Return the token stream of the structure builder corresponding
+/// to the provided IDL structure.
+///
+/// This function also returns a builder for an array of elements of type this structure.
+///
+/// # Arguments
+/// - `s`: The IDL structure.
+/// - `cluster`: The IDL cluster to which the structure belongs.
+/// - `context`: The IDL generation context.
 pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
@@ -188,6 +202,15 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
     )
 }
 
+/// Return the token stream of the structure field builder corresponding
+/// to the provided IDL structure field.
+///
+/// # Arguments
+/// - `f`: The IDL structure field.
+/// - `cluster`: The IDL cluster to which the structure of this field belongs.
+/// - `parent_name`: The name of the parent structure builder.
+/// - `next_code`: The code (tag context ID) of the next field in the structure.
+/// - `context`: The IDL generation context.
 fn struct_field_builder(
     f: &StructField,
     cluster: &Cluster,
@@ -205,7 +228,7 @@ fn struct_field_builder(
 
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
 
-    let (field_type, builder) = field_type_out(
+    let (field_type, builder) = field_type_builder(
         &f.field.data_type,
         f.is_nullable,
         f.is_optional,
