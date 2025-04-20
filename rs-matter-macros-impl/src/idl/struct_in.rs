@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+//! A module for generating Rust types corresponding to structures in an IDL cluster.
+
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
@@ -23,6 +25,8 @@ use super::field::field_type;
 use super::id::{idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
 use super::IdlGenerateContext;
 
+/// Return a token stream containing simple enums with the tag IDs of
+/// all structures in the given IDL cluster.
 pub fn struct_tags(cluster: &Cluster) -> TokenStream {
     let struct_tags = cluster.structs.iter().map(struct_tag);
 
@@ -31,6 +35,8 @@ pub fn struct_tags(cluster: &Cluster) -> TokenStream {
     )
 }
 
+/// Return a token stream containing the structure definitions
+/// for all structures in the given IDL cluster.
 pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let structs = cluster
         .structs
@@ -42,10 +48,10 @@ pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     )
 }
 
-/// Creates the token stream corresponding to a structure
+/// Create the token stream corresponding to a structure
 /// tag definition.
 ///
-/// Provides the raw `enum FooTag { }` declaration.
+/// Provide the raw `enum FooTag { }` declaration.
 pub fn struct_tag(s: &Struct) -> TokenStream {
     let name = Ident::new(&format!("{}Tag", s.id), Span::call_site());
 
@@ -62,7 +68,7 @@ pub fn struct_tag(s: &Struct) -> TokenStream {
 /// Creates the token stream corresponding to a structure
 /// definition.
 ///
-/// Provides the raw `struct Foo<'a>(TLVElement<'a>); impl<'a> Foo<'a> { ... }` declaration.
+/// Provide the raw `struct Foo<'a>(TLVElement<'a>); impl<'a> Foo<'a> { ... }` declaration.
 fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
@@ -108,6 +114,7 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
     )
 }
 
+/// Create the token stream corresponding to a field inside a structure
 fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
@@ -148,6 +155,7 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
     }
 }
 
+/// Create the token stream corresponding to the tag of a field inside a structure
 fn struct_tag_field(f: &StructField) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
@@ -166,6 +174,7 @@ fn struct_tag_field(f: &StructField) -> TokenStream {
     )
 }
 
+/// Create the token stream corresponding to the comment of a field inside a structure
 pub(crate) fn struct_field_comment(f: &StructField) -> TokenStream {
     match f.maturity {
         rs_matter_data_model::ApiMaturity::Provisional => quote!(#[doc="provisional"]),

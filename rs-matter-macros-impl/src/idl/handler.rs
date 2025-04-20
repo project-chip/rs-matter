@@ -14,15 +14,36 @@
  * limitations under the License.
  */
 
+//! A module for generating the the handler trait and its
+//! adaptor for a given IDL cluster.
+
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Attribute, Cluster, Command, DataType, StructType};
 
-use super::field::{field_type, field_type_out};
+use super::field::{field_type, field_type_builder};
 use super::id::{idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
 use super::IdlGenerateContext;
 
+/// Return a token stream defining the handler trait for the provided IDL cluster.
+///
+/// Unlike the `rs-matter` generic `Handler` / `AsyncHandler` pair of traits, the trait
+/// generated here is specific to the conrete provided IDL cluster and is strongly-typed.
+///
+/// Thus, it contains methods corresponding to all the attributes and commands of the
+/// IDL cluster.
+///
+/// Moreover, these methods are much more safe w.r.t. TLV parsing and encoding, as they
+/// are based on the IDL information and make use of all enums, bitmaps and structs defined
+/// in the IDL cluster, thus providing a strongly-typed interface.
+///
+/// ## Arguments
+/// - `asynch`: If true, the generated handler will be async.
+/// - `delegate`: If true, rather than generating a handler trait, the function will generate
+///   an inherent implementation of the trait over `&T`, where `T` is assumed to implement the trait.
+/// - `cluster`: The IDL cluster for which the handler is generated.
+/// - `context`: The context containing the information needed to generate the handler.
 pub fn handler(
     asynch: bool,
     delegate: bool,
@@ -86,6 +107,18 @@ pub fn handler(
     }
 }
 
+/// Return a token stream defining an adaptor struct that can adapt a type implementing the
+/// cluster-specific handler trait as defined by the `handler` function to the
+/// generic `Handler` / `AsyncHandler` traits that `rs-matter` understands.
+///
+/// Without this adaptor, implementations of the cluster-specific handler trait would not be
+/// usable with `rs-matter`.
+///
+/// # Arguments
+/// - `asynch`: If true, the adaptor implements to rs-matter's `AsyncHandler` trait, rather than
+///   to the `Handler` trait.
+/// - `cluster`: The IDL cluster for which the adaptor is generated.
+/// - `context`: The context containing the information needed to generate the adaptor.
 pub fn handler_adaptor(
     asynch: bool,
     cluster: &Cluster,
@@ -223,6 +256,15 @@ pub fn handler_adaptor(
     }
 }
 
+/// Return a token stream defining the handler trait method for reading the provided IDL attribute.
+///
+/// # Arguments
+/// - `attr`: The IDL attribute for which the handler method is generated.
+/// - `asynch`: If true, the generated handler method signature will be async.
+/// - `delegate`: If true, the generated handler method will have an implementation delegating
+///   to a `T` type (for inherent impls)
+/// - `cluster`: The IDL cluster for which the handler method is generated.
+/// - `krate`: The crate name to use for the generated code.
 fn handler_attribute(
     attr: &Attribute,
     asynch: bool,
@@ -242,7 +284,7 @@ fn handler_attribute(
         (quote!(), quote!())
     };
 
-    let (attr_type, builder) = field_type_out(
+    let (attr_type, builder) = field_type_builder(
         &attr.field.field.data_type,
         attr.field.is_nullable,
         attr.field.is_optional,
@@ -289,6 +331,15 @@ fn handler_attribute(
     }
 }
 
+/// Return a token stream defining the handler trait method for writing the provided IDL attribute.
+///
+/// # Arguments
+/// - `attr`: The IDL attribute for which the handler method is generated.
+/// - `asynch`: If true, the generated handler method signature will be async.
+/// - `delegate`: If true, the generated handler method will have an implementation delegating
+///   to a `T` type (for inherent impls)
+/// - `cluster`: The IDL cluster for which the handler method is generated.
+/// - `krate`: The crate name to use for the generated code.
 fn handler_attribute_write(
     attr: &Attribute,
     asynch: bool,
@@ -334,6 +385,15 @@ fn handler_attribute_write(
     }
 }
 
+/// Return a token stream defining the handler trait method for handling the provided IDL command.
+///
+/// # Arguments
+/// - `cmd`: The IDL command for which the handler method is generated.
+/// - `asynch`: If true, the generated handler method signature will be async.
+/// - `delegate`: If true, the generated handler method will have an implementation delegating
+///   to a `T` type (for inherent impls)
+/// - `cluster`: The IDL cluster for which the handler method is generated.
+/// - `krate`: The crate name to use for the generated code.
 fn handler_command(
     cmd: &Command,
     asynch: bool,
@@ -369,7 +429,7 @@ fn handler_command(
     let cmd_output = (cmd.output != "DefaultSuccess").then(|| cmd.output.clone());
 
     let field_resp = cmd_output.map(|output| {
-        field_type_out(
+        field_type_builder(
             &DataType {
                 name: output.clone(),
                 is_list: false,
@@ -476,6 +536,14 @@ fn handler_command(
     }
 }
 
+/// Return a token stream defining a mach clause, `AttributeId::Foo => handler.foo(...)`
+/// that is used by the adaptor to handle reading from the provided IDL attribute.
+///
+/// # Arguments
+/// - `attr`: The IDL attribute for which the match clause is generated.
+/// - `asynch`: If true, the generated match clause will assume the cluster trait is async and will generate async code.
+/// - `cluster`: The IDL cluster for which the match clause is generated.
+/// - `krate`: The crate name to use for the generated code.
 fn handler_adaptor_attribute_match(
     attr: &Attribute,
     asynch: bool,
@@ -495,7 +563,7 @@ fn handler_adaptor_attribute_match(
     let parent = quote!(P);
     let sawait = if asynch { quote!(.await) } else { quote!() };
 
-    let (_, builder) = field_type_out(
+    let (_, builder) = field_type_builder(
         &attr.field.field.data_type,
         attr.field.is_nullable,
         attr.field.is_optional,
@@ -523,6 +591,13 @@ fn handler_adaptor_attribute_match(
     }
 }
 
+/// Return a token stream defining a mach clause, `AttributeId::Foo => handler.foo(...)`
+/// that is used by the adaptor to handle writing to the provided IDL attribute.
+///
+/// # Arguments
+/// - `attr`: The IDL attribute for which the match clause is generated.
+/// - `asynch`: If true, the generated match clause will assume the cluster trait is async and will generate async code.
+/// - `krate`: The crate name to use for the generated code.
 fn handler_adaptor_attribute_write_match(
     attr: &Attribute,
     asynch: bool,
@@ -545,6 +620,14 @@ fn handler_adaptor_attribute_write_match(
     )
 }
 
+/// Return a token stream defining a mach clause, `CommandId::Foo => handler.foo(...)`
+/// that is used by the adaptor to handle invoking the provided IDL command.
+///
+/// # Arguments
+/// - `cmd`: The IDL command for which the match clause is generated.
+/// - `asynch`: If true, the generated match clause will assume the cluster trait is async and will generate async code.
+/// - `cluster`: The IDL cluster for which the match clause is generated.
+/// - `krate`: The crate name to use for the generated code.
 fn handler_adaptor_command_match(
     cmd: &Command,
     asynch: bool,
@@ -600,7 +683,7 @@ fn handler_adaptor_command_match(
         .flatten();
 
     let field_resp = cmd_output.map(|(output, code)| {
-        let (_, builder) = field_type_out(
+        let (_, builder) = field_type_builder(
             &DataType {
                 name: output.clone(),
                 is_list: false,

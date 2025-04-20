@@ -14,19 +14,22 @@
  * limitations under the License.
  */
 
+//! A collection of utilities for converting IDL identifiers to Rust identifiers.
+
 use convert_case::{Case, Casing};
 
-/// Converts a idl identifier (like `kFoo`) into a name suitable for
-/// constants based on rust guidelines
+/// Convert an IDL identifier (like `kFoo`) into a name suitable for
+/// constants based on Rust guidelines
 ///
 /// Examples:
 ///
 /// ```
-/// use rs_matter_macros_impl::idl::idl_id_to_constant_name;
+/// use rs_matter_macros_impl::idl::id::idl_id_to_constant_name;
 ///
 /// assert_eq!(idl_id_to_constant_name("kAbc"), "ABC");
 /// assert_eq!(idl_id_to_constant_name("kAbcXyz"), "ABC_XYZ");
 /// assert_eq!(idl_id_to_constant_name("ThisIsATest"), "THIS_IS_A_TEST");
+/// assert_eq!(idl_id_to_constant_name("k2G5"), "C2G5");
 /// ```
 pub fn idl_id_to_constant_name(s: &str) -> String {
     let str = s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake);
@@ -38,13 +41,35 @@ pub fn idl_id_to_constant_name(s: &str) -> String {
     }
 }
 
-/// Converts a idl identifier (like `kFoo`) into a name suitable for
-/// constants based on rust guidelines
+/// Convert an IDL identifier (like `kFoo`) into a name suitable for
+/// Rust enum variants
 ///
 /// Examples:
 ///
 /// ```
-/// use rs_matter_macros_impl::idl::idl_field_name_to_rs_name;
+/// use rs_matter_macros_impl::idl::idl_id_to_enum_name;
+///
+/// assert_eq!(idl_id_to_enum_variant_name("kAbc"), "Abc");
+/// assert_eq!(idl_id_to_enum_variant_name("kAbcXyz"), "AbcXyz");
+/// assert_eq!(idl_id_to_enum_variant_name("k2G5"), "V2G5");
+/// ```
+pub fn idl_id_to_enum_variant_name(s: &str) -> String {
+    let str = s.strip_prefix('k').unwrap_or(s).to_string();
+    let char = str.chars().next().unwrap();
+    if !char.is_alphabetic() {
+        format!("V{}", str)
+    } else {
+        str
+    }
+}
+
+/// Convert an IDL identifier (like `anotherTest`) into a name suitable for
+/// fields based on Rust guidelines
+///
+/// Examples:
+///
+/// ```
+/// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
 ///
 /// assert_eq!(idl_field_name_to_rs_name("test"), "test");
 /// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "another_test");
@@ -53,36 +78,39 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
     s.to_case(Case::Snake)
 }
 
+/// Convert an IDL identifier (like `anotherTest`) into a name suitable for
+/// types based on Rust guidelines
+///
+/// Examples:
+///
+/// ```
+/// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
+///
+/// assert_eq!(idl_field_name_to_rs_name("test"), "Test");
+/// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "AnotherTest");
+/// assert_eq!(idl_field_name_to_rs_name("another_test"), "AnotherTest");
+/// assert_eq!(idl_field_name_to_rs_name("Identity"), "Identity");
+/// ```
 pub fn idl_field_name_to_rs_type_name(s: &str) -> String {
     s.to_case(Case::Camel)
 }
 
+/// Convert an IDL attribute identifier (like `anotherTest`) into a name suitable for
+/// enum variants based on Rust guidelines
+///
+/// Examples:
+///
+/// ```
+/// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
+///
+/// assert_eq!(idl_field_name_to_rs_name("test"), "Test");
+/// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "AnotherTest");
+/// assert_eq!(idl_field_name_to_rs_name("Identity"), "Identity");
+/// ```
 pub fn idl_attribute_name_to_enum_variant_name(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
-
-/// Converts a idl identifier (like `kFoo`) into a name suitable for
-/// enum names
-///
-/// Examples:
-///
-/// ```
-/// use rs_matter_macros_impl::idl::idl_id_to_enum_name;
-///
-/// assert_eq!(idl_id_to_enum_name("kAbc"), "Abc");
-/// assert_eq!(idl_id_to_enum_name("kAbcXyz"), "AbcXyz");
-/// assert_eq!(idl_id_to_enum_name("ThisIsATest"), "ThisIsATest");
-/// ```
-pub fn idl_id_to_enum_name(s: &str) -> String {
-    let str = s.strip_prefix('k').unwrap_or(s).to_string();
-    let char = str.chars().next().unwrap();
-    if !char.is_alphabetic() {
-        format!("V{}", str)
-    } else {
-        str
     }
 }

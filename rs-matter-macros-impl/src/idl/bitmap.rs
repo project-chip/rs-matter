@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 
+//! A module for generating Rust types corresponding to bitmap definitions in an IDL cluster.
+
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 
 use quote::quote;
 
 use rs_matter_data_model::{Bitmap, Cluster};
 
-use crate::idl::id::idl_id_to_constant_name;
-
+use super::id::idl_id_to_constant_name;
 use super::IdlGenerateContext;
 
+/// Create the token stream corresponding to all bitmap definitions in the provided IDL cluster.
 pub fn bitmaps(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let bitmaps = cluster.bitmaps.iter().map(|c| bitmap(c, context));
 
@@ -32,7 +34,7 @@ pub fn bitmaps(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     )
 }
 
-/// Creates the token stream corresponding to a bitmap definition.
+/// Create the token stream corresponding to a bitmap definition.
 fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
     let base_type = match b.base_type.as_ref() {
         "bitmap8" => quote!(u8),
