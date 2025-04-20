@@ -289,68 +289,12 @@ impl BasicInformationHandler for BasicInfoCluster {
         Ok(1) // TODO: Report real value
     }
 
-    fn manufacturing_date<P: TLVBuilderParent>(
-        &self,
-        _exchange: &Exchange,
-        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
-    ) -> Result<P, Error> {
-        Ok(out.none())
-    }
-
-    fn part_number<P: TLVBuilderParent>(
-        &self,
-        _exchange: &Exchange,
-        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
-    ) -> Result<P, Error> {
-        Ok(out.none())
-    }
-
-    fn product_url<P: TLVBuilderParent>(
-        &self,
-        _exchange: &Exchange,
-        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
-    ) -> Result<P, Error> {
-        Ok(out.none())
-    }
-
     fn product_label<P: TLVBuilderParent>(
         &self,
         exchange: &Exchange,
         out: OptionalBuilder<P, Utf8StrBuilder<P>>,
     ) -> Result<P, Error> {
         out.some()?.set(Self::config(exchange).product_name)
-    }
-
-    fn product_appearance<P: TLVBuilderParent>(
-        &self,
-        _exchange: &Exchange,
-        out: OptionalBuilder<P, ProductAppearanceStructBuilder<P>>,
-    ) -> Result<P, Error> {
-        Ok(out.none())
-    }
-
-    fn reachable(&self, _exchange: &Exchange) -> Result<Option<bool>, Error> {
-        Ok(None)
-    }
-
-    fn unique_id<P: TLVBuilderParent>(
-        &self,
-        _exchange: &Exchange,
-        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
-    ) -> Result<P, Error> {
-        Ok(out.none())
-    }
-
-    fn local_config_disabled(&self, _exchange: &Exchange) -> Result<Option<bool>, Error> {
-        Ok(None)
-    }
-
-    fn set_local_config_disabled(
-        &self,
-        _exchange: &Exchange,
-        _disabled: bool,
-    ) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
     }
 
     fn handle_mfg_specific_ping(&self, _exchange: &Exchange) -> Result<(), Error> {
