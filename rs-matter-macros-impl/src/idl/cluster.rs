@@ -32,41 +32,88 @@ use super::IdlGenerateContext;
 pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let attributes = cluster
+    let attributes = cluster.attributes.iter().map(|attr| {
+        let attr_name = Ident::new(
+            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+            Span::call_site(),
+        );
+        let attr_code = Literal::i64_unsuffixed(attr.field.field.code as i64);
+
+        quote!(
+            #attr_name = #attr_code
+        )
+    });
+
+    let attributes_all = cluster.attributes.iter().map(|attr| {
+        let attr_name = Ident::new(
+            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+            Span::call_site(),
+        );
+
+        quote!(AttributeId::#attr_name as _,)
+    });
+
+    let attributes_mandatory = cluster
         .attributes
         .iter()
+        .filter(|attr| !attr.field.is_optional)
         .map(|attr| {
             let attr_name = Ident::new(
                 &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
                 Span::call_site(),
             );
-            let attr_code = Literal::i64_unsuffixed(attr.field.field.code as i64);
 
-            quote!(
-                #attr_name = #attr_code
-            )
-        })
-        .collect::<Vec<_>>();
+            quote!(AttributeId::#attr_name as _,)
+        });
 
-    if attributes.is_empty() {
-        quote!()
-    } else {
-        quote!(
-            #[derive(strum::FromRepr)]
-            #[repr(u32)]
-            pub enum AttributeId {
-                #(#attributes),*
+    let attributes_global = cluster
+        .attributes
+        .iter()
+        .filter(|attr| attr.field.field.code >= 0xf000 && attr.field.field.code < 0x10000)
+        .map(|attr| {
+            let attr_name = Ident::new(
+                &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+                Span::call_site(),
+            );
+
+            quote!(AttributeId::#attr_name as _,)
+        });
+
+    quote!(
+        #[derive(strum::FromRepr)]
+        #[repr(u32)]
+        pub enum AttributeId {
+            #(#attributes),*
+        }
+
+        impl AttributeId {
+            pub const fn all() -> &'static [u32] {
+                static ALL: &[u32] = &[#(#attributes_all)*];
+
+                ALL
             }
 
-            impl core::convert::TryFrom<#krate::data_model::objects::AttrId> for AttributeId {
-                type Error = #krate::error::Error;
+            pub const fn mandatory() -> &'static [u32] {
+                static MANDATORY: &[u32] = &[#(#attributes_mandatory)*];
 
-                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
-                    AttributeId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::AttributeNotFound.into())
-                }
+                MANDATORY
             }
-        )
-    }
+
+            pub const fn global() -> &'static [u32] {
+                static GLOBAL: &[u32] = &[#(#attributes_global)*];
+
+                GLOBAL
+            }
+        }
+
+        impl core::convert::TryFrom<#krate::data_model::objects::AttrId> for AttributeId {
+            type Error = #krate::error::Error;
+
+            fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                AttributeId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::AttributeNotFound.into())
+            }
+        }
+    )
 }
 
 /// Return a TokenStream containing a simple enum with variants for each
@@ -87,16 +134,20 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
         })
         .collect::<Vec<_>>();
 
-    if commands.is_empty() {
-        quote!()
-    } else {
-        quote!(
-            #[derive(strum::FromRepr)]
-            #[repr(u32)]
-            pub enum CommandId {
-                #(#commands),*
-            }
+    let commands_all = cluster.commands.iter().map(|cmd| {
+        let command_name = Ident::new(&cmd.id, Span::call_site());
 
+        quote!(CommandId::#command_name as _,)
+    });
+
+    let repr = if !commands.is_empty() {
+        quote!(#[repr(u32)])
+    } else {
+        quote!()
+    };
+
+    let try_from = if !commands.is_empty() {
+        quote!(
             impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandId {
                 type Error = #krate::error::Error;
 
@@ -105,7 +156,35 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
                 }
             }
         )
-    }
+    } else {
+        quote!(
+            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                    Err(#krate::error::ErrorCode::CommandNotFound.into())
+                }
+            }
+        )
+    };
+
+    quote!(
+        #[derive(strum::FromRepr)]
+        #repr
+        pub enum CommandId {
+            #(#commands),*
+        }
+
+        impl CommandId {
+            pub const fn all() -> &'static [u32] {
+                static ALL: &[u32] = &[#(#commands_all)*];
+
+                ALL
+            }
+        }
+
+        #try_from
+    )
 }
 
 /// Return a TokenStream containing a simple enum with variants for each
@@ -129,57 +208,8 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
         })
         .collect::<Vec<_>>();
 
-    if command_responses.is_empty() {
-        quote!()
-    } else {
-        quote!(
-            #[derive(strum::FromRepr)]
-            #[repr(u32)]
-            pub enum CommandResponseId {
-                #(#command_responses),*
-            }
-
-            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandResponseId {
-                type Error = #krate::error::Error;
-
-                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
-                    CommandResponseId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::CommandNotFound.into())
-                }
-            }
-        )
-    }
-}
-
-/// Return a TokenStream containing a constant `CLUSTER` object of type `Cluster` for the given IDL cluster.
-///
-/// The `CLUSTER` object contains the cluster ID, revision, feature map, attributes, accepted commands, and generated commands
-/// - basically, the cluster meta-data that `rs-matter` needs in order do path expansion and access checks on the cluster.
-pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    let krate = context.rs_matter_crate.clone();
-
-    let attributes_meta_data = cluster.attributes.iter().map(|attr| {
-        let attr_name = Ident::new(
-            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-            Span::call_site(),
-        );
-
-        quote!(
-            #krate::data_model::objects::Attribute::new(
-                AttributeId::#attr_name as _,
-                #krate::data_model::objects::Access::RV,
-                #krate::data_model::objects::Quality::SN,
-            ),
-        )
-    });
-
-    let commands_meta_data = cluster.commands.iter().map(|cmd| {
-        let command_name = Ident::new(&cmd.id, Span::call_site());
-
-        quote!(CommandId::#command_name as _,)
-    });
-
-    let command_responses_meta_data = cluster.structs.iter().filter_map(|s| {
-        if matches!(s.struct_type, StructType::Response(_)) {
+    let command_responses_all = cluster.structs.iter().filter_map(|s| {
+        if let StructType::Response(_) = s.struct_type {
             let command_name = Ident::new(&s.id, Span::call_site());
 
             Some(quote!(CommandResponseId::#command_name as _,))
@@ -188,16 +218,138 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
         }
     });
 
+    let repr = if !command_responses.is_empty() {
+        quote!(#[repr(u32)])
+    } else {
+        quote!()
+    };
+
+    let try_from = if !command_responses.is_empty() {
+        quote!(
+            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandResponseId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                    CommandResponseId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::CommandNotFound.into())
+                }
+            }
+        )
+    } else {
+        quote!(
+            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandResponseId {
+                type Error = #krate::error::Error;
+
+                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                    Err(#krate::error::ErrorCode::CommandNotFound.into())
+                }
+            }
+        )
+    };
+
+    quote!(
+        #[derive(strum::FromRepr)]
+        #repr
+        pub enum CommandResponseId {
+            #(#command_responses),*
+        }
+
+        impl CommandResponseId {
+            pub const fn all() -> &'static [u32] {
+                static ALL: &[u32] = &[#(#command_responses_all)*];
+
+                ALL
+            }
+        }
+
+        #try_from
+    )
+}
+
+/// Return a TokenStream containing a `ClusterConf` enum that allows the user to configure the `Cluster` instance
+/// corresponding to the given IDL cluster.
+///
+/// The `Cluster` instance contains the cluster ID, revision, feature map, attributes, accepted commands, and generated commands
+/// - basically, the cluster meta-data that `rs-matter` needs in order do path expansion and access checks on the cluster.
+pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+    let krate = context.rs_matter_crate.clone();
+
+    let attributes_access = cluster.attributes.iter().map(|attr| {
+        let attr_name = Ident::new(
+            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
+            Span::call_site(),
+        );
+
+        quote!(
+            #krate::data_model::objects::Attribute::new(
+                AttributeId::#attr_name as _,
+                #krate::data_model::objects::Access::RV, // TODO
+                #krate::data_model::objects::Quality::SN, // TODO
+            ),
+        )
+    });
+
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
 
     quote!(
-        pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = #krate::data_model::objects::Cluster {
-            id: ID as _,
-            revision: #cluster_revision,
-            feature_map: 0, // TODO
-            attributes: &[#(#attributes_meta_data)*],
-            accepted_commands: &[#(#commands_meta_data)*],
-            generated_commands: &[#(#command_responses_meta_data)*],
-        };
+        const CLUSTER_REVISION: u16 = #cluster_revision;
+
+        // TODO: Think if to continue supporting this
+        pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = ClusterConf::Default.cluster();
+
+        #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
+        pub enum ClusterConf<'a> {
+            #[default]
+            Default,
+            Mandatory {
+                revision: u16,
+                feature_map: u32,
+            },
+            All {
+                revision: u16,
+                feature_map: u32,
+            },
+            Custom {
+                revision: u16,
+                feature_map: u32,
+                supported_attributes: &'a [u32],
+                accepted_commands: &'a [u32],
+                generated_commands: &'a [u32],
+            }
+        }
+
+        impl<'a> ClusterConf<'a> {
+            pub const fn cluster(&self) -> #krate::data_model::objects::Cluster<'a> {
+                static ATTRIBUTES_ACCESS: &[#krate::data_model::objects::Attribute] = &[#(#attributes_access)*];
+
+                #krate::data_model::objects::Cluster {
+                    id: ID as _,
+                    attributes_access: ATTRIBUTES_ACCESS,
+                    revision: match self {
+                        ClusterConf::Default => CLUSTER_REVISION,
+                        ClusterConf::Mandatory { revision, .. } => *revision,
+                        ClusterConf::All { revision, .. } => *revision,
+                        ClusterConf::Custom { revision, .. } => *revision,
+                    },
+                    feature_map: match self {
+                        ClusterConf::Default => 0,
+                        ClusterConf::Mandatory { feature_map, .. } => *feature_map,
+                        ClusterConf::All { feature_map, .. } => *feature_map,
+                        ClusterConf::Custom { feature_map, .. } => *feature_map,
+                    },
+                    supported_attributes: match self {
+                        ClusterConf::Custom { supported_attributes, .. } => supported_attributes,
+                        _ => AttributeId::all(),
+                    },
+                    accepted_commands: match self {
+                        ClusterConf::Custom { accepted_commands, .. } => accepted_commands,
+                        _ => CommandId::all(),
+                    },
+                    generated_commands: match self {
+                        ClusterConf::Custom { generated_commands, .. } => generated_commands,
+                        _ => CommandResponseId::all(),
+                    },
+                }
+            }
+        }
     )
 }
