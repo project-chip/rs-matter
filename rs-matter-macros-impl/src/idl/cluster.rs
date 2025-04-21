@@ -22,7 +22,7 @@
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
-use rs_matter_data_model::{Cluster, StructType};
+use rs_matter_data_model::{AccessPrivilege, Cluster, StructType};
 
 use super::id::idl_attribute_name_to_enum_variant_name;
 use super::IdlGenerateContext;
@@ -279,11 +279,50 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
             Span::call_site(),
         );
 
+        let mut rw = quote!(#krate::data_model::objects::Access::READ);
+        if !attr.is_read_only {
+            rw = quote!(#rw.union(#krate::data_model::objects::Access::WRITE));
+        }
+
+        let (acl, needs_view) = if !attr.is_read_only {
+            if attr.read_acl != attr.write_acl && !matches!(attr.read_acl, AccessPrivilege::View) || matches!(attr.write_acl, AccessPrivilege::View) {
+                // These cases are not currently supported by the `Access` bitmask
+                panic!("Unsupported access patern: attribute {attr_name} has {:?} read access and {:?} write access", attr.read_acl, attr.write_acl);
+            }
+
+            (attr.write_acl, attr.read_acl != attr.write_acl)
+        } else {
+            (attr.read_acl, false)
+        };
+
+        let mut acl = match acl {
+            AccessPrivilege::View => quote!(#krate::data_model::objects::Access::NEED_VIEW),
+            AccessPrivilege::Operate => quote!(#krate::data_model::objects::Access::NEED_OPERATE.union(#krate::data_model::objects::Access::NEED_MANAGE.union(#krate::data_model::objects::Access::NEED_ADMIN))),
+            AccessPrivilege::Manage => quote!(#krate::data_model::objects::Access::NEED_MANAGE.union(#krate::data_model::objects::Access::NEED_ADMIN)),
+            AccessPrivilege::Administer => quote!(#krate::data_model::objects::Access::NEED_ADMIN),
+        };
+
+        if needs_view {
+            acl = quote!(#acl.union(#krate::data_model::objects::Access::NEED_VIEW));
+        }
+
+        let mut access = quote!(#rw.union(#acl));
+
+        if attr.is_timed_write {
+            access = quote!(#access.union(#krate::data_model::objects::Access::TIMED_ONLY));
+        }
+
+        if attr.field.is_fabric_sensitive {
+            access = quote!(#access.union(#krate::data_model::objects::Access::FAB_SENSITIVE));
+        }
+
+        // TODO: Fabric Scoped seems to be on the struct level
+
         quote!(
             #krate::data_model::objects::Attribute::new(
                 AttributeId::#attr_name as _,
-                #krate::data_model::objects::Access::RV, // TODO
-                #krate::data_model::objects::Quality::SN, // TODO
+                #access,
+                #krate::data_model::objects::Quality::SN, // TODO: Info not present in the IDL
             ),
         )
     });
