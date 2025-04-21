@@ -22,7 +22,7 @@ use quote::quote;
 
 use rs_matter_data_model::{Cluster, Struct, StructField};
 
-use super::field::field_type_builder;
+use super::field::{field_type_builder, BuilderPolicy};
 use super::id::idl_field_name_to_rs_name;
 use super::struct_in::struct_field_comment;
 use super::IdlGenerateContext;
@@ -232,8 +232,8 @@ fn struct_field_builder(
         &f.field.data_type,
         f.is_nullable,
         f.is_optional,
-        false,
-        quote!(P),
+        BuilderPolicy::NonCopy,
+        next_parent.clone(),
         cluster,
         &krate,
     );
