@@ -44,12 +44,12 @@ impl EthernetNetworkDiagnosticsHandler for EthNwDiagCluster {
         self.dataver.changed();
     }
 
-    fn packet_rx_count(&self, _exchange: &Exchange<'_>) -> Result<Option<u64>, Error> {
-        Ok(Some(1)) // TODO
+    fn packet_rx_count(&self, _exchange: &Exchange<'_>) -> Result<u64, Error> {
+        Ok(1) // TODO
     }
 
-    fn packet_tx_count(&self, _exchange: &Exchange<'_>) -> Result<Option<u64>, Error> {
-        Ok(Some(1)) // TODO
+    fn packet_tx_count(&self, _exchange: &Exchange<'_>) -> Result<u64, Error> {
+        Ok(1) // TODO
     }
 
     fn handle_reset_counts(&self, _exchange: &Exchange<'_>) -> Result<(), Error> {

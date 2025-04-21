@@ -22,7 +22,7 @@ use quote::quote;
 
 use rs_matter_data_model::{Attribute, Cluster, Command, DataType, StructType};
 
-use super::field::{field_type, field_type_builder};
+use super::field::{field_type, field_type_builder, BuilderPolicy};
 use super::id::{idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
 use super::IdlGenerateContext;
 
@@ -130,7 +130,8 @@ pub fn handler_adaptor(
         .attributes
         .iter()
         .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
-        .map(|attr| handler_adaptor_attribute_match(attr, asynch, cluster, &krate));
+        .map(|attr| handler_adaptor_attribute_match(attr, asynch, cluster, &krate))
+        .collect::<Vec<_>>();
 
     let handler_adaptor_attribute_write_match = cluster
         .attributes
@@ -142,7 +143,48 @@ pub fn handler_adaptor(
     let handler_adaptor_command_match = cluster
         .commands
         .iter()
-        .map(|cmd| handler_adaptor_command_match(cmd, asynch, cluster, &krate));
+        .map(|cmd| handler_adaptor_command_match(cmd, asynch, cluster, &krate))
+        .collect::<Vec<_>>();
+
+    let read_stream = if !handler_adaptor_attribute_match.is_empty() {
+        quote!(
+            match AttributeId::try_from(attr.attr_id)? {
+                #(#handler_adaptor_attribute_match)*
+                #[allow(unreachable_code)]
+                _ => Err(#krate::error::ErrorCode::AttributeNotFound.into()),
+            }
+        )
+    } else {
+        quote!(
+            Err(#krate::error::ErrorCode::AttributeNotFound.into())
+        )
+    };
+
+    let write_stream = if !handler_adaptor_attribute_match.is_empty() {
+        quote!(
+            match AttributeId::try_from(attr.attr_id)? {
+                #(#handler_adaptor_attribute_write_match)*
+                _ => return Err(#krate::error::ErrorCode::AttributeNotFound.into()),
+            }
+        )
+    } else {
+        quote!(
+            return Err(#krate::error::ErrorCode::AttributeNotFound.into());
+        )
+    };
+
+    let invoke_stream = if !handler_adaptor_command_match.is_empty() {
+        quote!(
+            match CommandId::try_from(cmd.cmd_id)? {
+                #(#handler_adaptor_command_match)*
+                _ => return Err(#krate::error::ErrorCode::CommandNotFound.into()),
+            }
+        )
+    } else {
+        quote!(
+            return Err(#krate::error::ErrorCode::CommandNotFound.into());
+        )
+    };
 
     let handler_name = Ident::new(
         &format!("{}{}Handler", if asynch { "Async" } else { "" }, cluster.id),
@@ -178,6 +220,7 @@ pub fn handler_adaptor(
         where
             T: #handler_name,
         {
+            #[allow(unreachable_code)]
             #pasync fn read(
                 &self,
                 exchange: &#krate::transport::exchange::Exchange<'_>,
@@ -188,11 +231,7 @@ pub fn handler_adaptor(
                     if attr.is_system() {
                         CLUSTER.read(attr.attr_id, writer)
                     } else {
-                        match AttributeId::try_from(attr.attr_id)? {
-                            #(#handler_adaptor_attribute_match)*
-                            #[allow(unreachable_code)]
-                            _ => Err(#krate::error::ErrorCode::AttributeNotFound.into()),
-                        }
+                        #read_stream
                     }
                 } else {
                     Ok(())
@@ -212,10 +251,7 @@ pub fn handler_adaptor(
                     return Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
 
-                match AttributeId::try_from(attr.attr_id)? {
-                    #(#handler_adaptor_attribute_write_match)*
-                    _ => return Err(#krate::error::ErrorCode::AttributeNotFound.into()),
-                }
+                #write_stream
 
                 self.0.dataver_changed();
 
@@ -230,10 +266,7 @@ pub fn handler_adaptor(
                 data: &#krate::tlv::TLVElement<'_>,
                 encoder: #krate::data_model::objects::CmdDataEncoder<'_, '_, '_>,
             ) -> Result<(), #krate::error::Error> {
-                match CommandId::try_from(cmd.cmd_id)? {
-                    #(#handler_adaptor_command_match)*
-                    _ => return Err(#krate::error::ErrorCode::CommandNotFound.into()),
-                }
+                #invoke_stream
 
                 self.0.dataver_changed();
 
@@ -284,21 +317,39 @@ fn handler_attribute(
         (quote!(), quote!())
     };
 
-    let (attr_type, builder) = field_type_builder(
+    let (mut attr_type, builder) = field_type_builder(
         &attr.field.field.data_type,
         attr.field.is_nullable,
-        attr.field.is_optional,
-        true,
-        parent,
+        false,
+        BuilderPolicy::NonCopyAndStrings,
+        parent.clone(),
         cluster,
         krate,
     );
 
     if builder {
+        if attr.field.field.data_type.is_list {
+            let (attr_element_type, _) = field_type_builder(
+                &DataType {
+                    name: attr.field.field.data_type.name.clone(),
+                    is_list: false,
+                    max_length: attr.field.field.data_type.max_length,
+                },
+                false,
+                false,
+                BuilderPolicy::All,
+                parent,
+                cluster,
+                krate,
+            );
+
+            attr_type = quote!(#krate::data_model::objects::ArrayAttributeRead<#attr_type, #attr_element_type>);
+        }
+
         if !delegate && attr.field.is_optional {
             quote!(
                 #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, exchange: &#krate::transport::exchange::Exchange<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
-                    Ok(builder.none())
+                    Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
         } else {
@@ -315,18 +366,18 @@ fn handler_attribute(
     } else if !delegate && attr.field.is_optional {
         quote!(
             #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>) -> Result<#attr_type, #krate::error::Error> {
-                Ok(None)
+                Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
-        let strream = quote!(
+        let stream = quote!(
             #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>) -> Result<#attr_type, #krate::error::Error>
         );
 
         if delegate {
-            quote!(#strream { T::#attr_name(self, exchange)#sawait })
+            quote!(#stream { T::#attr_name(self, exchange)#sawait })
         } else {
-            quote!(#strream;)
+            quote!(#stream;)
         }
     }
 }
@@ -358,18 +409,34 @@ fn handler_attribute_write(
         (quote!(), quote!())
     };
 
-    let attr_type = field_type(
+    let mut attr_type = field_type(
         &attr.field.field.data_type,
         attr.field.is_nullable,
-        attr.field.is_optional,
+        false,
         cluster,
         krate,
     );
 
+    if attr.field.field.data_type.is_list {
+        let attr_element_type = field_type(
+            &DataType {
+                name: attr.field.field.data_type.name.clone(),
+                is_list: false,
+                max_length: attr.field.field.data_type.max_length,
+            },
+            false,
+            false,
+            cluster,
+            krate,
+        );
+
+        attr_type = quote!(#krate::data_model::objects::ArrayAttributeWrite<#attr_type, #attr_element_type>);
+    }
+
     if !delegate && attr.field.is_optional {
         quote!(
             #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
-                Ok(())
+                Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
@@ -437,7 +504,7 @@ fn handler_command(
             },
             false,
             false,
-            true,
+            BuilderPolicy::NonCopyAndStrings,
             quote!(P),
             cluster,
             krate,
@@ -567,23 +634,40 @@ fn handler_adaptor_attribute_match(
         &attr.field.field.data_type,
         attr.field.is_nullable,
         attr.field.is_optional,
-        true,
+        BuilderPolicy::NonCopyAndStrings,
         parent,
         cluster,
         krate,
     );
 
     if builder {
-        quote!(
-            AttributeId::#attr_name => {
-                self.0.#attr_method_name(exchange, #krate::tlv::TLVBuilder::new(
-                    #krate::tlv::TLVWriteParent::new(writer.writer()),
-                    &#krate::data_model::objects::AttrDataWriter::TAG,
-                )?)#sawait?;
+        if attr.field.field.data_type.is_list {
+            quote!(
+                AttributeId::#attr_name => {
+                    self.0.#attr_method_name(
+                        exchange,
+                        #krate::data_model::objects::ArrayAttributeRead::new(
+                            attr.list_index.clone(),
+                            #krate::tlv::TLVWriteParent::new(writer.writer()),
+                            &#krate::data_model::objects::AttrDataWriter::TAG,
+                        )?,
+                    )#sawait?;
 
-                writer.complete()
-            }
-        )
+                    writer.complete()
+                }
+            )
+        } else {
+            quote!(
+                AttributeId::#attr_name => {
+                    self.0.#attr_method_name(exchange, #krate::tlv::TLVBuilder::new(
+                        #krate::tlv::TLVWriteParent::new(writer.writer()),
+                        &#krate::data_model::objects::AttrDataWriter::TAG,
+                    )?)#sawait?;
+
+                    writer.complete()
+                }
+            )
+        }
     } else {
         quote!(
             AttributeId::#attr_name => writer.set(self.0.#attr_method_name(exchange)#sawait?),
@@ -615,9 +699,15 @@ fn handler_adaptor_attribute_write_match(
 
     let sawait = if asynch { quote!(.await) } else { quote!() };
 
-    quote!(
-        AttributeId::#attr_name => self.0.#attr_method_name(exchange, #krate::tlv::FromTLV::from_tlv(&data)?)#sawait?,
-    )
+    if attr.field.field.data_type.is_list {
+        quote!(
+            AttributeId::#attr_name => self.0.#attr_method_name(exchange, #krate::data_model::objects::ArrayAttributeWrite::new(attr.list_index.clone(), &data)?)#sawait?,
+        )
+    } else {
+        quote!(
+            AttributeId::#attr_name => self.0.#attr_method_name(exchange, #krate::tlv::FromTLV::from_tlv(&data)?)#sawait?,
+        )
+    }
 }
 
 /// Return a token stream defining a mach clause, `CommandId::Foo => handler.foo(...)`
@@ -691,7 +781,7 @@ fn handler_adaptor_command_match(
             },
             false,
             false,
-            true,
+            BuilderPolicy::NonCopyAndStrings,
             quote!(P),
             cluster,
             krate,

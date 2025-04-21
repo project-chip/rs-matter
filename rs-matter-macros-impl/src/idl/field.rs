@@ -63,6 +63,17 @@ pub fn field_type(
     field_type
 }
 
+/// A policy for determining how to convert an IDL type to a Rust builder.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum BuilderPolicy {
+    /// Use builders for types that are not `Copy` (i.e. structs and arrays).
+    NonCopy,
+    /// Use builders for types that are not `Copy` or strings (i.e. octet and UTF8 strings).
+    NonCopyAndStrings,
+    /// Use builders for all types.
+    All,
+}
+
 /// Return a stream representing the Rust type builder that corresponds to the given
 /// IDL type.
 ///
@@ -70,7 +81,7 @@ pub fn field_type(
 /// - `data_type`: The IDL type.
 /// - `nullable`: Whether the type is nullable.
 /// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
-/// - `strings_as_builders`: Whether to return a builder for Utf8 and octet strings.
+/// - `policy`: The policy for determining how to convert the IDL type to a Rust builder.
 /// - `parent`: The parent type for the returned builder (usually `P`)
 /// - `cluster`: The cluster to which the type belongs.
 /// - `krate`: The crate name.
@@ -85,48 +96,59 @@ pub fn field_type_builder(
     data_type: &DataType,
     nullable: bool,
     optional: bool,
-    strings_as_builders: bool,
+    policy: BuilderPolicy,
     parent: TokenStream,
     cluster: &Cluster,
     krate: &Ident,
 ) -> (TokenStream, bool) {
-    let (mut typ, builder) =
-        if data_type.is_octet_string() && (strings_as_builders || data_type.is_list) {
-            (
-                if data_type.is_list {
-                    quote!(#krate::tlv::OctetsArrayBuilder<#parent>)
-                } else {
-                    quote!(#krate::tlv::OctetsBuilder<#parent>)
-                },
-                true,
-            )
-        } else if data_type.is_utf8_string() && (strings_as_builders || data_type.is_list) {
-            (
-                if data_type.is_list {
-                    quote!(#krate::tlv::Utf8StrArrayBuilder<#parent>)
-                } else {
-                    quote!(#krate::tlv::Utf8StrBuilder<#parent>)
-                },
-                true,
-            )
-        } else if let Some(copy) = field_type_copy(data_type, cluster, krate) {
+    let (mut typ, builder) = if data_type.is_octet_string()
+        && (matches!(
+            policy,
+            BuilderPolicy::All | BuilderPolicy::NonCopyAndStrings
+        ) || data_type.is_list)
+    {
+        (
             if data_type.is_list {
-                (quote!(#krate::tlv::ToTLVArrayBuilder<#parent, #copy>), true)
+                quote!(#krate::tlv::OctetsArrayBuilder<#parent>)
             } else {
-                (quote!(#copy), false)
-            }
+                quote!(#krate::tlv::OctetsBuilder<#parent>)
+            },
+            true,
+        )
+    } else if data_type.is_utf8_string()
+        && (matches!(
+            policy,
+            BuilderPolicy::All | BuilderPolicy::NonCopyAndStrings
+        ) || data_type.is_list)
+    {
+        (
+            if data_type.is_list {
+                quote!(#krate::tlv::Utf8StrArrayBuilder<#parent>)
+            } else {
+                quote!(#krate::tlv::Utf8StrBuilder<#parent>)
+            },
+            true,
+        )
+    } else if let Some(copy) = field_type_copy(data_type, cluster, krate) {
+        if data_type.is_list {
+            (quote!(#krate::tlv::ToTLVArrayBuilder<#parent, #copy>), true)
+        } else if matches!(policy, BuilderPolicy::All) {
+            (quote!(#krate::tlv::ToTLVBuilder<#parent, #copy>), true)
         } else {
-            let ident = Ident::new(
-                &format!(
-                    "{}{}Builder",
-                    data_type.name.as_str(),
-                    if data_type.is_list { "Array" } else { "" }
-                ),
-                Span::call_site(),
-            );
+            (quote!(#copy), false)
+        }
+    } else {
+        let ident = Ident::new(
+            &format!(
+                "{}{}Builder",
+                data_type.name.as_str(),
+                if data_type.is_list { "Array" } else { "" }
+            ),
+            Span::call_site(),
+        );
 
-            (quote!(#ident<#parent>), true)
-        };
+        (quote!(#ident<#parent>), true)
+    };
 
     if builder {
         if nullable {

@@ -38,28 +38,24 @@ impl CommissioningErrorEnum {
     }
 }
 
-// impl BasicCommissioningInfo {
-//     pub const fn new() -> Self {
-//         // TODO: Arch-Specific
-//         Self {
-//             expiry_len: 120,
-//             max_cmltv_failsafe_secs: 120,
-//         }
-//     }
-// }
-
-/// A trait indicating whether the device supports concurrent connection
+/// A trait indicating the commissioning policy supported by `rs-matter`.
 /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
 pub trait CommissioningPolicy {
-    /// Return true if the device supports concurrent connection.
+    /// Return true if the device supports concurrent connection
+    /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
     fn concurrent_connection_supported(&self) -> bool;
 
+    /// Return the expiry length of the fail-safe in seconds.
     fn failsafe_expiry_len_secs(&self) -> u16;
 
+    /// Return the maximum cumulative fail-safe time in seconds.
     fn failsafe_max_cml_secs(&self) -> u16;
 
+    /// Return the regulatory configuration of the device.
+    // TODO: Needs to be persisted
     fn regulatory_config(&self) -> RegulatoryLocationTypeEnum;
 
+    /// Return the location capability of the device.
     fn location_cap(&self) -> RegulatoryLocationTypeEnum;
 }
 

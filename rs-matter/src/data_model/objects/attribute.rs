@@ -19,6 +19,9 @@
 use core::fmt::{self, Debug};
 
 use crate::data_model::objects::GlobalElements;
+use crate::error::Error;
+use crate::tlv::{AsNullable, FromTLV, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
+use crate::utils::maybe::Maybe;
 
 use super::{AttrId, Privilege};
 
@@ -124,6 +127,81 @@ impl Attribute {
 impl core::fmt::Display for Attribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.id)
+    }
+}
+
+/// An enum for modeling reads from attributes whose type is an array.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ArrayAttributeRead<T, E> {
+    /// Read the whole array
+    ReadAll(T),
+    /// Read one element of the array
+    ReadOne(u16, E),
+}
+
+impl<T, E> ArrayAttributeRead<T, E> {
+    /// Create a new `ArrayAttributeRead` from an index.
+    pub fn new<P>(
+        index: Option<Maybe<u16, AsNullable>>,
+        parent: P,
+        tag: &TLVTag,
+    ) -> Result<Self, Error>
+    where
+        P: TLVBuilderParent,
+        T: TLVBuilder<P>,
+        E: TLVBuilder<P>,
+    {
+        if let Some(Some(index)) = index.clone().map(Into::into) {
+            // Valid index - read one element
+            Ok(Self::ReadOne(index, TLVBuilder::new(parent, tag)?))
+        } else {
+            // Read the whole array
+            Ok(Self::ReadAll(TLVBuilder::new(parent, tag)?))
+        }
+    }
+}
+
+/// An enum for modeling writes to attributes whose type is an array.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ArrayAttributeWrite<T, E> {
+    /// Replace the whole array
+    Replace(T),
+    /// Add a new element to the array
+    Add(E),
+    /// Replace/update an element of the array
+    Update(u16, E),
+    /// Remove an element of the array
+    Remove(u16),
+}
+
+impl<T, E> ArrayAttributeWrite<T, E> {
+    /// Create a new `ArrayAttributeWrite` from a TLV element
+    /// and an index.
+    pub fn new<'a>(
+        index: Option<Maybe<u16, AsNullable>>,
+        data: &TLVElement<'a>,
+    ) -> Result<Self, Error>
+    where
+        T: FromTLV<'a>,
+        E: FromTLV<'a>,
+    {
+        if let Some(Some(index)) = index.clone().map(Into::into) {
+            // If the index is valid, this is an item update or removal
+            if data.null().is_ok() {
+                // Data is null - item removal
+                Ok(Self::Remove(index))
+            } else {
+                Ok(Self::Update(index, FromTLV::from_tlv(data)?))
+            }
+        } else if data.array().is_ok() {
+            // The data is an array, so the whole array needs to be replaced
+            Ok(Self::Replace(FromTLV::from_tlv(data)?))
+        } else {
+            // The data is not an array and there is no index, so this must be an Add operation
+            Ok(Self::Add(FromTLV::from_tlv(data)?))
+        }
     }
 }
 
