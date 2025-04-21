@@ -20,9 +20,7 @@ use core::str::FromStr;
 use rs_matter_macros::idl_import;
 
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{
-    FromTLV, OptionalBuilder, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder,
-};
+use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -186,9 +184,9 @@ impl BasicInformationHandler for BasicInfoCluster {
     fn serial_number<P: TLVBuilderParent>(
         &self,
         exchange: &Exchange,
-        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+        out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.some()?.set(Self::config(exchange).serial_no)
+        out.set(Self::config(exchange).serial_no)
     }
 
     fn hardware_version(&self, exchange: &Exchange) -> Result<u16, Error> {
@@ -292,9 +290,9 @@ impl BasicInformationHandler for BasicInfoCluster {
     fn product_label<P: TLVBuilderParent>(
         &self,
         exchange: &Exchange,
-        out: OptionalBuilder<P, Utf8StrBuilder<P>>,
+        out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.some()?.set(Self::config(exchange).product_name)
+        out.set(Self::config(exchange).product_name)
     }
 
     fn handle_mfg_specific_ping(&self, _exchange: &Exchange) -> Result<(), Error> {
