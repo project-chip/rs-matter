@@ -25,7 +25,10 @@ use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, command_enum};
+use crate::{
+    accepted_commands, attribute_enum, attributes_access, command_enum, generated_commands,
+    supported_attributes,
+};
 
 pub const ID: u32 = 0x0036;
 
@@ -61,7 +64,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes_access: attributes_access!(
         Attribute::new(
             AttributesDiscriminants::Bssid as _,
             Access::RV,
@@ -88,8 +91,15 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
     ),
-    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
-    generated_commands: &[],
+    supported_attributes: supported_attributes!(
+        AttributesDiscriminants::Bssid,
+        AttributesDiscriminants::SecurityType,
+        AttributesDiscriminants::WifiVersion,
+        AttributesDiscriminants::ChannelNumber,
+        AttributesDiscriminants::Rssi,
+    ),
+    accepted_commands: accepted_commands!(CommandsDiscriminants::ResetCounts),
+    generated_commands: generated_commands!(),
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]

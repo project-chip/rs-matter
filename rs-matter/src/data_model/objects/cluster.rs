@@ -38,28 +38,19 @@ use core::fmt::{self, Debug};
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum GlobalElements {
-    ClusterRevision = 0xFFFD,
-    FeatureMap = 0xFFFC,
-    AttributeList = 0xFFFB,
-    _EventList = 0xFFFA,
-    AcceptedCmdList = 0xFFF9,
-    GeneratedCmdList = 0xFFF8,
     FabricIndex = 0xFE,
+    GeneratedCmdList = 0xFFF8,
+    AcceptedCmdList = 0xFFF9,
+    _EventList = 0xFFFA,
+    AttributeList = 0xFFFB,
+    FeatureMap = 0xFFFC,
+    ClusterRevision = 0xFFFD,
 }
 
 attribute_enum!(GlobalElements);
 
-pub const CLUSTER_REVISION: Attribute = Attribute::new(
-    GlobalElements::ClusterRevision as _,
-    Access::RV,
-    Quality::NONE,
-);
-
-pub const FEATURE_MAP: Attribute =
-    Attribute::new(GlobalElements::FeatureMap as _, Access::RV, Quality::NONE);
-
-pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
-    GlobalElements::AttributeList as _,
+pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
+    GlobalElements::GeneratedCmdList as _,
     Access::RV,
     Quality::NONE,
 );
@@ -70,15 +61,74 @@ pub const ACCEPTED_COMMAND_LIST: Attribute = Attribute::new(
     Quality::NONE,
 );
 
-pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
-    GlobalElements::GeneratedCmdList as _,
+pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
+    GlobalElements::AttributeList as _,
     Access::RV,
     Quality::NONE,
 );
 
+pub const FEATURE_MAP: Attribute =
+    Attribute::new(GlobalElements::FeatureMap as _, Access::RV, Quality::NONE);
+
+pub const CLUSTER_REVISION: Attribute = Attribute::new(
+    GlobalElements::ClusterRevision as _,
+    Access::RV,
+    Quality::NONE,
+);
+
+// const fn sort_ids(slice: &mut [u32]) {
+//     loop {
+//         let mut swapped = false;
+//         let mut i = 1;
+//         while i < slice.len() {
+//             if slice[i - 1] > slice[i] {
+//                 let left = slice[i-1];
+//                 let right = slice[i];
+//                 slice[i - 1] = right;
+//                 slice[i] = left;
+//                 swapped = true;
+//             }
+
+//             i += 1;
+//         }
+
+//         if !swapped {
+//             break;
+//         }
+//     }
+// }
+
+// const fn merge_ids<const P: usize, const M: usize, const N: usize>(arr1: [u32; M], arr2: [u32; N]) -> [u32; P] {
+//     if P != M + N {
+//         panic!("Array sizes do not match");
+//     }
+
+//     let mut result = [0; P];
+//     let mut i = 0;
+
+//     let mut i1 = 0;
+//     while i1 < arr1.len() {
+//         result[i] = arr1[i1];
+//         i1 += 1;
+//         i += 1;
+//     }
+
+//     let mut i2 = 0;
+//     while i2 < arr2.len() {
+//         result[i] = arr2[i2];
+//         i2 += 1;
+//         i += 1;
+//     }
+
+//     sort_ids(&mut result);
+
+//     result
+// }
+
+/// A proc-macro to generate the attribute accessors for a cluster.
 #[allow(unused_macros)]
 #[macro_export]
-macro_rules! cluster_attrs {
+macro_rules! attributes_access {
     () => {
         &[
             $crate::data_model::objects::GENERATED_COMMAND_LIST,
@@ -97,6 +147,62 @@ macro_rules! cluster_attrs {
             $crate::data_model::objects::ATTRIBUTE_LIST,
             $crate::data_model::objects::FEATURE_MAP,
             $crate::data_model::objects::CLUSTER_REVISION,
+        ]
+    }
+}
+
+/// A proc-macro to generate the supported attributes for a cluster.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! supported_attributes {
+    () => {
+        &[
+            $crate::data_model::objects::GlobalElements::GeneratedCmdList as _,
+            $crate::data_model::objects::GlobalElements::AcceptedCmdList as _,
+            $crate::data_model::objects::GlobalElements::AttributeList as _,
+            $crate::data_model::objects::GlobalElements::FeatureMap as _,
+            $crate::data_model::objects::GlobalElements::ClusterRevision as _,
+        ]
+    };
+    ($attr0:expr $(, $attr:expr)* $(,)?) => {
+        &[
+            $attr0 as _,
+            $($attr as _,)*
+            $crate::data_model::objects::GlobalElements::GeneratedCmdList as _,
+            $crate::data_model::objects::GlobalElements::AcceptedCmdList as _,
+            $crate::data_model::objects::GlobalElements::AttributeList as _,
+            $crate::data_model::objects::GlobalElements::FeatureMap as _,
+            $crate::data_model::objects::GlobalElements::ClusterRevision as _,
+        ]
+    }
+}
+
+/// A proc-macro to generate the accepted commands for a cluster.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! accepted_commands {
+    () => {
+        &[]
+    };
+    ($cmd0:expr $(, $cmd:expr)* $(,)?) => {
+        &[
+            $cmd0 as _,
+            $($cmd as _,)*
+        ]
+    }
+}
+
+/// A proc-macro to generate the generated commands for a cluster.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! generated_commands {
+    () => {
+        &[]
+    };
+    ($cmd0:expr $(, $cmd:expr)* $(,)?) => {
+        &[
+            $cmd0 as _,
+            $($cmd as _,)*
         ]
     }
 }
@@ -137,6 +243,16 @@ impl AttrDetails<'_> {
             list_index: self.list_index.clone(),
             ..Default::default()
         }
+    }
+
+    pub fn cluster(&self) -> Result<&Cluster, Error> {
+        self.node
+            .endpoint(self.endpoint_id)
+            .and_then(|endpoint| endpoint.cluster(self.cluster_id))
+            .ok_or_else(|| {
+                error!("Cluster not found");
+                ErrorCode::ClusterNotFound.into()
+            })
     }
 
     pub fn status(&self, status: IMStatusCode) -> Result<Option<AttrStatus>, Error> {
@@ -234,7 +350,8 @@ pub struct Cluster<'a> {
     pub id: ClusterId,
     pub revision: u16,
     pub feature_map: u32,
-    pub attributes: &'a [Attribute],
+    pub attributes_access: &'a [Attribute],
+    pub supported_attributes: &'a [AttrId],
     pub accepted_commands: &'a [CmdId],
     pub generated_commands: &'a [CmdId],
 }
@@ -245,7 +362,8 @@ impl<'a> Cluster<'a> {
         id: ClusterId,
         revision: u16,
         feature_map: u32,
-        attributes: &'a [Attribute],
+        attributes_access: &'a [Attribute],
+        supported_attributes: &'a [AttrId],
         accepted_commands: &'a [CmdId],
         generated_commands: &'a [CmdId],
     ) -> Self {
@@ -253,10 +371,16 @@ impl<'a> Cluster<'a> {
             id,
             revision,
             feature_map,
-            attributes,
+            attributes_access,
+            supported_attributes,
             accepted_commands,
             generated_commands,
         }
+    }
+
+    /// Return the attribute information for the attribute with the given ID, if it exists.
+    pub fn attribute(&self, id: AttrId) -> Option<&Attribute> {
+        self.attributes_access.iter().find(|attr| attr.id == id)
     }
 
     /// Check if the accessor has the required permissions to access the attribute
@@ -264,10 +388,11 @@ impl<'a> Cluster<'a> {
     ///
     /// if `write` is true, the operation is a write operation, otherwise it is a read operation.
     pub(crate) fn check_attr_access(
+        &self,
         accessor: &Accessor,
         path: GenericPath,
         write: bool,
-        target_perms: Access,
+        attr_id: AttrId,
     ) -> Result<(), IMStatusCode> {
         let mut access_req = AccessReq::new(
             accessor,
@@ -275,6 +400,10 @@ impl<'a> Cluster<'a> {
             if write { Access::WRITE } else { Access::READ },
         );
 
+        let target_perms = self
+            .attribute(attr_id)
+            .map(|attr| attr.access)
+            .unwrap_or(Access::empty());
         if !target_perms.contains(access_req.operation()) {
             Err(if matches!(access_req.operation(), Access::WRITE) {
                 IMStatusCode::UnsupportedWrite
@@ -337,15 +466,9 @@ impl<'a> Cluster<'a> {
 
     fn encode_attribute_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         tw.start_array(tag)?;
-        for a in self.attributes.iter().filter(|a| !a.is_system()) {
-            tw.u32(&TLVTag::Anonymous, a.id)?;
+        for a in self.supported_attributes {
+            tw.u32(&TLVTag::Anonymous, *a)?;
         }
-
-        tw.u32(&TLVTag::Anonymous, GlobalElements::GeneratedCmdList as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::AcceptedCmdList as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::AttributeList as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::FeatureMap as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::ClusterRevision as _)?;
 
         tw.end_container()
     }
@@ -377,7 +500,7 @@ impl core::fmt::Display for Cluster<'_> {
         write!(f, "id: {}, ", self.id)?;
 
         write!(f, "attrs [")?;
-        for (index, attr) in self.attributes.iter().enumerate() {
+        for (index, attr) in self.supported_attributes.iter().enumerate() {
             if index > 0 {
                 write!(f, ", {}", attr)?;
             } else {
@@ -413,7 +536,7 @@ impl defmt::Format for Cluster<'_> {
         defmt::write!(f, "id: {}, ", self.id);
 
         defmt::write!(f, "attrs [");
-        for (index, attr) in self.attributes.iter().enumerate() {
+        for (index, attr) in self.supported_attributes.iter().enumerate() {
             if index > 0 {
                 defmt::write!(f, ", {}", attr);
             } else {

@@ -21,7 +21,10 @@ use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
+use crate::{
+    accepted_commands, attribute_enum, attributes_access, cmd_enter, command_enum,
+    generated_commands, supported_attributes,
+};
 
 pub const ID: u32 = 0x003F;
 
@@ -48,7 +51,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes_access: attributes_access!(
         Attribute::new(
             AttributesDiscriminants::GroupKeyMap as _,
             Access::RWFVM,
@@ -70,8 +73,14 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
     ),
-    accepted_commands: &[CommandsDiscriminants::KeySetWrite as _],
-    generated_commands: &[],
+    supported_attributes: supported_attributes!(
+        AttributesDiscriminants::GroupKeyMap,
+        AttributesDiscriminants::GroupTable,
+        AttributesDiscriminants::MaxGroupsPerFabric,
+        AttributesDiscriminants::MaxGroupKeysPerFabric,
+    ),
+    accepted_commands: accepted_commands!(CommandsDiscriminants::KeySetWrite),
+    generated_commands: generated_commands!(),
 };
 
 #[derive(Debug, Clone)]

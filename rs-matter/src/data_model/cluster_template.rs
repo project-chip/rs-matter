@@ -15,10 +15,10 @@
  *    limitations under the License.
  */
 
-use crate::cluster_attrs;
 use crate::data_model::objects::{Cluster, Handler};
 use crate::error::{Error, ErrorCode};
 use crate::transport::exchange::Exchange;
+use crate::{accepted_commands, attributes_access, generated_commands, supported_attributes};
 
 use super::objects::{AttrDataEncoder, AttrDetails, ChangeNotifier, Dataver, NonBlockingHandler};
 
@@ -28,9 +28,10 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: CLUSTER_NETWORK_COMMISSIONING_ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(),
-    accepted_commands: &[],
-    generated_commands: &[],
+    attributes_access: attributes_access!(),
+    supported_attributes: supported_attributes!(),
+    accepted_commands: accepted_commands!(),
+    generated_commands: generated_commands!(),
 };
 
 pub struct TemplateCluster {

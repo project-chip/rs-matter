@@ -20,10 +20,13 @@ use num_derive::FromPrimitive;
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::*;
+use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter};
-use crate::{command_enum, error::*};
+use crate::{
+    accepted_commands, attribute_enum, attributes_access, cmd_enter, command_enum,
+    generated_commands, supported_attributes,
+};
 
 pub const ID: u32 = 0x003C;
 
@@ -60,7 +63,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes_access: attributes_access!(
         Attribute::new(
             AttributesDiscriminants::WindowStatus as _,
             Access::RV,
@@ -77,12 +80,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NULLABLE,
         ),
     ),
-    accepted_commands: &[
-        Commands::OpenCommWindow as _,
-        Commands::OpenBasicCommWindow as _,
-        Commands::RevokeComm as _,
-    ],
-    generated_commands: &[],
+    supported_attributes: supported_attributes!(
+        AttributesDiscriminants::WindowStatus,
+        AttributesDiscriminants::AdminFabricIndex,
+        AttributesDiscriminants::AdminVendorId,
+    ),
+    accepted_commands: accepted_commands!(
+        Commands::OpenCommWindow,
+        Commands::OpenBasicCommWindow,
+        Commands::RevokeComm,
+    ),
+    generated_commands: generated_commands!(),
 };
 
 #[derive(FromTLV)]

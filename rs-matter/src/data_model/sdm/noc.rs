@@ -32,7 +32,10 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-use crate::{alloc, attribute_enum, cluster_attrs, cmd_enter, command_enum, error::*};
+use crate::{
+    accepted_commands, alloc, attribute_enum, attributes_access, cmd_enter, command_enum, error::*,
+    generated_commands, supported_attributes,
+};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
@@ -164,7 +167,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes_access: attributes_access!(
         Attribute::new(
             AttributesDiscriminants::CurrentFabricIndex as _,
             Access::RV,
@@ -186,16 +189,22 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NONE,
         ),
     ),
-    accepted_commands: &[
-        Commands::AttReq as _,
-        Commands::CertChainReq as _,
-        Commands::CSRReq as _,
-        Commands::AddNOC as _,
-        Commands::UpdateFabricLabel as _,
-        Commands::RemoveFabric as _,
-        Commands::AddTrustedRootCert as _,
-    ],
-    generated_commands: &[RespCommands::NOCResp as _],
+    supported_attributes: supported_attributes!(
+        AttributesDiscriminants::CurrentFabricIndex,
+        AttributesDiscriminants::Fabrics,
+        AttributesDiscriminants::SupportedFabrics,
+        AttributesDiscriminants::CommissionedFabrics,
+    ),
+    accepted_commands: accepted_commands!(
+        Commands::AttReq,
+        Commands::CertChainReq,
+        Commands::CSRReq,
+        Commands::AddNOC,
+        Commands::UpdateFabricLabel,
+        Commands::RemoveFabric,
+        Commands::AddTrustedRootCert,
+    ),
+    generated_commands: generated_commands!(),
 };
 
 #[derive(Debug, Clone)]
