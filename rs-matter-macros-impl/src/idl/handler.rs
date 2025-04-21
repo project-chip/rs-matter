@@ -229,7 +229,7 @@ pub fn handler_adaptor(
             ) -> Result<(), #krate::error::Error> {
                 if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
                     if attr.is_system() {
-                        CLUSTER.read(attr.attr_id, writer)
+                        attr.cluster()?.read(attr.attr_id, writer)
                     } else {
                         #read_stream
                     }

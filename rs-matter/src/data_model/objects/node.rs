@@ -46,6 +46,11 @@ impl<'a> Node<'a> {
         Self { id, endpoints }
     }
 
+    /// Return a reference to the endpoint with the given ID, if it exists.
+    pub fn endpoint(&self, id: EndptId) -> Option<&Endpoint<'a>> {
+        self.endpoints.iter().find(|endpoint| endpoint.id == id)
+    }
+
     /// Expand (potentially wildcard) read requests into concrete attribute details
     /// using the node metadata.
     ///
@@ -438,14 +443,14 @@ where
                         let cluster_leaves_len = if command {
                             cluster.accepted_commands.len()
                         } else {
-                            cluster.attributes.len()
+                            cluster.supported_attributes.len()
                         };
 
                         while (self.leaf_index as usize) < cluster_leaves_len {
                             let leaf_id = if command {
                                 cluster.accepted_commands[self.leaf_index as usize]
                             } else {
-                                cluster.attributes[self.leaf_index as usize].id as _
+                                cluster.supported_attributes[self.leaf_index as usize]
                             };
 
                             if path.leaf.is_none() || path.leaf == Some(leaf_id as _) {
@@ -461,7 +466,7 @@ where
                                         ),
                                     )
                                 } else {
-                                    Cluster::check_attr_access(
+                                    cluster.check_attr_access(
                                         self.accessor,
                                         GenericPath::new(
                                             Some(endpoint.id),
@@ -469,7 +474,7 @@ where
                                             Some(leaf_id),
                                         ),
                                         matches!(T::OPERATION, Operation::Write),
-                                        cluster.attributes[self.leaf_index as usize].access,
+                                        cluster.supported_attributes[self.leaf_index as usize],
                                     )
                                 };
 
@@ -702,6 +707,7 @@ mod test {
                     1,
                     0,
                     &[Attribute::new(0, Access::all(), Quality::all())],
+                    &[0],
                     &[],
                     &[],
                 )],
@@ -810,6 +816,7 @@ mod test {
                             1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[1],
                             &[],
                             &[],
                         ),
@@ -818,6 +825,7 @@ mod test {
                             1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[1],
                             &[],
                             &[],
                         ),
@@ -832,6 +840,7 @@ mod test {
                             1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[1],
                             &[],
                             &[],
                         ),
@@ -843,6 +852,7 @@ mod test {
                                 Attribute::new(20, Access::all(), Quality::all()),
                                 Attribute::new(30, Access::all(), Quality::all()),
                             ],
+                            &[20, 30],
                             &[],
                             &[],
                         ),
