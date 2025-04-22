@@ -142,7 +142,25 @@ impl<T, G> Maybe<T, G> {
     }
 
     /// Return a mutable reference to the wrapped value, if it exists.
-    pub fn as_mut(&mut self) -> Option<&mut T> {
+    pub fn as_mut(&mut self) -> Maybe<&mut T, G> {
+        if self.some {
+            Maybe::some(unsafe { self.value.assume_init_mut() })
+        } else {
+            Maybe::none()
+        }
+    }
+
+    /// Return a reference to the wrapped value, if it exists.
+    pub fn as_ref(&self) -> Maybe<&T, G> {
+        if self.some {
+            Maybe::some(unsafe { self.value.assume_init_ref() })
+        } else {
+            Maybe::none()
+        }
+    }
+
+    /// Return - as an `Option` - a mutable reference to the wrapped value, if it exists.
+    pub fn as_opt_mut(&mut self) -> Option<&mut T> {
         if self.some {
             Some(unsafe { self.value.assume_init_mut() })
         } else {
@@ -150,8 +168,8 @@ impl<T, G> Maybe<T, G> {
         }
     }
 
-    /// Return a reference to the wrapped value, if it exists.
-    pub fn as_ref(&self) -> Option<&T> {
+    /// Return - as an `Option` - a reference to the wrapped value, if it exists.
+    pub fn as_opt_ref(&self) -> Option<&T> {
         if self.some {
             Some(unsafe { self.value.assume_init_ref() })
         } else {
@@ -160,22 +178,44 @@ impl<T, G> Maybe<T, G> {
     }
 
     /// Derefs the wrapped value, if it exists.
-    pub fn as_deref(&self) -> Option<&T::Target>
+    pub fn as_deref(&self) -> Maybe<&T::Target, G>
     where
         T: Deref,
     {
-        match self.as_ref() {
+        match self.as_opt_ref() {
+            Some(t) => Maybe::some(t.deref()),
+            None => Maybe::none(),
+        }
+    }
+
+    /// Derefs mutably the wrapped value, if it exists.
+    pub fn as_deref_mut(&mut self) -> Maybe<&mut T::Target, G>
+    where
+        T: DerefMut,
+    {
+        match self.as_opt_mut() {
+            Some(t) => Maybe::some(t.deref_mut()),
+            None => Maybe::none(),
+        }
+    }
+
+    /// Derefs - as an `Option` - the wrapped value, if it exists.
+    pub fn as_opt_deref(&self) -> Option<&T::Target>
+    where
+        T: Deref,
+    {
+        match self.as_opt_ref() {
             Some(t) => Some(t.deref()),
             None => None,
         }
     }
 
-    /// Derefs mutably the wrapped value, if it exists.
-    pub fn as_deref_mut(&mut self) -> Option<&mut T::Target>
+    /// Derefs - as an `Option` - mutably the wrapped value, if it exists.
+    pub fn as_opt_deref_mut(&mut self) -> Option<&mut T::Target>
     where
         T: DerefMut,
     {
-        match self.as_mut() {
+        match self.as_opt_mut() {
             Some(t) => Some(t.deref_mut()),
             None => None,
         }
@@ -246,7 +286,7 @@ where
     T: Clone,
 {
     fn clone(&self) -> Self {
-        Maybe::<_, G>::new(self.as_ref().cloned())
+        Maybe::<_, G>::new(self.as_opt_ref().cloned())
     }
 }
 
@@ -255,7 +295,7 @@ where
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.as_ref() == other.as_ref()
+        self.as_opt_ref() == other.as_opt_ref()
     }
 }
 
@@ -266,7 +306,7 @@ where
     T: Hash,
 {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.as_ref().hash(state)
+        self.as_opt_ref().hash(state)
     }
 }
 

@@ -117,7 +117,7 @@ impl PaseMgr {
             )));
 
         // Can't fail as we just initialized the session
-        let session = unwrap!(self.session.as_mut());
+        let session = unwrap!(self.session.as_opt_mut());
 
         session.add_mdns(discriminator, self.rand, mdns)
     }
@@ -139,13 +139,13 @@ impl PaseMgr {
             .try_reinit(Maybe::init_some(PaseSession::init(verifier, salt, count)))?;
 
         // Can't fail as we just initialized the session
-        let session = unwrap!(self.session.as_mut());
+        let session = unwrap!(self.session.as_opt_mut());
 
         session.add_mdns(discriminator, self.rand, mdns)
     }
 
     pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<bool, Error> {
-        let disabled = if let Some(session) = self.session.as_ref() {
+        let disabled = if let Some(session) = self.session.as_opt_ref() {
             mdns.remove(&session.mdns_service_name)?;
 
             true
@@ -305,7 +305,7 @@ impl Pake {
 
         {
             let pase = exchange.matter().pase_mgr.borrow();
-            let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+            let session = pase.session.as_opt_ref().ok_or(ErrorCode::NoSession)?;
 
             spake2p.start_verifier(&session.verifier)?;
             spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
@@ -338,7 +338,7 @@ impl Pake {
 
         let resp = {
             let pase = exchange.matter().pase_mgr.borrow();
-            let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+            let session = pase.session.as_opt_ref().ok_or(ErrorCode::NoSession)?;
 
             let a = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
             if a.passcode_id != 0 {

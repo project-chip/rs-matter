@@ -92,14 +92,14 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
 
 impl<T: ToTLV> ToTLV for Maybe<T, AsNullable> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        match self.as_ref() {
+        match self.as_opt_ref() {
             None => tw.null(tag),
             Some(s) => s.to_tlv(tag, tw),
         }
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
-        match self.as_ref() {
+        match self.as_opt_ref() {
             None => EitherIter::First(TLV::null(tag).into_tlv_iter()),
             Some(s) => EitherIter::Second(s.tlv_iter(tag)),
         }
@@ -126,7 +126,7 @@ impl<'a, T: FromTLV<'a> + 'a> FromTLV<'a> for Maybe<T, AsOptional> {
 
 impl<T: ToTLV> ToTLV for Maybe<T, AsOptional> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
-        match self.as_ref() {
+        match self.as_opt_ref() {
             None => Ok(()),
             Some(s) => s.to_tlv(tag, tw),
         }
@@ -135,7 +135,7 @@ impl<T: ToTLV> ToTLV for Maybe<T, AsOptional> {
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
         use crate::tlv::EitherIter;
 
-        match self.as_ref() {
+        match self.as_opt_ref() {
             None => EitherIter::First(empty()),
             Some(s) => EitherIter::Second(s.tlv_iter(tag)),
         }

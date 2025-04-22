@@ -209,7 +209,7 @@ use core::marker::PhantomData;
 use crate::error::Error;
 use crate::tlv::{TLVTag, TLVWrite};
 
-use super::{Octets, ToTLV, Utf8Str};
+use super::{Nullable, Octets, ToTLV, Utf8Str};
 
 /// Each `TLVBuilder<P>` trait implementation has a parent - `P`
 /// which should implement the `TLVBuilderParent` trait.
@@ -225,9 +225,6 @@ pub trait TLVBuilderParent: Sized {
 
     /// Return a mutable reference to the writer.
     fn writer(&mut self) -> &mut Self::Write;
-
-    /// Convert itself into the writer.
-    fn into_writer(self) -> Self::Write;
 }
 
 /// The `TLVBuilder` trait is used to implement a TLV builder for a certain TLV type.
@@ -241,11 +238,24 @@ where
     /// Create a new TLV builder for the given parent and tag.
     fn new(parent: P, tag: &TLVTag) -> Result<Self, Error>;
 
+    /// Call a closure with the builder and return the result.
+    fn with<F>(self, f: F) -> Result<P, Error>
+    where
+        F: FnOnce(Self) -> Result<P, Error>,
+    {
+        f(self)
+    }
+
     /// Convert itself into a writer.
     ///
     /// Should be used when the user prefers to use the raw `TLVWrite`
     /// interface to write the TLV type.
-    fn into_writer(self) -> P::Write;
+    ///
+    /// NOTE:
+    /// Use this method with caution, as it will consume the builder!
+    /// You are then on your own so as to write - using the parent's writer - the correct TLV data
+    /// that is otherwise performed by the builder.
+    fn unchecked_into_parent(self) -> P;
 }
 
 pub struct TLVWriteParent<W>(W);
@@ -265,10 +275,6 @@ where
 
     fn writer(&mut self) -> &mut Self::Write {
         &mut self.0
-    }
-
-    fn into_writer(self) -> Self::Write {
-        self.0
     }
 }
 
@@ -316,10 +322,6 @@ where
     fn writer(&mut self) -> &mut Self::Write {
         self.parent.writer()
     }
-
-    fn into_writer(self) -> Self::Write {
-        self.parent.into_writer()
-    }
 }
 
 impl<P, T> TLVBuilder<P> for ToTLVBuilder<P, T>
@@ -331,8 +333,8 @@ where
         Ok(Self::new(parent, tag))
     }
 
-    fn into_writer(self) -> P::Write {
-        self.parent.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
@@ -364,8 +366,10 @@ where
     }
 
     /// Push a new element into the array.
-    pub fn push(&mut self, tlv: &T) -> Result<(), Error> {
-        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())
+    pub fn push(mut self, tlv: &T) -> Result<Self, Error> {
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
+
+        Ok(self)
     }
 
     /// Finish the array and return the parent.
@@ -385,10 +389,6 @@ where
     fn writer(&mut self) -> &mut Self::Write {
         self.parent.writer()
     }
-
-    fn into_writer(self) -> Self::Write {
-        self.parent.into_writer()
-    }
 }
 
 impl<P, T> TLVBuilder<P> for ToTLVArrayBuilder<P, T>
@@ -400,8 +400,8 @@ where
         Self::new(parent, tag)
     }
 
-    fn into_writer(self) -> P::Write {
-        self.parent.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
@@ -439,10 +439,6 @@ where
     fn writer(&mut self) -> &mut Self::Write {
         self.parent.writer()
     }
-
-    fn into_writer(self) -> Self::Write {
-        self.parent.into_writer()
-    }
 }
 
 impl<P> TLVBuilder<P> for Utf8StrBuilder<P>
@@ -453,8 +449,8 @@ where
         Ok(Self::new(parent, tag))
     }
 
-    fn into_writer(self) -> P::Write {
-        self.parent.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
@@ -481,8 +477,10 @@ where
     }
 
     /// Push a new element into the array.
-    pub fn push(&mut self, tlv: Utf8Str<'_>) -> Result<(), Error> {
-        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())
+    pub fn push(mut self, tlv: Utf8Str<'_>) -> Result<Self, Error> {
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
+
+        Ok(self)
     }
 
     /// Finish the array and return the parent.
@@ -502,10 +500,6 @@ where
     fn writer(&mut self) -> &mut Self::Write {
         self.parent.writer()
     }
-
-    fn into_writer(self) -> Self::Write {
-        self.parent.into_writer()
-    }
 }
 
 impl<P> TLVBuilder<P> for Utf8StrArrayBuilder<P>
@@ -516,8 +510,8 @@ where
         Self::new(parent, tag)
     }
 
-    fn into_writer(self) -> P::Write {
-        self.parent.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
@@ -555,10 +549,6 @@ where
     fn writer(&mut self) -> &mut Self::Write {
         self.parent.writer()
     }
-
-    fn into_writer(self) -> Self::Write {
-        self.parent.into_writer()
-    }
 }
 
 impl<P> TLVBuilder<P> for OctetsBuilder<P>
@@ -569,8 +559,8 @@ where
         Ok(Self::new(parent, tag))
     }
 
-    fn into_writer(self) -> P::Write {
-        self.parent.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
@@ -597,8 +587,10 @@ where
     }
 
     /// Push a new element into the array.
-    pub fn push(&mut self, tlv: Octets<'_>) -> Result<(), Error> {
-        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())
+    pub fn push(mut self, tlv: Octets<'_>) -> Result<Self, Error> {
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
+
+        Ok(self)
     }
 
     /// Finish the array and return the parent.
@@ -618,10 +610,6 @@ where
     fn writer(&mut self) -> &mut Self::Write {
         self.parent.writer()
     }
-
-    fn into_writer(self) -> Self::Write {
-        self.parent.into_writer()
-    }
 }
 
 impl<P> TLVBuilder<P> for OctetsArrayBuilder<P>
@@ -632,14 +620,14 @@ where
         Self::new(parent, tag)
     }
 
-    fn into_writer(self) -> P::Write {
-        self.parent.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
 /// A builder for a nullable TLV type.
 pub struct NullableBuilder<P, T> {
-    p: P,
+    parent: P,
     tag: TLVTag,
     _t: PhantomData<fn() -> T>,
 }
@@ -650,9 +638,9 @@ where
     T: TLVBuilder<P>,
 {
     /// Create a new nullable TLV builder for the given parent and tag.
-    pub fn new(p: P, tag: &TLVTag) -> Self {
+    pub fn new(parent: P, tag: &TLVTag) -> Self {
         Self {
-            p,
+            parent,
             tag: tag.clone(),
             _t: PhantomData,
         }
@@ -660,14 +648,27 @@ where
 
     /// Write a null value into the TLV and return the parent.
     pub fn null(mut self) -> Result<P, Error> {
-        self.p.writer().null(&self.tag)?;
+        self.parent.writer().null(&self.tag)?;
 
-        Ok(self.p)
+        Ok(self.parent)
     }
 
     /// Create and return the builder for the non-null value.
     pub fn non_null(self) -> Result<T, Error> {
-        T::new(self.p, &self.tag)
+        T::new(self.parent, &self.tag)
+    }
+
+    /// If the input is non-null, call the closure with the non-null builder and the input.
+    /// If the input is null, write null and return the parent.
+    pub fn with_non_null<I, F>(self, input: Nullable<I>, f: F) -> Result<P, Error>
+    where
+        F: FnOnce(&I, T) -> Result<P, Error>,
+    {
+        if let Some(input) = input.as_opt_ref() {
+            f(input, self.non_null()?)
+        } else {
+            self.null()
+        }
     }
 }
 
@@ -678,11 +679,7 @@ where
     type Write = P::Write;
 
     fn writer(&mut self) -> &mut Self::Write {
-        self.p.writer()
-    }
-
-    fn into_writer(self) -> Self::Write {
-        self.p.into_writer()
+        self.parent.writer()
     }
 }
 
@@ -695,14 +692,14 @@ where
         Ok(Self::new(parent, tag))
     }
 
-    fn into_writer(self) -> P::Write {
-        self.p.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
 
 /// A builder for an optional TLV type.
 pub struct OptionalBuilder<P, T> {
-    p: P,
+    parent: P,
     tag: TLVTag,
     _t: PhantomData<fn() -> T>,
 }
@@ -713,9 +710,9 @@ where
     T: TLVBuilder<P>,
 {
     /// Create a new optional TLV builder for the given parent and tag.
-    pub fn new(p: P, tag: &TLVTag) -> Self {
+    pub fn new(parent: P, tag: &TLVTag) -> Self {
         Self {
-            p,
+            parent,
             tag: tag.clone(),
             _t: PhantomData,
         }
@@ -723,12 +720,25 @@ where
 
     /// Skip writing the TLV type and return the parent.
     pub fn none(self) -> P {
-        self.p
+        self.parent
     }
 
     /// Create and return the builder for the non-optional value.
     pub fn some(self) -> Result<T, Error> {
-        T::new(self.p, &self.tag)
+        T::new(self.parent, &self.tag)
+    }
+
+    /// If the input is `Some`, call the closure with the non-optional builder and the input.
+    /// If the input is `None`, return the parent.
+    pub fn with_some<I, F>(self, input: Option<I>, f: F) -> Result<P, Error>
+    where
+        F: FnOnce(&I, T) -> Result<P, Error>,
+    {
+        if let Some(input) = input.as_ref() {
+            f(input, self.some()?)
+        } else {
+            Ok(self.none())
+        }
     }
 }
 
@@ -739,11 +749,7 @@ where
     type Write = P::Write;
 
     fn writer(&mut self) -> &mut Self::Write {
-        self.p.writer()
-    }
-
-    fn into_writer(self) -> Self::Write {
-        self.p.into_writer()
+        self.parent.writer()
     }
 }
 
@@ -756,7 +762,7 @@ where
         Ok(Self::new(parent, tag))
     }
 
-    fn into_writer(self) -> P::Write {
-        self.p.into_writer()
+    fn unchecked_into_parent(self) -> P {
+        self.parent
     }
 }
