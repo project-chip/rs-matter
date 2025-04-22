@@ -27,3 +27,4 @@ pub mod root_endpoint;
 pub mod sdm;
 pub mod subscriptions;
 pub mod system_model;
+pub mod unit_testing;

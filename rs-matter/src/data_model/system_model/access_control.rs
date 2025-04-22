@@ -32,12 +32,6 @@ use crate::{
 
 pub const ID: u32 = 0x001F;
 
-mod foo {
-    use rs_matter_macros::idl_import;
-
-    idl_import!(clusters = ["AccessControl"]);
-}
-
 #[derive(FromRepr, EnumDiscriminants)]
 #[repr(u32)]
 pub enum Attributes {

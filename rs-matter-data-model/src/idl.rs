@@ -5,7 +5,7 @@ use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, tag_no_case, take_until, take_while, take_while1},
     character::complete::{digit1, hex_digit1, multispace1, one_of, space1},
-    combinator::{map, opt, recognize, value},
+    combinator::{opt, recognize, value},
     error::ErrorKind,
     multi::{many0, separated_list0},
     sequence::{delimited, preceded, tuple},
@@ -110,16 +110,16 @@ where
 /// assert_eq!(result.1, ApiMaturity::Provisional);
 /// ```
 pub fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("stable").parse(span) {
+    if let Ok((span, _)) = keyword("stable").parse(span) {
         return Ok((span, ApiMaturity::Stable));
     }
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("provisional").parse(span) {
+    if let Ok((span, _)) = keyword("provisional").parse(span) {
         return Ok((span, ApiMaturity::Provisional));
     }
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("internal").parse(span) {
+    if let Ok((span, _)) = keyword("internal").parse(span) {
         return Ok((span, ApiMaturity::Internal));
     }
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("deprecated").parse(span) {
+    if let Ok((span, _)) = keyword("deprecated").parse(span) {
         return Ok((span, ApiMaturity::Deprecated));
     }
 
@@ -146,6 +146,28 @@ pub fn hex_integer(span: Span) -> IResult<Span, u64, ParseError> {
         .preceded_by(tag_no_case("0x"))
         .map(|r| u64::from_str_radix(r.fragment(), 16).expect("valid hex digits"))
         .parse(span)
+}
+
+/// Parses a keyword
+///
+/// A keyword is an identifier that is case-insensitive
+pub fn keyword<'a>(
+    keyword: &'a str,
+) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Span<'a>, ParseError<'a>> + 'a {
+    move |span| {
+        let (r_span, id) = parse_id_span(span)?;
+
+        if id.eq_ignore_ascii_case(keyword) {
+            Ok((r_span, id))
+        } else {
+            use nom::error::ParseError;
+
+            Err(nom::Err::Error(ParseError::from_error_kind(
+                span,
+                ErrorKind::Tag,
+            )))
+        }
+    }
 }
 
 /// Parses a decimal-formated integer
@@ -336,13 +358,17 @@ pub fn whitespace1(span: Span) -> IResult<Span, Option<DocComment>, ParseError> 
 
 /// Parses a name id, of the form /[a-zA-Z_][a-zA-Z0-9_]*/
 ///
+/// Returns the parsed id as a string slice
 pub fn parse_id(span: Span) -> IResult<Span, &str, ParseError> {
+    parse_id_span(span).map(|(span, data)| (span, *data.fragment()))
+}
+
+/// Parses a name id, of the form /[a-zA-Z_][a-zA-Z0-9_]*/
+fn parse_id_span(span: Span) -> IResult<Span, Span, ParseError> {
     let valid_first = |c: char| c.is_ascii_alphabetic() || c == '_';
     let valid_second = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    map(
-        recognize(tuple((take_while1(valid_first), take_while(valid_second)))),
-        |data: Span| *data.fragment(),
-    )(span)
+
+    recognize(tuple((take_while1(valid_first), take_while(valid_second)))).parse(span)
 }
 
 /// Parses a IDL representation of a constant entry.
@@ -417,7 +443,7 @@ fn parse_enum_after_doc_maturity<'a>(
     span: Span<'a>,
 ) -> IResult<Span<'a>, Enum, ParseError<'a>> {
     tuple((
-        tag_no_case("enum"),
+        keyword("enum"),
         whitespace1,
         parse_id,
         whitespace0,
@@ -451,7 +477,7 @@ pub fn parse_bitmap_after_doc_maturity<'a>(
     span: Span<'a>,
 ) -> IResult<Span<'a>, Bitmap, ParseError<'a>> {
     tuple((
-        tag_no_case("bitmap"),
+        keyword("bitmap"),
         whitespace1,
         parse_id,
         whitespace0,
@@ -506,10 +532,10 @@ pub fn parse_field(span: Span) -> IResult<Span, Field, ParseError> {
     .parse(span)
 }
 
-/// Grabs a tag set which are whitespace-separated list of items
+/// Grabs a set of keywords which is just a whitespace-separated list of keywords
 ///
-/// Returns applyin the parser and extracting a HashSet of the given tags.
-macro_rules! tags_set {
+/// Returns applying the parser and extracting a HashSet of the given keywords.
+macro_rules! keywords_set {
     ($span:ident, $($tags:expr),+) => {{
         let mut result = HashSet::new();
         let mut rest = $span;
@@ -523,7 +549,7 @@ macro_rules! tags_set {
            }
 
            $(
-           if let Ok((tail, tag)) = nom::bytes::complete::tag_no_case::<_,_,()>($tags).parse(element_start) {
+           if let Ok((tail, tag)) = keyword($tags).parse(element_start) {
                rest = tail;
                result.insert(*tag.fragment());
                continue;
@@ -540,7 +566,7 @@ macro_rules! tags_set {
 
 pub fn parse_struct_field(span: Span) -> IResult<Span, StructField, ParseError> {
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-    let (span, attributes) = tags_set!(span, "optional", "nullable", "fabric_sensitive");
+    let (span, attributes) = keywords_set!(span, "optional", "nullable", "fabric_sensitive");
 
     let is_optional = attributes.contains("optional");
     let is_nullable = attributes.contains("nullable");
@@ -586,17 +612,17 @@ fn parse_struct_after_doc_maturity<'a>(
     maturity: ApiMaturity,
     span: Span<'a>,
 ) -> IResult<Span<'a>, Struct, ParseError<'a>> {
-    let (span, struct_type) = opt(alt((tag_no_case("request"), tag_no_case("response"))))(span)?;
+    let (span, struct_type) = opt(alt((keyword("request"), keyword("response"))))(span)?;
     let struct_type = struct_type.map(|f| *f.fragment());
 
     let (span, _) = whitespace0.parse(span)?;
 
-    let (span, attributes) = tags_set!(span, "fabric_scoped");
+    let (span, attributes) = keywords_set!(span, "fabric_scoped");
 
     let is_fabric_scoped = attributes.contains("fabric_scoped");
 
     let (span, id) = delimited(
-        tuple((whitespace0, tag_no_case("struct"), whitespace1)),
+        tuple((whitespace0, keyword("struct"), whitespace1)),
         parse_id,
         whitespace0,
     )
@@ -626,29 +652,29 @@ fn parse_struct_after_doc_maturity<'a>(
 }
 
 pub fn access_privilege(span: Span) -> IResult<Span, AccessPrivilege, ParseError> {
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("view").parse(span) {
+    if let Ok((span, _)) = keyword("view").parse(span) {
         return Ok((span, AccessPrivilege::View));
     }
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("operate").parse(span) {
+    if let Ok((span, _)) = keyword("operate").parse(span) {
         return Ok((span, AccessPrivilege::Operate));
     }
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("manage").parse(span) {
+    if let Ok((span, _)) = keyword("manage").parse(span) {
         return Ok((span, AccessPrivilege::Manage));
     }
 
-    value(AccessPrivilege::Administer, tag_no_case("administer")).parse(span)
+    value(AccessPrivilege::Administer, keyword("administer")).parse(span)
 }
 
 pub fn event_priority(span: Span) -> IResult<Span, EventPriority, ParseError> {
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("info").parse(span) {
+    if let Ok((span, _)) = keyword("info").parse(span) {
         return Ok((span, EventPriority::Info));
     }
 
-    if let Ok((span, _)) = tag_no_case::<_, _, ()>("critical").parse(span) {
+    if let Ok((span, _)) = keyword("critical").parse(span) {
         return Ok((span, EventPriority::Critical));
     }
 
-    value(EventPriority::Debug, tag_no_case("debug")).parse(span)
+    value(EventPriority::Debug, keyword("debug")).parse(span)
 }
 
 pub fn parse_event(span: Span) -> IResult<Span, Event, ParseError> {
@@ -664,21 +690,21 @@ fn parse_event_after_doc_maturity<'a>(
     maturity: ApiMaturity,
     span: Span<'a>,
 ) -> IResult<Span<'a>, Event, ParseError<'a>> {
-    let (span, attributes) = tags_set!(span, "fabric_sensitive");
+    let (span, attributes) = keywords_set!(span, "fabric_sensitive");
     let is_fabric_sensitive = attributes.contains("fabric_sensitive");
 
     tuple((
         preceded(whitespace0, event_priority),
         whitespace1,
-        tag_no_case("event"),
+        keyword("event"),
         whitespace1,
         opt(delimited(
             tuple((
-                tag_no_case("access"),
+                keyword("access"),
                 whitespace0,
                 tag("("),
                 whitespace0,
-                tag_no_case("read"),
+                keyword("read"),
                 tag(":"),
                 whitespace0,
             )),
@@ -719,18 +745,18 @@ pub fn parse_command_after_doc_maturity<'a>(
     maturity: ApiMaturity,
     span: Span<'a>,
 ) -> IResult<Span<'a>, Command, ParseError<'a>> {
-    let (span, qualities) = tags_set!(span, "timed", "fabric");
+    let (span, qualities) = keywords_set!(span, "timed", "fabric");
     let is_timed = qualities.contains("timed");
     let is_fabric_scoped = qualities.contains("fabric");
 
     let access_parser = opt(tuple((
         tuple((
             whitespace0,
-            tag_no_case("access"),
+            keyword("access"),
             whitespace0,
             tag("("),
             whitespace0,
-            tag_no_case("invoke"),
+            keyword("invoke"),
             tag(":"),
             whitespace0,
         )),
@@ -741,7 +767,7 @@ pub fn parse_command_after_doc_maturity<'a>(
     .map(|opt_access| opt_access.unwrap_or(AccessPrivilege::Operate));
 
     tuple((
-        tuple((whitespace0, tag_no_case("command"))),
+        tuple((whitespace0, keyword("command"))),
         access_parser,
         whitespace0,
         parse_id,
@@ -775,7 +801,7 @@ fn attribute_access(span: Span) -> IResult<Span, (AccessPrivilege, AccessPrivile
     let (span, tags) = opt(delimited(
         tuple((
             whitespace0,
-            tag_no_case("access"),
+            keyword("access"),
             whitespace0,
             tag("("),
             whitespace0,
@@ -784,7 +810,7 @@ fn attribute_access(span: Span) -> IResult<Span, (AccessPrivilege, AccessPrivile
             tuple((whitespace0, tag(","), whitespace0)),
             tuple((
                 whitespace0,
-                alt((tag_no_case("read"), tag_no_case("write"))),
+                alt((keyword("read"), keyword("write"))),
                 whitespace0,
                 tag(":"),
                 whitespace0,
@@ -826,14 +852,14 @@ pub fn parse_attribute_after_doc_maturity<'a>(
     maturity: ApiMaturity,
     span: Span<'a>,
 ) -> IResult<Span<'a>, Attribute, ParseError<'a>> {
-    let (span, qualities) = tags_set!(span, "readonly", "nosubscribe", "timedwrite");
+    let (span, qualities) = keywords_set!(span, "readonly", "nosubscribe", "timedwrite");
     let is_read_only = qualities.contains("readonly");
     let is_no_subscribe = qualities.contains("nosubscribe");
     let is_timed_write = qualities.contains("timedwrite");
 
     tuple((
         whitespace0,
-        tag_no_case("attribute"),
+        keyword("attribute"),
         whitespace1,
         attribute_access,
         whitespace0,
@@ -866,7 +892,7 @@ fn parse_cluster_member<'a>(c: &mut Cluster, span: Span<'a>) -> Option<Span<'a>>
     .ok()?;
 
     if let Ok((rest, revision)) = delimited(
-        tuple((tag_no_case("revision"), whitespace1)),
+        tuple((keyword("revision"), whitespace1)),
         positive_integer,
         tuple((whitespace0, tag(";"))),
     )
@@ -914,10 +940,10 @@ pub fn parse_cluster(span: Span) -> IResult<Span, Cluster, ParseError> {
     let (span, mut cluster) = delimited(
         tuple((
             opt(tuple((
-                alt((tag_no_case("client"), tag_no_case("server"))),
+                alt((keyword("client"), keyword("server"))),
                 whitespace1,
             ))),
-            tag_no_case("cluster"),
+            keyword("cluster"),
             whitespace1,
         )),
         tuple((
@@ -951,9 +977,9 @@ pub fn parse_cluster(span: Span) -> IResult<Span, Cluster, ParseError> {
 pub fn device_type(span: Span) -> IResult<Span, DeviceType, ParseError> {
     tuple((
         parse_id.preceded_by(tuple((
-            tag_no_case("device"),
+            keyword("device"),
             whitespace1,
-            tag_no_case("type"),
+            keyword("type"),
             whitespace1,
         ))),
         positive_integer.preceded_by(tuple((whitespace0, tag("="), whitespace0))),
@@ -962,7 +988,7 @@ pub fn device_type(span: Span) -> IResult<Span, DeviceType, ParseError> {
                 whitespace0,
                 tag(","),
                 whitespace0,
-                tag_no_case("version"),
+                keyword("version"),
                 whitespace0,
             )))
             .terminated(tuple((whitespace0, tag(";")))),
@@ -982,9 +1008,8 @@ pub fn default_attribute_value(span: Span) -> IResult<Span, DefaultAttributeValu
     let mut deepest_error = DeepestError::new();
 
     // make sure we have some default before trying to parse
-    let (span, _) = deepest_error.intercept(
-        tuple((tag_no_case("default"), whitespace0, tag("="), whitespace0)).parse(span),
-    )?;
+    let (span, _) = deepest_error
+        .intercept(tuple((keyword("default"), whitespace0, tag("="), whitespace0)).parse(span))?;
 
     if let Ok((rest, n)) = deepest_error.intercept(positive_integer.parse(span)) {
         // TODO: bitwise compare here may be rough
@@ -996,11 +1021,11 @@ pub fn default_attribute_value(span: Span) -> IResult<Span, DefaultAttributeValu
         return Ok((rest, DefaultAttributeValue::Signed(n)));
     }
 
-    if let Ok((rest, _)) = deepest_error.intercept(tag_no_case("true").parse(span)) {
+    if let Ok((rest, _)) = deepest_error.intercept(keyword("true").parse(span)) {
         return Ok((rest, DefaultAttributeValue::Bool(true)));
     }
 
-    if let Ok((rest, _)) = deepest_error.intercept(tag_no_case("false").parse(span)) {
+    if let Ok((rest, _)) = deepest_error.intercept(keyword("false").parse(span)) {
         return Ok((rest, DefaultAttributeValue::Bool(false)));
     }
 
@@ -1050,18 +1075,13 @@ pub fn default_attribute_value(span: Span) -> IResult<Span, DefaultAttributeValu
 }
 
 pub fn attribute_handling_type(span: Span) -> IResult<Span, AttributeHandlingType, ParseError> {
-    if let Ok(r) = value(AttributeHandlingType::Ram, tag_no_case::<_, _, ()>("ram")).parse(span) {
+    if let Ok(r) = value(AttributeHandlingType::Ram, keyword("ram")).parse(span) {
         return Ok(r);
     }
-    if let Ok(r) = value(
-        AttributeHandlingType::Callback,
-        tag_no_case::<_, _, ()>("callback"),
-    )
-    .parse(span)
-    {
+    if let Ok(r) = value(AttributeHandlingType::Callback, keyword("callback")).parse(span) {
         return Ok(r);
     }
-    value(AttributeHandlingType::Persist, tag_no_case("persist")).parse(span)
+    value(AttributeHandlingType::Persist, keyword("persist")).parse(span)
 }
 
 pub fn attribute_instantiation(span: Span) -> IResult<Span, AttributeInstantiation, ParseError> {
@@ -1071,7 +1091,7 @@ pub fn attribute_instantiation(span: Span) -> IResult<Span, AttributeInstantiati
     // as an overload.
     tuple((
         attribute_handling_type,
-        parse_id.preceded_by(tuple((whitespace1, tag_no_case("attribute"), whitespace1))),
+        parse_id.preceded_by(tuple((whitespace1, keyword("attribute"), whitespace1))),
         opt(default_attribute_value.preceded_by(whitespace1)),
     ))
     .terminated(tuple((whitespace0, tag(";"))))
@@ -1087,9 +1107,9 @@ pub fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, 
     let (mut span, name) = parse_id
         .preceded_by(tuple((
             whitespace0,
-            tag_no_case("server"),
+            keyword("server"),
             whitespace1,
-            tag_no_case("cluster"),
+            keyword("cluster"),
             whitespace1,
         )))
         .terminated(tuple((whitespace0, tag("{"))))
@@ -1110,9 +1130,9 @@ pub fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, 
         } else if let Ok((tail, cmd)) = deepest_error.intercept(
             parse_id
                 .preceded_by(tuple((
-                    tag_no_case("handle"),
+                    keyword("handle"),
                     whitespace1,
-                    tag_no_case("command"),
+                    keyword("command"),
                     whitespace1,
                 )))
                 .terminated(tuple((whitespace0, tag(";"))))
@@ -1123,9 +1143,9 @@ pub fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, 
         } else if let Ok((tail, e)) = deepest_error.intercept(
             parse_id
                 .preceded_by(tuple((
-                    tag_no_case("emits"),
+                    keyword("emits"),
                     whitespace1,
-                    tag_no_case("event"),
+                    keyword("event"),
                     whitespace1,
                 )))
                 .terminated(tuple((whitespace0, tag(";"))))
@@ -1160,7 +1180,7 @@ pub fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, 
 
 pub fn endpoint(span: Span) -> IResult<Span, Endpoint, ParseError> {
     let (mut span, id) = positive_integer
-        .preceded_by(tuple((whitespace0, tag_no_case("endpoint"), whitespace1)))
+        .preceded_by(tuple((whitespace0, keyword("endpoint"), whitespace1)))
         .terminated(tuple((whitespace0, tag("{"))))
         .parse(span)?;
 
@@ -1181,9 +1201,9 @@ pub fn endpoint(span: Span) -> IResult<Span, Endpoint, ParseError> {
             parse_id
                 .preceded_by(tuple((
                     whitespace0,
-                    tag_no_case("binding"),
+                    keyword("binding"),
                     whitespace1,
-                    tag_no_case("cluster"),
+                    keyword("cluster"),
                     whitespace1,
                 )))
                 .terminated(tuple((whitespace0, tag(";"))))
