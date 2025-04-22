@@ -32,7 +32,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-use crate::{alloc, attribute_enum, cmd_enter, command_enum, error::*};
+use crate::{alloc, attribute_enum, cluster_attrs, cmd_enter, command_enum, error::*};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
@@ -71,7 +71,7 @@ pub enum Commands {
 
 command_enum!(Commands);
 
-#[repr(u16)]
+#[repr(u32)]
 pub enum RespCommands {
     AttReqResp = 0x01,
     CertChainResp = 0x03,
@@ -80,7 +80,7 @@ pub enum RespCommands {
 }
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     NOCs = 0,
     Fabrics(()) = 1,
@@ -162,32 +162,31 @@ impl NocStatus {
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::CurrentFabricIndex as u16,
+            AttributesDiscriminants::CurrentFabricIndex as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::Fabrics as u16,
+            AttributesDiscriminants::Fabrics as _,
             Access::RV.union(Access::FAB_SCOPED),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::SupportedFabrics as u16,
+            AttributesDiscriminants::SupportedFabrics as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::CommissionedFabrics as u16,
+            AttributesDiscriminants::CommissionedFabrics as _,
             Access::RV,
             Quality::NONE,
         ),
-    ],
-    commands: &[
+    ),
+    accepted_commands: &[
         Commands::AttReq as _,
         Commands::CertChainReq as _,
         Commands::CSRReq as _,
@@ -196,6 +195,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Commands::RemoveFabric as _,
         Commands::AddTrustedRootCert as _,
     ],
+    generated_commands: &[RespCommands::NOCResp as _],
 };
 
 #[derive(Debug, Clone)]

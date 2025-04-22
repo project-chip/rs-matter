@@ -21,12 +21,12 @@ use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cmd_enter, command_enum};
+use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
 
 pub const ID: u32 = 0x0033;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     NetworkInterfaces(()) = 0x00,
     RebootCount(AttrType<u16>) = 0x01,
@@ -45,27 +45,27 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::NetworkInterfaces as u16,
+            AttributesDiscriminants::NetworkInterfaces as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::RebootCount as u16,
+            AttributesDiscriminants::RebootCount as _,
             Access::RV,
             Quality::PERSISTENT,
         ),
         Attribute::new(
-            AttributesDiscriminants::TestEventTriggersEnabled as u16,
+            AttributesDiscriminants::TestEventTriggersEnabled as _,
             Access::RV,
             Quality::NONE,
         ),
-    ],
-    commands: &[CommandsDiscriminants::TestEventTrigger as _],
+    ),
+    accepted_commands: &[CommandsDiscriminants::TestEventTrigger as _],
+    generated_commands: &[],
 };
 
 #[derive(Debug, Clone)]

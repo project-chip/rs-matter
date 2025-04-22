@@ -29,6 +29,9 @@ pub mod fileio {
     use crate::utils::init::{init, Init};
     use crate::Matter;
 
+    const KEY_FABRICS: &str = "fabrics";
+    const KEY_BASIC_INFO: &str = "basic_info";
+
     pub struct Psm<const N: usize = 4096> {
         buf: MaybeUninit<[u8; N]>,
     }
@@ -57,20 +60,36 @@ pub mod fileio {
             fs::create_dir_all(dir)?;
 
             if let Some(data) =
-                Self::load_key(dir, "fabrics", unsafe { self.buf.assume_init_mut() })?
+                Self::load_key(dir, KEY_FABRICS, unsafe { self.buf.assume_init_mut() })?
             {
                 matter.load_fabrics(data)?;
+            }
+
+            if let Some(data) =
+                Self::load_key(dir, KEY_BASIC_INFO, unsafe { self.buf.assume_init_mut() })?
+            {
+                matter.load_basic_info(data)?;
             }
 
             Ok(())
         }
 
         pub fn store(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
-            if matter.fabrics_changed() {
+            if matter.fabrics_changed() || matter.basic_info_changed() {
                 fs::create_dir_all(dir)?;
+            }
 
+            if matter.fabrics_changed() {
                 if let Some(data) = matter.store_fabrics(unsafe { self.buf.assume_init_mut() })? {
-                    Self::store_key(dir, "fabrics", data)?;
+                    Self::store_key(dir, KEY_FABRICS, data)?;
+                }
+            }
+
+            if matter.basic_info_changed() {
+                if let Some(data) =
+                    matter.store_basic_info(unsafe { self.buf.assume_init_mut() })?
+                {
+                    Self::store_key(dir, KEY_BASIC_INFO, data)?;
                 }
             }
 
@@ -84,10 +103,16 @@ pub mod fileio {
         ) -> Result<(), Error> {
             let dir = dir.as_ref();
 
-            self.load(dir, matter)?;
+            // NOTE: Calling `load` here does not make sense, because the `Psm::run` future / async method is executed
+            // concurrently with other `rs-matter` futures. Including the future (`Matter::run`) that takes a decision whether
+            // the state of `rs-matter` is such that it is not provisioned yet (no fabrics) and as such
+            // it has to open the basic commissioning window and print the QR code.
+            //
+            // User is supposed to instead explicitly call `load` before calling `Psm::run` and `Matter::run`
+            // self.load(dir, matter)?;
 
             loop {
-                matter.wait_fabrics_changed().await;
+                matter.wait_persist().await;
 
                 self.store(dir, matter)?;
             }
@@ -120,7 +145,7 @@ pub mod fileio {
 
                     let data = &buf[..offset];
 
-                    info!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
+                    debug!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
 
                     Ok(Some(data))
                 }
@@ -135,7 +160,7 @@ pub mod fileio {
 
             file.write_all(data)?;
 
-            info!("Key {}: stored {} bytes {:?}", key, data.len(), data);
+            debug!("Key {}: stored {} bytes {:?}", key, data.len(), data);
 
             Ok(())
         }

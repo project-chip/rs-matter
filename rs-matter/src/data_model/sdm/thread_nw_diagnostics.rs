@@ -23,12 +23,12 @@ use crate::data_model::objects::*;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, command_enum};
+use crate::{attribute_enum, cluster_attrs, command_enum};
 
 pub const ID: u32 = 0x0036;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     Channel(AttrType<u16>) = 0x00,
     RoutingRole(AttrType<RoutingRole>) = 0x01,
@@ -107,97 +107,97 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::Channel as u16,
+            AttributesDiscriminants::Channel as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::RoutingRole as u16,
+            AttributesDiscriminants::RoutingRole as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::NetworkName as u16,
+            AttributesDiscriminants::NetworkName as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::PanId as u16,
+            AttributesDiscriminants::PanId as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ExtendedPanId as u16,
+            AttributesDiscriminants::ExtendedPanId as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::MeshLocalPrefix as u16,
+            AttributesDiscriminants::MeshLocalPrefix as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::NeightborTable as u16,
+            AttributesDiscriminants::NeightborTable as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::RouteTable as u16,
+            AttributesDiscriminants::RouteTable as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::PartitionId as u16,
+            AttributesDiscriminants::PartitionId as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::Weighting as u16,
+            AttributesDiscriminants::Weighting as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::DataVersion as u16,
+            AttributesDiscriminants::DataVersion as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::StableDataVersion as u16,
+            AttributesDiscriminants::StableDataVersion as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::LeaderRouterId as u16,
+            AttributesDiscriminants::LeaderRouterId as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SecurityPolicy as u16,
+            AttributesDiscriminants::SecurityPolicy as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ChannelPage0Mask as u16,
+            AttributesDiscriminants::ChannelPage0Mask as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::OperationalDatasetComponents as u16,
+            AttributesDiscriminants::OperationalDatasetComponents as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::ActiveNetworkFaultsList as u16,
+            AttributesDiscriminants::ActiveNetworkFaultsList as _,
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[CommandsDiscriminants::ResetCounts as _],
+    ),
+    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
+    generated_commands: &[],
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV, FromRepr)]

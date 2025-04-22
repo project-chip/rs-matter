@@ -45,7 +45,7 @@ pub use metadata::*;
 
 pub type EndptId = u16;
 pub type ClusterId = u32;
-pub type AttrId = u16;
+pub type AttrId = u32;
 pub type CmdId = u32;
 
 #[derive(Debug, ToTLV, Copy, Clone)]

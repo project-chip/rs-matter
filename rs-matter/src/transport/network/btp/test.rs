@@ -37,6 +37,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     vid: 10,
     pid: 11,
     hw_ver: 12,
+    hw_ver_str: "12",
     sw_ver: 13,
     sw_ver_str: "13",
     serial_no: "aabbccdd",

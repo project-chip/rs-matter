@@ -24,7 +24,7 @@ use strum::{EnumDiscriminants, FromRepr};
 use crate::error::Error;
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cmd_enter, command_enum};
+use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
 
 use super::objects::*;
 
@@ -36,7 +36,7 @@ pub use on_off::Commands;
 pub use on_off::CommandsDiscriminants;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     OnOff(AttrType<bool>) = 0x0,
 }
@@ -46,21 +46,19 @@ command_enum!(Commands);
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
-        Attribute::new(
-            AttributesDiscriminants::OnOff as u16,
-            Access::RV,
-            Quality::SN,
-        ),
-    ],
-    commands: &[
+    attributes: cluster_attrs!(Attribute::new(
+        AttributesDiscriminants::OnOff as _,
+        Access::RV,
+        Quality::SN,
+    ),),
+    accepted_commands: &[
         CommandsDiscriminants::Off as _,
         CommandsDiscriminants::On as _,
         CommandsDiscriminants::Toggle as _,
     ],
+    generated_commands: &[],
 };
 
 #[derive(Clone)]

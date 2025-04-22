@@ -27,13 +27,12 @@ use strum::{EnumDiscriminants, FromRepr};
 use rs_matter::data_model::objects::{
     Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, Cluster,
     CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, NonBlockingHandler, Quality,
-    ATTRIBUTE_LIST, FEATURE_MAP,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
-use rs_matter::{attribute_enum, command_enum};
+use rs_matter::{attribute_enum, cluster_attrs, command_enum};
 
 pub const WRITE_LIST_MAX: usize = 5;
 
@@ -43,7 +42,7 @@ pub const ATTR_WRITE_DEFAULT_VALUE: u16 = 0xcafe;
 pub const ID: u32 = 0xABCD;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     Att1(AttrType<u16>) = 0,
     Att2(AttrType<u16>) = 1,
@@ -69,37 +68,37 @@ pub enum RespCommands {
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::Att1 as u16,
+            AttributesDiscriminants::Att1 as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::Att2 as u16,
+            AttributesDiscriminants::Att2 as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AttWrite as u16,
+            AttributesDiscriminants::AttWrite as _,
             Access::WRITE.union(Access::NEED_ADMIN),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AttCustom as u16,
+            AttributesDiscriminants::AttCustom as _,
             Access::READ.union(Access::NEED_VIEW),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::AttWriteList as u16,
+            AttributesDiscriminants::AttWriteList as _,
             Access::WRITE.union(Access::NEED_ADMIN),
             Quality::NONE,
         ),
-    ],
-    commands: &[Commands::EchoReq as _],
+    ),
+    accepted_commands: &[Commands::EchoReq as _],
+    generated_commands: &[RespCommands::EchoResp as _],
 };
 
 /// This is used in the tests to validate any settings that may have happened

@@ -436,14 +436,14 @@ where
 
                     if path.cluster.is_none() || path.cluster == Some(cluster.id) {
                         let cluster_leaves_len = if command {
-                            cluster.commands.len()
+                            cluster.accepted_commands.len()
                         } else {
                             cluster.attributes.len()
                         };
 
                         while (self.leaf_index as usize) < cluster_leaves_len {
                             let leaf_id = if command {
-                                cluster.commands[self.leaf_index as usize]
+                                cluster.accepted_commands[self.leaf_index as usize]
                             } else {
                                 cluster.attributes[self.leaf_index as usize].id as _
                             };
@@ -699,8 +699,10 @@ mod test {
                 &[DeviceType { dtype: 0, drev: 0 }],
                 &[Cluster::new(
                     0,
+                    1,
                     0,
                     &[Attribute::new(0, Access::all(), Quality::all())],
+                    &[],
                     &[],
                 )],
             )],
@@ -805,14 +807,18 @@ mod test {
                     &[
                         Cluster::new(
                             1,
+                            1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[],
                             &[],
                         ),
                         Cluster::new(
                             10,
+                            1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[],
                             &[],
                         ),
                     ],
@@ -823,17 +829,21 @@ mod test {
                     &[
                         Cluster::new(
                             1,
+                            1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
+                            &[],
                             &[],
                         ),
                         Cluster::new(
                             20,
+                            1,
                             0,
                             &[
                                 Attribute::new(20, Access::all(), Quality::all()),
                                 Attribute::new(30, Access::all(), Quality::all()),
                             ],
+                            &[],
                             &[],
                         ),
                     ],

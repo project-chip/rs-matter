@@ -736,11 +736,7 @@ pub mod ib {
             Self {
                 endpoint: path.endpoint,
                 cluster: path.cluster,
-                attr: if let Some(leaf) = path.leaf {
-                    Some(leaf as u16)
-                } else {
-                    None
-                },
+                attr: path.leaf,
                 tag_compression: None,
                 node: None,
                 list_index: None,
@@ -748,7 +744,7 @@ pub mod ib {
         }
 
         pub fn to_gp(&self) -> GenericPath {
-            GenericPath::new(self.endpoint, self.cluster, self.attr.map(|x| x as u32))
+            GenericPath::new(self.endpoint, self.cluster, self.attr)
         }
     }
 

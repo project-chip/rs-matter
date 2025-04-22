@@ -22,7 +22,7 @@ use strum::{EnumDiscriminants, FromRepr};
 use crate::data_model::objects::*;
 use crate::tlv::{FromTLV, TLVElement, ToTLV, Utf8Str};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cmd_enter};
+use crate::{attribute_enum, cluster_attrs, cmd_enter};
 use crate::{command_enum, error::*};
 
 idl_import!(clusters = ["GeneralCommissioning"]);
@@ -33,7 +33,7 @@ pub use general_commissioning::RegulatoryLocationTypeEnum;
 pub use general_commissioning::ID;
 
 #[derive(FromRepr, EnumDiscriminants)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum Attributes {
     BreadCrumb(AttrType<u64>) = 0,
     BasicCommissioningInfo(()) = 1,
@@ -46,7 +46,7 @@ attribute_enum!(Attributes);
 
 command_enum!(Commands);
 
-#[repr(u16)]
+#[repr(u32)]
 pub enum RespCommands {
     ArmFailsafeResp = 0x01,
     SetRegulatoryConfigResp = 0x03,
@@ -119,40 +119,44 @@ struct RegulatoryConfig<'a> {
 
 pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
+    revision: 1,
     feature_map: 0,
-    attributes: &[
-        FEATURE_MAP,
-        ATTRIBUTE_LIST,
+    attributes: cluster_attrs!(
         Attribute::new(
-            AttributesDiscriminants::BreadCrumb as u16,
+            AttributesDiscriminants::BreadCrumb as _,
             Access::READ.union(Access::WRITE).union(Access::NEED_ADMIN),
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::RegConfig as u16,
+            AttributesDiscriminants::RegConfig as _,
             Access::RV,
             Quality::NONE,
         ),
         Attribute::new(
-            AttributesDiscriminants::LocationCapability as u16,
+            AttributesDiscriminants::LocationCapability as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::BasicCommissioningInfo as u16,
+            AttributesDiscriminants::BasicCommissioningInfo as _,
             Access::RV,
             Quality::FIXED,
         ),
         Attribute::new(
-            AttributesDiscriminants::SupportsConcurrentConnection as u16,
+            AttributesDiscriminants::SupportsConcurrentConnection as _,
             Access::RV,
             Quality::FIXED,
         ),
-    ],
-    commands: &[
+    ),
+    accepted_commands: &[
         Commands::ArmFailSafe as _,
         Commands::SetRegulatoryConfig as _,
         Commands::CommissioningComplete as _,
+    ],
+    generated_commands: &[
+        RespCommands::ArmFailsafeResp as _,
+        RespCommands::SetRegulatoryConfigResp as _,
+        RespCommands::CommissioningCompleteResp as _,
     ],
 };
 
