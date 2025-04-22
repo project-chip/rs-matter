@@ -348,34 +348,34 @@ fn handler_attribute(
 
         if !delegate && attr.field.is_optional {
             quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, exchange: &#krate::transport::exchange::Exchange<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::data_model::objects::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
                     Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
         } else {
             let stream = quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, exchange: &#krate::transport::exchange::Exchange<'_>, builder: #attr_type) -> Result<P, #krate::error::Error>
+                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::data_model::objects::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#attr_name(self, exchange, builder)#sawait })
+                quote!(#stream { T::#attr_name(self, ctx, builder)#sawait })
             } else {
                 quote!(#stream;)
             }
         }
     } else if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>) -> Result<#attr_type, #krate::error::Error> {
+            #pasync fn #attr_name(&self, ctx: &#krate::data_model::objects::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>) -> Result<#attr_type, #krate::error::Error>
+            #pasync fn #attr_name(&self, ctx: &#krate::data_model::objects::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error>
         );
 
         if delegate {
-            quote!(#stream { T::#attr_name(self, exchange)#sawait })
+            quote!(#stream { T::#attr_name(self, ctx)#sawait })
         } else {
             quote!(#stream;)
         }
@@ -435,17 +435,17 @@ fn handler_attribute_write(
 
     if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
+            #pasync fn #attr_name(&self, ctx: &#krate::data_model::objects::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, exchange: &#krate::transport::exchange::Exchange<'_>, value: #attr_type) -> Result<(), #krate::error::Error>
+            #pasync fn #attr_name(&self, ctx: &#krate::data_model::objects::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error>
         );
 
         if delegate {
-            quote!(#stream { T::#attr_name(self, exchange, value)#sawait })
+            quote!(#stream { T::#attr_name(self, ctx, value)#sawait })
         } else {
             quote!(#stream;)
         }
@@ -517,14 +517,14 @@ fn handler_command(
                 let stream = quote!(
                     #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                         &self,
-                        exchange: &#krate::transport::exchange::Exchange<'_>,
+                        ctx: &#krate::data_model::objects::InvokeContext<'_>,
                         request: #field_req,
                         response: #field_resp,
                     ) -> Result<P, #krate::error::Error>
                 );
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, exchange, request, response)#sawait })
+                    quote!(#stream { T::#cmd_name(self, ctx, request, response)#sawait })
                 } else {
                     quote!(#stream;)
                 }
@@ -532,13 +532,13 @@ fn handler_command(
                 let stream = quote!(
                     #pasync fn #cmd_name(
                         &self,
-                        exchange: &#krate::transport::exchange::Exchange<'_>,
+                        ctx: &#krate::data_model::objects::InvokeContext<'_>,
                         request: #field_req,
                     ) -> Result<#field_resp, #krate::error::Error>
                 );
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, exchange, request)#sawait })
+                    quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
                 } else {
                     quote!(#stream;)
                 }
@@ -547,13 +547,13 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
-                    exchange: &#krate::transport::exchange::Exchange<'_>,
+                    ctx: &#krate::data_model::objects::InvokeContext<'_>,
                     request: #field_req,
                 ) -> Result<(), #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, exchange, request)#sawait })
+                quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
             } else {
                 quote!(#stream;)
             }
@@ -563,13 +563,13 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                     &self,
-                    exchange: &#krate::transport::exchange::Exchange<'_>,
+                    ctx: &#krate::data_model::objects::InvokeContext<'_>,
                     response: #field_resp,
                 ) -> Result<P, #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, exchange, response)#sawait })
+                quote!(#stream { T::#cmd_name(self, ctx, response)#sawait })
             } else {
                 quote!(#stream;)
             }
@@ -577,12 +577,12 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
-                    exchange: &#krate::transport::exchange::Exchange<'_>,
+                    ctx: &#krate::data_model::objects::InvokeContext<'_>,
                 ) -> Result<#field_resp, #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, exchange)#sawait })
+                quote!(#stream { T::#cmd_name(self, ctx)#sawait })
             } else {
                 quote!(#stream;)
             }
@@ -591,12 +591,12 @@ fn handler_command(
         let stream = quote!(
             #pasync fn #cmd_name(
                 &self,
-                exchange: &#krate::transport::exchange::Exchange<'_>,
+                ctx: &#krate::data_model::objects::InvokeContext<'_>,
             ) -> Result<(), #krate::error::Error>
         );
 
         if delegate {
-            quote!(#stream { T::#cmd_name(self, exchange)#sawait })
+            quote!(#stream { T::#cmd_name(self, ctx)#sawait })
         } else {
             quote!(#stream;)
         }
@@ -645,7 +645,7 @@ fn handler_adaptor_attribute_match(
             quote!(
                 AttributeId::#attr_name => {
                     self.0.#attr_method_name(
-                        exchange,
+                        &#krate::data_model::objects::ReadContext::new(exchange),
                         #krate::data_model::objects::ArrayAttributeRead::new(
                             attr.list_index.clone(),
                             #krate::tlv::TLVWriteParent::new(writer.writer()),
@@ -659,7 +659,7 @@ fn handler_adaptor_attribute_match(
         } else {
             quote!(
                 AttributeId::#attr_name => {
-                    self.0.#attr_method_name(exchange, #krate::tlv::TLVBuilder::new(
+                    self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange), #krate::tlv::TLVBuilder::new(
                         #krate::tlv::TLVWriteParent::new(writer.writer()),
                         &#krate::data_model::objects::AttrDataWriter::TAG,
                     )?)#sawait?;
@@ -670,7 +670,7 @@ fn handler_adaptor_attribute_match(
         }
     } else {
         quote!(
-            AttributeId::#attr_name => writer.set(self.0.#attr_method_name(exchange)#sawait?),
+            AttributeId::#attr_name => writer.set(self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange))#sawait?),
         )
     }
 }
@@ -701,11 +701,11 @@ fn handler_adaptor_attribute_write_match(
 
     if attr.field.field.data_type.is_list {
         quote!(
-            AttributeId::#attr_name => self.0.#attr_method_name(exchange, #krate::data_model::objects::ArrayAttributeWrite::new(attr.list_index.clone(), &data)?)#sawait?,
+            AttributeId::#attr_name => self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), #krate::data_model::objects::ArrayAttributeWrite::new(attr.list_index.clone(), &data)?)#sawait?,
         )
     } else {
         quote!(
-            AttributeId::#attr_name => self.0.#attr_method_name(exchange, #krate::tlv::FromTLV::from_tlv(&data)?)#sawait?,
+            AttributeId::#attr_name => self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), #krate::tlv::FromTLV::from_tlv(&data)?)#sawait?,
         )
     }
 }
@@ -798,7 +798,7 @@ fn handler_adaptor_command_match(
                         let mut writer = encoder.with_command(#field_resp_cmd_code)?;
 
                         self.0.#cmd_method_name(
-                            exchange,
+                            &#krate::data_model::objects::InvokeContext::new(exchange),
                             #krate::tlv::FromTLV::from_tlv(&data)?,
                             #krate::tlv::TLVBuilder::new(
                                 #krate::tlv::TLVWriteParent::new(writer.writer()),
@@ -815,7 +815,7 @@ fn handler_adaptor_command_match(
                         encoder
                             .with_command(#field_resp_cmd_code)?
                             .set(self.0.#cmd_method_name(
-                                exchange
+                                &#krate::data_model::objects::InvokeContext::new(exchange)
                                 #krate::tlv::FromTLV::from_tlv(&data)?,
                             )#sawait?)?
                     }
@@ -824,7 +824,7 @@ fn handler_adaptor_command_match(
         } else {
             quote!(
                 CommandId::#cmd_name => self.0.#cmd_method_name(
-                    exchange,
+                    &#krate::data_model::objects::InvokeContext::new(exchange),
                     #krate::tlv::FromTLV::from_tlv(&data)?,
                 )#sawait?,
             )
@@ -836,7 +836,7 @@ fn handler_adaptor_command_match(
                     let mut writer = encoder.with_command(#field_resp_cmd_code)?;
 
                     self.0.#cmd_method_name(
-                        exchange,
+                        &#krate::data_model::objects::InvokeContext::new(exchange),
                         #krate::tlv::TLVBuilder::new(
                             #krate::tlv::TLVWriteParent::new(writer.writer()),
                             &#krate::data_model::objects::AttrDataWriter::TAG,
@@ -851,13 +851,13 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     encoder
                         .with_command(#field_resp_cmd_code)?
-                        .set(self.0.#cmd_method_name(exchange)#sawait?)?
+                        .set(self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait?)?
                 }
             ))
         }
     } else {
         quote!(
-            CommandId::#cmd_name => self.0.#cmd_method_name(exchange)#sawait?,
+            CommandId::#cmd_name => self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait?,
         )
     }
 }
