@@ -17,10 +17,9 @@
 
 use rs_matter_macros::idl_import;
 
-use crate::data_model::objects::Dataver;
+use crate::data_model::objects::{Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
-use crate::transport::exchange::Exchange;
 
 idl_import!(clusters = ["GeneralCommissioning"]);
 
@@ -130,17 +129,17 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
         self.dataver.changed();
     }
 
-    fn breadcrumb(&self, _exchange: &Exchange<'_>) -> Result<u64, Error> {
+    fn breadcrumb(&self, _ctx: &ReadContext) -> Result<u64, Error> {
         Ok(0) // TODO
     }
 
-    fn set_breadcrumb(&self, _exchange: &Exchange<'_>, _value: u64) -> Result<(), Error> {
+    fn set_breadcrumb(&self, _ctx: &WriteContext, _value: u64) -> Result<(), Error> {
         Ok(()) // TODO
     }
 
     fn basic_commissioning_info<P: TLVBuilderParent>(
         &self,
-        _exchange: &Exchange<'_>,
+        _ctx: &ReadContext,
         builder: BasicCommissioningInfoBuilder<P>,
     ) -> Result<P, Error> {
         builder
@@ -149,32 +148,26 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
             .finish()
     }
 
-    fn regulatory_config(
-        &self,
-        _exchange: &Exchange<'_>,
-    ) -> Result<RegulatoryLocationTypeEnum, Error> {
+    fn regulatory_config(&self, _ctx: &ReadContext) -> Result<RegulatoryLocationTypeEnum, Error> {
         Ok(RegulatoryLocationTypeEnum::IndoorOutdoor)
     }
 
-    fn location_capability(
-        &self,
-        _exchange: &Exchange<'_>,
-    ) -> Result<RegulatoryLocationTypeEnum, Error> {
+    fn location_capability(&self, _ctx: &ReadContext) -> Result<RegulatoryLocationTypeEnum, Error> {
         Ok(self.commissioning_policy.location_cap())
     }
 
-    fn supports_concurrent_connection(&self, _exchange: &Exchange<'_>) -> Result<bool, Error> {
+    fn supports_concurrent_connection(&self, _ctx: &ReadContext) -> Result<bool, Error> {
         Ok(self.commissioning_policy.concurrent_connection_supported())
     }
 
     fn handle_arm_fail_safe<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange<'_>,
+        ctx: &InvokeContext,
         request: ArmFailSafeRequest,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let status = CommissioningErrorEnum::map(exchange.with_session(|sess| {
-            exchange
+        let status = CommissioningErrorEnum::map(ctx.exchange().with_session(|sess| {
+            ctx.exchange()
                 .matter()
                 .failsafe
                 .borrow_mut()
@@ -186,7 +179,7 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
 
     fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
-        _exchange: &Exchange<'_>,
+        _ctx: &InvokeContext,
         _request: SetRegulatoryConfigRequest,
         response: SetRegulatoryConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -199,11 +192,11 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
 
     fn handle_commissioning_complete<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange<'_>,
+        ctx: &InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let status = CommissioningErrorEnum::map(exchange.with_session(|sess| {
-            exchange
+        let status = CommissioningErrorEnum::map(ctx.exchange().with_session(|sess| {
+            ctx.exchange()
                 .matter()
                 .failsafe
                 .borrow_mut()
@@ -213,11 +206,11 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
         if matches!(status, CommissioningErrorEnum::OK) {
             // As per section 5.5 of the Matter Core Spec V1.3 we have to teriminate the PASE session
             // upon completion of commissioning
-            exchange
+            ctx.exchange()
                 .matter()
                 .pase_mgr
                 .borrow_mut()
-                .disable_pase_session(&exchange.matter().transport_mgr.mdns)?;
+                .disable_pase_session(&ctx.exchange().matter().transport_mgr.mdns)?;
         }
 
         response.error_code(status)?.debug_text("")?.finish()

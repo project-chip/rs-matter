@@ -26,7 +26,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 
-use super::objects::Dataver;
+use super::objects::{Dataver, InvokeContext, ReadContext, WriteContext};
 
 idl_import!(clusters = ["BasicInformation"]);
 
@@ -153,80 +153,80 @@ impl BasicInformationHandler for BasicInfoCluster {
         self.0.changed();
     }
 
-    fn data_model_revision(&self, _exchange: &Exchange) -> Result<u16, Error> {
+    fn data_model_revision(&self, _ctx: &ReadContext) -> Result<u16, Error> {
         Ok(0) // TODO
     }
 
-    fn vendor_id(&self, exchange: &Exchange) -> Result<u16, Error> {
-        Ok(Self::config(exchange).vid)
+    fn vendor_id(&self, ctx: &ReadContext) -> Result<u16, Error> {
+        Ok(Self::config(ctx.exchange()).vid)
     }
 
     fn vendor_name<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::config(exchange).vendor_name)
+        out.set(Self::config(ctx.exchange()).vendor_name)
     }
 
-    fn product_id(&self, exchange: &Exchange) -> Result<u16, Error> {
-        Ok(Self::config(exchange).pid)
+    fn product_id(&self, ctx: &ReadContext) -> Result<u16, Error> {
+        Ok(Self::config(ctx.exchange()).pid)
     }
 
     fn product_name<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::config(exchange).product_name)
+        out.set(Self::config(ctx.exchange()).product_name)
     }
 
     fn serial_number<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::config(exchange).serial_no)
+        out.set(Self::config(ctx.exchange()).serial_no)
     }
 
-    fn hardware_version(&self, exchange: &Exchange) -> Result<u16, Error> {
-        Ok(Self::config(exchange).hw_ver)
+    fn hardware_version(&self, ctx: &ReadContext) -> Result<u16, Error> {
+        Ok(Self::config(ctx.exchange()).hw_ver)
     }
 
     fn hardware_version_string<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::config(exchange).hw_ver_str)
+        out.set(Self::config(ctx.exchange()).hw_ver_str)
     }
 
-    fn software_version(&self, exchange: &Exchange) -> Result<u32, Error> {
-        Ok(Self::config(exchange).sw_ver)
+    fn software_version(&self, ctx: &ReadContext) -> Result<u32, Error> {
+        Ok(Self::config(ctx.exchange()).sw_ver)
     }
 
     fn software_version_string<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::config(exchange).sw_ver_str)
+        out.set(Self::config(ctx.exchange()).sw_ver_str)
     }
 
     fn node_label<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::settings(exchange).borrow().node_label.as_str())
+        out.set(Self::settings(ctx.exchange()).borrow().node_label.as_str())
     }
 
-    fn set_node_label(&self, exchange: &Exchange, label: &str) -> Result<(), Error> {
+    fn set_node_label(&self, ctx: &WriteContext, label: &str) -> Result<(), Error> {
         if label.len() > 32 {
             return Err(ErrorCode::InvalidAction.into());
         }
 
-        let mut settings = Self::settings(exchange).borrow_mut();
+        let mut settings = Self::settings(ctx.exchange()).borrow_mut();
         settings.node_label.clear();
         settings
             .node_label
@@ -235,26 +235,26 @@ impl BasicInformationHandler for BasicInfoCluster {
         settings.changed = true;
 
         settings.changed = true;
-        exchange.matter().notify_persist();
+        ctx.exchange().matter().notify_persist();
 
         Ok(())
     }
 
     fn location<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        let settings = Self::settings(exchange).borrow();
+        let settings = Self::settings(ctx.exchange()).borrow();
         out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
     }
 
-    fn set_location(&self, exchange: &Exchange, location: &str) -> Result<(), Error> {
+    fn set_location(&self, ctx: &WriteContext, location: &str) -> Result<(), Error> {
         if location.len() != 2 {
             return Err(ErrorCode::InvalidAction.into());
         }
 
-        let mut settings = Self::settings(exchange).borrow_mut();
+        let mut settings = Self::settings(ctx.exchange()).borrow_mut();
         if location == "XX" {
             settings.location = None;
         } else {
@@ -263,14 +263,14 @@ impl BasicInformationHandler for BasicInfoCluster {
         }
 
         settings.changed = true;
-        exchange.matter().notify_persist();
+        ctx.exchange().matter().notify_persist();
 
         Ok(())
     }
 
     fn capability_minima<P: TLVBuilderParent>(
         &self,
-        _exchange: &Exchange,
+        _ctx: &ReadContext,
         out: CapabilityMinimaStructBuilder<P>,
     ) -> Result<P, Error> {
         // TODO: Report real values
@@ -279,23 +279,23 @@ impl BasicInformationHandler for BasicInfoCluster {
             .finish()
     }
 
-    fn specification_version(&self, _exchange: &Exchange) -> Result<u32, Error> {
+    fn specification_version(&self, _ctx: &ReadContext) -> Result<u32, Error> {
         Ok(SUPPORTED_MATTER_SPEC_VERSION)
     }
 
-    fn max_paths_per_invoke(&self, _exchange: &Exchange) -> Result<u16, Error> {
+    fn max_paths_per_invoke(&self, _ctx: &ReadContext) -> Result<u16, Error> {
         Ok(1) // TODO: Report real value
     }
 
     fn product_label<P: TLVBuilderParent>(
         &self,
-        exchange: &Exchange,
+        ctx: &ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
-        out.set(Self::config(exchange).product_name)
+        out.set(Self::config(ctx.exchange()).product_name)
     }
 
-    fn handle_mfg_specific_ping(&self, _exchange: &Exchange) -> Result<(), Error> {
+    fn handle_mfg_specific_ping(&self, _ctx: &InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 }

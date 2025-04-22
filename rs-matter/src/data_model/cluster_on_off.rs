@@ -20,9 +20,8 @@ use core::cell::Cell;
 use rs_matter_macros::idl_import;
 
 use crate::error::Error;
-use crate::transport::exchange::Exchange;
 
-use super::objects::Dataver;
+use super::objects::{Dataver, InvokeContext, ReadContext};
 
 idl_import!(clusters = ["OnOff"]);
 
@@ -61,42 +60,42 @@ impl OnOffHandler for OnOffCluster {
         self.dataver.changed();
     }
 
-    fn on_off(&self, _exchange: &Exchange) -> Result<bool, Error> {
+    fn on_off(&self, _ctx: &ReadContext) -> Result<bool, Error> {
         Ok(self.on.get())
     }
 
-    fn handle_off(&self, _exchange: &Exchange) -> Result<(), Error> {
+    fn handle_off(&self, _ctx: &InvokeContext) -> Result<(), Error> {
         self.set(false);
         Ok(())
     }
 
-    fn handle_on(&self, _exchange: &Exchange) -> Result<(), Error> {
+    fn handle_on(&self, _ctx: &InvokeContext) -> Result<(), Error> {
         self.set(true);
         Ok(())
     }
 
-    fn handle_toggle(&self, _exchange: &Exchange) -> Result<(), Error> {
+    fn handle_toggle(&self, _ctx: &InvokeContext) -> Result<(), Error> {
         self.set(!self.on.get());
         Ok(())
     }
 
     fn handle_off_with_effect(
         &self,
-        _exchange: &Exchange,
+        _ctx: &InvokeContext,
         _request: OffWithEffectRequest,
     ) -> Result<(), Error> {
         // TODO
         Ok(())
     }
 
-    fn handle_on_with_recall_global_scene(&self, _exchange: &Exchange) -> Result<(), Error> {
+    fn handle_on_with_recall_global_scene(&self, _ctx: &InvokeContext) -> Result<(), Error> {
         // TODO
         Ok(())
     }
 
     fn handle_on_with_timed_off(
         &self,
-        _exchange: &Exchange,
+        _ctx: &InvokeContext,
         _request: OnWithTimedOffRequest,
     ) -> Result<(), Error> {
         // TODO
