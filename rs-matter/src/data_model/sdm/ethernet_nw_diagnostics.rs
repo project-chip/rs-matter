@@ -17,9 +17,8 @@
 
 use rs_matter_macros::idl_import;
 
-use crate::data_model::objects::Dataver;
+use crate::data_model::objects::{Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
-use crate::transport::exchange::Exchange;
 
 idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
 
@@ -44,15 +43,15 @@ impl EthernetNetworkDiagnosticsHandler for EthNwDiagCluster {
         self.dataver.changed();
     }
 
-    fn packet_rx_count(&self, _exchange: &Exchange<'_>) -> Result<u64, Error> {
+    fn packet_rx_count(&self, _ctx: &ReadContext) -> Result<u64, Error> {
         Ok(1) // TODO
     }
 
-    fn packet_tx_count(&self, _exchange: &Exchange<'_>) -> Result<u64, Error> {
+    fn packet_tx_count(&self, _ctx: &ReadContext) -> Result<u64, Error> {
         Ok(1) // TODO
     }
 
-    fn handle_reset_counts(&self, _exchange: &Exchange<'_>) -> Result<(), Error> {
+    fn handle_reset_counts(&self, _ctx: &InvokeContext) -> Result<(), Error> {
         Ok(()) // TODO
     }
 }

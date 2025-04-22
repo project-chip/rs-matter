@@ -25,6 +25,75 @@ use super::{AttrData, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails};
 
 pub use asynch::*;
 
+/// A context object that is passed to the handler when processing an attribute Read operation.
+///
+/// Currently, `AttrReadContext` instances are only used for IDL-generated cluster-specific
+/// handler traits and not in the general `Handler`/`AsyncHandler` traits.
+/// Consider re-evaluating that decision in future, as that would allow us to gradually
+pub struct ReadContext<'a> {
+    exchange: &'a Exchange<'a>,
+}
+
+impl<'a> ReadContext<'a> {
+    /// Construct a new `ReadContext` instance.
+    #[inline(always)]
+    pub const fn new(exchange: &'a Exchange<'a>) -> Self {
+        Self { exchange }
+    }
+
+    /// Return the exchange object that is associated with this read operation.
+    #[inline(always)]
+    pub fn exchange(&self) -> &Exchange<'_> {
+        self.exchange
+    }
+}
+
+/// A context object that is passed to the handler when processing an attribute Write operation.
+///
+/// Currently, `WriteContext` instances are only used for IDL-generated cluster-specific
+/// handler traits and not in the general `Handler`/`AsyncHandler` traits.
+/// Consider re-evaluating that decision in future.
+pub struct WriteContext<'a> {
+    exchange: &'a Exchange<'a>,
+}
+
+impl<'a> WriteContext<'a> {
+    /// Create a new `WriteContext` instance.
+    #[inline(always)]
+    pub const fn new(exchange: &'a Exchange<'a>) -> Self {
+        Self { exchange }
+    }
+
+    /// Return the exchange object that is associated with this write operation.
+    #[inline(always)]
+    pub fn exchange(&self) -> &Exchange<'_> {
+        self.exchange
+    }
+}
+
+/// A context object that is passed to the handler when processing an attribute Write operation.
+///
+/// Currently, `InvokeContext` instances are only used for IDL-generated cluster-specific
+/// handler traits and not in the general `Handler`/`AsyncHandler` traits.
+/// Consider re-evaluating that decision in future.
+pub struct InvokeContext<'a> {
+    exchange: &'a Exchange<'a>,
+}
+
+impl<'a> InvokeContext<'a> {
+    /// Construct a new `InvokeContext` instance.
+    #[inline(always)]
+    pub const fn new(exchange: &'a Exchange<'a>) -> Self {
+        Self { exchange }
+    }
+
+    /// Return the exchange object that is associated with this invoke operation.
+    #[inline(always)]
+    pub fn exchange(&self) -> &Exchange<'_> {
+        self.exchange
+    }
+}
+
 pub trait DataModelHandler: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
 impl<T> DataModelHandler for T where T: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
 
