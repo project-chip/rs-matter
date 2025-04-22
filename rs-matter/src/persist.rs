@@ -103,7 +103,13 @@ pub mod fileio {
         ) -> Result<(), Error> {
             let dir = dir.as_ref();
 
-            //self.load(dir, matter)?;
+            // NOTE: Calling `load` here does not make sense, because the `Psm::run` future / async method is executed
+            // concurrently with other `rs-matter` futures. Including the future (`Matter::run`) that takes a decision whether
+            // the state of `rs-matter` is such that it is not provisioned yet (no fabrics) and as such
+            // it has to open the basic commissioning window and print the QR code.
+            //
+            // User is supposed to instead explicitly call `load` before calling `Psm::run` and `Matter::run`
+            // self.load(dir, matter)?;
 
             loop {
                 matter.wait_persist().await;
