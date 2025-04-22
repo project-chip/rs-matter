@@ -92,7 +92,12 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
 /// assert_eq!(idl_field_name_to_rs_name("Identity"), "Identity");
 /// ```
 pub fn idl_field_name_to_rs_type_name(s: &str) -> String {
-    s.to_case(Case::Camel)
+    let s = s.to_case(Case::Camel);
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
 }
 
 /// Convert an IDL attribute identifier (like `anotherTest`) into a name suitable for

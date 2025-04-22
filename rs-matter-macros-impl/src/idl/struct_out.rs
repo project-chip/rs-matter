@@ -123,10 +123,6 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
             fn writer(&mut self) -> &mut P::Write {
                 self.0.writer()
             }
-
-            fn into_writer(self) -> Self::Write {
-                self.0.into_writer()
-            }
         }
 
         impl<P> #krate::tlv::TLVBuilder<P> for #name<P>
@@ -137,8 +133,8 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
                 Self::new(parent, tag)
             }
 
-            fn into_writer(self) -> P::Write {
-                self.0.into_writer()
+            fn unchecked_into_parent(self) -> P {
+                self.0
             }
         }
 
@@ -181,10 +177,6 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
             fn writer(&mut self) -> &mut P::Write {
                 self.0.writer()
             }
-
-            fn into_writer(self) -> Self::Write {
-                self.0.into_writer()
-            }
         }
 
         impl<P> #krate::tlv::TLVBuilder<P> for #name_array<P>
@@ -195,8 +187,8 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
                 Self::new(parent, tag)
             }
 
-            fn into_writer(self) -> P::Write {
-                self.0.into_writer()
+            fn unchecked_into_parent(self) -> P {
+                self.0
             }
         }
     )

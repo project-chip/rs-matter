@@ -71,7 +71,7 @@
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(async_fn_in_trait)]
-#![recursion_limit = "256"]
+#![recursion_limit = "1024"]
 
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
