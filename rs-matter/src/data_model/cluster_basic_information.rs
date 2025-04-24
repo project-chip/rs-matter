@@ -276,7 +276,7 @@ impl BasicInformationHandler for BasicInfoCluster {
         // TODO: Report real values
         out.case_sessions_per_fabric(3)?
             .subscriptions_per_fabric(3)?
-            .finish()
+            .end()
     }
 
     fn specification_version(&self, _ctx: &ReadContext) -> Result<u32, Error> {
