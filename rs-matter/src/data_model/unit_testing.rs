@@ -2242,6 +2242,9 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
         request: TestListInt8UReverseRequestRequest<'_>,
         response: TestListInt8UReverseResponseBuilder<P>,
     ) -> Result<P, Error> {
+        // Iterating TLV containers backwards is not possible,
+        // so for once here we'll on-stack allocate a temp buffer
+
         let l = request.arg_1()?;
         let mut tmp = heapless::Vec::<u8, 16>::new();
         for i in l.iter() {
