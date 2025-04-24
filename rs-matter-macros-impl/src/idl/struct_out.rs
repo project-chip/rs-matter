@@ -104,8 +104,8 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
         where
             P: #krate::tlv::TLVBuilderParent,
         {
-            #[doc="Finish the builder"]
-            pub fn finish(mut self) -> Result<P, #krate::error::Error> {
+            #[doc="Finish the struct and return the parent"]
+            pub fn end(mut self) -> Result<P, #krate::error::Error> {
                 use #krate::tlv::TLVWrite;
 
                 self.0.writer().end_container()?;
@@ -159,7 +159,7 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
             }
 
             #[doc="Finish the array and return the parent"]
-            pub fn finish(mut self) -> Result<P, #krate::error::Error> {
+            pub fn end(mut self) -> Result<P, #krate::error::Error> {
                 use #krate::tlv::TLVWrite;
 
                 self.0.writer().end_container()?;

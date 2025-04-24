@@ -373,7 +373,7 @@ where
     }
 
     /// Finish the array and return the parent.
-    pub fn finish(mut self) -> Result<P, Error> {
+    pub fn end(mut self) -> Result<P, Error> {
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
@@ -484,7 +484,7 @@ where
     }
 
     /// Finish the array and return the parent.
-    pub fn finish(mut self) -> Result<P, Error> {
+    pub fn end(mut self) -> Result<P, Error> {
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
@@ -594,7 +594,7 @@ where
     }
 
     /// Finish the array and return the parent.
-    pub fn finish(mut self) -> Result<P, Error> {
+    pub fn end(mut self) -> Result<P, Error> {
         self.parent.writer().end_container()?;
 
         Ok(self.parent)

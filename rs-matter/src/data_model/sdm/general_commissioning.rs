@@ -145,7 +145,7 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
         builder
             .fail_safe_expiry_length_seconds(self.commissioning_policy.failsafe_expiry_len_secs())?
             .max_cumulative_failsafe_seconds(self.commissioning_policy.failsafe_max_cml_secs())?
-            .finish()
+            .end()
     }
 
     fn regulatory_config(&self, _ctx: &ReadContext) -> Result<RegulatoryLocationTypeEnum, Error> {
@@ -174,7 +174,7 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
                 .arm(request.expiry_length_seconds()?, sess.get_session_mode())
         }))?;
 
-        response.error_code(status)?.debug_text("")?.finish()
+        response.error_code(status)?.debug_text("")?.end()
     }
 
     fn handle_set_regulatory_config<P: TLVBuilderParent>(
@@ -187,7 +187,7 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
         response
             .error_code(CommissioningErrorEnum::OK)?
             .debug_text("")?
-            .finish()
+            .end()
     }
 
     fn handle_commissioning_complete<P: TLVBuilderParent>(
@@ -213,6 +213,6 @@ impl GeneralCommissioningHandler for GenCommCluster<'_> {
                 .disable_pase_session(&ctx.exchange().matter().transport_mgr.mdns)?;
         }
 
-        response.error_code(status)?.debug_text("")?.finish()
+        response.error_code(status)?.debug_text("")?.end()
     }
 }

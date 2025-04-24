@@ -501,7 +501,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     builder = builder.push(i)?;
                 }
 
-                builder.finish()
+                builder.end()
             }
         }
     }
@@ -527,7 +527,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     builder = builder.push(Octets(i.as_slice()))?;
                 }
 
-                builder.finish()
+                builder.end()
             }
         }
     }
@@ -549,7 +549,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     builder
                         .member_1(s.member_1)?
                         .member_2(Octets(&s.member_2))?
-                        .finish()
+                        .end()
                 } else {
                     Err(ErrorCode::InvalidAction.into())
                 }
@@ -562,10 +562,10 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         .push()?
                         .member_1(s.member_1)?
                         .member_2(Octets(&s.member_2))?
-                        .finish()?;
+                        .end()?;
                 }
 
-                builder.finish()
+                builder.end()
             }
         }
     }
@@ -638,7 +638,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         .f(ss.f)?
                         .g(ss.g)?
                         .h(ss.h)?
-                        .finish()
+                        .end()
                 })?
                 .optional_struct()?
                 .with_some(s.optional_struct.as_ref(), |ss, builder| {
@@ -651,7 +651,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         .f(ss.f)?
                         .g(ss.g)?
                         .h(ss.h)?
-                        .finish()
+                        .end()
                 })?
                 .nullable_optional_struct()?
                 .with_some(s.nullable_optional_struct.as_ref(), |ss, builder| {
@@ -665,7 +665,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                             .f(ss.f)?
                             .g(ss.g)?
                             .h(ss.h)?
-                            .finish()
+                            .end()
                     })
                 })?
                 .nullable_list()?
@@ -674,7 +674,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         builder = builder.push(s)?;
                     }
 
-                    builder.finish()
+                    builder.end()
                 })?
                 .optional_list()?
                 .with_some(s.optional_list.as_ref(), |l, mut builder| {
@@ -682,7 +682,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         builder = builder.push(s)?;
                     }
 
-                    builder.finish()
+                    builder.end()
                 })?
                 .nullable_optional_list()?
                 .with_some(s.nullable_optional_list.as_ref(), |l, builder| {
@@ -691,10 +691,10 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                             builder = builder.push(s)?;
                         }
 
-                        builder.finish()
+                        builder.end()
                     })
                 })?
-                .finish()
+                .end()
         }
 
         match builder {
@@ -715,7 +715,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     builder = read_one(builder.push()?, s)?;
                 }
 
-                builder.finish()
+                builder.end()
             }
         }
     }
@@ -741,7 +741,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
             .f(s.f)?
             .g(s.g)?
             .h(s.h)?
-            .finish()
+            .end()
     }
 
     fn range_restricted_int_8_u(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
@@ -783,7 +783,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     builder = builder.push(Octets(i.as_slice()))?;
                 }
 
-                builder.finish()
+                builder.end()
             }
         }
     }
@@ -962,7 +962,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                 .f(s.f)?
                 .g(s.g)?
                 .h(s.h)?
-                .finish()
+                .end()
         } else {
             builder.null()
         }
@@ -1903,7 +1903,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
         _ctx: &InvokeContext<'_>,
         response: TestSpecificResponseBuilder<P>,
     ) -> Result<P, Error> {
-        response.return_value(7)?.finish()
+        response.return_value(7)?.end()
     }
 
     fn handle_test_unknown_command(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
@@ -1918,7 +1918,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
     ) -> Result<P, Error> {
         let result = request.arg_1()? as u16 + request.arg_2()? as u16;
         if result <= u8::MAX as u16 {
-            response.return_value(result as _)?.finish()
+            response.return_value(result as _)?.end()
         } else {
             Err(ErrorCode::InvalidCommand.into())
         }
@@ -1930,7 +1930,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
         request: TestSimpleArgumentRequestRequest<'_>,
         response: TestSimpleArgumentResponseBuilder<P>,
     ) -> Result<P, Error> {
-        response.return_value(request.arg_1()? as _)?.finish()
+        response.return_value(request.arg_1()? as _)?.end()
     }
 
     fn handle_test_struct_array_argument_request<P: TLVBuilderParent>(
@@ -1965,23 +1965,23 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
         //                     .f(i.f()?)?
         //                     .g(i.g()?)?
         //                     .h(i.h()?)?
-        //                     .finish()?
+        //                     .end()?
         //                 .d()?
         //                     .
 
         //         }
 
-        //         arr.finish()
+        //         arr.end()
         //     })?
         //     .arg_2()?
-        //     .finish()?
+        //     .end()?
         //     .arg_3()?
-        //     .finish()?
+        //     .end()?
         //     .arg_4()?
-        //     .finish()?
+        //     .end()?
         //     .arg_5(a5)?
         //     .arg_6(a6)?
-        //     .finish()
+        //     .end()
         todo!()
     }
 
@@ -2002,7 +2002,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
             && s.g()? == 0f32
             && s.h()? == 0f64;
 
-        response.value(result)?.finish()
+        response.value(result)?.end()
     }
 
     fn handle_test_nested_struct_argument_request<P: TLVBuilderParent>(
@@ -2026,7 +2026,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                 && s.h()? == 0f64
         };
 
-        response.value(result)?.finish()
+        response.value(result)?.end()
     }
 
     fn handle_test_list_struct_argument_request<P: TLVBuilderParent>(
@@ -2063,7 +2063,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                 && s2.h()? == 0f64;
         }
 
-        response.value(result)?.finish()
+        response.value(result)?.end()
     }
 
     fn handle_test_list_int_8_u_argument_request<P: TLVBuilderParent>(
@@ -2084,7 +2084,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
             result
         };
 
-        response.value(result)?.finish()
+        response.value(result)?.end()
     }
 
     fn handle_test_nested_struct_list_argument_request<P: TLVBuilderParent>(
@@ -2136,7 +2136,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                 }
             };
 
-        response.value(result)?.finish()
+        response.value(result)?.end()
     }
 
     fn handle_test_list_nested_struct_list_argument_request<P: TLVBuilderParent>(
@@ -2233,7 +2233,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                 }
         };
 
-        response.value(result)?.finish()
+        response.value(result)?.end()
     }
 
     fn handle_test_list_int_8_u_reverse_request<P: TLVBuilderParent>(
@@ -2253,7 +2253,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
             lo = lo.push(i)?;
         }
 
-        lo.finish()?.finish()
+        lo.end()?.end()
     }
 
     fn handle_test_enums_request<P: TLVBuilderParent>(
@@ -2265,7 +2265,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
         response
             .arg_1(request.arg_1()?)?
             .arg_2(request.arg_2()?)?
-            .finish()
+            .end()
     }
 
     fn handle_test_nullable_optional_request<P: TLVBuilderParent>(
@@ -2279,7 +2279,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
             .was_null(request.arg_1()?.as_ref().map(Nullable::is_none))?
             .value(request.arg_1()?.and_then(|value| value.into_option()))?
             .original_value(request.arg_1()?)?
-            .finish()
+            .end()
     }
 
     fn handle_test_complex_nullable_optional_request<P: TLVBuilderParent>(
@@ -2332,7 +2332,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     .f(i.f()?)?
                     .g(i.g()?)?
                     .h(i.h()?)?
-                    .finish()
+                    .end()
             })?
             .optional_struct_was_present(request.optional_struct()?.is_some())?
             .optional_struct_value()?
@@ -2345,7 +2345,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     .f(i.f()?)?
                     .g(i.g()?)?
                     .h(i.h()?)?
-                    .finish()
+                    .end()
             })?
             .nullable_optional_struct_was_present(request.nullable_optional_struct()?.is_some())?
             .nullable_optional_struct_was_null(
@@ -2368,7 +2368,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         .f(i.f()?)?
                         .g(i.g()?)?
                         .h(i.h()?)?
-                        .finish()
+                        .end()
                 },
             )?
             .nullable_list_was_null(request.nullable_list()?.is_none())?
@@ -2378,7 +2378,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     o = o.push(&i?)?;
                 }
 
-                o.finish()
+                o.end()
             })?
             .optional_list_was_present(request.optional_list()?.is_some())?
             .optional_list_value()?
@@ -2387,7 +2387,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                     o = o.push(&i?)?;
                 }
 
-                o.finish()
+                o.end()
             })?
             .nullable_optional_list_was_present(request.nullable_optional_list()?.is_some())?
             .nullable_optional_list_was_null(
@@ -2406,10 +2406,10 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
                         o = o.push(&i?)?;
                     }
 
-                    o.finish()
+                    o.end()
                 },
             )?
-            .finish()
+            .end()
     }
 
     fn handle_simple_struct_echo_request<P: TLVBuilderParent>(
@@ -2430,8 +2430,8 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
             .f(s.f()?)?
             .g(s.g()?)?
             .h(s.h()?)?
-            .finish()?
-            .finish()
+            .end()?
+            .end()
     }
 
     fn handle_timed_invoke_request(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
