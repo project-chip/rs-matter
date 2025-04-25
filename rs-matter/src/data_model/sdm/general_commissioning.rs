@@ -118,6 +118,10 @@ impl<'a> GenCommCluster<'a> {
             commissioning_policy,
         }
     }
+
+    pub const fn adapt(self) -> GeneralCommissioningAdaptor<Self> {
+        GeneralCommissioningAdaptor(self)
+    }
 }
 
 impl GeneralCommissioningHandler for GenCommCluster<'_> {

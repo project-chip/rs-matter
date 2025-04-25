@@ -5,7 +5,7 @@ use super::cluster_basic_information::{self, BasicInfoCluster};
 use super::objects::{Cluster, Dataver, EmptyHandler, Endpoint, EndptId, HandlerCompat};
 use super::sdm::admin_commissioning::{self, AdminCommCluster};
 use super::sdm::ethernet_nw_diagnostics::{
-    self, EthNwDiagCluster, EthernetNetworkDiagnosticsHandlerAdaptor,
+    self, EthNwDiagCluster, EthernetNetworkDiagnosticsAdaptor,
 };
 use super::sdm::general_commissioning::{self, CommissioningPolicy, GenCommCluster};
 use super::sdm::general_diagnostics::{self, GenDiagCluster};
@@ -84,11 +84,8 @@ pub const fn clusters(op_nw_type: OperNwType) -> &'static [Cluster<'static>] {
 }
 
 /// A type alias for a root (Endpoint 0) handler using Ethernet as an operational network
-pub type EthRootEndpointHandler<'a> = RootEndpointHandler<
-    'a,
-    EthNwCommCluster,
-    EthernetNetworkDiagnosticsHandlerAdaptor<EthNwDiagCluster>,
->;
+pub type EthRootEndpointHandler<'a> =
+    RootEndpointHandler<'a, EthNwCommCluster, EthernetNetworkDiagnosticsAdaptor<EthNwDiagCluster>>;
 
 /// A type representing the type of the root (Endpoint 0) handler
 /// which is generic over the operational transport clusters (i.e. Ethernet, Wifi or Thread)
@@ -97,12 +94,12 @@ pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     NWDIAG,
     HandlerCompat<descriptor::DescriptorCluster<'a>>,
     HandlerCompat<
-        cluster_basic_information::BasicInformationHandlerAdaptor<
+        cluster_basic_information::BasicInformationAdaptor<
             cluster_basic_information::BasicInfoCluster,
         >,
     >,
     HandlerCompat<
-        general_commissioning::GeneralCommissioningHandlerAdaptor<
+        general_commissioning::GeneralCommissioningAdaptor<
             general_commissioning::GenCommCluster<'a>,
         >,
     >,
@@ -119,9 +116,7 @@ pub fn eth_handler(endpoint_id: u16, rand: Rand) -> EthRootEndpointHandler<'stat
         endpoint_id,
         EthNwCommCluster::new(Dataver::new_rand(rand)),
         ethernet_nw_diagnostics::ID,
-        EthernetNetworkDiagnosticsHandlerAdaptor::new(EthNwDiagCluster::new(Dataver::new_rand(
-            rand,
-        ))),
+        EthNwDiagCluster::new(Dataver::new_rand(rand)).adapt(),
         &true,
         rand,
     )
@@ -187,19 +182,13 @@ fn wrap<NWCOMM, NWDIAG>(
             endpoint_id,
             general_commissioning::ID,
             HandlerCompat(
-                general_commissioning::GeneralCommissioningHandlerAdaptor::new(
-                    GenCommCluster::new(Dataver::new_rand(rand), concurrent_connection_policy),
-                ),
+                GenCommCluster::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
             ),
         )
         .chain(
             endpoint_id,
             cluster_basic_information::ID,
-            HandlerCompat(
-                cluster_basic_information::BasicInformationHandlerAdaptor::new(
-                    BasicInfoCluster::new(Dataver::new_rand(rand)),
-                ),
-            ),
+            HandlerCompat(BasicInfoCluster::new(Dataver::new_rand(rand)).adapt()),
         )
         .chain(
             endpoint_id,
