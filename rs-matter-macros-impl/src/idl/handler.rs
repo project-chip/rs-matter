@@ -192,11 +192,7 @@ pub fn handler_adaptor(
     );
 
     let handler_adaptor_name = Ident::new(
-        &format!(
-            "{}{}HandlerAdaptor",
-            if asynch { "Async" } else { "" },
-            cluster.id
-        ),
+        &format!("{}{}Adaptor", if asynch { "Async" } else { "" }, cluster.id),
         Span::call_site(),
     );
 
@@ -208,13 +204,7 @@ pub fn handler_adaptor(
     let pasync = if asynch { quote!(async) } else { quote!() };
 
     let stream = quote!(
-        pub struct #handler_adaptor_name<T>(T);
-
-        impl<T> #handler_adaptor_name<T> {
-            pub const fn new(handler: T) -> Self {
-                Self(handler)
-            }
-        }
+        pub struct #handler_adaptor_name<T>(pub T);
 
         impl<T> #krate::data_model::objects::#generic_handler_name for #handler_adaptor_name<T>
         where
