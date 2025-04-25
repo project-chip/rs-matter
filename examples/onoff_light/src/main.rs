@@ -27,7 +27,7 @@ use log::info;
 
 use rs_matter::core::{BasicCommData, Matter, MATTER_PORT};
 use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter::data_model::cluster_on_off;
+use rs_matter::data_model::cluster_on_off::{self, OnOffAdaptor};
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::*;
@@ -141,7 +141,7 @@ fn run() -> Result<(), Error> {
     let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom On/Off clusters
-    let dm_handler = HandlerCompat(dm_handler(&matter, &on_off));
+    let dm_handler = Async(dm_handler(&matter, &on_off));
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -246,9 +246,11 @@ fn dm_handler<'a>(
             .chain(
                 1,
                 descriptor::ID,
-                descriptor::DescriptorCluster::new(Dataver::new_rand(matter.rand())),
+                Async(descriptor::DescriptorCluster::new(Dataver::new_rand(
+                    matter.rand(),
+                ))),
             )
-            .chain(1, cluster_on_off::ID, on_off),
+            .chain(1, cluster_on_off::ID, Async(OnOffAdaptor(on_off))),
     )
 }
 
