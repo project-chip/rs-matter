@@ -11,6 +11,8 @@ rs-matter-data-model = { path = "../rs-matter-data-model", features = ["idl"] }
 syn = { version = "2", features = ["extra-traits", "parsing", "proc-macro"] }
 proc-macro2 = "1"
 convert_case = "0.6"
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_debug"] }
+env_logger = "0.11"
 
 [dev-dependencies]
 assert-tokenstreams-eq = "0.1.0"

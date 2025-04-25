@@ -39,6 +39,10 @@ impl OnOffCluster {
         }
     }
 
+    pub const fn adapt(self) -> OnOffAdaptor<Self> {
+        OnOffAdaptor(self)
+    }
+    
     pub fn get(&self) -> bool {
         self.on.get()
     }
