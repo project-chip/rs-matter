@@ -16,7 +16,7 @@
  */
 
 use rs_matter::data_model::cluster_basic_information;
-use rs_matter::data_model::cluster_on_off::{self, OnOffCluster, OnOffAdaptor};
+use rs_matter::data_model::cluster_on_off::{self, OnOffAdaptor, OnOffCluster};
 use rs_matter::data_model::device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails, Dataver,

@@ -195,7 +195,7 @@ static PART_3: &[TestAttrResp<'static>] = &[
 
 #[test]
 fn test_long_read_success() {
-    // Read the entire attribute database, which requires 2 reads to complete
+    // Read the entire attribute database, which requires 3 reads to complete
     init_env_logger();
 
     let im = ImEngine::new_default();
@@ -243,7 +243,7 @@ fn test_long_read_success() {
 
 #[test]
 fn test_long_read_subscription_success() {
-    // Subscribe to the entire attribute database, which requires 2 reads to complete
+    // Subscribe to the entire attribute database, which requires 3 reads to complete
     init_env_logger();
 
     let im = ImEngine::new_default();
