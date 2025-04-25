@@ -851,3 +851,531 @@ fn handler_adaptor_command_match(
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use assert_tokenstreams_eq::assert_tokenstreams_eq;
+    use quote::quote;
+
+    use crate::idl::tests::{get_cluster_named, parse_idl};
+    use crate::idl::IdlGenerateContext;
+
+    use super::{handler, handler_adaptor};
+
+    #[test]
+    fn test_cluster() {
+        let idl = parse_idl(
+            "
+              cluster OnOff = 6 {
+                revision 6;
+
+                enum DelayedAllOffEffectVariantEnum : enum8 {
+                  kDelayedOffFastFade = 0;
+                  kNoFade = 1;
+                  kDelayedOffSlowFade = 2;
+                }
+
+                enum DyingLightEffectVariantEnum : enum8 {
+                  kDyingLightFadeOff = 0;
+                }
+
+                enum EffectIdentifierEnum : enum8 {
+                  kDelayedAllOff = 0;
+                  kDyingLight = 1;
+                }
+
+                enum StartUpOnOffEnum : enum8 {
+                  kOff = 0;
+                  kOn = 1;
+                  kToggle = 2;
+                }
+
+                bitmap Feature : bitmap32 {
+                  kLighting = 0x1;
+                  kDeadFrontBehavior = 0x2;
+                  kOffOnly = 0x4;
+                }
+
+                bitmap OnOffControlBitmap : bitmap8 {
+                  kAcceptOnlyWhenOn = 0x1;
+                }
+
+                readonly attribute boolean onOff = 0;
+                readonly attribute optional boolean globalSceneControl = 16384;
+                attribute optional int16u onTime = 16385;
+                attribute optional int16u offWaitTime = 16386;
+                attribute access(write: manage) optional nullable StartUpOnOffEnum startUpOnOff = 16387;
+                readonly attribute command_id generatedCommandList[] = 65528;
+                readonly attribute command_id acceptedCommandList[] = 65529;
+                readonly attribute event_id eventList[] = 65530;
+                readonly attribute attrib_id attributeList[] = 65531;
+                readonly attribute bitmap32 featureMap = 65532;
+                readonly attribute int16u clusterRevision = 65533;
+
+                request struct OffWithEffectRequest {
+                  EffectIdentifierEnum effectIdentifier = 0;
+                  enum8 effectVariant = 1;
+                }
+
+                request struct OnWithTimedOffRequest {
+                  OnOffControlBitmap onOffControl = 0;
+                  int16u onTime = 1;
+                  int16u offWaitTime = 2;
+                }
+
+                /** On receipt of this command, a device SHALL enter its ‘Off’ state. This state is device dependent, but it is recommended that it is used for power off or similar functions. On receipt of the Off command, the OnTime attribute SHALL be set to 0. */
+                command Off(): DefaultSuccess = 0;
+                /** On receipt of this command, a device SHALL enter its ‘On’ state. This state is device dependent, but it is recommended that it is used for power on or similar functions. On receipt of the On command, if the value of the OnTime attribute is equal to 0, the device SHALL set the OffWaitTime attribute to 0. */
+                command On(): DefaultSuccess = 1;
+                /** On receipt of this command, if a device is in its ‘Off’ state it SHALL enter its ‘On’ state. Otherwise, if it is in its ‘On’ state it SHALL enter its ‘Off’ state. On receipt of the Toggle command, if the value of the OnOff attribute is equal to FALSE and if the value of the OnTime attribute is equal to 0, the device SHALL set the OffWaitTime attribute to 0. If the value of the OnOff attribute is equal to TRUE, the OnTime attribute SHALL be set to 0. */
+                command Toggle(): DefaultSuccess = 2;
+                /** The OffWithEffect command allows devices to be turned off using enhanced ways of fading. */
+                command OffWithEffect(OffWithEffectRequest): DefaultSuccess = 64;
+                /** The OnWithRecallGlobalScene command allows the recall of the settings when the device was turned off. */
+                command OnWithRecallGlobalScene(): DefaultSuccess = 65;
+                /** The OnWithTimedOff command allows devices to be turned on for a specific duration with a guarded off duration so that SHOULD the device be subsequently switched off, further OnWithTimedOff commands, received during this time, are prevented from turning the devices back on. */
+                command OnWithTimedOff(OnWithTimedOffRequest): DefaultSuccess = 66;
+              }
+        ",
+        );
+
+        let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
+        let context = IdlGenerateContext::new("rs_matter_crate");
+
+        // panic!("====\n{}\n====", &handler(false, false, cluster, &context));
+
+        assert_tokenstreams_eq!(
+            &handler(false, false, cluster, &context),
+            &quote!(
+                pub trait OnOffHandler {
+                    fn dataver(&self) -> u32;
+                    fn dataver_changed(&self);
+                    fn on_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<bool, rs_matter_crate::error::Error>;
+                    fn global_scene_control(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<bool, rs_matter_crate::error::Error> {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn on_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<u16, rs_matter_crate::error::Error> {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn off_wait_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<u16, rs_matter_crate::error::Error> {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn start_up_on_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<
+                        rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn set_on_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+                        value: u16,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn set_off_wait_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+                        value: u16,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn set_start_up_on_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+                        value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+                    }
+                    fn handle_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error>;
+                    fn handle_on(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error>;
+                    fn handle_toggle(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error>;
+                    fn handle_off_with_effect(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                        request: OffWithEffectRequest<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error>;
+                    fn handle_on_with_recall_global_scene(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error>;
+                    fn handle_on_with_timed_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                        request: OnWithTimedOffRequest<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error>;
+                }
+            )
+        );
+
+        // panic!("====\n{}\n====", &handler(true, false, cluster, &context));
+
+        // NOTE: (Temporarily) commented out, as `assert_tokenstreams_eq` does not seem to understand
+        // Rust 2021
+        // assert_tokenstreams_eq!(
+        //     &handler(true, false, cluster, &context),
+        //     &quote!(
+        //         pub trait AsyncOnOffHandler {
+        //             fn dataver(&self) -> u32;
+        //             fn dataver_changed(&self);
+        //             async fn on_off(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+        //             ) -> Result<bool, rs_matter_crate::error::Error>;
+        //             async fn global_scene_control(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+        //             ) -> Result<bool, rs_matter_crate::error::Error> {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn on_time(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+        //             ) -> Result<u16, rs_matter_crate::error::Error> {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn off_wait_time(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+        //             ) -> Result<u16, rs_matter_crate::error::Error> {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn start_up_on_off(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+        //             ) -> Result<rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>, rs_matter_crate::error::Error>
+        //             {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn set_on_time(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+        //                 value: u16,
+        //             ) -> Result<(), rs_matter_crate::error::Error> {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn set_off_wait_time(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+        //                 value: u16,
+        //             ) -> Result<(), rs_matter_crate::error::Error> {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn set_start_up_on_off(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+        //                 value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
+        //             ) -> Result<(), rs_matter_crate::error::Error> {
+        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
+        //             }
+        //             async fn handle_off(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+        //             ) -> Result<(), rs_matter_crate::error::Error>;
+        //             async fn handle_on(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+        //             ) -> Result<(), rs_matter_crate::error::Error>;
+        //             async fn handle_toggle(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+        //             ) -> Result<(), rs_matter_crate::error::Error>;
+        //             async fn handle_off_with_effect(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+        //                 request: OffWithEffectRequest<'_>,
+        //             ) -> Result<(), rs_matter_crate::error::Error>;
+        //             async fn handle_on_with_recall_global_scene(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+        //             ) -> Result<(), rs_matter_crate::error::Error>;
+        //             async fn handle_on_with_timed_off(
+        //                 &self,
+        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+        //                 request: OnWithTimedOffRequest<'_>,
+        //             ) -> Result<(), rs_matter_crate::error::Error>;
+        //         }
+        //     )
+        // );
+
+        // panic!("====\n{}\n====", &handler(false, true, cluster, &context));
+
+        assert_tokenstreams_eq!(
+            &handler(false, true, cluster, &context),
+            &quote!(
+                impl<T> OnOffHandler for &T
+                where
+                    T: OnOffHandler,
+                {
+                    fn dataver(&self) -> u32 {
+                        T::dataver(self)
+                    }
+                    fn dataver_changed(&self) {
+                        T::dataver_changed(self)
+                    }
+                    fn on_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<bool, rs_matter_crate::error::Error> {
+                        T::on_off(self, ctx)
+                    }
+                    fn global_scene_control(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<bool, rs_matter_crate::error::Error> {
+                        T::global_scene_control(self, ctx)
+                    }
+                    fn on_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<u16, rs_matter_crate::error::Error> {
+                        T::on_time(self, ctx)
+                    }
+                    fn off_wait_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<u16, rs_matter_crate::error::Error> {
+                        T::off_wait_time(self, ctx)
+                    }
+                    fn start_up_on_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
+                    ) -> Result<
+                        rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        T::start_up_on_off(self, ctx)
+                    }
+                    fn set_on_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+                        value: u16,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::set_on_time(self, ctx, value)
+                    }
+                    fn set_off_wait_time(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+                        value: u16,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::set_off_wait_time(self, ctx, value)
+                    }
+                    fn set_start_up_on_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
+                        value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::set_start_up_on_off(self, ctx, value)
+                    }
+                    fn handle_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::handle_off(self, ctx)
+                    }
+                    fn handle_on(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::handle_on(self, ctx)
+                    }
+                    fn handle_toggle(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::handle_toggle(self, ctx)
+                    }
+                    fn handle_off_with_effect(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                        request: OffWithEffectRequest<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::handle_off_with_effect(self, ctx, request)
+                    }
+                    fn handle_on_with_recall_global_scene(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::handle_on_with_recall_global_scene(self, ctx)
+                    }
+                    fn handle_on_with_timed_off(
+                        &self,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
+                        request: OnWithTimedOffRequest<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        T::handle_on_with_timed_off(self, ctx, request)
+                    }
+                }
+            )
+        );
+
+        // panic!("====\n{}\n====", &handler_adaptor(false, cluster, &context));
+
+        assert_tokenstreams_eq!(
+            &handler_adaptor(false, cluster, &context),
+            &quote!(
+                pub struct OnOffAdaptor<T>(pub T);
+                impl<T> rs_matter_crate::data_model::objects::Handler for OnOffAdaptor<T>
+                where
+                    T: OnOffHandler,
+                {
+                    #[allow(unreachable_code)]
+                    fn read(
+                        &self,
+                        exchange: &rs_matter_crate::transport::exchange::Exchange<'_>,
+                        attr: &rs_matter_crate::data_model::objects::AttrDetails<'_>,
+                        encoder: rs_matter_crate::data_model::objects::AttrDataEncoder<'_, '_, '_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
+                            if attr.is_system() {
+                                attr.cluster()?.read(attr.attr_id, writer)
+                            } else {
+                                match AttributeId::try_from(attr.attr_id)? {
+                                    AttributeId::OnOff => writer.set(self.0.on_off(
+                                        &rs_matter_crate::data_model::objects::ReadContext::new(
+                                            exchange,
+                                        ),
+                                    )?),
+                                    AttributeId::GlobalSceneControl => {
+                                        writer.set(self.0.global_scene_control(
+                                            &rs_matter_crate::data_model::objects::ReadContext::new(
+                                                exchange,
+                                            ),
+                                        )?)
+                                    }
+                                    AttributeId::OnTime => writer.set(self.0.on_time(
+                                        &rs_matter_crate::data_model::objects::ReadContext::new(
+                                            exchange,
+                                        ),
+                                    )?),
+                                    AttributeId::OffWaitTime => writer.set(self.0.off_wait_time(
+                                        &rs_matter_crate::data_model::objects::ReadContext::new(
+                                            exchange,
+                                        ),
+                                    )?),
+                                    AttributeId::StartUpOnOff => {
+                                        writer.set(self.0.start_up_on_off(
+                                            &rs_matter_crate::data_model::objects::ReadContext::new(
+                                                exchange,
+                                            ),
+                                        )?)
+                                    }
+                                    #[allow(unreachable_code)]
+                                    _ => {
+                                        Err(rs_matter_crate::error::ErrorCode::AttributeNotFound
+                                            .into())
+                                    }
+                                }
+                            }
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    #[allow(unreachable_code)]
+                    fn write(
+                        &self,
+                        exchange: &rs_matter_crate::transport::exchange::Exchange<'_>,
+                        attr: &rs_matter_crate::data_model::objects::AttrDetails<'_>,
+                        data: rs_matter_crate::data_model::objects::AttrData<'_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        let data = data.with_dataver(self.0.dataver())?;
+                        if attr.is_system() {
+                            return Err(rs_matter_crate::error::ErrorCode::InvalidAction.into());
+                        }
+                        match AttributeId::try_from(attr.attr_id)? {
+                            AttributeId::OnTime => self.0.set_on_time(
+                                &rs_matter_crate::data_model::objects::WriteContext::new(exchange),
+                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
+                            )?,
+                            AttributeId::OffWaitTime => self.0.set_off_wait_time(
+                                &rs_matter_crate::data_model::objects::WriteContext::new(exchange),
+                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
+                            )?,
+                            AttributeId::StartUpOnOff => self.0.set_start_up_on_off(
+                                &rs_matter_crate::data_model::objects::WriteContext::new(exchange),
+                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
+                            )?,
+                            _ => {
+                                return Err(
+                                    rs_matter_crate::error::ErrorCode::AttributeNotFound.into()
+                                )
+                            }
+                        }
+                        self.0.dataver_changed();
+                        Ok(())
+                    }
+                    #[allow(unreachable_code)]
+                    fn invoke(
+                        &self,
+                        exchange: &rs_matter_crate::transport::exchange::Exchange<'_>,
+                        cmd: &rs_matter_crate::data_model::objects::CmdDetails<'_>,
+                        data: &rs_matter_crate::tlv::TLVElement<'_>,
+                        encoder: rs_matter_crate::data_model::objects::CmdDataEncoder<'_, '_, '_>,
+                    ) -> Result<(), rs_matter_crate::error::Error> {
+                        match CommandId::try_from(cmd.cmd_id)? {
+                            CommandId::Off => self.0.handle_off(
+                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
+                            )?,
+                            CommandId::On => self.0.handle_on(
+                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
+                            )?,
+                            CommandId::Toggle => self.0.handle_toggle(
+                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
+                            )?,
+                            CommandId::OffWithEffect => self.0.handle_off_with_effect(
+                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
+                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
+                            )?,
+                            CommandId::OnWithRecallGlobalScene => {
+                                self.0.handle_on_with_recall_global_scene(
+                                    &rs_matter_crate::data_model::objects::InvokeContext::new(
+                                        exchange,
+                                    ),
+                                )?
+                            }
+                            CommandId::OnWithTimedOff => self.0.handle_on_with_timed_off(
+                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
+                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
+                            )?,
+                            _ => {
+                                return Err(
+                                    rs_matter_crate::error::ErrorCode::CommandNotFound.into()
+                                )
+                            }
+                        }
+                        self.0.dataver_changed();
+                        Ok(())
+                    }
+                }
+                impl<T> rs_matter_crate::data_model::objects::NonBlockingHandler for OnOffAdaptor<T> where
+                    T: OnOffHandler
+                {
+                }
+            )
+        );
+    }
+}
