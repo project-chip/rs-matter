@@ -791,7 +791,7 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
     fn list_fabric_scoped<P: TLVBuilderParent>(
         &self,
         _ctx: &ReadContext<'_>,
-        builder: ArrayAttributeRead<TestFabricScopedArrayBuilder<P>, TestFabricScopedBuilder<P>>,
+        _builder: ArrayAttributeRead<TestFabricScopedArrayBuilder<P>, TestFabricScopedBuilder<P>>,
     ) -> Result<P, Error> {
         todo!()
     }
@@ -1547,20 +1547,28 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
     fn set_list_fabric_scoped(
         &self,
         _ctx: &WriteContext<'_>,
-        value: ArrayAttributeWrite<TLVArray<'_, TestFabricScoped<'_>>, TestFabricScoped<'_>>,
+        _value: ArrayAttributeWrite<TLVArray<'_, TestFabricScoped<'_>>, TestFabricScoped<'_>>,
     ) -> Result<(), Error> {
         todo!()
     }
 
-    fn set_timed_write_boolean(&self, _ctx: &WriteContext<'_>, value: bool) -> Result<(), Error> {
+    fn set_timed_write_boolean(&self, _ctx: &WriteContext<'_>, _value: bool) -> Result<(), Error> {
         todo!()
     }
 
-    fn set_general_error_boolean(&self, _ctx: &WriteContext<'_>, value: bool) -> Result<(), Error> {
+    fn set_general_error_boolean(
+        &self,
+        _ctx: &WriteContext<'_>,
+        _value: bool,
+    ) -> Result<(), Error> {
         todo!()
     }
 
-    fn set_cluster_error_boolean(&self, _ctx: &WriteContext<'_>, value: bool) -> Result<(), Error> {
+    fn set_cluster_error_boolean(
+        &self,
+        _ctx: &WriteContext<'_>,
+        _value: bool,
+    ) -> Result<(), Error> {
         todo!()
     }
 
@@ -1936,52 +1944,9 @@ impl UnitTestingHandler for UnitTestingCluster<'_> {
     fn handle_test_struct_array_argument_request<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
-        request: TestStructArrayArgumentRequestRequest<'_>,
-        response: TestStructArrayArgumentResponseBuilder<P>,
+        _request: TestStructArrayArgumentRequestRequest<'_>,
+        _response: TestStructArrayArgumentResponseBuilder<P>,
     ) -> Result<P, Error> {
-        // let a1 = request.arg_1()?;
-        // let a2 = request.arg_2()?;
-        // let a3 = request.arg_3()?;
-        // let a4 = request.arg_4()?;
-        // let a5 = request.arg_5()?;
-        // let a6 = request.arg_6()?;
-
-        // response
-        //     .arg_1()?
-        //     .with(|mut arr| {
-        //         for i in a1.iter() {
-        //             let i = i?;
-
-        //             arr = arr
-        //                 .push()?
-        //                 .a(i.a()?)?
-        //                 .b(i.b()?)?
-        //                 .c()?
-        //                     .a(i.a()?)?
-        //                     .b(i.b()?)?
-        //                     .c(i.c()?)?
-        //                     .d(i.d()?)?
-        //                     .e(i.e()?)?
-        //                     .f(i.f()?)?
-        //                     .g(i.g()?)?
-        //                     .h(i.h()?)?
-        //                     .end()?
-        //                 .d()?
-        //                     .
-
-        //         }
-
-        //         arr.end()
-        //     })?
-        //     .arg_2()?
-        //     .end()?
-        //     .arg_3()?
-        //     .end()?
-        //     .arg_4()?
-        //     .end()?
-        //     .arg_5(a5)?
-        //     .arg_6(a6)?
-        //     .end()
         todo!()
     }
 
