@@ -94,8 +94,8 @@ impl<'a> InvokeContext<'a> {
     }
 }
 
-pub trait DataModelHandler: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
-impl<T> DataModelHandler for T where T: super::asynch::AsyncMetadata + asynch::AsyncHandler {}
+pub trait DataModelHandler: super::AsyncMetadata + AsyncHandler {}
+impl<T> DataModelHandler for T where T: super::AsyncMetadata + AsyncHandler {}
 
 // TODO: Re-assess once once proper cluster change notifications are implemented.
 pub trait ChangeNotifier<T> {
@@ -373,42 +373,6 @@ where
     }
 }
 
-/// Wrap your `NonBlockingHandler` or `AsyncHandler` implementation in this struct
-/// to get your code compilable with and without the `nightly` feature
-///
-/// TODO: Re-assess the need for this struct now that we no longer use a nightly compiler.
-pub struct HandlerCompat<T>(pub T);
-
-impl<T> Handler for HandlerCompat<T>
-where
-    T: Handler,
-{
-    fn read(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
-    ) -> Result<(), Error> {
-        self.0.read(exchange, attr, encoder)
-    }
-
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        self.0.write(exchange, attr, data)
-    }
-
-    fn invoke(
-        &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
-    ) -> Result<(), Error> {
-        self.0.invoke(exchange, cmd, data, encoder)
-    }
-}
-
-impl<T> NonBlockingHandler for HandlerCompat<T> where T: NonBlockingHandler {}
-
 /// A helper macro that makes it easier to specify the full type of a `ChainedHandler` instantiation,
 /// which can be quite annoying in the case of long chains of handlers.
 ///
@@ -453,7 +417,7 @@ mod asynch {
         transport::exchange::Exchange,
     };
 
-    use super::{ChainedHandler, EmptyHandler, Handler, HandlerCompat, NonBlockingHandler};
+    use super::{ChainedHandler, EmptyHandler, Handler, NonBlockingHandler};
 
     /// A handler for processing a single IM operation:
     /// read an attribute, write an attribute, or invoke a command.
@@ -673,7 +637,7 @@ mod asynch {
         }
     }
 
-    impl<T> AsyncHandler for HandlerCompat<T>
+    impl<T> AsyncHandler for Async<T>
     where
         T: NonBlockingHandler,
     {
@@ -814,4 +778,44 @@ mod asynch {
             }
         }
     }
+
+    /// An adaptor that adapts a `NonBlockingHandler` trait implementation to the `AsyncHandler` trait contract.
+    ///
+    /// The adaptor also implements `NonBlockingHandler` so that the adapted handler can be used in any context.
+    pub struct Async<T>(pub T);
+
+    impl<T> Handler for Async<T>
+    where
+        T: Handler,
+    {
+        fn read(
+            &self,
+            exchange: &Exchange,
+            attr: &AttrDetails,
+            encoder: AttrDataEncoder,
+        ) -> Result<(), Error> {
+            self.0.read(exchange, attr, encoder)
+        }
+
+        fn write(
+            &self,
+            exchange: &Exchange,
+            attr: &AttrDetails,
+            data: AttrData,
+        ) -> Result<(), Error> {
+            self.0.write(exchange, attr, data)
+        }
+
+        fn invoke(
+            &self,
+            exchange: &Exchange,
+            cmd: &CmdDetails,
+            data: &TLVElement,
+            encoder: CmdDataEncoder,
+        ) -> Result<(), Error> {
+            self.0.invoke(exchange, cmd, data, encoder)
+        }
+    }
+
+    impl<T> NonBlockingHandler for Async<T> where T: NonBlockingHandler {}
 }

@@ -2,7 +2,7 @@ use crate::handler_chain_type;
 use crate::utils::rand::Rand;
 
 use super::cluster_basic_information::{self, BasicInfoCluster};
-use super::objects::{Cluster, Dataver, EmptyHandler, Endpoint, EndptId, HandlerCompat};
+use super::objects::{Async, Cluster, Dataver, EmptyHandler, Endpoint, EndptId};
 use super::sdm::admin_commissioning::{self, AdminCommCluster};
 use super::sdm::ethernet_nw_diagnostics::{
     self, EthNwDiagCluster, EthernetNetworkDiagnosticsAdaptor,
@@ -92,22 +92,22 @@ pub type EthRootEndpointHandler<'a> =
 pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     NWCOMM,
     NWDIAG,
-    HandlerCompat<descriptor::DescriptorCluster<'a>>,
-    HandlerCompat<
+    Async<descriptor::DescriptorCluster<'a>>,
+    Async<
         cluster_basic_information::BasicInformationAdaptor<
             cluster_basic_information::BasicInfoCluster,
         >,
     >,
-    HandlerCompat<
+    Async<
         general_commissioning::GeneralCommissioningAdaptor<
             general_commissioning::GenCommCluster<'a>,
         >,
     >,
-    HandlerCompat<admin_commissioning::AdminCommCluster>,
-    HandlerCompat<noc::NocCluster>,
-    HandlerCompat<access_control::AccessControlCluster>,
-    HandlerCompat<general_diagnostics::GenDiagCluster>,
-    HandlerCompat<group_key_management::GrpKeyMgmtCluster>
+    Async<admin_commissioning::AdminCommCluster>,
+    Async<noc::NocCluster>,
+    Async<access_control::AccessControlCluster>,
+    Async<general_diagnostics::GenDiagCluster>,
+    Async<group_key_management::GrpKeyMgmtCluster>
 );
 
 /// A utility function to instantiate the root (Endpoint 0) handler using Ethernet as the operational network.
@@ -156,44 +156,44 @@ fn wrap<NWCOMM, NWDIAG>(
         .chain(
             endpoint_id,
             group_key_management::ID,
-            HandlerCompat(GrpKeyMgmtCluster::new(Dataver::new_rand(rand))),
+            Async(GrpKeyMgmtCluster::new(Dataver::new_rand(rand))),
         )
         .chain(
             endpoint_id,
             general_diagnostics::ID,
-            HandlerCompat(GenDiagCluster::new(Dataver::new_rand(rand))),
+            Async(GenDiagCluster::new(Dataver::new_rand(rand))),
         )
         .chain(
             endpoint_id,
             access_control::ID,
-            HandlerCompat(AccessControlCluster::new(Dataver::new_rand(rand))),
+            Async(AccessControlCluster::new(Dataver::new_rand(rand))),
         )
         .chain(
             endpoint_id,
             noc::ID,
-            HandlerCompat(NocCluster::new(Dataver::new_rand(rand))),
+            Async(NocCluster::new(Dataver::new_rand(rand))),
         )
         .chain(
             endpoint_id,
             admin_commissioning::ID,
-            HandlerCompat(AdminCommCluster::new(Dataver::new_rand(rand))),
+            Async(AdminCommCluster::new(Dataver::new_rand(rand))),
         )
         .chain(
             endpoint_id,
             general_commissioning::ID,
-            HandlerCompat(
+            Async(
                 GenCommCluster::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
             ),
         )
         .chain(
             endpoint_id,
             cluster_basic_information::ID,
-            HandlerCompat(BasicInfoCluster::new(Dataver::new_rand(rand)).adapt()),
+            Async(BasicInfoCluster::new(Dataver::new_rand(rand)).adapt()),
         )
         .chain(
             endpoint_id,
             descriptor::ID,
-            HandlerCompat(DescriptorCluster::new(Dataver::new_rand(rand))),
+            Async(DescriptorCluster::new(Dataver::new_rand(rand))),
         )
         .chain(endpoint_id, nwdiag_id, nwdiag)
         .chain(endpoint_id, nw_commissioning::ID, nwcomm)
