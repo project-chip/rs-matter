@@ -135,6 +135,10 @@ impl BasicInfoCluster {
         Self(dataver)
     }
 
+    pub const fn adapt(self) -> BasicInformationAdaptor<Self> {
+        BasicInformationAdaptor(self)
+    }
+
     fn config<'a>(exchange: &'a Exchange) -> &'a BasicInfoConfig<'a> {
         exchange.matter().dev_det()
     }

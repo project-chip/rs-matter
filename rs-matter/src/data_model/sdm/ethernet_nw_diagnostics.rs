@@ -32,6 +32,10 @@ impl EthNwDiagCluster {
     pub const fn new(dataver: Dataver) -> Self {
         Self { dataver }
     }
+
+    pub const fn adapt(self) -> EthernetNetworkDiagnosticsAdaptor<Self> {
+        EthernetNetworkDiagnosticsAdaptor(self)
+    }
 }
 
 impl EthernetNetworkDiagnosticsHandler for EthNwDiagCluster {
