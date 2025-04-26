@@ -138,7 +138,7 @@ pub fn handler_adaptor(
         .iter()
         .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
         .filter(|attr| !attr.is_read_only)
-        .map(|attr| handler_adaptor_attribute_write_match(attr, asynch, &krate));
+        .map(|attr| handler_adaptor_attribute_write_match(attr, asynch, cluster, &krate));
 
     let handler_adaptor_command_match = cluster
         .commands
@@ -611,6 +611,7 @@ fn handler_adaptor_attribute_match(
         &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
         Span::call_site(),
     );
+    let attr_debug_id = quote!(AttributeId::#attr_name.debug(false));
 
     let attr_method_name = Ident::new(
         &idl_field_name_to_rs_name(&attr.field.field.id),
@@ -630,18 +631,45 @@ fn handler_adaptor_attribute_match(
         krate,
     );
 
+    let attr_read_debug_build_start = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?} -> (build) +", #attr_debug_id);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?} -> (build) +", #attr_debug_id);
+    );
+
+    let attr_read_debug_build_end = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?} -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
+        #[cfg(feature = "log")]
+        ::log::info!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
+    );
+
+    let attr_read_debug = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+    );
+
     if builder {
         if attr.field.field.data_type.is_list {
             quote!(
                 AttributeId::#attr_name => {
-                    self.0.#attr_method_name(
+                    #attr_read_debug_build_start
+
+                    let attr_read_result = self.0.#attr_method_name(
                         &#krate::data_model::objects::ReadContext::new(exchange),
                         #krate::data_model::objects::ArrayAttributeRead::new(
                             attr.list_index.clone(),
-                            #krate::tlv::TLVWriteParent::new(writer.writer()),
+                            #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
                             &#krate::data_model::objects::AttrDataWriter::TAG,
                         )?,
-                    )#sawait?;
+                    )#sawait;
+
+                    #attr_read_debug_build_end
+
+                    attr_read_result?;
 
                     writer.complete()
                 }
@@ -649,10 +677,16 @@ fn handler_adaptor_attribute_match(
         } else {
             quote!(
                 AttributeId::#attr_name => {
-                    self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange), #krate::tlv::TLVBuilder::new(
-                        #krate::tlv::TLVWriteParent::new(writer.writer()),
+                    #attr_read_debug_build_start
+
+                    let attr_read_result = self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange), #krate::tlv::TLVBuilder::new(
+                        #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
                         &#krate::data_model::objects::AttrDataWriter::TAG,
-                    )?)#sawait?;
+                    )?)#sawait;
+
+                    #attr_read_debug_build_end
+
+                    attr_read_result?;
 
                     writer.complete()
                 }
@@ -660,7 +694,13 @@ fn handler_adaptor_attribute_match(
         }
     } else {
         quote!(
-            AttributeId::#attr_name => writer.set(self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange))#sawait?),
+            AttributeId::#attr_name => {
+               let attr_read_result = self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange))#sawait;
+
+                #attr_read_debug
+
+                writer.set(attr_read_result?)
+            }
         )
     }
 }
@@ -675,27 +715,60 @@ fn handler_adaptor_attribute_match(
 fn handler_adaptor_attribute_write_match(
     attr: &Attribute,
     asynch: bool,
+    cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
     let attr_name = Ident::new(
         &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
         Span::call_site(),
     );
+    let attr_debug_id = quote!(AttributeId::#attr_name.debug(true));
 
     let attr_method_name = Ident::new(
         &format!("set_{}", &idl_field_name_to_rs_name(&attr.field.field.id)),
         Span::call_site(),
     );
 
+    let attr_type = field_type(
+        &attr.field.field.data_type,
+        attr.field.is_nullable,
+        false,
+        cluster,
+        krate,
+    );
+
     let sawait = if asynch { quote!(.await) } else { quote!() };
+
+    let attr_write_debug = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+    );
 
     if attr.field.field.data_type.is_list {
         quote!(
-            AttributeId::#attr_name => self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), #krate::data_model::objects::ArrayAttributeWrite::new(attr.list_index.clone(), &data)?)#sawait?,
+            AttributeId::#attr_name => {
+                let attr_data = #krate::data_model::objects::ArrayAttributeWrite::new(attr.list_index.clone(), &data)?;
+
+                let attr_write_result = self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), attr_data.clone())#sawait;
+
+                #attr_write_debug
+
+                attr_write_result?;
+            }
         )
     } else {
         quote!(
-            AttributeId::#attr_name => self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), #krate::tlv::FromTLV::from_tlv(&data)?)#sawait?,
+            AttributeId::#attr_name => {
+                let attr_data: #attr_type = #krate::tlv::FromTLV::from_tlv(&data)?;
+
+                let attr_write_result = self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), attr_data.clone())#sawait;
+
+                #attr_write_debug
+
+                attr_write_result?;
+            }
         )
     }
 }
@@ -718,6 +791,7 @@ fn handler_adaptor_command_match(
         &idl_attribute_name_to_enum_variant_name(&cmd.id),
         Span::call_site(),
     );
+    let cmd_debug_id = quote!(CommandId::#cmd_name.debug(true));
 
     let cmd_method_name = Ident::new(
         &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
@@ -726,23 +800,54 @@ fn handler_adaptor_command_match(
 
     let sawait = if asynch { quote!(.await) } else { quote!() };
 
-    let field_req = cmd
-        .input
-        .as_ref()
-        .map(|id| {
-            field_type(
-                &DataType {
-                    name: id.clone(),
-                    is_list: false,
-                    max_length: None,
-                },
-                false,
-                false,
-                cluster,
-                krate,
-            )
-        })
-        .is_some();
+    let cmd_invoke_debug_build_start = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+    );
+
+    let cmd_invoke_debug_noarg_build_start = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?} -> (build) +", #cmd_debug_id);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?} -> (build) +", #cmd_debug_id);
+    );
+
+    let cmd_invoke_debug_build_end = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
+        #[cfg(feature = "log")]
+        ::log::info!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
+    );
+
+    let cmd_invoke_debug = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+    );
+
+    let cmd_invoke_debug_noarg = quote!(
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+    );
+
+    let field_req = cmd.input.as_ref().map(|id| {
+        field_type(
+            &DataType {
+                name: id.clone(),
+                is_list: false,
+                max_length: None,
+            },
+            false,
+            false,
+            cluster,
+            krate,
+        )
+    });
 
     let cmd_output = (cmd.output != "DefaultSuccess")
         .then(|| {
@@ -780,21 +885,29 @@ fn handler_adaptor_command_match(
         (code as u32, builder)
     });
 
-    if field_req {
+    if field_req.is_some() {
         if let Some((field_resp_cmd_code, field_resp_builder)) = field_resp {
             if field_resp_builder {
                 quote!(
                     CommandId::#cmd_name => {
+                        let cmd_data = #krate::tlv::FromTLV::from_tlv(&data)?;
+
+                        #cmd_invoke_debug_build_start
+
                         let mut writer = encoder.with_command(#field_resp_cmd_code)?;
 
-                        self.0.#cmd_method_name(
+                        let cmd_invoke_result = self.0.#cmd_method_name(
                             &#krate::data_model::objects::InvokeContext::new(exchange),
-                            #krate::tlv::FromTLV::from_tlv(&data)?,
+                            cmd_data,
                             #krate::tlv::TLVBuilder::new(
-                                #krate::tlv::TLVWriteParent::new(writer.writer()),
-                                &#krate::data_model::objects::AttrDataWriter::TAG,
+                                #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
+                                &#krate::data_model::objects::CmdDataWriter::TAG,
                             )?
-                        )#sawait?;
+                        )#sawait;
+
+                        #cmd_invoke_debug_build_end
+
+                        cmd_invoke_result?;
 
                         writer.complete()?
                     }
@@ -802,36 +915,56 @@ fn handler_adaptor_command_match(
             } else {
                 quote!(
                     CommandId::#cmd_name => {
-                        encoder
-                            .with_command(#field_resp_cmd_code)?
-                            .set(self.0.#cmd_method_name(
-                                &#krate::data_model::objects::InvokeContext::new(exchange)
-                                #krate::tlv::FromTLV::from_tlv(&data)?,
-                            )#sawait?)?
+                        let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(&data)?;
+
+                        let writer = encoder.with_command(#field_resp_cmd_code)?;
+
+                        let cmd_invoke_result = self.0.#cmd_method_name(
+                            &#krate::data_model::objects::InvokeContext::new(exchange)
+                            cmd_data.clone(),
+                        )#sawait;
+
+                        #cmd_invoke_debug
+
+                        writer.set(cmd_invoke_result?)?;
                     }
                 )
             }
         } else {
             quote!(
-                CommandId::#cmd_name => self.0.#cmd_method_name(
-                    &#krate::data_model::objects::InvokeContext::new(exchange),
-                    #krate::tlv::FromTLV::from_tlv(&data)?,
-                )#sawait?,
+                CommandId::#cmd_name => {
+                    let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(&data)?;
+
+                    let cmd_invoke_result = self.0.#cmd_method_name(
+                        &#krate::data_model::objects::InvokeContext::new(exchange),
+                        cmd_data.clone(),
+                    )#sawait;
+
+                    #cmd_invoke_debug
+
+                    cmd_invoke_result?;
+                }
             )
         }
     } else if let Some((field_resp_cmd_code, field_resp_builder)) = field_resp {
         if field_resp_builder {
             quote!(
                 CommandId::#cmd_name => {
+                    #cmd_invoke_debug_noarg_build_start
+
                     let mut writer = encoder.with_command(#field_resp_cmd_code)?;
 
-                    self.0.#cmd_method_name(
+                    let cmd_invoke_result = self.0.#cmd_method_name(
                         &#krate::data_model::objects::InvokeContext::new(exchange),
                         #krate::tlv::TLVBuilder::new(
-                            #krate::tlv::TLVWriteParent::new(writer.writer()),
-                            &#krate::data_model::objects::AttrDataWriter::TAG,
+                            #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
+                            &#krate::data_model::objects::CmdDataWriter::TAG,
                         )?,
-                    )#sawait?;
+                    )#sawait;
+
+                    #cmd_invoke_debug_build_end
+
+                    cmd_invoke_result?;
 
                     writer.complete()?
                 }
@@ -839,15 +972,25 @@ fn handler_adaptor_command_match(
         } else {
             quote!(quote!(
                 CommandId::#cmd_name => {
-                    encoder
-                        .with_command(#field_resp_cmd_code)?
-                        .set(self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait?)?
+                    let writer = encoder.with_command(#field_resp_cmd_code)?;
+
+                    let cmd_invoke_result = self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait;
+
+                    #cmd_invoke_debug_noarg
+
+                    writer.set(cmd_invoke_result?)?;
                 }
             ))
         }
     } else {
         quote!(
-            CommandId::#cmd_name => self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait?,
+            CommandId::#cmd_name => {
+                let cmd_invoke_result = self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait;
+
+                #cmd_invoke_debug_noarg
+
+                cmd_invoke_result?;
+            }
         )
     }
 }

@@ -131,7 +131,7 @@ impl core::fmt::Display for Attribute {
 }
 
 /// An enum for modeling reads from attributes whose type is an array.
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ArrayAttributeRead<T, E> {
     /// Read the whole array
@@ -163,7 +163,7 @@ impl<T, E> ArrayAttributeRead<T, E> {
 }
 
 /// An enum for modeling writes to attributes whose type is an array.
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ArrayAttributeWrite<T, E> {
     /// Replace the whole array
