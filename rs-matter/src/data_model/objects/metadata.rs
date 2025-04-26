@@ -130,6 +130,12 @@ where
     }
 }
 
+/// A helper newtype used for displaying debug information for meta-data
+/// (attribute IDs, command IDs, cluster IDs and so on).
+///
+/// Typically implements `core::fmt::Debug` and also `defmt::Format` when the `defmt` feature is enabled.
+pub struct MetaDataDebug<T>(pub T);
+
 mod asynch {
     use crate::data_model::objects::{Async, Node};
 

@@ -470,21 +470,24 @@ impl Default for Pake {
     }
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct Pake1Resp<'a> {
     pb: OctetStr<'a>,
     cb: OctetStr<'a>,
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct PBKDFParamRespParams<'a> {
     count: u32,
     salt: OctetStr<'a>,
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct PBKDFParamResp<'a> {
     init_random: OctetStr<'a>,
@@ -500,7 +503,8 @@ fn extract_pasepake_1_or_3_params(buf: &[u8]) -> Result<&[u8], Error> {
     Ok(pA)
 }
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a", start = 1)]
 struct PBKDFParamReq<'a> {
     initiator_random: OctetStr<'a>,

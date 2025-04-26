@@ -266,7 +266,17 @@ where
 /// it should return its parent type `P`. This provides for extra ertgonomics when
 /// using the builder, as the user cannot "forget" to build the complete TLV type which
 /// is expected.
-pub trait TLVBuilderParent: Sized {
+#[cfg(not(feature = "defmt"))]
+pub trait TLVBuilderParent: Sized + core::fmt::Debug {
+    /// The type of the writer.
+    type Write: TLVWrite;
+
+    /// Return a mutable reference to the writer.
+    fn writer(&mut self) -> &mut Self::Write;
+}
+
+#[cfg(feature = "defmt")]
+pub trait TLVBuilderParent: Sized + core::fmt::Debug + defmt::Format {
     /// The type of the writer.
     type Write: TLVWrite;
 
@@ -275,23 +285,57 @@ pub trait TLVBuilderParent: Sized {
 }
 
 /// A root-level TLV builder parent, that wraps a `TLVWrite` implementation.
-pub struct TLVWriteParent<W>(W);
+pub struct TLVWriteParent<S, W>(S, W);
 
-impl<W> TLVWriteParent<W> {
+impl<S, W> TLVWriteParent<S, W> {
     /// Create a new `TLVWriteParent` for the given writer.
-    pub const fn new(writer: W) -> Self {
-        Self(writer)
+    pub const fn new(id: S, writer: W) -> Self {
+        Self(id, writer)
     }
 }
 
-impl<W> TLVBuilderParent for TLVWriteParent<W>
+impl<S, W> core::fmt::Debug for TLVWriteParent<S, W>
 where
+    S: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<S, W> defmt::Format for TLVWriteParent<S, W>
+where
+    S: core::fmt::Debug + defmt::Format,
+{
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{:?}", self.0);
+    }
+}
+
+#[cfg(not(feature = "defmt"))]
+impl<S, W> TLVBuilderParent for TLVWriteParent<S, W>
+where
+    S: core::fmt::Debug,
     W: TLVWrite,
 {
     type Write = W;
 
     fn writer(&mut self) -> &mut Self::Write {
-        &mut self.0
+        &mut self.1
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<S, W> TLVBuilderParent for TLVWriteParent<S, W>
+where
+    S: core::fmt::Debug + defmt::Format,
+    W: TLVWrite,
+{
+    type Write = W;
+
+    fn writer(&mut self) -> &mut Self::Write {
+        &mut self.1
     }
 }
 
@@ -323,10 +367,48 @@ where
     }
 
     /// Write the TLV type into the writer.
-    pub fn set(mut self, tlv: &T) -> Result<P, Error> {
+    #[cfg(not(feature = "defmt"))]
+    pub fn set(mut self, tlv: &T) -> Result<P, Error>
+    where
+        T: core::fmt::Debug,
+    {
+        #[cfg(feature = "log")]
+        log::info!("{:?}::TLV -> {:?} +", self, tlv);
+
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
         Ok(self.parent)
+    }
+
+    #[cfg(feature = "defmt")]
+    pub fn set(mut self, tlv: &T) -> Result<P, Error>
+    where
+        T: core::fmt::Debug + defmt::Format,
+    {
+        defmt::info!("{:?}::TLV[] -> {:?} +", self, tlv);
+
+        tlv.to_tlv(&self.tag, self.parent.writer())?;
+
+        Ok(self.parent)
+    }
+}
+
+impl<P, T> core::fmt::Debug for ToTLVBuilder<P, T>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P, T> defmt::Format for ToTLVBuilder<P, T>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.parent)
     }
 }
 
@@ -383,7 +465,26 @@ where
     }
 
     /// Push a new element into the array.
-    pub fn push(mut self, tlv: &T) -> Result<Self, Error> {
+    #[cfg(not(feature = "defmt"))]
+    pub fn push(mut self, tlv: &T) -> Result<Self, Error>
+    where
+        T: core::fmt::Debug,
+    {
+        #[cfg(feature = "log")]
+        log::info!("{:?}::TLV[] -> {:?} +", self, tlv);
+
+        tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
+
+        Ok(self)
+    }
+
+    #[cfg(feature = "defmt")]
+    pub fn push(mut self, tlv: &T) -> Result<Self, Error>
+    where
+        T: core::fmt::Debug + defmt::Format,
+    {
+        defmt::info!("{:?}::TLV[] -> {:?} +", self, tlv);
+
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
         Ok(self)
@@ -394,6 +495,25 @@ where
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
+    }
+}
+
+impl<P, T> core::fmt::Debug for ToTLVArrayBuilder<P, T>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}[]", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P, T> defmt::Format for ToTLVArrayBuilder<P, T>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}[]", self.parent)
     }
 }
 
@@ -442,9 +562,33 @@ where
 
     /// Write the Utf8 string type into the writer.
     pub fn set(mut self, tlv: Utf8Str<'_>) -> Result<P, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::Utf8 -> {:?} +", self, tlv);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::Utf8 -> {:?} +", self, tlv);
+
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
         Ok(self.parent)
+    }
+}
+
+impl<P> core::fmt::Debug for Utf8StrBuilder<P>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P> defmt::Format for Utf8StrBuilder<P>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.parent)
     }
 }
 
@@ -491,6 +635,11 @@ where
 
     /// Push a new Utf8 string into the array.
     pub fn push(mut self, tlv: Utf8Str<'_>) -> Result<Self, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::Utf8[] -> {:?} +", self, tlv);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::Utf8[] -> {:?} +", self, tlv);
+
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
         Ok(self)
@@ -501,6 +650,25 @@ where
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
+    }
+}
+
+impl<P> core::fmt::Debug for Utf8StrArrayBuilder<P>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}[]", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P> defmt::Format for Utf8StrArrayBuilder<P>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}[]", self.parent)
     }
 }
 
@@ -548,9 +716,33 @@ where
 
     /// Write the TLV type into the writer.
     pub fn set(mut self, tlv: Octets<'_>) -> Result<P, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::Octets -> {:?} +", self, tlv);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::Octets -> {:?} +", self, tlv);
+
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
         Ok(self.parent)
+    }
+}
+
+impl<P> core::fmt::Debug for OctetsBuilder<P>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P> defmt::Format for OctetsBuilder<P>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.parent)
     }
 }
 
@@ -597,6 +789,11 @@ where
 
     /// Push a new octet string into the array.
     pub fn push(mut self, tlv: Octets<'_>) -> Result<Self, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::Octets[] -> {:?} +", self, tlv);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::Octets[] -> {:?} +", self, tlv);
+
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
         Ok(self)
@@ -607,6 +804,25 @@ where
         self.parent.writer().end_container()?;
 
         Ok(self.parent)
+    }
+}
+
+impl<P> core::fmt::Debug for OctetsArrayBuilder<P>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}[]", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P> defmt::Format for OctetsArrayBuilder<P>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}[]", self.parent)
     }
 }
 
@@ -657,6 +873,11 @@ where
 
     /// Write a null value into the TLV and return the parent.
     pub fn null(mut self) -> Result<P, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::nullable -> null +", self);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::nullable -> null +", self);
+
         self.parent.writer().null(&self.tag)?;
 
         Ok(self.parent)
@@ -664,6 +885,11 @@ where
 
     /// Create and return the builder for the non-null value.
     pub fn non_null(self) -> Result<T, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::nullable -> (not_null) +", self);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::nullable -> (not_null) +", self);
+
         T::new(self.parent, &self.tag)
     }
 
@@ -678,6 +904,25 @@ where
         } else {
             self.null()
         }
+    }
+}
+
+impl<P, T> core::fmt::Debug for NullableBuilder<P, T>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P, T> defmt::Format for NullableBuilder<P, T>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.parent)
     }
 }
 
@@ -729,11 +974,21 @@ where
 
     /// Skip writing the TLV type and return the parent.
     pub fn none(self) -> P {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::optional -> none +", self);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::optional -> none +", self);
+
         self.parent
     }
 
     /// Create and return the builder for the non-optional value.
     pub fn some(self) -> Result<T, Error> {
+        #[cfg(feature = "defmt")]
+        defmt::info!("{:?}::optional -> (some) +", self);
+        #[cfg(feature = "log")]
+        ::log::info!("{:?}::optional -> (some) +", self);
+
         T::new(self.parent, &self.tag)
     }
 
@@ -748,6 +1003,25 @@ where
         } else {
             Ok(self.none())
         }
+    }
+}
+
+impl<P, T> core::fmt::Debug for OptionalBuilder<P, T>
+where
+    P: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.parent)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<P, T> defmt::Format for OptionalBuilder<P, T>
+where
+    P: defmt::Format,
+{
+    fn format(&self, f: defmt::Formatter<'_>) {
+        defmt::write!(f, "{:?}", self.parent)
     }
 }
 

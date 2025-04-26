@@ -53,7 +53,9 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
     let krate = context.rs_matter_crate.clone();
 
     let name = Ident::new(&format!("{}Builder", s.id), Span::call_site());
+    let name_str = Literal::string(&s.id);
     let name_array = Ident::new(&format!("{}ArrayBuilder", s.id), Span::call_site());
+    let name_array_str = Literal::string(&format!("{}[]", s.id));
 
     let start_code = s
         .fields
@@ -114,6 +116,25 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
             }
         }
 
+        impl<P, const F: usize> core::fmt::Debug for #name<P, F>
+        where
+            P: core::fmt::Debug,
+        {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "{:?}::{}", self.0, #name_str)
+            }
+        }
+
+        #[cfg(feature = "defmt")]
+        impl<P, const F: usize> defmt::Format for #name<P, F>
+        where
+            P: defmt::Format,
+        {
+            fn format(&self, f: defmt::Formatter<'_>) {
+                defmt::write!(f, "{:?}::{}", self.0, #name_str)
+            }
+        }
+
         impl<P, const F: usize> #krate::tlv::TLVBuilderParent for #name<P, F>
         where
             P: #krate::tlv::TLVBuilderParent,
@@ -168,6 +189,25 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
             }
         }
 
+        impl<P> core::fmt::Debug for #name_array<P>
+        where
+            P: core::fmt::Debug,
+        {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "{:?}::{}", self.0, #name_array_str)
+            }
+        }
+
+        #[cfg(feature = "defmt")]
+        impl<P> defmt::Format for #name_array<P>
+        where
+            P: defmt::Format,
+        {
+            fn format(&self, f: defmt::Formatter<'_>) {
+                defmt::write!(f, "{:?}::{}", self.0, #name_array_str)
+            }
+        }
+
         impl<P> #krate::tlv::TLVBuilderParent for #name_array<P>
         where
             P: #krate::tlv::TLVBuilderParent,
@@ -219,6 +259,7 @@ fn struct_field_builder(
     let next_parent = quote!(#parent_name<P, #next_code>);
 
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+    let name_str = Literal::string(&f.field.id);
 
     let (field_type, builder) = field_type_builder(
         &f.field.data_type,
@@ -247,12 +288,38 @@ fn struct_field_builder(
         )
     } else {
         quote!(
+            #[cfg(feature = "defmt")]
             impl<P> #parent
             where
-                P: #krate::tlv::TLVBuilderParent,
+                P: #krate::tlv::TLVBuilderParent + core::fmt::Debug + defmt::Format,
             {
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
+                    #[cfg(feature = "defmt")]
+                    defmt::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #[cfg(feature = "log")]
+                    ::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+
+                    #krate::tlv::ToTLV::to_tlv(
+                        &value,
+                        &#krate::tlv::TLVTag::Context(#code),
+                        self.0.writer(),
+                    )?;
+
+                    Ok(#parent_name(self.0))
+                }
+            }
+
+            #[cfg(not(feature = "defmt"))]
+            impl<P> #parent
+            where
+                P: #krate::tlv::TLVBuilderParent + core::fmt::Debug,
+            {
+                #doc_comment
+                pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
+                    #[cfg(feature = "log")]
+                    ::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+
                     #krate::tlv::ToTLV::to_tlv(
                         &value,
                         &#krate::tlv::TLVTag::Context(#code),

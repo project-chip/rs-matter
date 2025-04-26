@@ -18,14 +18,14 @@ use super::objects::Dataver;
 idl_import!(clusters = ["UnitTesting"]);
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", defmt::Format)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct TestListStructOctetOwned {
     member_1: u64,
     member_2: Vec<u8, 32>,
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", defmt::Format)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct SimpleStructOwned {
     a: u8,
     b: bool,
@@ -53,7 +53,7 @@ impl SimpleStructOwned {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", defmt::Format)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct NullablesAndOptionalsStructOwned {
     nullable_int: Nullable<u16>,
     optional_int: Option<u16>,
@@ -181,7 +181,7 @@ impl NullablesAndOptionalsStructOwned {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", defmt::Format)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct UnitTestingClusterData {
     boolean: bool,
     bitmap_8: Bitmap8MaskMap,

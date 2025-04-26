@@ -93,7 +93,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     generated_commands: generated_commands!(),
 };
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct OpenCommWindowReq<'a> {
     timeout: u16,
@@ -103,7 +104,8 @@ pub struct OpenCommWindowReq<'a> {
     salt: OctetStr<'a>,
 }
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OpenBasicCommWindowReq {
     timeout: u16,
 }
