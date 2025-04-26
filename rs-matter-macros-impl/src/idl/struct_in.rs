@@ -74,13 +74,16 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
     //       will have fabric_idx with ID 254 automatically added.
 
     let name = Ident::new(&s.id, Span::call_site());
+    let name_str = Literal::string(&s.id);
 
     let fields = s.fields.iter().map(|f| struct_field(f, cluster, context));
+    let fields_debug = s.fields.iter().map(|f| struct_field_debug(f, false));
+    let fields_format = s.fields.iter().map(|f| struct_field_debug(f, true));
+
     let krate = context.rs_matter_crate.clone();
 
     quote!(
-        #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        #[derive(PartialEq, Eq, Clone, Hash)]
         pub struct #name<'a>(#krate::tlv::TLVElement<'a>);
 
         impl<'a> #name<'a> {
@@ -110,6 +113,27 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
 
             fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
                 self.0.tlv_iter(tag)
+            }
+        }
+
+        impl core::fmt::Debug for #name<'_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "{} {{", #name_str)?;
+
+                #(#fields_debug)*
+
+                write!(f, "}}")
+            }
+        }
+
+        #[cfg(feature = "defmt")]
+        impl defmt::Format for #name<'_> {
+            fn format(&self, f: defmt::Formatter<'_>) {
+                defmt::write!(f, "{} {{", #name_str);
+
+                #(#fields_format)*
+
+                defmt::write!(f, "}}")
             }
         }
     )
@@ -151,6 +175,35 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
             #doc_comment
             pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
                 #krate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(#code)?)
+            }
+        )
+    }
+}
+
+/// Create the token stream corresponding to a debug printout of a field inside a structure
+fn struct_field_debug(f: &StructField, defmt: bool) -> TokenStream {
+    let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+    let name_str = Literal::string(&idl_field_name_to_rs_name(&f.field.id));
+    let write = if defmt {
+        quote!(defmt::write!)
+    } else {
+        quote!(write!)
+    };
+    let write_suffix = if defmt { quote!() } else { quote!(?) };
+
+    if f.is_optional {
+        quote!(
+            match self.#name() {
+                Ok(Some(value)) => #write(f, "{}: Some({:?}),", #name_str, value)#write_suffix,
+                Ok(None) => #write(f, "{}: None,", #name_str)#write_suffix,
+                Err(e) => #write(f, "{}: ??? {:?},", #name_str, e)#write_suffix,
+            }
+        )
+    } else {
+        quote!(
+            match self.#name() {
+                Ok(value) => #write(f, "{}: {:?},", #name_str, value)#write_suffix,
+                Err(e) => #write(f, "{}: ??? {:?},", #name_str, e)#write_suffix,
             }
         )
     }
