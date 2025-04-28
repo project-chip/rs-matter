@@ -214,7 +214,7 @@ fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<Tok
 fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Option<TokenStream> {
     // NOTE: f.max_length is not used (i.e. we do not limit or check string length limit)
 
-    Some(match f.name.as_str() {
+    Some(match f.name.as_str().to_ascii_lowercase().as_str() {
         "enum8" | "int8u" | "bitmap8" => quote!(u8),
         "enum16" | "int16u" | "bitmap16" => quote!(u16),
         "int24u" | "int32u" | "bitmap32" => quote!(u32),

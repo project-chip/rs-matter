@@ -15,18 +15,19 @@
  *    limitations under the License.
  */
 
+//! An example Matter device that implements the On/Off Light cluster over Ethernet.
+
 use core::pin::pin;
 
 use std::net::UdpSocket;
 
 use embassy_futures::select::{select, select4};
-
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
+
 use log::info;
 
-use rs_matter::core::{BasicCommData, Matter, MATTER_PORT};
-use rs_matter::data_model::basic_info::BasicInfoConfig;
+use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::*;
@@ -39,6 +40,7 @@ use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::test_device;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -46,36 +48,12 @@ use rs_matter::utils::storage::pooled::PooledBuffers;
 
 use static_cell::StaticCell;
 
-mod dev_att;
-
-static DEV_DET: BasicInfoConfig = BasicInfoConfig {
-    vid: 0xFFF1,
-    pid: 0x8001,
-    hw_ver: 2,
-    hw_ver_str: "2",
-    sw_ver: 1,
-    sw_ver_str: "1",
-    serial_no: "aabbccdd",
-    device_name: "OnOff Light",
-    product_name: "Light123",
-    vendor_name: "Vendor PQR",
-    sai: None,
-    sii: None,
-};
-
-static DEV_COMM: BasicCommData = BasicCommData {
-    password: 20202021,
-    discriminator: 3840,
-};
-
-static DEV_ATT: dev_att::HardCodedDevAtt = dev_att::HardCodedDevAtt::new();
+#[path = "../common/mdns.rs"]
+mod mdns;
 
 static MATTER: StaticCell<Matter> = StaticCell::new();
-
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
-
 static SUBSCRIPTIONS: StaticCell<Subscriptions<3>> = StaticCell::new();
-
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -117,9 +95,9 @@ fn run() -> Result<(), Error> {
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
-        &DEV_DET,
-        DEV_COMM,
-        &DEV_ATT,
+        &test_device::TEST_DEV_DET,
+        test_device::TEST_DEV_COMM,
+        &test_device::TEST_DEV_ATT,
         // NOTE:
         // For `no_std` environments, provide your own epoch and rand functions here
         MdnsService::Builtin,
@@ -140,12 +118,12 @@ fn run() -> Result<(), Error> {
 
     let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
 
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom On/Off clusters
-    let dm_handler = Async(dm_handler(&matter, &on_off));
+    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
+    let dm_handler = Async(dm_handler(matter, &on_off));
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, buffers, &subscriptions, dm_handler);
+    let responder = DefaultResponder::new(matter, buffers, subscriptions, dm_handler);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
@@ -155,7 +133,6 @@ fn run() -> Result<(), Error> {
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
-    //let mut respond = responder_fut(responder);
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
@@ -179,10 +156,10 @@ fn run() -> Result<(), Error> {
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
         core::mem::size_of_val(&matter.run(&socket, &socket, DiscoveryCapabilities::IP)),
-        core::mem::size_of_val(&run_mdns(&matter))
+        core::mem::size_of_val(&mdns::run_mdns(matter))
     );
 
-    let mut mdns = pin!(run_mdns(&matter));
+    let mut mdns = pin!(mdns::run_mdns(matter));
 
     let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
 
@@ -193,14 +170,14 @@ fn run() -> Result<(), Error> {
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(std::env::temp_dir().join("rs-matter"), &matter))
+        core::mem::size_of_val(&psm.run(std::env::temp_dir().join("rs-matter"), matter))
     );
 
     let dir = std::env::temp_dir().join("rs-matter");
 
-    psm.load(&dir, &matter)?;
+    psm.load(&dir, matter)?;
 
-    let mut persist = pin!(psm.run(dir, &matter));
+    let mut persist = pin!(psm.run(dir, matter));
 
     // Combine all async tasks in a single one
     let all = select4(
@@ -214,15 +191,6 @@ fn run() -> Result<(), Error> {
     // Replace with a different executor for e.g. `no_std` environments
     futures_lite::future::block_on(all.coalesce())
 }
-
-// #[inline(never)]
-// pub fn responder_fut<const N: usize, B, T>(responder: &'static DefaultResponder<N, B, T>) -> Box<impl Future<Output = Result<(), Error>>>
-// where
-//     B: BufferAccess<IMBuffer>,
-//     T: DataModelHandler,
-// {
-//     Box::new(responder.run::<4, 4>())
-// }
 
 const NODE: Node<'static> = Node {
     id: 0,
@@ -252,102 +220,4 @@ fn dm_handler<'a>(
             )
             .chain(1, on_off::ID, Async(on_off::HandlerAdaptor(on_off))),
     )
-}
-
-#[cfg(all(
-    feature = "std",
-    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-))]
-async fn run_mdns(_matter: &Matter<'_>) -> Result<(), Error> {
-    // Nothing to run
-    core::future::pending().await
-}
-
-#[cfg(not(all(
-    feature = "std",
-    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-)))]
-async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
-    use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
-
-    // NOTE:
-    // Replace with your own network initialization for e.g. `no_std` environments
-    #[inline(never)]
-    fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
-        use log::error;
-        use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
-        use rs_matter::error::ErrorCode;
-        let interfaces = || {
-            nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {
-                ia.flags
-                    .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
-                    && !ia
-                        .flags
-                        .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
-            })
-        };
-
-        // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
-        // Most likely, this is the interface we need
-        // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
-        let (iname, ip, ipv6) = interfaces()
-            .filter_map(|ia| {
-                ia.address
-                    .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                    .map(|ipv6| (ia.interface_name, ipv6))
-            })
-            .filter_map(|(iname, ipv6)| {
-                interfaces()
-                    .filter(|ia2| ia2.interface_name == iname)
-                    .find_map(|ia2| {
-                        ia2.address
-                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
-                            .map(|ip: std::net::Ipv4Addr| (iname.clone(), ip, ipv6))
-                    })
-            })
-            .next()
-            .ok_or_else(|| {
-                error!("Cannot find network interface suitable for mDNS broadcasting");
-                ErrorCode::StdIoError
-            })?;
-
-        info!(
-            "Will use network interface {} with {}/{} for mDNS",
-            iname, ip, ipv6
-        );
-
-        Ok((ip.octets().into(), ipv6.octets().into(), 0 as _))
-    }
-
-    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
-
-    use rs_matter::mdns::{
-        Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
-    };
-
-    // NOTE:
-    // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind + multicast join for your custom UDP stack
-    // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
-    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
-    socket
-        .get_ref()
-        .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)?;
-    socket
-        .get_ref()
-        .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
-
-    matter
-        .run_builtin_mdns(
-            &socket,
-            &socket,
-            &Host {
-                id: 0,
-                hostname: "rs-matter-demo",
-                ip: ipv4_addr,
-                ipv6: ipv6_addr,
-            },
-            Some(ipv4_addr),
-            Some(interface),
-        )
-        .await
 }

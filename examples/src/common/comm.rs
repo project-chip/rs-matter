@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+//! A module containing a "fake" Wifi Network Commissioning cluster
+
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::{error, info, warn};
 
@@ -238,7 +240,7 @@ impl<'a> WifiNwCommCluster<'a> {
     }
 }
 
-impl<'a> Handler for WifiNwCommCluster<'a> {
+impl Handler for WifiNwCommCluster<'_> {
     fn read(
         &self,
         exchange: &Exchange,
@@ -250,7 +252,7 @@ impl<'a> Handler for WifiNwCommCluster<'a> {
 
     fn invoke(
         &self,
-        exchange: &Exchange<'_>,
+        exchange: &Exchange,
         cmd: &CmdDetails,
         data: &TLVElement,
         encoder: CmdDataEncoder,
@@ -259,4 +261,4 @@ impl<'a> Handler for WifiNwCommCluster<'a> {
     }
 }
 
-impl<'a> NonBlockingHandler for WifiNwCommCluster<'a> {}
+impl NonBlockingHandler for WifiNwCommCluster<'_> {}

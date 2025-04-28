@@ -27,7 +27,7 @@ pub const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
     drev: 2,
 };
 
-pub const DEV_TYPE_ON_SMART_SPEAKER: DeviceType = DeviceType {
+pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
     dtype: 0x0022,
     drev: 2,
 };

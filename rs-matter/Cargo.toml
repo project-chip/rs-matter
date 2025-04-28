@@ -28,7 +28,7 @@ large-buffers = [] # TCP support
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
-bitflags = { version =  "2.5", default-features = false } # TODO: Update to 2.x
+bitflags = { version =  "2.5", default-features = false }
 byteorder = { version = "1.5", default-features = false }
 heapless = "0.8"
 num = { version = "0.4", default-features = false }
@@ -87,7 +87,7 @@ tokio = { version = "1" }
 tokio-stream = { version = "0.1" }
 
 [dev-dependencies]
-log = { version = "0.4", features = ["max_level_debug", "release_max_level_debug"] }
+log = "0.4"
 env_logger = "0.11"
 nix = { version = "0.27", features = ["net"] }
 futures-lite = "2"
@@ -95,18 +95,3 @@ async-channel = "2"
 static_cell = "2"
 similar = "2.6"
 embassy-time-queue-utils = { version = "0.1", features = ["generic-queue-64"] }
-
-[[example]]
-name = "onoff_light"
-path = "../examples/onoff_light/src/main.rs"
-required-features = ["examples"]
-
-[[example]]
-name = "onoff_light_bt"
-path = "../examples/onoff_light_bt/src/main.rs"
-required-features = ["examples"]
-
-# [[example]]
-# name = "speaker"
-# path = "../examples/speaker/src/main.rs"
-# required-features = ["examples"]

@@ -3,7 +3,7 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 
 use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 
-use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::data_model::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};

@@ -64,7 +64,7 @@ fn cluster_internal(
 
     let bitmaps = bitmap::bitmaps(cluster, context);
     let enums = enumeration::enums(cluster, context);
-    let struct_tags = struct_in::struct_tags(cluster);
+    let struct_tags = struct_in::struct_tags(cluster, context);
     let structs = struct_in::structs(cluster, context);
     let struct_builders = struct_out::struct_builders(cluster, context);
 
@@ -125,6 +125,7 @@ fn cluster_internal(
         #[allow(async_fn_in_trait)]
         #[allow(unknown_lints)]
         #[allow(clippy::uninlined_format_args)]
+        #[allow(unexpected_cfgs)]
         pub mod #cluster_module_name {
             #quote
         }

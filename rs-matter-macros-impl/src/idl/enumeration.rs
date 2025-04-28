@@ -56,7 +56,7 @@ fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
-        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         #[repr(#base_type)]
         pub enum #name {
             #(#items),*

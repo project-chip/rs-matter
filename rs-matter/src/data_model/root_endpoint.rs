@@ -88,8 +88,8 @@ pub type EthRootEndpointHandler<'a> =
 /// A type representing the type of the root (Endpoint 0) handler
 /// which is generic over the operational transport clusters (i.e. Ethernet, Wifi or Thread)
 pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
-    NWCOMM,
-    NWDIAG,
+    Async<NWCOMM>,
+    Async<NWDIAG>,
     Async<descriptor::DescriptorCluster<'a>>,
     Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
     Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
@@ -185,6 +185,6 @@ fn wrap<NWCOMM, NWDIAG>(
             descriptor::ID,
             Async(DescriptorCluster::new(Dataver::new_rand(rand))),
         )
-        .chain(endpoint_id, nwdiag_id, nwdiag)
-        .chain(endpoint_id, nw_commissioning::ID, nwcomm)
+        .chain(endpoint_id, nwdiag_id, Async(nwdiag))
+        .chain(endpoint_id, nw_commissioning::ID, Async(nwcomm))
 }
