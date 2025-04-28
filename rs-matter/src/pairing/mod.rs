@@ -19,7 +19,7 @@
 
 use qr::no_optional_data;
 
-use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::data_model::basic_info::BasicInfoConfig;
 use crate::error::Error;
 use crate::utils::bitflags::bitflags;
 use crate::BasicCommData;

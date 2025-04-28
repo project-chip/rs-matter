@@ -1,5 +1,3 @@
-use rs_matter_macros::idl_import;
-
 use crate::data_model::objects::{
     ArrayAttributeRead, ArrayAttributeWrite, InvokeContext, ReadContext, WriteContext,
 };
@@ -15,7 +13,7 @@ use crate::utils::storage::Vec;
 
 use super::objects::Dataver;
 
-idl_import!(clusters = ["UnitTesting"]);
+pub use crate::data_model::clusters::unit_testing::*;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -182,7 +180,7 @@ impl NullablesAndOptionalsStructOwned {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct UnitTestingClusterData {
+pub struct UnitTestingHandlerData {
     boolean: bool,
     bitmap_8: Bitmap8MaskMap,
     bitmap_16: Bitmap16MaskMap,
@@ -265,7 +263,7 @@ pub struct UnitTestingClusterData {
     nullable_range_restricted_int_16_s: Nullable<i16>,
 }
 
-impl UnitTestingClusterData {
+impl UnitTestingHandlerData {
     pub fn init() -> impl Init<Self> {
         init!(Self {
             boolean: false,
@@ -352,18 +350,22 @@ impl UnitTestingClusterData {
     }
 }
 
-pub struct UnitTestingCluster<'a> {
+pub struct UnitTestingHandler<'a> {
     dataver: Dataver,
-    data: &'a RefCell<UnitTestingClusterData>,
+    data: &'a RefCell<UnitTestingHandlerData>,
 }
 
-impl<'a> UnitTestingCluster<'a> {
-    pub const fn new(dataver: Dataver, data: &'a RefCell<UnitTestingClusterData>) -> Self {
+impl<'a> UnitTestingHandler<'a> {
+    pub const fn new(dataver: Dataver, data: &'a RefCell<UnitTestingHandlerData>) -> Self {
         Self { dataver, data }
+    }
+
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 }
 
-impl UnitTestingHandler for UnitTestingCluster<'_> {
+impl ClusterHandler for UnitTestingHandler<'_> {
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

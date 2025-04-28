@@ -20,7 +20,7 @@ use rs_matter::data_model::sdm::{
     admin_commissioning as adm_comm, general_commissioning as gen_comm, noc, nw_commissioning,
 };
 use rs_matter::data_model::system_model::{access_control as acl, descriptor};
-use rs_matter::data_model::{cluster_basic_information as basic_info, cluster_on_off as onoff};
+use rs_matter::data_model::{basic_info, on_off};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::AttrPath;
 use rs_matter::interaction_model::messages::msg::{StatusResp, SubscribeResp};
@@ -177,7 +177,7 @@ static PART_3: &[TestAttrResp<'static>] = &[
     attr_data!(1, 29, GlobalElements::AttributeList, None),
     attr_data!(1, 29, GlobalElements::FeatureMap, None),
     attr_data!(1, 29, GlobalElements::ClusterRevision, None),
-    attr_data!(1, 6, onoff::AttributeId::OnOff, None),
+    attr_data!(1, 6, on_off::AttributeId::OnOff, None),
     attr_data!(1, 6, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
     attr_data!(1, 6, GlobalElements::AttributeList, None),

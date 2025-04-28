@@ -17,21 +17,19 @@
 
 use core::cell::Cell;
 
-use rs_matter_macros::idl_import;
-
 use crate::error::Error;
 
 use super::objects::{Dataver, InvokeContext, ReadContext};
 
-idl_import!(clusters = ["OnOff"]);
+pub use crate::data_model::clusters::on_off::*;
 
 #[derive(Clone)]
-pub struct OnOffCluster {
+pub struct OnOffHandler {
     dataver: Dataver,
     on: Cell<bool>,
 }
 
-impl OnOffCluster {
+impl OnOffHandler {
     pub const fn new(dataver: Dataver) -> Self {
         Self {
             dataver,
@@ -39,8 +37,8 @@ impl OnOffCluster {
         }
     }
 
-    pub const fn adapt(self) -> OnOffAdaptor<Self> {
-        OnOffAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     pub fn get(&self) -> bool {
@@ -55,7 +53,7 @@ impl OnOffCluster {
     }
 }
 
-impl OnOffHandler for OnOffCluster {
+impl ClusterHandler for OnOffHandler {
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

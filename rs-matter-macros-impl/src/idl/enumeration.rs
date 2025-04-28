@@ -40,7 +40,7 @@ fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
     let base_type = match e.base_type.as_ref() {
         "enum8" => quote!(u8),
         "enum16" => quote!(u16),
-        other => panic!("Unknown enumeration base type {}", other),
+        other => panic!("Unknown enumeration base type {other}"),
     };
     let name = Ident::new(&e.id, Span::call_site());
 

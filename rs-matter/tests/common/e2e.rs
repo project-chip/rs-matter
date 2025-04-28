@@ -26,7 +26,7 @@ use embassy_sync::{
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::KeyPair;
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
+use rs_matter::data_model::basic_info::BasicInfoConfig;
 use rs_matter::data_model::core::{DataModel, IMBuffer};
 use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
