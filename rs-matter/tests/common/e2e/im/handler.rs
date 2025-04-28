@@ -24,7 +24,7 @@ use rs_matter::data_model::objects::{
 use rs_matter::data_model::on_off::{self, OnOffHandler};
 use rs_matter::data_model::root_endpoint::{self, EthRootEndpointHandler};
 use rs_matter::data_model::sdm::admin_commissioning;
-use rs_matter::data_model::sdm::general_commissioning;
+use rs_matter::data_model::sdm::gen_comm;
 use rs_matter::data_model::sdm::noc;
 use rs_matter::data_model::sdm::nw_commissioning;
 use rs_matter::data_model::system_model::access_control;
@@ -53,7 +53,7 @@ impl<'a> E2eTestHandler<'a> {
                 clusters: &[
                     descriptor::CLUSTER,
                     basic_info::CLUSTER,
-                    general_commissioning::CLUSTER,
+                    gen_comm::CLUSTER,
                     nw_commissioning::ETH_CLUSTER,
                     admin_commissioning::CLUSTER,
                     noc::CLUSTER,
