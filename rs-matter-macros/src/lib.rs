@@ -18,7 +18,7 @@
 use std::collections::HashSet;
 
 use proc_macro::TokenStream;
-use proc_macro2::{Group, Ident, Punct};
+use proc_macro2::{Ident, Punct};
 use quote::quote;
 use rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL;
 use rs_matter_macros_impl::idl::{cluster, IdlGenerateContext};
@@ -49,92 +49,51 @@ pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
 }
 
 #[derive(Debug)]
-struct MatterIdlImportArgs {
+struct MatterImportArgs {
     // Crate name to refer to for `rs-matter`
     rs_matter_crate: String,
 
-    // What clusters to import. Non-empty list if
-    // a clusters argument was given
-    clusters: Option<HashSet<String>>,
+    // What clusters to import. If the set is empty, all clusters will be imported
+    clusters: HashSet<String>,
 }
 
-impl Parse for MatterIdlImportArgs {
+impl Parse for MatterImportArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let clusters = if !input.is_empty() {
-            // Argument is "clusters = [....]"
-            //
-            // Token stream looks like:
-            //
-            // TokenStream [
-            //     Ident {
-            //         ident: "clusters",
-            //         span: #0 bytes(224041..224049),
-            //     },
-            //     Punct {
-            //         ch: '=',
-            //         spacing: Alone,
-            //         span: #0 bytes(224050..224051),
-            //     },
-            //     Group {
-            //         delimiter: Bracket,
-            //         stream: TokenStream [
-            //             Literal {
-            //                 kind: Str,
-            //                 symbol: "OnOff",
-            //                 suffix: None,
-            //                 span: #0 bytes(224053..224060),
-            //             },
-            //         ],
-            //         span: #0 bytes(224052..224061),
-            //     },
-            //  ]
+        let mut clusters = HashSet::new();
 
-            assert_eq!(input.parse::<Ident>()?.to_string(), "clusters");
-            assert_eq!(input.parse::<Punct>()?.as_char(), '=');
+        // Argument is "[Cluster1[, Cluster2, ...]]"
+        while !input.is_empty() {
+            let cluster: Ident = input.parse()?;
 
-            Some(
-                input
-                    .parse::<Group>()?
-                    .stream()
-                    .into_iter()
-                    .map(|item| match item {
-                        proc_macro2::TokenTree::Literal(l) => {
-                            let repr = l.to_string();
-                            // Representation  includes quotes. Remove them
-                            // TODO: this does NOT support `r"..."` or similar, however
-                            //       those should generally not be needed
-                            repr[1..(repr.len() - 1)].to_owned()
-                        }
-                        _ => panic!("Expected a token"),
-                    })
-                    .collect::<HashSet<_>>(),
-            )
-        } else {
-            None
-        };
+            clusters.insert(cluster.to_string());
 
-        if let Some(ref values) = clusters {
-            if values.is_empty() {
-                panic!("Input clusters MUST be non-empty. If you want no filtering, omit this argument.");
+            if !input.is_empty() {
+                let punct = input.parse::<Punct>()?;
+                if punct.as_char() != ',' {
+                    return Err(syn::Error::new(
+                        punct.span(),
+                        "Expected a comma between cluster names",
+                    ));
+                }
             }
         }
 
-        Ok(MatterIdlImportArgs {
+        Ok(MatterImportArgs {
             rs_matter_crate: get_crate_name(),
             clusters,
         })
     }
 }
 
-/// Imports a matter IDL and generates code for it
+/// Generate code for one or more Matter cluster definitions as specified in the Matter IDL/ZAP file.
 ///
 /// The IDL file used is rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL, so
 /// at this time only "standard" clusters can be imported.
 ///
-/// `idl_import!(clusters=["OnOff"])` imports the OnOff cluster
+/// `import!(OnOff)` imports the OnOff cluster
 #[proc_macro]
-pub fn idl_import(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as MatterIdlImportArgs);
+pub fn import(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as MatterImportArgs);
 
     let idl = rs_matter_data_model::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
     let context = IdlGenerateContext::new(input.rs_matter_crate);
@@ -142,10 +101,7 @@ pub fn idl_import(item: TokenStream) -> TokenStream {
     let clusters = idl
         .clusters
         .iter()
-        .filter(|c| match input.clusters {
-            Some(ref v) => v.contains(&c.id),
-            None => true,
-        })
+        .filter(|c| input.clusters.is_empty() || input.clusters.contains(&c.id))
         .map(|c| cluster(c, &context));
 
     quote!(

@@ -35,7 +35,7 @@ pub fn idl_id_to_constant_name(s: &str) -> String {
     let str = s.strip_prefix('k').unwrap_or(s).to_case(Case::UpperSnake);
     let char = str.chars().next().unwrap();
     if !char.is_alphabetic() {
-        format!("C{}", str)
+        format!("C{str}")
     } else {
         str
     }
@@ -57,7 +57,7 @@ pub fn idl_id_to_enum_variant_name(s: &str) -> String {
     let str = s.strip_prefix('k').unwrap_or(s).to_string();
     let char = str.chars().next().unwrap();
     if !char.is_alphabetic() {
-        format!("V{}", str)
+        format!("V{str}")
     } else {
         str
     }

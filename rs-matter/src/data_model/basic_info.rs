@@ -17,8 +17,6 @@
 
 use core::str::FromStr;
 
-use rs_matter_macros::idl_import;
-
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
@@ -28,7 +26,7 @@ use crate::utils::storage::WriteBuf;
 
 use super::objects::{Dataver, InvokeContext, ReadContext, WriteContext};
 
-idl_import!(clusters = ["BasicInformation"]);
+pub use crate::data_model::clusters::basic_information::*;
 
 const SUPPORTED_MATTER_SPEC_VERSION: u32 = 0x01000000;
 
@@ -128,15 +126,15 @@ impl Default for BasicInfoSettings {
 }
 
 #[derive(Clone)]
-pub struct BasicInfoCluster(Dataver);
+pub struct BasicInfoHandler(Dataver);
 
-impl BasicInfoCluster {
+impl BasicInfoHandler {
     pub fn new(dataver: Dataver) -> Self {
         Self(dataver)
     }
 
-    pub const fn adapt(self) -> BasicInformationAdaptor<Self> {
-        BasicInformationAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     fn config<'a>(exchange: &'a Exchange) -> &'a BasicInfoConfig<'a> {
@@ -148,7 +146,7 @@ impl BasicInfoCluster {
     }
 }
 
-impl BasicInformationHandler for BasicInfoCluster {
+impl ClusterHandler for BasicInfoHandler {
     fn dataver(&self) -> u32 {
         self.0.get()
     }

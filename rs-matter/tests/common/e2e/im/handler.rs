@@ -15,13 +15,13 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::cluster_basic_information;
-use rs_matter::data_model::cluster_on_off::{self, OnOffAdaptor, OnOffCluster};
+use rs_matter::data_model::basic_info;
 use rs_matter::data_model::device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails, Dataver,
     Endpoint, Handler, Metadata, Node, NonBlockingHandler,
 };
+use rs_matter::data_model::on_off::{self, OnOffHandler};
 use rs_matter::data_model::root_endpoint::{self, EthRootEndpointHandler};
 use rs_matter::data_model::sdm::admin_commissioning;
 use rs_matter::data_model::sdm::general_commissioning;
@@ -41,7 +41,7 @@ use super::echo_cluster::{self, EchoCluster};
 
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a>(
-    handler_chain_type!(OnOffAdaptor<OnOffCluster>, EchoCluster, DescriptorCluster<'static>, EchoCluster | EthRootEndpointHandler<'a>),
+    handler_chain_type!(on_off::HandlerAdaptor<OnOffHandler>, EchoCluster, DescriptorCluster<'static>, EchoCluster | EthRootEndpointHandler<'a>),
 );
 
 impl<'a> E2eTestHandler<'a> {
@@ -52,7 +52,7 @@ impl<'a> E2eTestHandler<'a> {
                 id: 0,
                 clusters: &[
                     descriptor::CLUSTER,
-                    cluster_basic_information::CLUSTER,
+                    basic_info::CLUSTER,
                     general_commissioning::CLUSTER,
                     nw_commissioning::ETH_CLUSTER,
                     admin_commissioning::CLUSTER,
@@ -64,11 +64,7 @@ impl<'a> E2eTestHandler<'a> {
             },
             Endpoint {
                 id: 1,
-                clusters: &[
-                    descriptor::CLUSTER,
-                    cluster_on_off::CLUSTER,
-                    echo_cluster::CLUSTER,
-                ],
+                clusters: &[descriptor::CLUSTER, on_off::CLUSTER, echo_cluster::CLUSTER],
                 device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             },
         ],
@@ -93,8 +89,8 @@ impl<'a> E2eTestHandler<'a> {
             )
             .chain(
                 1,
-                cluster_on_off::ID,
-                OnOffCluster::new(Dataver::new_rand(matter.rand())).adapt(),
+                on_off::ID,
+                OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt(),
             );
 
         Self(handler)

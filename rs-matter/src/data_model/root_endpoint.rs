@@ -1,13 +1,11 @@
 use crate::handler_chain_type;
 use crate::utils::rand::Rand;
 
-use super::cluster_basic_information::{self, BasicInfoCluster};
+use super::basic_info::{self, BasicInfoHandler};
 use super::objects::{Async, Cluster, Dataver, EmptyHandler, Endpoint, EndptId};
 use super::sdm::admin_commissioning::{self, AdminCommCluster};
-use super::sdm::ethernet_nw_diagnostics::{
-    self, EthNwDiagCluster, EthernetNetworkDiagnosticsAdaptor,
-};
-use super::sdm::general_commissioning::{self, CommissioningPolicy, GenCommCluster};
+use super::sdm::ethernet_nw_diagnostics::{self, EthNwDiagHandler};
+use super::sdm::general_commissioning::{self, CommissioningPolicy, GenCommHandler};
 use super::sdm::general_diagnostics::{self, GenDiagCluster};
 use super::sdm::group_key_management::{self, GrpKeyMgmtCluster};
 use super::sdm::noc::{self, NocCluster};
@@ -18,7 +16,7 @@ use super::system_model::descriptor::{self, DescriptorCluster};
 
 const ETH_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
-    cluster_basic_information::CLUSTER,
+    basic_info::CLUSTER,
     general_commissioning::CLUSTER,
     nw_commissioning::ETH_CLUSTER,
     admin_commissioning::CLUSTER,
@@ -31,7 +29,7 @@ const ETH_NW_CLUSTERS: [Cluster<'static>; 10] = [
 
 const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
-    cluster_basic_information::CLUSTER,
+    basic_info::CLUSTER,
     general_commissioning::CLUSTER,
     nw_commissioning::WIFI_CLUSTER,
     admin_commissioning::CLUSTER,
@@ -44,7 +42,7 @@ const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
 
 const THREAD_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
-    cluster_basic_information::CLUSTER,
+    basic_info::CLUSTER,
     general_commissioning::CLUSTER,
     nw_commissioning::THR_CLUSTER,
     admin_commissioning::CLUSTER,
@@ -84,8 +82,11 @@ pub const fn clusters(op_nw_type: OperNwType) -> &'static [Cluster<'static>] {
 }
 
 /// A type alias for a root (Endpoint 0) handler using Ethernet as an operational network
-pub type EthRootEndpointHandler<'a> =
-    RootEndpointHandler<'a, EthNwCommCluster, EthernetNetworkDiagnosticsAdaptor<EthNwDiagCluster>>;
+pub type EthRootEndpointHandler<'a> = RootEndpointHandler<
+    'a,
+    EthNwCommCluster,
+    ethernet_nw_diagnostics::HandlerAdaptor<EthNwDiagHandler>,
+>;
 
 /// A type representing the type of the root (Endpoint 0) handler
 /// which is generic over the operational transport clusters (i.e. Ethernet, Wifi or Thread)
@@ -93,16 +94,8 @@ pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     NWCOMM,
     NWDIAG,
     Async<descriptor::DescriptorCluster<'a>>,
-    Async<
-        cluster_basic_information::BasicInformationAdaptor<
-            cluster_basic_information::BasicInfoCluster,
-        >,
-    >,
-    Async<
-        general_commissioning::GeneralCommissioningAdaptor<
-            general_commissioning::GenCommCluster<'a>,
-        >,
-    >,
+    Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
+    Async<general_commissioning::HandlerAdaptor<GenCommHandler<'a>>>,
     Async<admin_commissioning::AdminCommCluster>,
     Async<noc::NocCluster>,
     Async<access_control::AccessControlCluster>,
@@ -116,7 +109,7 @@ pub fn eth_handler(endpoint_id: u16, rand: Rand) -> EthRootEndpointHandler<'stat
         endpoint_id,
         EthNwCommCluster::new(Dataver::new_rand(rand)),
         ethernet_nw_diagnostics::ID,
-        EthNwDiagCluster::new(Dataver::new_rand(rand)).adapt(),
+        EthNwDiagHandler::new(Dataver::new_rand(rand)).adapt(),
         &true,
         rand,
     )
@@ -182,13 +175,13 @@ fn wrap<NWCOMM, NWDIAG>(
             endpoint_id,
             general_commissioning::ID,
             Async(
-                GenCommCluster::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
+                GenCommHandler::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
             ),
         )
         .chain(
             endpoint_id,
-            cluster_basic_information::ID,
-            Async(BasicInfoCluster::new(Dataver::new_rand(rand)).adapt()),
+            basic_info::ID,
+            Async(BasicInfoHandler::new(Dataver::new_rand(rand)).adapt()),
         )
         .chain(
             endpoint_id,

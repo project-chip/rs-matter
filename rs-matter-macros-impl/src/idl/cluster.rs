@@ -495,10 +495,12 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
         )
     });
 
+    let cluster_id = Literal::u32_unsuffixed(cluster.code as u32);
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
 
     quote!(
-        const CLUSTER_REVISION: u16 = #cluster_revision;
+        pub const ID: u32 = #cluster_id;
+        pub const REVISION: u16 = #cluster_revision;
 
         // TODO: Think if to continue supporting this
         pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = ClusterConf::Default.cluster();
@@ -532,7 +534,7 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
                     id: ID as _,
                     attributes_access: ATTRIBUTES_ACCESS,
                     revision: match self {
-                        ClusterConf::Default => CLUSTER_REVISION,
+                        ClusterConf::Default => REVISION,
                         ClusterConf::Mandatory { revision, .. } => *revision,
                         ClusterConf::All { revision, .. } => *revision,
                         ClusterConf::Custom { revision, .. } => *revision,

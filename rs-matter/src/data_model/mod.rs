@@ -15,14 +15,12 @@
  *    limitations under the License.
  */
 
+pub mod basic_info;
+mod clusters;
 pub mod core;
 pub mod device_types;
 pub mod objects;
-
-pub mod cluster_basic_information;
-// TODO pub mod cluster_media_playback;
-pub mod cluster_on_off;
-pub mod cluster_template;
+pub mod on_off;
 pub mod root_endpoint;
 pub mod sdm;
 pub mod subscriptions;

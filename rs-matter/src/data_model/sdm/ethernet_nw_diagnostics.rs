@@ -15,30 +15,28 @@
  *    limitations under the License.
  */
 
-use rs_matter_macros::idl_import;
-
 use crate::data_model::objects::{Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
 
-idl_import!(clusters = ["EthernetNetworkDiagnostics"]);
+pub use crate::data_model::clusters::ethernet_network_diagnostics::*;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct EthNwDiagCluster {
+pub struct EthNwDiagHandler {
     dataver: Dataver,
 }
 
-impl EthNwDiagCluster {
+impl EthNwDiagHandler {
     pub const fn new(dataver: Dataver) -> Self {
         Self { dataver }
     }
 
-    pub const fn adapt(self) -> EthernetNetworkDiagnosticsAdaptor<Self> {
-        EthernetNetworkDiagnosticsAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 }
 
-impl EthernetNetworkDiagnosticsHandler for EthNwDiagCluster {
+impl ClusterHandler for EthNwDiagHandler {
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

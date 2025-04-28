@@ -43,11 +43,11 @@ use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
 use rs_matter::core::{BasicCommData, Matter};
-use rs_matter::data_model::cluster_basic_information::BasicInfoConfig;
-use rs_matter::data_model::cluster_on_off::{self, OnOffAdaptor};
+use rs_matter::data_model::basic_info::BasicInfoConfig;
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::*;
+use rs_matter::data_model::on_off;
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
     self, WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
@@ -144,7 +144,7 @@ fn run() -> Result<(), Error> {
 
     let mut mdns = pin!(run_mdns(&matter));
 
-    let on_off = cluster_on_off::OnOffCluster::new(Dataver::new_rand(matter.rand()));
+    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
     let subscriptions = Subscriptions::<3>::new();
 
@@ -251,14 +251,14 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, cluster_on_off::CLUSTER],
+            clusters: &[descriptor::CLUSTER, on_off::CLUSTER],
         },
     ],
 };
 
 fn dm_handler<'a>(
     matter: &'a Matter<'a>,
-    on_off: &'a cluster_on_off::OnOffCluster,
+    on_off: &'a on_off::OnOffHandler,
     wifi_complete: &'a Notification<NoopRawMutex>,
 ) -> impl Metadata + NonBlockingHandler + 'a {
     (
@@ -290,7 +290,7 @@ fn dm_handler<'a>(
                 matter.rand(),
             ))),
         )
-        .chain(1, cluster_on_off::ID, Async(OnOffAdaptor(on_off))),
+        .chain(1, on_off::ID, Async(on_off::HandlerAdaptor(on_off))),
     )
 }
 

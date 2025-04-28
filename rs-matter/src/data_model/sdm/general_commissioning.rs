@@ -15,13 +15,11 @@
  *    limitations under the License.
  */
 
-use rs_matter_macros::idl_import;
-
 use crate::data_model::objects::{Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 
-idl_import!(clusters = ["GeneralCommissioning"]);
+pub use crate::data_model::clusters::general_commissioning::*;
 
 impl CommissioningErrorEnum {
     fn map(result: Result<(), Error>) -> Result<Self, Error> {
@@ -106,12 +104,12 @@ impl CommissioningPolicy for bool {
 }
 
 #[derive(Clone)]
-pub struct GenCommCluster<'a> {
+pub struct GenCommHandler<'a> {
     dataver: Dataver,
     commissioning_policy: &'a dyn CommissioningPolicy,
 }
 
-impl<'a> GenCommCluster<'a> {
+impl<'a> GenCommHandler<'a> {
     pub const fn new(dataver: Dataver, commissioning_policy: &'a dyn CommissioningPolicy) -> Self {
         Self {
             dataver,
@@ -119,12 +117,12 @@ impl<'a> GenCommCluster<'a> {
         }
     }
 
-    pub const fn adapt(self) -> GeneralCommissioningAdaptor<Self> {
-        GeneralCommissioningAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 }
 
-impl GeneralCommissioningHandler for GenCommCluster<'_> {
+impl ClusterHandler for GenCommHandler<'_> {
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

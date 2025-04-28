@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::Cluster;
@@ -57,7 +57,10 @@ fn cluster_internal(
     with_async: bool,
     context: &IdlGenerateContext,
 ) -> TokenStream {
-    //let cluster_module_name = Ident::new(&cluster.id.to_case(Case::Snake), Span::call_site());
+    let cluster_module_name = Ident::new(
+        &id::idl_field_name_to_rs_name(&cluster.id),
+        Span::call_site(),
+    );
 
     let bitmaps = bitmap::bitmaps(cluster, context);
     let enums = enumeration::enums(cluster, context);
@@ -74,11 +77,7 @@ fn cluster_internal(
     let handler_inherent_impl = handler::handler(false, true, cluster, context);
     let handler_adaptor = handler::handler_adaptor(false, cluster, context);
 
-    let cluster_code = Literal::u32_unsuffixed(cluster.code as u32);
-
     let quote = quote!(
-        pub const ID: u32 = #cluster_code;
-
         #bitmaps
 
         #enums
@@ -104,7 +103,7 @@ fn cluster_internal(
         #handler_adaptor
     );
 
-    if with_async {
+    let quote = if with_async {
         let async_handler = handler::handler(true, false, cluster, context);
         let async_handler_inherent_impl = handler::handler(true, true, cluster, context);
         let async_handler_adaptor = handler::handler_adaptor(true, cluster, context);
@@ -120,7 +119,16 @@ fn cluster_internal(
         )
     } else {
         quote
-    }
+    };
+
+    quote!(
+        #[allow(async_fn_in_trait)]
+        #[allow(unknown_lints)]
+        #[allow(clippy::uninlined_format_args)]
+        pub mod #cluster_module_name {
+            #quote
+        }
+    )
 }
 
 #[cfg(test)]
