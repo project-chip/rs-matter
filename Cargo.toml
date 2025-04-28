@@ -5,16 +5,17 @@ members = [
         "rs-matter-data-model",
         "rs-matter-macros",
         "rs-matter-macros-impl",
+        "examples",
 ]
 
 exclude = ["examples/*", "tools/tlv"]
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 
 [profile.dev]
 debug = true
-opt-level = 3
+opt-level = "z"
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }

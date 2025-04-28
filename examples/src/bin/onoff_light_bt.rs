@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! On/Off Light Example with provisioning over Bluetooth (Linux only)
+//! An example Matter device that implements the On/Off Light cluster with provisioning over Bluetooth (Linux only)
 //!
 //! Build with:
 //! `cargo build --features os,async-io,async-compat,zeroconf --example onoff_light_bt`
@@ -42,8 +42,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
-use rs_matter::core::{BasicCommData, Matter};
-use rs_matter::data_model::basic_info::BasicInfoConfig;
+use rs_matter::core::Matter;
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::*;
@@ -59,6 +58,7 @@ use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::test_device;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::utils::select::Coalesce;
@@ -66,10 +66,10 @@ use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::{blocking::raw::StdRawMutex, Notification};
 use rs_matter::MATTER_PORT;
 
+#[path = "../common/comm.rs"]
 mod comm;
-// TODO: Now that we have two examples, move common stuff to a `common` filder
-// The `dev_att` module would be a prime candidate for this.
-mod dev_att;
+#[path = "../common/mdns.rs"]
+mod mdns;
 
 static BTP_CONTEXT: BtpContext<StdRawMutex> = BtpContext::<StdRawMutex>::new();
 
@@ -100,32 +100,10 @@ fn run() -> Result<(), Error> {
         core::mem::size_of::<PooledBuffers<10, NoopRawMutex, IMBuffer>>()
     );
 
-    let dev_det = BasicInfoConfig {
-        vid: 0xFFF1,
-        pid: 0x8000,
-        hw_ver: 2,
-        hw_ver_str: "2",
-        sw_ver: 1,
-        sw_ver_str: "1",
-        serial_no: "aabbccdd",
-        device_name: "OnOff Light",
-        product_name: "Light123",
-        vendor_name: "Vendor PQR",
-        sai: None,
-        sii: None,
-    };
-
-    let dev_comm = BasicCommData {
-        password: 20202021,
-        discriminator: 3840,
-    };
-
-    let dev_att = dev_att::HardCodedDevAtt::new();
-
     let matter = Matter::new(
-        &dev_det,
-        dev_comm,
-        &dev_att,
+        &test_device::TEST_DEV_DET,
+        test_device::TEST_DEV_COMM,
+        &test_device::TEST_DEV_ATT,
         // NOTE:
         // For `no_std` environments, provide your own epoch and rand functions here
         MdnsService::Builtin,
@@ -142,7 +120,7 @@ fn run() -> Result<(), Error> {
 
     info!("IM buffers initialized");
 
-    let mut mdns = pin!(run_mdns(&matter));
+    let mut mdns = pin!(mdns::run_mdns(&matter));
 
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
@@ -150,7 +128,7 @@ fn run() -> Result<(), Error> {
 
     let wifi_complete = Notification::new();
 
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom On/Off clusters
+    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
     let dm_handler = Async(dm_handler(&matter, &on_off, &wifi_complete));
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -194,7 +172,11 @@ fn run() -> Result<(), Error> {
         // Not commissioned yet, start commissioning first
 
         let btp = Btp::new_builtin(&BTP_CONTEXT);
-        let mut bluetooth = pin!(btp.run("MT", &dev_det, dev_comm.discriminator));
+        let mut bluetooth = pin!(btp.run(
+            "MT",
+            &test_device::TEST_DEV_DET,
+            test_device::TEST_DEV_COMM.discriminator
+        ));
 
         let mut transport = pin!(matter.run(&btp, &btp, DiscoveryCapabilities::BLE));
 
@@ -267,7 +249,7 @@ fn dm_handler<'a>(
             0,
             Async(WifiNwCommCluster::new(
                 Dataver::new_rand(matter.rand()),
-                &wifi_complete,
+                wifi_complete,
             )),
             wifi_nw_diagnostics::ID,
             Async(WifiNwDiagCluster::new(
@@ -292,102 +274,4 @@ fn dm_handler<'a>(
         )
         .chain(1, on_off::ID, Async(on_off::HandlerAdaptor(on_off))),
     )
-}
-
-#[cfg(all(
-    feature = "std",
-    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-))]
-async fn run_mdns(_matter: &Matter<'_>) -> Result<(), Error> {
-    // Nothing to run
-    core::future::pending().await
-}
-
-#[cfg(not(all(
-    feature = "std",
-    any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-)))]
-async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
-    use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
-
-    // NOTE:
-    // Replace with your own network initialization for e.g. `no_std` environments
-    fn initialize_network() -> Result<(Ipv4Addr, Ipv6Addr, u32), Error> {
-        use log::error;
-        use nix::{net::if_::InterfaceFlags, sys::socket::SockaddrIn6};
-        use rs_matter::error::ErrorCode;
-        let interfaces = || {
-            nix::ifaddrs::getifaddrs().unwrap().filter(|ia| {
-                ia.flags
-                    .contains(InterfaceFlags::IFF_UP | InterfaceFlags::IFF_BROADCAST)
-                    && !ia
-                        .flags
-                        .intersects(InterfaceFlags::IFF_LOOPBACK | InterfaceFlags::IFF_POINTOPOINT)
-            })
-        };
-
-        // A quick and dirty way to get a network interface that has a link-local IPv6 address assigned as well as a non-loopback IPv4
-        // Most likely, this is the interface we need
-        // (as opposed to all the docker and libvirt interfaces that might be assigned on the machine and which seem by default to be IPv4 only)
-        let (iname, ip, ipv6) = interfaces()
-            .filter_map(|ia| {
-                ia.address
-                    .and_then(|addr| addr.as_sockaddr_in6().map(SockaddrIn6::ip))
-                    .filter(|ip| ip.octets()[..2] == [0xfe, 0x80])
-                    .map(|ipv6| (ia.interface_name, ipv6))
-            })
-            .filter_map(|(iname, ipv6)| {
-                interfaces()
-                    .filter(|ia2| ia2.interface_name == iname)
-                    .find_map(|ia2| {
-                        ia2.address
-                            .and_then(|addr| addr.as_sockaddr_in().map(|addr| addr.ip().into()))
-                            .map(|ip: std::net::Ipv4Addr| (iname.clone(), ip, ipv6))
-                    })
-            })
-            .next()
-            .ok_or_else(|| {
-                error!("Cannot find network interface suitable for mDNS broadcasting");
-                ErrorCode::StdIoError
-            })?;
-
-        info!(
-            "Will use network interface {} with {}/{} for mDNS",
-            iname, ip, ipv6
-        );
-
-        Ok((ip.octets().into(), ipv6.octets().into(), 0 as _))
-    }
-
-    let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
-
-    use rs_matter::mdns::{
-        Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
-    };
-
-    // NOTE:
-    // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind + multicast join for your custom UDP stack
-    // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
-    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
-    socket
-        .get_ref()
-        .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)?;
-    socket
-        .get_ref()
-        .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
-
-    matter
-        .run_builtin_mdns(
-            &socket,
-            &socket,
-            &Host {
-                id: 0,
-                hostname: "rs-matter-demo",
-                ip: ipv4_addr,
-                ipv6: ipv6_addr,
-            },
-            Some(ipv4_addr),
-            Some(interface),
-        )
-        .await
 }

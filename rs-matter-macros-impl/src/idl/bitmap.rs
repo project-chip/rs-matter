@@ -61,7 +61,7 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
 
     quote!(
         #[cfg(not(feature = "defmt"))]
-        bitflags::bitflags! {
+        #krate::reexport::bitflags::bitflags! {
             #[repr(transparent)]
             #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
             pub struct #name: #base_type {
@@ -70,7 +70,7 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
         }
 
         #[cfg(feature = "defmt")]
-        defmt::bitflags! {
+        #krate::reexport::defmt::bitflags! {
             #[repr(transparent)]
             #[derive(Default)]
             pub struct #name: #base_type {

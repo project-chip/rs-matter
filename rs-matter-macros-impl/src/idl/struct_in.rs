@@ -27,8 +27,10 @@ use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
 /// all structures in the given IDL cluster.
-pub fn struct_tags(cluster: &Cluster) -> TokenStream {
-    let struct_tags = cluster.structs.iter().map(struct_tag);
+pub fn struct_tags(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+    let krate = context.rs_matter_crate.clone();
+
+    let struct_tags = cluster.structs.iter().map(|s| struct_tag(s, &krate));
 
     quote!(
         #(#struct_tags)*
@@ -52,14 +54,14 @@ pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 /// tag definition.
 ///
 /// Provide the raw `enum FooTag { }` declaration.
-pub fn struct_tag(s: &Struct) -> TokenStream {
+fn struct_tag(s: &Struct, krate: &Ident) -> TokenStream {
     let name = Ident::new(&format!("{}Tag", s.id), Span::call_site());
 
     let fields = s.fields.iter().map(struct_tag_field);
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-        #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+        #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         #[repr(u8)]
         pub enum #name { #(#fields)* }
     )
@@ -73,14 +75,17 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
 
+    let krate = context.rs_matter_crate.clone();
+
     let name = Ident::new(&s.id, Span::call_site());
     let name_str = Literal::string(&s.id);
 
     let fields = s.fields.iter().map(|f| struct_field(f, cluster, context));
-    let fields_debug = s.fields.iter().map(|f| struct_field_debug(f, false));
-    let fields_format = s.fields.iter().map(|f| struct_field_debug(f, true));
-
-    let krate = context.rs_matter_crate.clone();
+    let fields_debug = s
+        .fields
+        .iter()
+        .map(|f| struct_field_debug(f, false, &krate));
+    let fields_format = s.fields.iter().map(|f| struct_field_debug(f, true, &krate));
 
     quote!(
         #[derive(PartialEq, Eq, Clone, Hash)]
@@ -127,13 +132,13 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
         }
 
         #[cfg(feature = "defmt")]
-        impl defmt::Format for #name<'_> {
-            fn format(&self, f: defmt::Formatter<'_>) {
-                defmt::write!(f, "{} {{", #name_str);
+        impl #krate::reexport::defmt::Format for #name<'_> {
+            fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
+                #krate::reexport::defmt::write!(f, "{} {{", #name_str);
 
                 #(#fields_format)*
 
-                defmt::write!(f, "}}")
+                #krate::reexport::defmt::write!(f, "}}")
             }
         }
     )
@@ -181,11 +186,11 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
 }
 
 /// Create the token stream corresponding to a debug printout of a field inside a structure
-fn struct_field_debug(f: &StructField, defmt: bool) -> TokenStream {
+fn struct_field_debug(f: &StructField, defmt: bool, krate: &Ident) -> TokenStream {
     let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
     let name_str = Literal::string(&idl_field_name_to_rs_name(&f.field.id));
     let write = if defmt {
-        quote!(defmt::write!)
+        quote!(#krate::reexport::defmt::write!)
     } else {
         quote!(write!)
     };
@@ -554,7 +559,7 @@ mod tests {
         );
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster),
+            &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -732,7 +737,7 @@ mod tests {
         );
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster),
+            &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -856,7 +861,7 @@ mod tests {
         );
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster),
+            &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -974,7 +979,7 @@ mod tests {
         );
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster),
+            &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

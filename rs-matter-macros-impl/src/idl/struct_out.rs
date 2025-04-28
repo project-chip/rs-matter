@@ -126,12 +126,12 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
         }
 
         #[cfg(feature = "defmt")]
-        impl<P, const F: usize> defmt::Format for #name<P, F>
+        impl<P, const F: usize> #krate::reexport::defmt::Format for #name<P, F>
         where
-            P: defmt::Format,
+            P: #krate::reexport::defmt::Format,
         {
-            fn format(&self, f: defmt::Formatter<'_>) {
-                defmt::write!(f, "{:?}::{}", self.0, #name_str)
+            fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
+                #krate::reexport::defmt::write!(f, "{:?}::{}", self.0, #name_str)
             }
         }
 
@@ -199,12 +199,12 @@ pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContex
         }
 
         #[cfg(feature = "defmt")]
-        impl<P> defmt::Format for #name_array<P>
+        impl<P> #krate::reexport::defmt::Format for #name_array<P>
         where
-            P: defmt::Format,
+            P: #krate::reexport::defmt::Format,
         {
-            fn format(&self, f: defmt::Formatter<'_>) {
-                defmt::write!(f, "{:?}::{}", self.0, #name_array_str)
+            fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
+                #krate::reexport::defmt::write!(f, "{:?}::{}", self.0, #name_array_str)
             }
         }
 
@@ -291,14 +291,14 @@ fn struct_field_builder(
             #[cfg(feature = "defmt")]
             impl<P> #parent
             where
-                P: #krate::tlv::TLVBuilderParent + core::fmt::Debug + defmt::Format,
+                P: #krate::tlv::TLVBuilderParent + core::fmt::Debug + #krate::reexport::defmt::Format,
             {
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
                     #[cfg(feature = "defmt")]
-                    defmt::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::defmt::info!("{:?}::{} -> {:?} +", self, #name_str, value);
                     #[cfg(feature = "log")]
-                    ::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
 
                     #krate::tlv::ToTLV::to_tlv(
                         &value,
@@ -318,7 +318,7 @@ fn struct_field_builder(
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
                     #[cfg(feature = "log")]
-                    ::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
 
                     #krate::tlv::ToTLV::to_tlv(
                         &value,
