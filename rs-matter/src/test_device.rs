@@ -15,16 +15,48 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
-use rs_matter::error::{Error, ErrorCode};
+//! A set of constants for an uncertified (test) device.
+//! Used in the examples and tests and can be re-used by user code as well.
 
-pub struct HardCodedDevAtt {}
+use crate::data_model::basic_info::BasicInfoConfig;
+use crate::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
+use crate::error::{Error, ErrorCode};
+use crate::BasicCommData;
 
-impl HardCodedDevAtt {
-    pub const fn new() -> Self {
-        Self {}
-    }
-}
+/// Test Device Attestation credentials
+pub const TEST_DEV_ATT: TestDevAtt = TestDevAtt(());
+/// Test Vendor ID
+/// Matches what chip-tool tests expect
+pub const TEST_VID: u16 = 0xfff1;
+/// Test Product ID
+/// MAtches what chip-tool tests expect
+pub const TEST_PID: u16 = 0x8001;
+/// Test Basic Commissioning Data
+/// Matches what chip-tool tests expect
+pub const TEST_DEV_COMM: BasicCommData = BasicCommData {
+    password: 20202021,
+    discriminator: 3840,
+};
+/// Test Basic Information
+/// Matches what chip-tool tests expect
+pub const TEST_DEV_DET: BasicInfoConfig = BasicInfoConfig {
+    vid: TEST_VID,
+    pid: TEST_PID,
+    hw_ver: 1,
+    hw_ver_str: "1",
+    sw_ver: 1,
+    sw_ver_str: "1",
+    serial_no: "123456789",
+    device_name: "MyTest",
+    product_name: "ACME Test",
+    vendor_name: "ACME",
+    sai: None,
+    sii: None,
+};
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct TestDevAtt(());
 
 // credentials/examples/ExamplePAI.cpp FFF1
 const PAI_CERT: [u8; 463] = [
@@ -145,7 +177,7 @@ const CERT_DECLARATION: [u8; 541] = [
     0xd3, 0xff, 0xdf, 0xc3, 0xcc, 0xed, 0x7a, 0xa8, 0xca, 0x5f, 0x4c, 0x1a, 0x7c,
 ];
 
-impl DevAttDataFetcher for HardCodedDevAtt {
+impl DevAttDataFetcher for TestDevAtt {
     fn get_devatt_data(&self, data_type: DataType, data: &mut [u8]) -> Result<usize, Error> {
         let src = match data_type {
             DataType::CertDeclaration => &CERT_DECLARATION[..],
