@@ -17,7 +17,7 @@
 
 use rs_matter::data_model::objects::GlobalElements;
 use rs_matter::data_model::sdm::{
-    admin_commissioning as adm_comm, general_commissioning as gen_comm, noc, nw_commissioning,
+    admin_commissioning as adm_comm, gen_comm, noc, nw_commissioning,
 };
 use rs_matter::data_model::system_model::{access_control as acl, descriptor};
 use rs_matter::data_model::{basic_info, on_off};
