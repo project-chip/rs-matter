@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::cluster_on_off;
+use rs_matter::data_model::on_off;
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::{CmdPath, CmdStatus};
 
@@ -113,15 +113,11 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     // should generate 1 response from the on-off cluster
     init_env_logger();
 
-    let target = CmdPath::new(
-        None,
-        Some(cluster_on_off::ID),
-        Some(cluster_on_off::CommandId::On as u32),
-    );
+    let target = CmdPath::new(None, Some(on_off::ID), Some(on_off::CommandId::On as u32));
     let expected_path = CmdPath::new(
         Some(1),
-        Some(cluster_on_off::ID),
-        Some(cluster_on_off::CommandId::On as u32),
+        Some(on_off::ID),
+        Some(on_off::CommandId::On as u32),
     );
     let input = &[cmd_data!(target, 1)];
     let expected = &[TestCmdResp::Status(CmdStatus::new(

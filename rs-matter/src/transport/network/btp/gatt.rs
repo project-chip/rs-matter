@@ -17,7 +17,7 @@
 
 use core::iter::{empty, once};
 
-use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::data_model::basic_info::BasicInfoConfig;
 use crate::error::Error;
 use crate::transport::network::BtAddr;
 

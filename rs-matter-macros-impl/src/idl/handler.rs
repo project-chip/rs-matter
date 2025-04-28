@@ -53,7 +53,7 @@ pub fn handler(
     let krate = context.rs_matter_crate.clone();
 
     let handler_name = Ident::new(
-        &format!("{}{}Handler", if asynch { "Async" } else { "" }, cluster.id),
+        &format!("Cluster{}Handler", if asynch { "Async" } else { "" }),
         Span::call_site(),
     );
 
@@ -126,6 +126,21 @@ pub fn handler_adaptor(
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
+    let handler_name = Ident::new(
+        &format!("Cluster{}Handler", if asynch { "Async" } else { "" }),
+        Span::call_site(),
+    );
+
+    let handler_adaptor_name = Ident::new(
+        &format!("Handler{}Adaptor", if asynch { "Async" } else { "" }),
+        Span::call_site(),
+    );
+
+    let generic_handler_name = Ident::new(
+        &format!("{}Handler", if asynch { "Async" } else { "" }),
+        Span::call_site(),
+    );
+
     let handler_adaptor_attribute_match = cluster
         .attributes
         .iter()
@@ -185,21 +200,6 @@ pub fn handler_adaptor(
             return Err(#krate::error::ErrorCode::CommandNotFound.into());
         )
     };
-
-    let handler_name = Ident::new(
-        &format!("{}{}Handler", if asynch { "Async" } else { "" }, cluster.id),
-        Span::call_site(),
-    );
-
-    let handler_adaptor_name = Ident::new(
-        &format!("{}{}Adaptor", if asynch { "Async" } else { "" }, cluster.id),
-        Span::call_site(),
-    );
-
-    let generic_handler_name = Ident::new(
-        &format!("{}Handler", if asynch { "Async" } else { "" }),
-        Span::call_site(),
-    );
 
     let pasync = if asynch { quote!(async) } else { quote!() };
 

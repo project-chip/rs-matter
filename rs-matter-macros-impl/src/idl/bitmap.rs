@@ -41,7 +41,7 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
         "bitmap16" => quote!(u16),
         "bitmap32" => quote!(u32),
         "bitmap64" => quote!(u64),
-        other => panic!("Unknown bitmap base type {}", other),
+        other => panic!("Unknown bitmap base type {other}"),
     };
     let name = Ident::new(&b.id, Span::call_site());
 

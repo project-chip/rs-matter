@@ -71,6 +71,8 @@
 //! Start off exploring by going to the [Matter] object.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(async_fn_in_trait)]
+#![allow(unknown_lints)]
+#![allow(clippy::uninlined_format_args)]
 #![recursion_limit = "1024"]
 
 // This mod MUST go first, so that the others see its macros.
@@ -99,6 +101,9 @@ pub use crate::core::*;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
+
+/// Re-export the `rs_matter_macros::import` macro
+pub use rs_matter_macros::import;
 
 #[cfg(feature = "alloc")]
 #[macro_export]
