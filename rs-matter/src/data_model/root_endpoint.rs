@@ -4,8 +4,8 @@ use crate::utils::rand::Rand;
 use super::basic_info::{self, BasicInfoHandler};
 use super::objects::{Async, Cluster, Dataver, EmptyHandler, Endpoint, EndptId};
 use super::sdm::admin_commissioning::{self, AdminCommCluster};
-use super::sdm::ethernet_nw_diagnostics::{self, EthNwDiagHandler};
-use super::sdm::general_commissioning::{self, CommissioningPolicy, GenCommHandler};
+use super::sdm::eth_nw_diag::{self, EthNwDiagHandler};
+use super::sdm::gen_comm::{self, CommissioningPolicy, GenCommHandler};
 use super::sdm::general_diagnostics::{self, GenDiagCluster};
 use super::sdm::group_key_management::{self, GrpKeyMgmtCluster};
 use super::sdm::noc::{self, NocCluster};
@@ -17,20 +17,20 @@ use super::system_model::descriptor::{self, DescriptorCluster};
 const ETH_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
     basic_info::CLUSTER,
-    general_commissioning::CLUSTER,
+    gen_comm::CLUSTER,
     nw_commissioning::ETH_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
     access_control::CLUSTER,
     general_diagnostics::CLUSTER,
-    ethernet_nw_diagnostics::CLUSTER,
+    eth_nw_diag::CLUSTER,
     group_key_management::CLUSTER,
 ];
 
 const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
     basic_info::CLUSTER,
-    general_commissioning::CLUSTER,
+    gen_comm::CLUSTER,
     nw_commissioning::WIFI_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
@@ -43,7 +43,7 @@ const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
 const THREAD_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
     basic_info::CLUSTER,
-    general_commissioning::CLUSTER,
+    gen_comm::CLUSTER,
     nw_commissioning::THR_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
@@ -82,11 +82,8 @@ pub const fn clusters(op_nw_type: OperNwType) -> &'static [Cluster<'static>] {
 }
 
 /// A type alias for a root (Endpoint 0) handler using Ethernet as an operational network
-pub type EthRootEndpointHandler<'a> = RootEndpointHandler<
-    'a,
-    EthNwCommCluster,
-    ethernet_nw_diagnostics::HandlerAdaptor<EthNwDiagHandler>,
->;
+pub type EthRootEndpointHandler<'a> =
+    RootEndpointHandler<'a, EthNwCommCluster, eth_nw_diag::HandlerAdaptor<EthNwDiagHandler>>;
 
 /// A type representing the type of the root (Endpoint 0) handler
 /// which is generic over the operational transport clusters (i.e. Ethernet, Wifi or Thread)
@@ -95,7 +92,7 @@ pub type RootEndpointHandler<'a, NWCOMM, NWDIAG> = handler_chain_type!(
     NWDIAG,
     Async<descriptor::DescriptorCluster<'a>>,
     Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
-    Async<general_commissioning::HandlerAdaptor<GenCommHandler<'a>>>,
+    Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
     Async<admin_commissioning::AdminCommCluster>,
     Async<noc::NocCluster>,
     Async<access_control::AccessControlCluster>,
@@ -108,7 +105,7 @@ pub fn eth_handler(endpoint_id: u16, rand: Rand) -> EthRootEndpointHandler<'stat
     handler(
         endpoint_id,
         EthNwCommCluster::new(Dataver::new_rand(rand)),
-        ethernet_nw_diagnostics::ID,
+        eth_nw_diag::ID,
         EthNwDiagHandler::new(Dataver::new_rand(rand)).adapt(),
         &true,
         rand,
@@ -173,7 +170,7 @@ fn wrap<NWCOMM, NWDIAG>(
         )
         .chain(
             endpoint_id,
-            general_commissioning::ID,
+            gen_comm::ID,
             Async(
                 GenCommHandler::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
             ),
