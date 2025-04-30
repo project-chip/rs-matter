@@ -499,68 +499,17 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
 
     quote!(
-        pub const ID: u32 = #cluster_id;
-        pub const REVISION: u16 = #cluster_revision;
+        static ATTRIBUTES_ACCESS: &[#krate::data_model::objects::Attribute] = &[#(#attributes_access)*];
 
-        // TODO: Think if to continue supporting this
-        pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = ClusterConf::Default.cluster();
-
-        #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
-        pub enum ClusterConf<'a> {
-            #[default]
-            Default,
-            Mandatory {
-                revision: u16,
-                feature_map: u32,
-            },
-            All {
-                revision: u16,
-                feature_map: u32,
-            },
-            Custom {
-                revision: u16,
-                feature_map: u32,
-                supported_attributes: &'a [u32],
-                accepted_commands: &'a [u32],
-                generated_commands: &'a [u32],
-            }
-        }
-
-        impl<'a> ClusterConf<'a> {
-            pub const fn cluster(&self) -> #krate::data_model::objects::Cluster<'a> {
-                static ATTRIBUTES_ACCESS: &[#krate::data_model::objects::Attribute] = &[#(#attributes_access)*];
-
-                #krate::data_model::objects::Cluster {
-                    id: ID as _,
-                    attributes_access: ATTRIBUTES_ACCESS,
-                    revision: match self {
-                        ClusterConf::Default => REVISION,
-                        ClusterConf::Mandatory { revision, .. } => *revision,
-                        ClusterConf::All { revision, .. } => *revision,
-                        ClusterConf::Custom { revision, .. } => *revision,
-                    },
-                    feature_map: match self {
-                        ClusterConf::Default => 0,
-                        ClusterConf::Mandatory { feature_map, .. } => *feature_map,
-                        ClusterConf::All { feature_map, .. } => *feature_map,
-                        ClusterConf::Custom { feature_map, .. } => *feature_map,
-                    },
-                    supported_attributes: match self {
-                        ClusterConf::Default | ClusterConf::Mandatory { .. } => AttributeId::mandatory(),
-                        ClusterConf::Custom { supported_attributes, .. } => supported_attributes,
-                        _ => AttributeId::all(),
-                    },
-                    accepted_commands: match self {
-                        ClusterConf::Custom { accepted_commands, .. } => accepted_commands,
-                        _ => CommandId::all(),
-                    },
-                    generated_commands: match self {
-                        ClusterConf::Custom { generated_commands, .. } => generated_commands,
-                        _ => CommandResponseId::all(),
-                    },
-                }
-            }
-        }
+        pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = #krate::data_model::objects::Cluster::new(
+            #cluster_id,
+            #cluster_revision,
+            0,
+            ATTRIBUTES_ACCESS,
+            AttributeId::all(),
+            CommandId::all(),
+            CommandResponseId::all(),
+        );
 
         pub struct MetaDataDebug<T>(pub T);
     )

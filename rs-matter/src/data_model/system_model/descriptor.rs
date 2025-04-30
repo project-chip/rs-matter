@@ -23,7 +23,6 @@ use crate::data_model::objects::*;
 use crate::error::Error;
 use crate::tlv::TLVTag;
 use crate::tlv::{TLVWrite, TLVWriter, TagType, ToTLV};
-use crate::transport::exchange::Exchange;
 use crate::{
     accepted_commands, attribute_enum, attributes_access, generated_commands, supported_attributes,
 };
@@ -130,13 +129,14 @@ impl<'a> DescriptorCluster<'a> {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
-                CLUSTER.read(attr.attr_id, writer)
+                CLUSTER.read(ctx.attr().attr_id, writer)
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::DeviceTypeList => {
@@ -254,18 +254,11 @@ impl<'a> DescriptorCluster<'a> {
 impl Handler for DescriptorCluster<'_> {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        DescriptorCluster::read(self, exchange, attr, encoder)
+        DescriptorCluster::read(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for DescriptorCluster<'_> {}
-
-impl ChangeNotifier<()> for DescriptorCluster<'_> {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

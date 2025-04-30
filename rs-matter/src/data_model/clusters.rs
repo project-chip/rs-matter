@@ -1,7 +1,15 @@
 crate::import!(
+    AdministratorCommissioning,
+    AccessControl,
     BasicInformation,
+    Descriptor,
     EthernetNetworkDiagnostics,
     GeneralCommissioning,
+    GroupKeyManagement,
+    NetworkCommissioning,
     OnOff,
+    OperationalCredentials,
+    ThreadNetworkDiagnostics,
     UnitTesting,
+    WifiNetworkDiagnostics,
 );
