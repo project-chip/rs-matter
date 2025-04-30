@@ -78,8 +78,7 @@ pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
             })?;
 
         info!(
-            "Will use network interface {} with {}/{} for mDNS",
-            iname, ip, ipv6
+            "Will use network interface {iname} with {ip}/{ipv6} for mDNS",
         );
 
         Ok((ip.octets().into(), ipv6.octets().into(), 0 as _))

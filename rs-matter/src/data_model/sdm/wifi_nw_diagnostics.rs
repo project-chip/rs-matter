@@ -21,10 +21,12 @@ use rs_matter_macros::{FromTLV, ToTLV};
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Dataver, Handler,
+    InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
+};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{TLVElement, TLVTag, TLVWrite};
-use crate::transport::exchange::Exchange;
+use crate::tlv::{TLVTag, TLVWrite};
 use crate::{
     accepted_commands, attribute_enum, attributes_access, command_enum, generated_commands,
     supported_attributes,
@@ -185,10 +187,11 @@ impl WifiNwDiagCluster {
     /// Read the value of an attribute.
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -210,13 +213,8 @@ impl WifiNwDiagCluster {
     }
 
     /// Write the value of an attribute.
-    pub fn write(
-        &self,
-        _exchange: &Exchange,
-        _attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let _data = data.with_dataver(self.data_ver.get())?;
+    pub fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        ctx.attr().check_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
 
@@ -226,11 +224,11 @@ impl WifiNwDiagCluster {
     /// Invoke a command.
     pub fn invoke(
         &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        _data: &TLVElement,
-        _encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+
         match cmd.cmd_id.try_into()? {
             Commands::ResetCounts => {
                 info!("ResetCounts: Not yet supported");
@@ -246,25 +244,22 @@ impl WifiNwDiagCluster {
 impl Handler for WifiNwDiagCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        WifiNwDiagCluster::read(self, exchange, attr, encoder)
+        WifiNwDiagCluster::read(self, ctx, encoder)
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        WifiNwDiagCluster::write(self, exchange, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        WifiNwDiagCluster::write(self, ctx)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        WifiNwDiagCluster::invoke(self, exchange, cmd, data, encoder)
+        WifiNwDiagCluster::invoke(self, ctx, encoder)
     }
 }
 

@@ -31,7 +31,10 @@ use crate::{
     tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV},
 };
 
-use super::{AttrDetails, CmdDetails, DataModelHandler};
+use super::{
+    AttrDetails, ChangeNotify, CmdDetails, DataModelHandler, InvokeContext, ReadContext,
+    WriteContext,
+};
 
 pub struct AttrDataEncoder<'a, 'b, 'c> {
     dataver_filter: Option<u32>,
@@ -50,7 +53,9 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
             Ok(attr) => {
                 let encoder = AttrDataEncoder::new(attr, tw);
 
-                let result = handler.read(exchange, attr, encoder).await;
+                let result = handler
+                    .read(&ReadContext::new(exchange, attr), encoder)
+                    .await;
                 match result {
                     Ok(()) => None,
                     Err(e) => {
@@ -72,16 +77,17 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         Ok(true)
     }
 
-    pub async fn handle_write<T: DataModelHandler>(
+    pub(crate) async fn handle_write<T: DataModelHandler>(
         exchange: &Exchange<'_>,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
+        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((attr, data)) => {
                 let result = handler
-                    .write(exchange, attr, AttrData::new(attr.dataver, data))
+                    .write(&WriteContext::new(exchange, attr, data, notify))
                     .await;
                 match result {
                     Ok(()) => attr.status(IMStatusCode::Success)?,
@@ -191,27 +197,6 @@ impl DerefMut for AttrDataWriter<'_, '_, '_> {
     }
 }
 
-pub struct AttrData<'a> {
-    for_dataver: Option<u32>,
-    data: &'a TLVElement<'a>,
-}
-
-impl<'a> AttrData<'a> {
-    pub fn new(for_dataver: Option<u32>, data: &'a TLVElement<'a>) -> Self {
-        Self { for_dataver, data }
-    }
-
-    pub fn with_dataver(self, dataver: u32) -> Result<&'a TLVElement<'a>, Error> {
-        if let Some(req_dataver) = self.for_dataver {
-            if req_dataver != dataver {
-                Err(ErrorCode::DataVersionMismatch)?;
-            }
-        }
-
-        Ok(self.data)
-    }
-}
-
 #[derive(Default)]
 pub struct CmdDataTracker {
     skip_status: bool,
@@ -238,18 +223,21 @@ pub struct CmdDataEncoder<'a, 'b, 'c> {
 }
 
 impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
-    pub async fn handle<T: DataModelHandler>(
+    pub(crate) async fn handle<T: DataModelHandler>(
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
         exchange: &Exchange<'_>,
+        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((cmd, data)) => {
                 let mut tracker = CmdDataTracker::new();
                 let encoder = CmdDataEncoder::new(cmd, &mut tracker, tw);
 
-                let result = handler.invoke(exchange, cmd, data, encoder).await;
+                let result = handler
+                    .invoke(&InvokeContext::new(exchange, cmd, data, notify), encoder)
+                    .await;
                 match result {
                     Ok(()) => cmd.success(&tracker),
                     Err(error) => {

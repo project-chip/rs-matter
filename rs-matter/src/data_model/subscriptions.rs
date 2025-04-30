@@ -26,6 +26,8 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::Notification;
 
+use super::objects::{ChangeNotify, ClusterId, EndptId};
+
 struct Subscription {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,
@@ -42,7 +44,10 @@ struct Subscription {
 
 impl Subscription {
     pub fn report_due(&self, now: Instant) -> bool {
+        // Either the data for the subscription had changed and therefore we need to report,
+        // or the data for the subscription had not changed yet, however the report interval is due
         self.changed && self.expired(self.min_int_secs, now)
+            || self.expired(self.min_int_secs.max(self.max_int_secs / 2), now)
     }
 
     pub fn is_expired(&self, now: Instant) -> bool {
@@ -65,12 +70,6 @@ pub struct Subscriptions<const N: usize> {
     next_subscription_id: AtomicU32,
     subscriptions: RefCell<crate::utils::storage::Vec<Subscription, N>>,
     pub(crate) notification: Notification<NoopRawMutex>,
-}
-
-impl<const N: usize> Default for Subscriptions<N> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<const N: usize> Subscriptions<N> {
@@ -209,5 +208,18 @@ impl<const N: usize> Subscriptions<N> {
                 sub.reported_at = now;
                 (sub.fabric_idx, sub.peer_node_id, sub.session_id, sub.id)
             })
+    }
+}
+
+impl<const N: usize> Default for Subscriptions<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> ChangeNotify for Subscriptions<N> {
+    fn notify(&self, _endpt: EndptId, _clust: ClusterId) {
+        // TODO: Make use of endpt and clust
+        self.notify_changed();
     }
 }

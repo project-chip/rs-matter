@@ -271,6 +271,20 @@ impl AttrDetails<'_> {
         }
     }
 
+    /// Check the data version of the attribute (attribute write operations only).
+    ///
+    /// if the attribute data version is set and is different
+    /// from the provided one then return an error.
+    pub fn check_dataver(&self, dataver: u32) -> Result<(), Error> {
+        if let Some(req_dataver) = self.dataver {
+            if req_dataver != dataver {
+                Err(ErrorCode::DataVersionMismatch)?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn should_report(&self, status: IMStatusCode) -> bool {
         !self.wildcard
             || !matches!(
@@ -357,7 +371,16 @@ pub struct Cluster<'a> {
 }
 
 impl<'a> Cluster<'a> {
-    /// Create a new cluster with the provided parameters.
+    /// Create a new cluster
+    ///
+    /// # Arguments
+    /// - `id`: The ID of the cluster
+    /// - `revision`: The revision of the cluster
+    /// - `feature_map`: The feature map of the cluster
+    /// - `attributes_access`: The access control list for the attributes
+    /// - `supported_attributes`: The list of supported attributes
+    /// - `accepted_commands`: The list of accepted commands
+    /// - `generated_commands`: The list of generated commands
     pub const fn new(
         id: ClusterId,
         revision: u16,
@@ -378,9 +401,41 @@ impl<'a> Cluster<'a> {
         }
     }
 
-    /// Return the attribute information for the attribute with the given ID, if it exists.
-    pub fn attribute(&self, id: AttrId) -> Option<&Attribute> {
-        self.attributes_access.iter().find(|attr| attr.id == id)
+    /// Return a version of the cluster with the given revision.
+    pub const fn with_revision(self, revision: u16) -> Self {
+        Self { revision, ..self }
+    }
+
+    /// Return a version of the cluster with the given feature map.
+    pub const fn with_feature_map(self, feature_map: u32) -> Self {
+        Self {
+            feature_map,
+            ..self
+        }
+    }
+
+    /// Return a version of the cluster with the given supported attributes.
+    pub const fn with_supported_attributes(self, supported_attributes: &'a [AttrId]) -> Self {
+        Self {
+            supported_attributes,
+            ..self
+        }
+    }
+
+    /// Return a version of the cluster with the given accepted commands.
+    pub const fn with_accepted_commands(self, accepted_commands: &'a [CmdId]) -> Self {
+        Self {
+            accepted_commands,
+            ..self
+        }
+    }
+
+    /// Return a version of the cluster with the given generated commands.
+    pub const fn with_generated_commands(self, generated_commands: &'a [CmdId]) -> Self {
+        Self {
+            generated_commands,
+            ..self
+        }
     }
 
     /// Check if the accessor has the required permissions to access the attribute
@@ -401,7 +456,9 @@ impl<'a> Cluster<'a> {
         );
 
         let target_perms = self
-            .attribute(attr_id)
+            .attributes_access
+            .iter()
+            .find(|attr| attr.id == attr_id)
             .map(|attr| attr.access)
             .unwrap_or(Access::empty());
         if !target_perms.contains(access_req.operation()) {

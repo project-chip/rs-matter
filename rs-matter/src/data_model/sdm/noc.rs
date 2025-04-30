@@ -23,7 +23,10 @@ use strum::{EnumDiscriminants, FromRepr};
 
 use crate::cert::CertRef;
 use crate::crypto::{self, KeyPair};
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
+    CmdDataWriter, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext,
+};
 use crate::data_model::sdm::dev_att;
 use crate::fabric::MAX_SUPPORTED_FABRICS;
 use crate::fmt::Bytes;
@@ -220,10 +223,12 @@ impl NocCluster {
 
     pub fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let attr = ctx.attr();
+
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -269,11 +274,13 @@ impl NocCluster {
 
     pub fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let cmd = ctx.cmd();
+        let data = ctx.data();
+
         match cmd.cmd_id.try_into()? {
             Commands::AddNOC => self.handle_command_addnoc(exchange, data, encoder)?,
             Commands::CSRReq => self.handle_command_csrrequest(exchange, data, encoder)?,
@@ -655,28 +662,19 @@ impl NocCluster {
 impl Handler for NocCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        NocCluster::read(self, exchange, attr, encoder)
+        NocCluster::read(self, ctx, encoder)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        NocCluster::invoke(self, exchange, cmd, data, encoder)
+        NocCluster::invoke(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for NocCluster {}
-
-impl ChangeNotifier<()> for NocCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

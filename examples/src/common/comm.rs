@@ -18,11 +18,12 @@
 //! A module containing a "fake" Wifi Network Commissioning cluster
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
 use log::{error, info, warn};
 
 use rs_matter::data_model::objects::{
-    AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, CmdDataEncoder, CmdDetails, Dataver,
-    Handler, NonBlockingHandler,
+    AttrDataEncoder, AttrDataWriter, AttrType, CmdDataEncoder, Dataver, Handler, InvokeContext,
+    NonBlockingHandler, ReadContext,
 };
 use rs_matter::data_model::sdm::nw_commissioning::{
     AddWifiNetworkRequest, Attributes, Commands, ConnectNetworkRequest, ConnectNetworkResponse,
@@ -32,7 +33,7 @@ use rs_matter::data_model::sdm::nw_commissioning::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::Status;
-use rs_matter::tlv::{FromTLV, Octets, TLVElement, TLVWrite};
+use rs_matter::tlv::{FromTLV, Octets, TLVWrite};
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::utils::sync::Notification;
 
@@ -41,15 +42,15 @@ use rs_matter::utils::sync::Notification;
 ///
 /// We only pretend to manage these for the purposes of the BT demo.
 pub struct WifiNwCommCluster<'a> {
-    data_ver: Dataver,
+    dataver: Dataver,
     nw_setup_complete: &'a Notification<NoopRawMutex>,
 }
 
 impl<'a> WifiNwCommCluster<'a> {
     /// Create a new instance.
-    pub const fn new(data_ver: Dataver, nw_setup_complete: &'a Notification<NoopRawMutex>) -> Self {
+    pub const fn new(dataver: Dataver, nw_setup_complete: &'a Notification<NoopRawMutex>) -> Self {
         Self {
-            data_ver,
+            dataver,
             nw_setup_complete,
         }
     }
@@ -57,13 +58,14 @@ impl<'a> WifiNwCommCluster<'a> {
     /// Read an attribute.
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails<'_>,
+        ctx: &ReadContext<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? else {
+        let Some(mut writer) = encoder.with_dataver(self.dataver.get())? else {
             return Ok(());
         };
+
+        let attr = ctx.attr();
 
         if attr.is_system() {
             return WIFI_CLUSTER.read(attr.attr_id, writer);
@@ -89,11 +91,13 @@ impl<'a> WifiNwCommCluster<'a> {
     /// Invoke a command.
     pub fn invoke(
         &self,
-        exchange: &Exchange<'_>,
-        cmd: &CmdDetails<'_>,
-        data: &TLVElement<'_>,
+        ctx: &InvokeContext<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let cmd = ctx.cmd();
+        let data = ctx.data();
+
         match cmd.cmd_id.try_into()? {
             Commands::ScanNetworks => {
                 info!("ScanNetworks");
@@ -121,7 +125,7 @@ impl<'a> WifiNwCommCluster<'a> {
             }
         }
 
-        self.data_ver.changed();
+        self.dataver.changed();
 
         Ok(())
     }
@@ -243,21 +247,18 @@ impl<'a> WifiNwCommCluster<'a> {
 impl Handler for WifiNwCommCluster<'_> {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        WifiNwCommCluster::read(self, exchange, attr, encoder)
+        WifiNwCommCluster::read(self, ctx, encoder)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        WifiNwCommCluster::invoke(self, exchange, cmd, data, encoder)
+        WifiNwCommCluster::invoke(self, ctx, encoder)
     }
 }
 
