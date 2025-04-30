@@ -105,7 +105,7 @@ pub fn eth_handler(endpoint_id: u16, rand: Rand) -> EthRootEndpointHandler<'stat
     handler(
         endpoint_id,
         EthNwCommCluster::new(Dataver::new_rand(rand)),
-        eth_nw_diag::ID,
+        eth_nw_diag::CLUSTER.id,
         EthNwDiagHandler::new(Dataver::new_rand(rand)).adapt(),
         &true,
         rand,
@@ -170,14 +170,14 @@ fn wrap<NWCOMM, NWDIAG>(
         )
         .chain(
             endpoint_id,
-            gen_comm::ID,
+            gen_comm::CLUSTER.id,
             Async(
                 GenCommHandler::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
             ),
         )
         .chain(
             endpoint_id,
-            basic_info::ID,
+            basic_info::CLUSTER.id,
             Async(BasicInfoHandler::new(Dataver::new_rand(rand)).adapt()),
         )
         .chain(

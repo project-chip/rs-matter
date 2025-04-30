@@ -19,7 +19,10 @@ use num_derive::FromPrimitive;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Dataver, Handler,
+    InvokeContext, NonBlockingHandler, Quality, ReadContext,
+};
 use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
@@ -123,10 +126,11 @@ impl AdminCommCluster {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -144,11 +148,13 @@ impl AdminCommCluster {
 
     pub fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        _encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let cmd = ctx.cmd();
+        let data = ctx.data();
+
         match cmd.cmd_id.try_into()? {
             Commands::OpenCommWindow => self.handle_command_opencomm_win(exchange, data)?,
             Commands::OpenBasicCommWindow => {
@@ -221,28 +227,19 @@ impl AdminCommCluster {
 impl Handler for AdminCommCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        AdminCommCluster::read(self, exchange, attr, encoder)
+        AdminCommCluster::read(self, ctx, encoder)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        AdminCommCluster::invoke(self, exchange, cmd, data, encoder)
+        AdminCommCluster::invoke(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for AdminCommCluster {}
-
-impl ChangeNotifier<()> for AdminCommCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

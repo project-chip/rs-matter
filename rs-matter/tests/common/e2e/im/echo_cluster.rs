@@ -25,13 +25,13 @@ use num_derive::FromPrimitive;
 use strum::{EnumDiscriminants, FromRepr};
 
 use rs_matter::data_model::objects::{
-    Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, Cluster,
-    CmdDataEncoder, CmdDataWriter, CmdDetails, Dataver, Handler, NonBlockingHandler, Quality,
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
+    CmdDataWriter, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext,
+    WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
-use rs_matter::transport::exchange::Exchange;
 use rs_matter::{
     accepted_commands, attribute_enum, attributes_access, command_enum, generated_commands,
     supported_attributes,
@@ -161,7 +161,13 @@ impl EchoCluster {
         }
     }
 
-    pub fn read(&self, attr: &AttrDetails, encoder: AttrDataEncoder) -> Result<(), Error> {
+    pub fn read(
+        &self,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
+    ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -190,12 +196,11 @@ impl EchoCluster {
         }
     }
 
-    pub fn write(
-        &self,
-        attr: &AttrDetails,
-        data: rs_matter::data_model::objects::AttrData,
-    ) -> Result<(), Error> {
-        let data = data.with_dataver(self.data_ver.get())?;
+    pub fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        let attr = ctx.attr();
+        let data = ctx.data();
+
+        attr.check_dataver(self.data_ver.get())?;
 
         match attr.attr_id.try_into()? {
             Attributes::Att1(codec) => self.att1.set(codec.decode(data)?),
@@ -214,11 +219,12 @@ impl EchoCluster {
 
     pub fn invoke(
         &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+        let data = ctx.data();
+
         match cmd.cmd_id.try_into()? {
             // This will generate an echo response on the same endpoint
             // with data multiplied by the multiplier
@@ -280,30 +286,22 @@ impl EchoCluster {
 impl Handler for EchoCluster {
     fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        EchoCluster::read(self, attr, encoder)
+        EchoCluster::read(self, ctx, encoder)
     }
 
-    fn write(
-        &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        data: rs_matter::data_model::objects::AttrData,
-    ) -> Result<(), Error> {
-        EchoCluster::write(self, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        EchoCluster::write(self, ctx)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        EchoCluster::invoke(self, exchange, cmd, data, encoder)
+        EchoCluster::invoke(self, ctx, encoder)
     }
 }
 

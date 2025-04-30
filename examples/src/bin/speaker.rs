@@ -146,7 +146,7 @@ fn dm_handler<'a>(matter: &'a Matter<'a>) -> impl AsyncMetadata + AsyncHandler +
             )
             .chain(
                 1,
-                media_playback::ID,
+                media_playback::CLUSTER.id,
                 media_playback::HandlerAsyncAdaptor(SpeakerHandler::new(Dataver::new_rand(
                     matter.rand(),
                 ))),

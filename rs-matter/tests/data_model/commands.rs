@@ -113,10 +113,14 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     // should generate 1 response from the on-off cluster
     init_env_logger();
 
-    let target = CmdPath::new(None, Some(on_off::ID), Some(on_off::CommandId::On as u32));
+    let target = CmdPath::new(
+        None,
+        Some(on_off::CLUSTER.id),
+        Some(on_off::CommandId::On as u32),
+    );
     let expected_path = CmdPath::new(
         Some(1),
-        Some(on_off::ID),
+        Some(on_off::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let input = &[cmd_data!(target, 1)];

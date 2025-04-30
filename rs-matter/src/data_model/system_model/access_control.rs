@@ -25,7 +25,6 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::Exchange;
 use crate::{
     accepted_commands, attribute_enum, attributes_access, generated_commands, supported_attributes,
 };
@@ -99,22 +98,25 @@ impl AccessControlCluster {
 
     pub fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        self.read_acl_attr(&exchange.matter().fabric_mgr.borrow(), attr, encoder)
+        self.read_acl_attr(
+            &ctx.exchange().matter().fabric_mgr.borrow(),
+            ctx.attr(),
+            encoder,
+        )
     }
 
-    pub fn write(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
+    pub fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let attr = ctx.attr();
+        let data = ctx.data();
+
         match attr.attr_id.try_into()? {
             Attributes::Acl(_) => {
-                attr_list_write(attr, data.with_dataver(self.data_ver.get())?, |op, data| {
+                attr.check_dataver(self.data_ver.get())?;
+                attr_list_write(attr, data, |op, data| {
                     self.write_acl_attr(
                         &mut exchange.matter().fabric_mgr.borrow_mut(),
                         &op,
@@ -211,25 +213,18 @@ impl AccessControlCluster {
 impl Handler for AccessControlCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        AccessControlCluster::read(self, exchange, attr, encoder)
+        AccessControlCluster::read(self, ctx, encoder)
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        AccessControlCluster::write(self, exchange, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        AccessControlCluster::write(self, ctx)
     }
 }
 
 impl NonBlockingHandler for AccessControlCluster {}
-
-impl ChangeNotifier<()> for AccessControlCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}
 
 #[cfg(test)]
 mod tests {

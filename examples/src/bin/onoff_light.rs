@@ -218,6 +218,6 @@ fn dm_handler<'a>(
                     matter.rand(),
                 ))),
             )
-            .chain(1, on_off::ID, Async(on_off::HandlerAdaptor(on_off))),
+            .chain(1, on_off::CLUSTER.id, Async(on_off::HandlerAdaptor(on_off))),
     )
 }

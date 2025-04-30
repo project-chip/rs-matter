@@ -18,12 +18,11 @@
 use strum::FromRepr;
 
 use crate::data_model::objects::{
-    Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, ChangeNotifier,
-    Cluster, Dataver, Handler, NonBlockingHandler, Quality,
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, Dataver, Handler,
+    NonBlockingHandler, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::Exchange;
 use crate::utils::bitflags::bitflags;
 use crate::{
     accepted_commands, attribute_enum, attributes_access, bitflags_tlv, command_enum,
@@ -295,10 +294,11 @@ impl EthNwCommCluster {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         let info = self.get_network_info();
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
@@ -391,18 +391,11 @@ pub enum NetworkCommissioningStatus {
 impl Handler for EthNwCommCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        EthNwCommCluster::read(self, exchange, attr, encoder)
+        EthNwCommCluster::read(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for EthNwCommCluster {}
-
-impl ChangeNotifier<()> for EthNwCommCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

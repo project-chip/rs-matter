@@ -17,10 +17,11 @@
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Dataver, Handler,
+    InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
+};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::TLVElement;
-use crate::transport::exchange::Exchange;
 use crate::{
     accepted_commands, attribute_enum, attributes_access, cmd_enter, command_enum,
     generated_commands, supported_attributes,
@@ -89,10 +90,11 @@ impl GenDiagCluster {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -107,13 +109,8 @@ impl GenDiagCluster {
         }
     }
 
-    pub fn write(
-        &self,
-        _exchange: &Exchange,
-        _attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let _data = data.with_dataver(self.data_ver.get())?;
+    pub fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        ctx.attr().check_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
 
@@ -122,11 +119,11 @@ impl GenDiagCluster {
 
     pub fn invoke(
         &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        _data: &TLVElement,
-        _encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+
         match cmd.cmd_id.try_into()? {
             Commands::TestEventTrigger => {
                 cmd_enter!("TestEventTrigger: Not yet supported");
@@ -142,33 +139,24 @@ impl GenDiagCluster {
 impl Handler for GenDiagCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        GenDiagCluster::read(self, exchange, attr, encoder)
+        GenDiagCluster::read(self, ctx, encoder)
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        GenDiagCluster::write(self, exchange, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        GenDiagCluster::write(self, ctx)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        GenDiagCluster::invoke(self, exchange, cmd, data, encoder)
+        GenDiagCluster::invoke(self, ctx, encoder)
     }
 }
 
 // TODO: Might be removed once the `on` member is externalized
 impl NonBlockingHandler for GenDiagCluster {}
-
-impl ChangeNotifier<()> for GenDiagCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

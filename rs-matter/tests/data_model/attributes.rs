@@ -148,14 +148,14 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
 
     let wc_ep_onoff = GenericPath::new(
         None,
-        Some(on_off::ID),
+        Some(on_off::CLUSTER.id),
         Some(on_off::AttributeId::OnOff as u32),
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
     let expected = &[attr_data!(
         1,
-        on_off::ID,
+        on_off::CLUSTER.id,
         on_off::AttributeId::OnOff,
         Some(&false)
     )];

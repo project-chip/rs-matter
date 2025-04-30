@@ -158,7 +158,7 @@ where
 
         for item in metadata.node().read(&req, &exchange.accessor()?)? {
             if item?
-                .map(|attr| self.handler.read_awaits(exchange, &attr))
+                .map(|attr| self.handler.read_awaits(&ReadContext::new(exchange, &attr)))
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -261,7 +261,14 @@ where
 
         for item in metadata.node().write(&req, &exchange.accessor()?)? {
             if item?
-                .map(|(attr, _)| self.handler.write_awaits(exchange, &attr))
+                .map(|(attr, _)| {
+                    self.handler.write_awaits(&WriteContext::new(
+                        exchange,
+                        &attr,
+                        &TLVElement::new(&[]),
+                        &(),
+                    ))
+                })
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -281,14 +288,26 @@ where
 
             let req = WriteReqRef::new(TLVElement::new(&rx));
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
-                .await?
+            req.respond(
+                &self.handler,
+                exchange,
+                &metadata.node(),
+                self.subscriptions,
+                &mut wb,
+            )
+            .await?
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
-                .await?
+            req.respond(
+                &self.handler,
+                exchange,
+                &metadata.node(),
+                self.subscriptions,
+                &mut wb,
+            )
+            .await?
         };
 
         exchange.send(OpCode::WriteResponse, wb.as_slice()).await?;
@@ -325,7 +344,14 @@ where
 
         for item in metadata.node().invoke(&req, &exchange.accessor()?)? {
             if item?
-                .map(|(cmd, _)| self.handler.invoke_awaits(exchange, &cmd))
+                .map(|(cmd, _)| {
+                    self.handler.invoke_awaits(&InvokeContext::new(
+                        exchange,
+                        &cmd,
+                        &TLVElement::new(&[]),
+                        &(),
+                    ))
+                })
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -345,14 +371,28 @@ where
 
             let req = InvReqRef::new(TLVElement::new(&rx));
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb, false)
-                .await?;
+            req.respond(
+                &self.handler,
+                exchange,
+                &metadata.node(),
+                self.subscriptions,
+                &mut wb,
+                false,
+            )
+            .await?;
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb, false)
-                .await?;
+            req.respond(
+                &self.handler,
+                exchange,
+                &metadata.node(),
+                self.subscriptions,
+                &mut wb,
+                false,
+            )
+            .await?;
         }
 
         exchange.send(OpCode::InvokeResponse, wb.as_slice()).await?;
@@ -886,6 +926,7 @@ impl WriteReqRef<'_> {
         handler: T,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
+        notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error>
     where
@@ -914,7 +955,7 @@ impl WriteReqRef<'_> {
             node.write(self, &accessor)?.collect();
 
         for item in write_attrs {
-            AttrDataEncoder::handle_write(exchange, &item?, &handler, &mut tw).await?;
+            AttrDataEncoder::handle_write(exchange, &item?, &handler, &mut tw, notify).await?;
         }
 
         tw.end_container()?;
@@ -930,6 +971,7 @@ impl InvReqRef<'_> {
         handler: T,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
+        notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
         suppress_resp: bool,
     ) -> Result<(), Error>
@@ -957,7 +999,7 @@ impl InvReqRef<'_> {
         let accessor = exchange.accessor()?;
 
         for item in node.invoke(self, &accessor)? {
-            CmdDataEncoder::handle(&item?, &handler, &mut tw, exchange).await?;
+            CmdDataEncoder::handle(&item?, &handler, &mut tw, exchange, notify).await?;
         }
 
         if has_requests {

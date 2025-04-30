@@ -163,7 +163,7 @@ pub fn handler_adaptor(
 
     let read_stream = if !handler_adaptor_attribute_match.is_empty() {
         quote!(
-            match AttributeId::try_from(attr.attr_id)? {
+            match AttributeId::try_from(ctx.attr().attr_id)? {
                 #(#handler_adaptor_attribute_match)*
                 #[allow(unreachable_code)]
                 _ => Err(#krate::error::ErrorCode::AttributeNotFound.into()),
@@ -177,7 +177,7 @@ pub fn handler_adaptor(
 
     let write_stream = if !handler_adaptor_attribute_match.is_empty() {
         quote!(
-            match AttributeId::try_from(attr.attr_id)? {
+            match AttributeId::try_from(ctx.attr().attr_id)? {
                 #(#handler_adaptor_attribute_write_match)*
                 _ => return Err(#krate::error::ErrorCode::AttributeNotFound.into()),
             }
@@ -190,7 +190,7 @@ pub fn handler_adaptor(
 
     let invoke_stream = if !handler_adaptor_command_match.is_empty() {
         quote!(
-            match CommandId::try_from(cmd.cmd_id)? {
+            match CommandId::try_from(ctx.cmd().cmd_id)? {
                 #(#handler_adaptor_command_match)*
                 _ => return Err(#krate::error::ErrorCode::CommandNotFound.into()),
             }
@@ -213,13 +213,12 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn read(
                 &self,
-                exchange: &#krate::transport::exchange::Exchange<'_>,
-                attr: &#krate::data_model::objects::AttrDetails<'_>,
+                ctx: &#krate::data_model::objects::ReadContext<'_>,
                 encoder: #krate::data_model::objects::AttrDataEncoder<'_, '_, '_>,
             ) -> Result<(), #krate::error::Error> {
                 if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
-                    if attr.is_system() {
-                        attr.cluster()?.read(attr.attr_id, writer)
+                    if ctx.attr().is_system() {
+                        ctx.attr().cluster()?.read(ctx.attr().attr_id, writer)
                     } else {
                         #read_stream
                     }
@@ -231,13 +230,11 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn write(
                 &self,
-                exchange: &#krate::transport::exchange::Exchange<'_>,
-                attr: &#krate::data_model::objects::AttrDetails<'_>,
-                data: #krate::data_model::objects::AttrData<'_>,
+                ctx: &#krate::data_model::objects::WriteContext<'_>,
             ) -> Result<(), #krate::error::Error> {
-                let data = data.with_dataver(self.0.dataver())?;
+                ctx.attr().check_dataver(self.0.dataver())?;
 
-                if attr.is_system() {
+                if ctx.attr().is_system() {
                     return Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
 
@@ -251,9 +248,7 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn invoke(
                 &self,
-                exchange: &#krate::transport::exchange::Exchange<'_>,
-                cmd: &#krate::data_model::objects::CmdDetails<'_>,
-                data: &#krate::tlv::TLVElement<'_>,
+                ctx: &#krate::data_model::objects::InvokeContext<'_>,
                 encoder: #krate::data_model::objects::CmdDataEncoder<'_, '_, '_>,
             ) -> Result<(), #krate::error::Error> {
                 #invoke_stream
@@ -659,9 +654,9 @@ fn handler_adaptor_attribute_match(
                     #attr_read_debug_build_start
 
                     let attr_read_result = self.0.#attr_method_name(
-                        &#krate::data_model::objects::ReadContext::new(exchange),
+                        ctx,
                         #krate::data_model::objects::ArrayAttributeRead::new(
-                            attr.list_index.clone(),
+                            ctx.attr().list_index.clone(),
                             #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
                             &#krate::data_model::objects::AttrDataWriter::TAG,
                         )?,
@@ -679,7 +674,7 @@ fn handler_adaptor_attribute_match(
                 AttributeId::#attr_name => {
                     #attr_read_debug_build_start
 
-                    let attr_read_result = self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange), #krate::tlv::TLVBuilder::new(
+                    let attr_read_result = self.0.#attr_method_name(ctx, #krate::tlv::TLVBuilder::new(
                         #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
                         &#krate::data_model::objects::AttrDataWriter::TAG,
                     )?)#sawait;
@@ -695,7 +690,7 @@ fn handler_adaptor_attribute_match(
     } else {
         quote!(
             AttributeId::#attr_name => {
-               let attr_read_result = self.0.#attr_method_name(&#krate::data_model::objects::ReadContext::new(exchange))#sawait;
+               let attr_read_result = self.0.#attr_method_name(ctx)#sawait;
 
                 #attr_read_debug
 
@@ -749,9 +744,9 @@ fn handler_adaptor_attribute_write_match(
     if attr.field.field.data_type.is_list {
         quote!(
             AttributeId::#attr_name => {
-                let attr_data = #krate::data_model::objects::ArrayAttributeWrite::new(attr.list_index.clone(), &data)?;
+                let attr_data = #krate::data_model::objects::ArrayAttributeWrite::new(ctx.attr().list_index.clone(), ctx.data())?;
 
-                let attr_write_result = self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), attr_data.clone())#sawait;
+                let attr_write_result = self.0.#attr_method_name(ctx, attr_data.clone())#sawait;
 
                 #attr_write_debug
 
@@ -761,9 +756,9 @@ fn handler_adaptor_attribute_write_match(
     } else {
         quote!(
             AttributeId::#attr_name => {
-                let attr_data: #attr_type = #krate::tlv::FromTLV::from_tlv(&data)?;
+                let attr_data: #attr_type = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                let attr_write_result = self.0.#attr_method_name(&#krate::data_model::objects::WriteContext::new(exchange), attr_data.clone())#sawait;
+                let attr_write_result = self.0.#attr_method_name(ctx, attr_data.clone())#sawait;
 
                 #attr_write_debug
 
@@ -890,14 +885,14 @@ fn handler_adaptor_command_match(
             if field_resp_builder {
                 quote!(
                     CommandId::#cmd_name => {
-                        let cmd_data = #krate::tlv::FromTLV::from_tlv(&data)?;
+                        let cmd_data = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
                         #cmd_invoke_debug_build_start
 
                         let mut writer = encoder.with_command(#field_resp_cmd_code)?;
 
                         let cmd_invoke_result = self.0.#cmd_method_name(
-                            &#krate::data_model::objects::InvokeContext::new(exchange),
+                            ctx,
                             cmd_data,
                             #krate::tlv::TLVBuilder::new(
                                 #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
@@ -915,14 +910,11 @@ fn handler_adaptor_command_match(
             } else {
                 quote!(
                     CommandId::#cmd_name => {
-                        let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(&data)?;
+                        let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
                         let writer = encoder.with_command(#field_resp_cmd_code)?;
 
-                        let cmd_invoke_result = self.0.#cmd_method_name(
-                            &#krate::data_model::objects::InvokeContext::new(exchange)
-                            cmd_data.clone(),
-                        )#sawait;
+                        let cmd_invoke_result = self.0.#cmd_method_name(ctx, cmd_data.clone())#sawait;
 
                         #cmd_invoke_debug
 
@@ -933,12 +925,9 @@ fn handler_adaptor_command_match(
         } else {
             quote!(
                 CommandId::#cmd_name => {
-                    let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(&data)?;
+                    let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                    let cmd_invoke_result = self.0.#cmd_method_name(
-                        &#krate::data_model::objects::InvokeContext::new(exchange),
-                        cmd_data.clone(),
-                    )#sawait;
+                    let cmd_invoke_result = self.0.#cmd_method_name(ctx, cmd_data.clone())#sawait;
 
                     #cmd_invoke_debug
 
@@ -955,7 +944,7 @@ fn handler_adaptor_command_match(
                     let mut writer = encoder.with_command(#field_resp_cmd_code)?;
 
                     let cmd_invoke_result = self.0.#cmd_method_name(
-                        &#krate::data_model::objects::InvokeContext::new(exchange),
+                        ctx,
                         #krate::tlv::TLVBuilder::new(
                             #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
                             &#krate::data_model::objects::CmdDataWriter::TAG,
@@ -974,7 +963,7 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     let writer = encoder.with_command(#field_resp_cmd_code)?;
 
-                    let cmd_invoke_result = self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait;
+                    let cmd_invoke_result = self.0.#cmd_method_name(ctx)#sawait;
 
                     #cmd_invoke_debug_noarg
 
@@ -985,7 +974,7 @@ fn handler_adaptor_command_match(
     } else {
         quote!(
             CommandId::#cmd_name => {
-                let cmd_invoke_result = self.0.#cmd_method_name(&#krate::data_model::objects::InvokeContext::new(exchange))#sawait;
+                let cmd_invoke_result = self.0.#cmd_method_name(ctx)#sawait;
 
                 #cmd_invoke_debug_noarg
 

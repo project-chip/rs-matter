@@ -18,8 +18,8 @@
 use rs_matter::data_model::basic_info;
 use rs_matter::data_model::device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::data_model::objects::{
-    AsyncHandler, AsyncMetadata, AttrDataEncoder, AttrDetails, CmdDataEncoder, CmdDetails, Dataver,
-    Endpoint, Handler, Metadata, Node, NonBlockingHandler,
+    AsyncHandler, AsyncMetadata, AttrDataEncoder, CmdDataEncoder, Dataver, Endpoint, Handler,
+    InvokeContext, Metadata, Node, NonBlockingHandler, ReadContext, WriteContext,
 };
 use rs_matter::data_model::on_off::{self, OnOffHandler};
 use rs_matter::data_model::root_endpoint::{self, EthRootEndpointHandler};
@@ -31,8 +31,6 @@ use rs_matter::data_model::system_model::access_control;
 use rs_matter::data_model::system_model::descriptor::{self, DescriptorCluster};
 use rs_matter::error::Error;
 use rs_matter::handler_chain_type;
-use rs_matter::tlv::TLVElement;
-use rs_matter::transport::exchange::Exchange;
 use rs_matter::Matter;
 
 use crate::common::e2e::E2eRunner;
@@ -89,7 +87,7 @@ impl<'a> E2eTestHandler<'a> {
             )
             .chain(
                 1,
-                on_off::ID,
+                on_off::CLUSTER.id,
                 OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt(),
             );
 
@@ -108,74 +106,58 @@ impl<'a> E2eTestHandler<'a> {
 impl Handler for E2eTestHandler<'_> {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        self.0.read(exchange, attr, encoder)
+        self.0.read(ctx, encoder)
     }
 
-    fn write(
-        &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        data: rs_matter::data_model::objects::AttrData,
-    ) -> Result<(), Error> {
-        self.0.write(exchange, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        self.0.write(ctx)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        self.0.invoke(exchange, cmd, data, encoder)
+        self.0.invoke(ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for E2eTestHandler<'_> {}
 
 impl AsyncHandler for E2eTestHandler<'_> {
+    fn read_awaits(&self, _ctx: &ReadContext<'_>) -> bool {
+        false
+    }
+
+    fn write_awaits(&self, _ctx: &WriteContext<'_>) -> bool {
+        false
+    }
+
+    fn invoke_awaits(&self, _ctx: &InvokeContext<'_>) -> bool {
+        false
+    }
+
     async fn read(
         &self,
-        exchange: &Exchange<'_>,
-        attr: &AttrDetails<'_>,
+        ctx: &ReadContext<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        self.0.read(exchange, attr, encoder)
+        self.0.read(ctx, encoder)
     }
 
-    fn read_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
-        false
-    }
-
-    fn write_awaits(&self, _exchange: &Exchange, _attr: &AttrDetails) -> bool {
-        false
-    }
-
-    fn invoke_awaits(&self, _exchange: &Exchange, _cmd: &CmdDetails) -> bool {
-        false
-    }
-
-    async fn write(
-        &self,
-        exchange: &Exchange<'_>,
-        attr: &AttrDetails<'_>,
-        data: rs_matter::data_model::objects::AttrData<'_>,
-    ) -> Result<(), Error> {
-        self.0.write(exchange, attr, data)
+    async fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        self.0.write(ctx)
     }
 
     async fn invoke(
         &self,
-        exchange: &Exchange<'_>,
-        cmd: &CmdDetails<'_>,
-        data: &TLVElement<'_>,
+        ctx: &InvokeContext<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        self.0.invoke(exchange, cmd, data, encoder)
+        self.0.invoke(ctx, encoder)
     }
 }
 
