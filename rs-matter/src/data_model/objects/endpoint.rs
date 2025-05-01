@@ -19,11 +19,15 @@ use core::fmt;
 
 use super::{Cluster, ClusterId, DeviceType, EndptId};
 
+/// A type modeling the endpoint meta-data in the Matter data model.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Endpoint<'a> {
+    /// The endpoint ID.
     pub id: EndptId,
+    /// The list of device types associated with this endpoint.
     pub device_types: &'a [DeviceType],
+    /// The list of clusters associated with this endpoint.
     pub clusters: &'a [Cluster<'a>],
 }
 

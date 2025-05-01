@@ -17,11 +17,22 @@
 
 use core::cell::Cell;
 
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 
-use super::objects::{Dataver, InvokeContext, ReadContext};
+use super::objects::{Cluster, CmdId, Dataver, InvokeContext, Quality, ReadContext};
 
 pub use crate::data_model::clusters::on_off::*;
+
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.conf(
+    1,
+    0,
+    |attr, _, _| attr.is_system() || !attr.quality.contains(Quality::OPTIONAL),
+    |cmd, _, _| {
+        cmd.id == CommandId::On as CmdId
+            || cmd.id == CommandId::Off as CmdId
+            || cmd.id == CommandId::Toggle as CmdId
+    },
+);
 
 #[derive(Clone)]
 pub struct OnOffHandler {
@@ -86,13 +97,11 @@ impl ClusterHandler for OnOffHandler {
         _ctx: &InvokeContext,
         _request: OffWithEffectRequest,
     ) -> Result<(), Error> {
-        // TODO
-        Ok(())
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     fn handle_on_with_recall_global_scene(&self, _ctx: &InvokeContext) -> Result<(), Error> {
-        // TODO
-        Ok(())
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     fn handle_on_with_timed_off(
@@ -100,7 +109,6 @@ impl ClusterHandler for OnOffHandler {
         _ctx: &InvokeContext,
         _request: OnWithTimedOffRequest,
     ) -> Result<(), Error> {
-        // TODO
-        Ok(())
+        Err(ErrorCode::InvalidCommand.into())
     }
 }

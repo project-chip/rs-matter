@@ -22,15 +22,12 @@ use rs_matter_macros::{FromTLV, ToTLV};
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::{
-    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Dataver, Handler,
-    InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Command, Dataver,
+    Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVTag, TLVWrite};
-use crate::{
-    accepted_commands, attribute_enum, attributes_access, command_enum, generated_commands,
-    supported_attributes,
-};
+use crate::{attribute_enum, attributes, command_enum, commands};
 
 pub const ID: u32 = 0x0036;
 
@@ -66,7 +63,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes_access: attributes_access!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::Bssid as _,
             Access::RV,
@@ -93,15 +90,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
     ),
-    supported_attributes: supported_attributes!(
-        AttributesDiscriminants::Bssid,
-        AttributesDiscriminants::SecurityType,
-        AttributesDiscriminants::WifiVersion,
-        AttributesDiscriminants::ChannelNumber,
-        AttributesDiscriminants::Rssi,
-    ),
-    accepted_commands: accepted_commands!(CommandsDiscriminants::ResetCounts),
-    generated_commands: generated_commands!(),
+    commands: commands!(Command::new(
+        CommandsDiscriminants::ResetCounts as _,
+        None,
+        Access::WA,
+    ),),
+    with_attrs: Cluster::with_all_attrs,
+    with_cmds: Cluster::with_all_cmds,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, FromTLV, ToTLV, FromRepr)]

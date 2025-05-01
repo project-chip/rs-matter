@@ -26,16 +26,13 @@ use strum::{EnumDiscriminants, FromRepr};
 
 use rs_matter::data_model::objects::{
     Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
-    CmdDataWriter, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext,
-    WriteContext,
+    CmdDataWriter, Command, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality,
+    ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
-use rs_matter::{
-    accepted_commands, attribute_enum, attributes_access, command_enum, generated_commands,
-    supported_attributes,
-};
+use rs_matter::{attribute_enum, attributes, command_enum, commands};
 
 pub const WRITE_LIST_MAX: usize = 5;
 
@@ -73,7 +70,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID,
     revision: 1,
     feature_map: 0,
-    attributes_access: attributes_access!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::Att1 as _,
             Access::RV,
@@ -100,15 +97,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NONE,
         ),
     ),
-    supported_attributes: supported_attributes!(
-        AttributesDiscriminants::Att1,
-        AttributesDiscriminants::Att2,
-        AttributesDiscriminants::AttWrite,
-        AttributesDiscriminants::AttCustom,
-        AttributesDiscriminants::AttWriteList,
-    ),
-    accepted_commands: accepted_commands!(Commands::EchoReq),
-    generated_commands: generated_commands!(RespCommands::EchoResp),
+    commands: commands!(Command::new(
+        Commands::EchoReq as _,
+        Some(RespCommands::EchoResp as _),
+        Access::WA,
+    ),),
+    with_attrs: Cluster::with_all_attrs,
+    with_cmds: Cluster::with_all_cmds,
 };
 
 /// This is used in the tests to validate any settings that may have happened

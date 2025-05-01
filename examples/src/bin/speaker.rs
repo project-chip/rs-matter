@@ -126,14 +126,14 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: &[DEV_TYPE_SMART_SPEAKER],
-            clusters: &[descriptor::CLUSTER, media_playback::CLUSTER],
+            clusters: &[descriptor::CLUSTER, CLUSTER],
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Speaker handler and its descriptor.
-fn dm_handler<'a>(matter: &'a Matter<'a>) -> impl AsyncMetadata + AsyncHandler + 'a {
+fn dm_handler<'a>(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
         root_endpoint::eth_handler(0, matter.rand())
@@ -146,13 +146,16 @@ fn dm_handler<'a>(matter: &'a Matter<'a>) -> impl AsyncMetadata + AsyncHandler +
             )
             .chain(
                 1,
-                media_playback::CLUSTER.id,
+                CLUSTER.id,
                 media_playback::HandlerAsyncAdaptor(SpeakerHandler::new(Dataver::new_rand(
                     matter.rand(),
                 ))),
             ),
     )
 }
+
+const CLUSTER: Cluster<'static> =
+    media_playback::FULL_CLUSTER.conf(1, 0, Cluster::with_mandatory_attrs, Cluster::with_all_cmds);
 
 /// A sample NOOP handler for the MediaPlayback cluster.
 pub struct SpeakerHandler {
