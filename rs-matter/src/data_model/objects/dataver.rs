@@ -22,11 +22,7 @@ use crate::utils::rand::Rand;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Dataver {
-    #[cfg_attr(feature = "defmt", defmt(Debug2Format))]
-    ver: Cell<Wrapping<u32>>,
-    changed: Cell<bool>,
-}
+pub struct Dataver(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] Cell<Wrapping<u32>>);
 
 impl Dataver {
     pub fn new_rand(rand: Rand) -> Self {
@@ -38,29 +34,16 @@ impl Dataver {
     }
 
     pub const fn new(initial: u32) -> Self {
-        Self {
-            ver: Cell::new(Wrapping(initial)),
-            changed: Cell::new(false),
-        }
+        Self(Cell::new(Wrapping(initial)))
     }
 
     pub fn get(&self) -> u32 {
-        self.ver.get().0
+        self.0.get().0
     }
 
     pub fn changed(&self) -> u32 {
-        self.ver.set(self.ver.get() + Wrapping(1));
-        self.changed.set(true);
+        self.0.set(self.0.get() + Wrapping(1));
 
         self.get()
-    }
-
-    pub fn consume_change<T>(&self, change: T) -> Option<T> {
-        if self.changed.get() {
-            self.changed.set(false);
-            Some(change)
-        } else {
-            None
-        }
     }
 }

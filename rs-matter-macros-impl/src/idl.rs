@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::Cluster;
@@ -61,6 +61,11 @@ fn cluster_internal(
         &id::idl_field_name_to_rs_name(&cluster.id),
         Span::call_site(),
     );
+
+    let cluster_module_doc = Literal::string(&format!(
+        "This module contains generated Rust types for the \"{}\" cluster",
+        cluster.id
+    ));
 
     let bitmaps = bitmap::bitmaps(cluster, context);
     let enums = enumeration::enums(cluster, context);
@@ -122,6 +127,7 @@ fn cluster_internal(
     };
 
     quote!(
+        #[doc = #cluster_module_doc]
         #[allow(async_fn_in_trait)]
         #[allow(unknown_lints)]
         #[allow(clippy::uninlined_format_args)]

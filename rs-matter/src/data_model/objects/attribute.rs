@@ -18,95 +18,32 @@
 
 use core::fmt::{self, Debug};
 
-use crate::data_model::objects::GlobalElements;
-use crate::error::Error;
-use crate::tlv::{AsNullable, FromTLV, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
+use strum::FromRepr;
+
+use crate::attribute_enum;
+use crate::error::{Error, ErrorCode};
+use crate::interaction_model::core::IMStatusCode;
+use crate::interaction_model::messages::ib::{AttrPath, AttrStatus};
+use crate::interaction_model::messages::GenericPath;
+use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
 use crate::utils::maybe::Maybe;
 
-use super::{AttrId, Privilege};
+use super::{Access, AttrId, Cluster, ClusterId, EndptId, Node, Quality};
 
-use crate::utils::bitflags::bitflags;
-
-bitflags! {
-    #[repr(transparent)]
-    #[derive(Default)]
-    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
-    pub struct Access: u16 {
-        // These must match the bits in the Privilege object :-|
-        const NEED_VIEW = 0x00001;
-        const NEED_OPERATE = 0x0002;
-        const NEED_MANAGE = 0x0004;
-        const NEED_ADMIN = 0x0008;
-
-        const READ = 0x0010;
-        const WRITE = 0x0020;
-        const FAB_SCOPED = 0x0040;
-        const FAB_SENSITIVE = 0x0080;
-        const TIMED_ONLY = 0x0100;
-
-        const READ_PRIVILEGE_MASK = Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits() | Self::NEED_OPERATE.bits() | Self::NEED_ADMIN.bits();
-        const WRITE_PRIVILEGE_MASK = Self::NEED_MANAGE.bits() | Self::NEED_OPERATE.bits() | Self::NEED_ADMIN.bits();
-        const RV = Self::READ.bits() | Self::NEED_VIEW.bits();
-        const RF = Self::READ.bits() | Self::FAB_SCOPED.bits();
-        const RA = Self::READ.bits() | Self::NEED_ADMIN.bits();
-        const RWVA = Self::READ.bits() | Self::WRITE.bits() | Self::NEED_VIEW.bits() | Self::NEED_ADMIN.bits();
-        const RWFA = Self::READ.bits() | Self::WRITE.bits() | Self::FAB_SCOPED.bits() | Self::NEED_ADMIN.bits();
-        const RWVM = Self::READ.bits() | Self::WRITE.bits() | Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits();
-        const RWFVM = Self::READ.bits() | Self::WRITE.bits() | Self::FAB_SCOPED.bits() |Self::NEED_VIEW.bits() | Self::NEED_MANAGE.bits();
-    }
-}
-
-impl Access {
-    pub fn is_ok(&self, operation: Access, privilege: Privilege) -> bool {
-        let required = if operation.contains(Access::READ) {
-            *self & Access::READ_PRIVILEGE_MASK
-        } else if operation.contains(Access::WRITE) {
-            *self & Access::WRITE_PRIVILEGE_MASK
-        } else {
-            return false;
-        };
-
-        if required.is_empty() {
-            // There must be some required privilege for any object
-            return false;
-        }
-
-        if ((privilege.bits() as u16) & required.bits()) == 0 {
-            return false;
-        }
-
-        self.contains(operation)
-    }
-}
-
-bitflags! {
-    #[repr(transparent)]
-    #[derive(Default)]
-    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
-    pub struct Quality: u8 {
-        const NONE = 0x00;
-        const SCENE = 0x01;      // Short: S
-        const PERSISTENT = 0x02; // Short: N
-        const FIXED = 0x04;      // Short: F
-        const NULLABLE = 0x08;   // Short: X
-
-        const SN = Self::SCENE.bits() | Self::PERSISTENT.bits();
-        const S = Self::SCENE.bits();
-        const N = Self::PERSISTENT.bits();
-        const F = Self::FIXED.bits();
-        const X = Self::NULLABLE.bits();
-    }
-}
-
+/// A type modeling the attribute meta-data in the Matter data model.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Attribute {
+    /// The attribute ID
     pub id: AttrId,
-    pub quality: Quality,
+    /// The access control for the attribute
     pub access: Access,
+    /// The quality of the attribute
+    pub quality: Quality,
 }
 
 impl Attribute {
+    /// Create a new attribute with the given ID, access control and quality.
     pub const fn new(id: AttrId, access: Access, quality: Quality) -> Self {
         Self {
             id,
@@ -115,10 +52,12 @@ impl Attribute {
         }
     }
 
+    /// Return `true` if the attribute is a system one (i.e. a global attribute).
     pub fn is_system(&self) -> bool {
         Self::is_system_attr(self.id)
     }
 
+    /// Return `true` if the attribute ID is a system one (i.e. a global attribute).
     pub fn is_system_attr(attr_id: AttrId) -> bool {
         attr_id >= (GlobalElements::GeneratedCmdList as AttrId)
     }
@@ -128,6 +67,94 @@ impl core::fmt::Display for Attribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.id)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u32)]
+pub enum GlobalElements {
+    FabricIndex = 0xFE,
+    GeneratedCmdList = 0xFFF8,
+    AcceptedCmdList = 0xFFF9,
+    EventList = 0xFFFA,
+    AttributeList = 0xFFFB,
+    FeatureMap = 0xFFFC,
+    ClusterRevision = 0xFFFD,
+}
+
+attribute_enum!(GlobalElements);
+
+pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
+    GlobalElements::GeneratedCmdList as _,
+    Access::RV,
+    Quality::NONE,
+);
+
+pub const ACCEPTED_COMMAND_LIST: Attribute = Attribute::new(
+    GlobalElements::AcceptedCmdList as _,
+    Access::RV,
+    Quality::NONE,
+);
+
+pub const EVENT_LIST: Attribute =
+    Attribute::new(GlobalElements::EventList as _, Access::RV, Quality::NONE);
+
+pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
+    GlobalElements::AttributeList as _,
+    Access::RV,
+    Quality::NONE,
+);
+
+pub const FEATURE_MAP: Attribute =
+    Attribute::new(GlobalElements::FeatureMap as _, Access::RV, Quality::NONE);
+
+pub const CLUSTER_REVISION: Attribute = Attribute::new(
+    GlobalElements::ClusterRevision as _,
+    Access::RV,
+    Quality::NONE,
+);
+
+/// A proc-macro to generate the attributes for a cluster.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! attributes {
+    () => {
+        &[
+            $crate::data_model::objects::GENERATED_COMMAND_LIST,
+            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
+            $crate::data_model::objects::EVENT_LIST,
+            $crate::data_model::objects::ATTRIBUTE_LIST,
+            $crate::data_model::objects::FEATURE_MAP,
+            $crate::data_model::objects::CLUSTER_REVISION,
+        ]
+    };
+    ($attr0:expr $(, $attr:expr)* $(,)?) => {
+        &[
+            $attr0,
+            $($attr,)*
+            $crate::data_model::objects::GENERATED_COMMAND_LIST,
+            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
+            $crate::data_model::objects::EVENT_LIST,
+            $crate::data_model::objects::ATTRIBUTE_LIST,
+            $crate::data_model::objects::FEATURE_MAP,
+            $crate::data_model::objects::CLUSTER_REVISION,
+        ]
+    }
+}
+
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! attribute_enum {
+    ($en:ty) => {
+        impl core::convert::TryFrom<$crate::data_model::objects::AttrId> for $en {
+            type Error = $crate::error::Error;
+
+            fn try_from(id: $crate::data_model::objects::AttrId) -> Result<Self, Self::Error> {
+                <$en>::from_repr(id)
+                    .ok_or_else(|| $crate::error::ErrorCode::AttributeNotFound.into())
+            }
+        }
+    };
 }
 
 /// An enum for modeling reads from attributes whose type is an array.
@@ -202,6 +229,100 @@ impl<T, E> ArrayAttributeWrite<T, E> {
             // The data is not an array and there is no index, so this must be an Add operation
             Ok(Self::Add(FromTLV::from_tlv(data)?))
         }
+    }
+}
+
+// TODO: What if we instead of creating this, we just pass the AttrData/AttrPath to the read/write
+// methods?
+/// The Attribute Details structure records the details about the attribute under consideration.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct AttrDetails<'a> {
+    pub node: &'a Node<'a>,
+    /// The actual endpoint ID
+    pub endpoint_id: EndptId,
+    /// The actual cluster ID
+    pub cluster_id: ClusterId,
+    /// The actual attribute ID
+    pub attr_id: AttrId,
+    /// List Index, if any
+    pub list_index: Option<Nullable<u16>>,
+    /// The current Fabric Index
+    pub fab_idx: u8,
+    /// Fabric Filtering Activated
+    pub fab_filter: bool,
+    pub dataver: Option<u32>,
+    pub wildcard: bool,
+}
+
+impl AttrDetails<'_> {
+    pub fn is_system(&self) -> bool {
+        Attribute::is_system_attr(self.attr_id)
+    }
+
+    pub fn path(&self) -> AttrPath {
+        AttrPath {
+            endpoint: Some(self.endpoint_id),
+            cluster: Some(self.cluster_id),
+            attr: Some(self.attr_id),
+            list_index: self.list_index.clone(),
+            ..Default::default()
+        }
+    }
+
+    pub fn cluster(&self) -> Result<&Cluster, Error> {
+        self.node
+            .endpoint(self.endpoint_id)
+            .and_then(|endpoint| endpoint.cluster(self.cluster_id))
+            .ok_or_else(|| {
+                error!("Cluster not found");
+                ErrorCode::ClusterNotFound.into()
+            })
+    }
+
+    pub fn status(&self, status: IMStatusCode) -> Result<Option<AttrStatus>, Error> {
+        if self.should_report(status) {
+            Ok(Some(AttrStatus::new(
+                &GenericPath {
+                    endpoint: Some(self.endpoint_id),
+                    cluster: Some(self.cluster_id),
+                    leaf: Some(self.attr_id as _),
+                },
+                status,
+                0,
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Check the data version of the attribute (attribute write operations only).
+    ///
+    /// if the attribute data version is set and is different
+    /// from the provided one then return an error.
+    pub fn check_dataver(&self, dataver: u32) -> Result<(), Error> {
+        if let Some(req_dataver) = self.dataver {
+            if req_dataver != dataver {
+                Err(ErrorCode::DataVersionMismatch)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn should_report(&self, status: IMStatusCode) -> bool {
+        !self.wildcard
+            || !matches!(
+                status,
+                IMStatusCode::UnsupportedEndpoint
+                    | IMStatusCode::UnsupportedCluster
+                    | IMStatusCode::UnsupportedAttribute
+                    | IMStatusCode::UnsupportedCommand
+                    | IMStatusCode::UnsupportedAccess
+                    | IMStatusCode::UnsupportedRead
+                    | IMStatusCode::UnsupportedWrite
+                    | IMStatusCode::DataVersionMismatch
+            )
     }
 }
 

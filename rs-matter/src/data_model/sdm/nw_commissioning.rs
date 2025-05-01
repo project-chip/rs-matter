@@ -18,16 +18,13 @@
 use strum::FromRepr;
 
 use crate::data_model::objects::{
-    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, Dataver, Handler,
-    NonBlockingHandler, Quality, ReadContext,
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, Command, Dataver,
+    Handler, NonBlockingHandler, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
 use crate::utils::bitflags::bitflags;
-use crate::{
-    accepted_commands, attribute_enum, attributes_access, bitflags_tlv, command_enum,
-    generated_commands, supported_attributes,
-};
+use crate::{attribute_enum, attributes, bitflags_tlv, command_enum, commands};
 
 pub const ID: u32 = 0x0031;
 
@@ -75,8 +72,21 @@ pub enum FeatureMap {
     Ethernet = 0x04,
 }
 
+impl TryFrom<u32> for FeatureMap {
+    type Error = Error;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(FeatureMap::Wifi),
+            0x02 => Ok(FeatureMap::Thread),
+            0x04 => Ok(FeatureMap::Ethernet),
+            _ => Err(ErrorCode::Invalid.into()),
+        }
+    }
+}
+
 const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
-    static ATTRIBUTES_ACCESS: &[Attribute] = attributes_access!(
+    static ATTRIBUTES: &[Attribute] = attributes!(
         Attribute::new(Attributes::MaxNetworks as _, Access::RA, Quality::F),
         Attribute::new(Attributes::Networks as _, Access::RA, Quality::NONE),
         Attribute::new(Attributes::ScanMaxTimeSecs as _, Access::RV, Quality::F),
@@ -95,51 +105,86 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
         ),
     );
 
+    static COMMANDS: &[Command] = commands!(
+        Command::new(Commands::ScanNetworks as _, None, Access::WA),
+        Command::new(Commands::AddOrUpdateWifiNetwork as _, None, Access::WA),
+        Command::new(Commands::AddOrUpdateThreadNetwork as _, None, Access::WA),
+        Command::new(Commands::RemoveNetwork as _, None, Access::WA),
+        Command::new(Commands::ConnectNetwork as _, None, Access::WA),
+        Command::new(Commands::ReorderNetwork as _, None, Access::WA),
+    );
+
     Cluster {
         id: ID as _,
         revision: 1,
         feature_map: feature_map as _,
-        attributes_access: ATTRIBUTES_ACCESS,
-        supported_attributes: match feature_map {
-            FeatureMap::Wifi | FeatureMap::Thread => supported_attributes!(
-                Attributes::MaxNetworks,
-                Attributes::Networks,
-                Attributes::ScanMaxTimeSecs,
-                Attributes::ConnectMaxTimeSecs,
-                Attributes::InterfaceEnabled,
-                Attributes::LastNetworkingStatus,
-                Attributes::LastNetworkID,
-                Attributes::LastConnectErrorValue,
-            ),
-            FeatureMap::Ethernet => supported_attributes!(
-                Attributes::MaxNetworks,
-                Attributes::Networks,
-                Attributes::InterfaceEnabled,
-                Attributes::LastNetworkingStatus,
-                Attributes::LastNetworkID,
-            ),
+        attributes: ATTRIBUTES,
+        commands: COMMANDS,
+        with_attrs: |attr, _, feature_map| {
+            if attr.is_system() {
+                return true;
+            }
+
+            let Ok(feature_map) = feature_map.try_into() else {
+                return false;
+            };
+
+            let Ok(id) = attr.id.try_into() else {
+                return false;
+            };
+
+            match feature_map {
+                FeatureMap::Wifi | FeatureMap::Thread => matches!(
+                    id,
+                    Attributes::MaxNetworks
+                        | Attributes::Networks
+                        | Attributes::ScanMaxTimeSecs
+                        | Attributes::ConnectMaxTimeSecs
+                        | Attributes::InterfaceEnabled
+                        | Attributes::LastNetworkingStatus
+                        | Attributes::LastNetworkID
+                        | Attributes::LastConnectErrorValue
+                ),
+                FeatureMap::Ethernet => matches!(
+                    id,
+                    Attributes::MaxNetworks
+                        | Attributes::Networks
+                        | Attributes::InterfaceEnabled
+                        | Attributes::LastNetworkingStatus
+                        | Attributes::LastNetworkID
+                ),
+            }
         },
-        accepted_commands: match feature_map {
-            FeatureMap::Wifi => accepted_commands!(
-                Commands::ScanNetworks,
-                Commands::AddOrUpdateWifiNetwork,
-                Commands::RemoveNetwork,
-                Commands::ConnectNetwork,
-                Commands::ReorderNetwork,
-            ),
-            FeatureMap::Thread => accepted_commands!(
-                Commands::ScanNetworks,
-                Commands::AddOrUpdateThreadNetwork,
-                Commands::RemoveNetwork,
-                Commands::ConnectNetwork,
-                Commands::ReorderNetwork,
-            ),
-            FeatureMap::Ethernet => accepted_commands!(),
-        },
-        generated_commands: match feature_map {
-            FeatureMap::Wifi => generated_commands!(ResponseCommands::ScanNetworksResponse),
-            FeatureMap::Thread => generated_commands!(ResponseCommands::ScanNetworksResponse),
-            FeatureMap::Ethernet => generated_commands!(),
+        with_cmds: |cmd, _, feature_map| {
+            let Ok(feature_map) = feature_map.try_into() else {
+                return false;
+            };
+
+            let Ok(id) = cmd.id.try_into() else {
+                return false;
+            };
+
+            match feature_map {
+                FeatureMap::Wifi => {
+                    matches!(
+                        id,
+                        |Commands::ScanNetworks| Commands::AddOrUpdateWifiNetwork
+                            | Commands::RemoveNetwork
+                            | Commands::ConnectNetwork
+                            | Commands::ReorderNetwork
+                    )
+                }
+                FeatureMap::Thread => {
+                    matches!(
+                        id,
+                        |Commands::ScanNetworks| Commands::AddOrUpdateThreadNetwork
+                            | Commands::RemoveNetwork
+                            | Commands::ConnectNetwork
+                            | Commands::ReorderNetwork
+                    )
+                }
+                FeatureMap::Ethernet => false,
+            }
         },
     }
 }

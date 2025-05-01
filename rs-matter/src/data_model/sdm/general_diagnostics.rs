@@ -18,14 +18,11 @@
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::{
-    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Dataver, Handler,
-    InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Command, Dataver,
+    Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::{
-    accepted_commands, attribute_enum, attributes_access, cmd_enter, command_enum,
-    generated_commands, supported_attributes,
-};
+use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands};
 
 pub const ID: u32 = 0x0033;
 
@@ -51,7 +48,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes_access: attributes_access!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::NetworkInterfaces as _,
             Access::RV,
@@ -68,13 +65,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NONE,
         ),
     ),
-    supported_attributes: supported_attributes!(
-        AttributesDiscriminants::NetworkInterfaces,
-        AttributesDiscriminants::RebootCount,
-        AttributesDiscriminants::TestEventTriggersEnabled,
-    ),
-    accepted_commands: accepted_commands!(CommandsDiscriminants::TestEventTrigger),
-    generated_commands: generated_commands!(),
+    commands: commands!(Command::new(
+        CommandsDiscriminants::TestEventTrigger as _,
+        None,
+        Access::WA,
+    )),
+    with_attrs: Cluster::with_all_attrs,
+    with_cmds: Cluster::with_all_cmds,
 };
 
 #[derive(Debug, Clone)]

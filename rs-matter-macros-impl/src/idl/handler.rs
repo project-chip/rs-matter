@@ -17,11 +17,12 @@
 //! A module for generating the the handler trait and its
 //! adaptor for a given IDL cluster.
 
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Attribute, Cluster, Command, DataType, StructType};
 
+use super::cluster::{GLOBAL_ATTR, NO_RESPONSE};
 use super::field::{field_type, field_type_builder, BuilderPolicy};
 use super::id::{idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
 use super::IdlGenerateContext;
@@ -60,13 +61,13 @@ pub fn handler(
     let handler_attribute_methods = cluster
         .attributes
         .iter()
-        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .map(|attr| handler_attribute(attr, asynch, delegate, cluster, &krate));
 
     let handler_attribute_write_methods = cluster
         .attributes
         .iter()
-        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .filter(|attr| !attr.is_read_only)
         .map(|attr| handler_attribute_write(attr, asynch, delegate, cluster, &krate));
 
@@ -93,6 +94,7 @@ pub fn handler(
         )
     } else {
         quote!(
+            #[doc = "The handler trait for the cluster."]
             pub trait #handler_name {
                 fn dataver(&self) -> u32;
                 fn dataver_changed(&self);
@@ -126,6 +128,9 @@ pub fn handler_adaptor(
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
+    let cluster_name_str = Literal::string(&cluster.id);
+    let cluster_code = Literal::u32_suffixed(cluster.code as _);
+
     let handler_name = Ident::new(
         &format!("Cluster{}Handler", if asynch { "Async" } else { "" }),
         Span::call_site(),
@@ -144,14 +149,14 @@ pub fn handler_adaptor(
     let handler_adaptor_attribute_match = cluster
         .attributes
         .iter()
-        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .map(|attr| handler_adaptor_attribute_match(attr, asynch, cluster, &krate))
         .collect::<Vec<_>>();
 
     let handler_adaptor_attribute_write_match = cluster
         .attributes
         .iter()
-        .filter(|attr| attr.field.field.code < 0xf000) // TODO: Figure out the global attributes start
+        .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .filter(|attr| !attr.is_read_only)
         .map(|attr| handler_adaptor_attribute_write_match(attr, asynch, cluster, &krate));
 
@@ -204,6 +209,7 @@ pub fn handler_adaptor(
     let pasync = if asynch { quote!(async) } else { quote!() };
 
     let stream = quote!(
+        #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
         pub struct #handler_adaptor_name<T>(pub T);
 
         impl<T> #krate::data_model::objects::#generic_handler_name for #handler_adaptor_name<T>
@@ -256,6 +262,29 @@ pub fn handler_adaptor(
                 self.0.dataver_changed();
 
                 Ok(())
+            }
+        }
+
+        impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &#handler_adaptor_name<T>, Q)>
+        where
+            T: #handler_name,
+            Q: core::fmt::Debug,
+        {
+            #[allow(unreachable_code)]
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "Endpt(0x{:02x})::Cluster::{}(0x{:04x})::{:?}", self.0.0, #cluster_name_str, #cluster_code, self.0.2)
+            }
+        }
+
+        #[cfg(feature = "defmt")]
+        impl<T, Q> #krate::reexport::defmt::Format for MetadataDebug<(u16, &#handler_adaptor_name<T>, Q)>
+        where
+            T: #handler_name,
+            Q: #krate::reexport::defmt::Format,
+        {
+            #[allow(unreachable_code)]
+            fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
+                #krate::reexport::defmt::write!(f, "Endpt(0x{:02x})::Cluster::{}(0x{:04x})::{:?}", self.0.0, #cluster_name_str, #cluster_code, self.0.2)
             }
         }
     );
@@ -478,7 +507,7 @@ fn handler_command(
         )
     });
 
-    let cmd_output = (cmd.output != "DefaultSuccess").then(|| cmd.output.clone());
+    let cmd_output = (cmd.output != NO_RESPONSE).then(|| cmd.output.clone());
 
     let field_resp = cmd_output.map(|output| {
         field_type_builder(
@@ -606,7 +635,7 @@ fn handler_adaptor_attribute_match(
         &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
         Span::call_site(),
     );
-    let attr_debug_id = quote!(AttributeId::#attr_name.debug(false));
+    let attr_debug_id = quote!(MetadataDebug((ctx.attr().endpoint_id, self, MetadataDebug((AttributeId::#attr_name, false)))));
 
     let attr_method_name = Ident::new(
         &idl_field_name_to_rs_name(&attr.field.field.id),
@@ -717,7 +746,7 @@ fn handler_adaptor_attribute_write_match(
         &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
         Span::call_site(),
     );
-    let attr_debug_id = quote!(AttributeId::#attr_name.debug(true));
+    let attr_debug_id = quote!(MetadataDebug((ctx.attr().endpoint_id, self, MetadataDebug((AttributeId::#attr_name, false)))));
 
     let attr_method_name = Ident::new(
         &format!("set_{}", &idl_field_name_to_rs_name(&attr.field.field.id)),
@@ -786,7 +815,8 @@ fn handler_adaptor_command_match(
         &idl_attribute_name_to_enum_variant_name(&cmd.id),
         Span::call_site(),
     );
-    let cmd_debug_id = quote!(CommandId::#cmd_name.debug(true));
+    let cmd_debug_id =
+        quote!(MetadataDebug((ctx.cmd().endpoint_id, self, MetadataDebug(CommandId::#cmd_name))));
 
     let cmd_method_name = Ident::new(
         &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
@@ -844,7 +874,7 @@ fn handler_adaptor_command_match(
         )
     });
 
-    let cmd_output = (cmd.output != "DefaultSuccess")
+    let cmd_output = (cmd.output != NO_RESPONSE)
         .then(|| {
             cluster
                 .structs
