@@ -20,16 +20,13 @@ use num_derive::FromPrimitive;
 use strum::{EnumDiscriminants, FromRepr};
 
 use crate::data_model::objects::{
-    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Dataver, Handler,
-    InvokeContext, NonBlockingHandler, Quality, ReadContext,
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Command, Dataver,
+    Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext,
 };
 use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
-use crate::{
-    accepted_commands, attribute_enum, attributes_access, cmd_enter, command_enum,
-    generated_commands, supported_attributes,
-};
+use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands};
 
 pub const ID: u32 = 0x003C;
 
@@ -66,7 +63,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes_access: attributes_access!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::WindowStatus as _,
             Access::RV,
@@ -83,17 +80,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NULLABLE,
         ),
     ),
-    supported_attributes: supported_attributes!(
-        AttributesDiscriminants::WindowStatus,
-        AttributesDiscriminants::AdminFabricIndex,
-        AttributesDiscriminants::AdminVendorId,
+    commands: commands!(
+        Command::new(Commands::OpenCommWindow as _, None, Access::WA),
+        Command::new(Commands::OpenBasicCommWindow as _, None, Access::WA),
+        Command::new(Commands::RevokeComm as _, None, Access::WA),
     ),
-    accepted_commands: accepted_commands!(
-        Commands::OpenCommWindow,
-        Commands::OpenBasicCommWindow,
-        Commands::RevokeComm,
-    ),
-    generated_commands: generated_commands!(),
+    with_attrs: Cluster::with_all_attrs,
+    with_cmds: Cluster::with_all_cmds,
 };
 
 #[derive(FromTLV, Debug)]

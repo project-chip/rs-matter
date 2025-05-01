@@ -25,9 +25,11 @@ use crate::cert::CertRef;
 use crate::crypto::{self, KeyPair};
 use crate::data_model::objects::{
     Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
-    CmdDataWriter, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext,
+    CmdDataWriter, Command, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality,
+    ReadContext,
 };
 use crate::data_model::sdm::dev_att;
+use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_SUPPORTED_FABRICS;
 use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV, UtfStr};
@@ -35,10 +37,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-use crate::{
-    accepted_commands, alloc, attribute_enum, attributes_access, cmd_enter, command_enum, error::*,
-    generated_commands, supported_attributes,
-};
+use crate::{alloc, attribute_enum, attributes, cmd_enter, command_enum, commands};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
@@ -170,7 +169,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes_access: attributes_access!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::CurrentFabricIndex as _,
             Access::RV,
@@ -192,22 +191,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NONE,
         ),
     ),
-    supported_attributes: supported_attributes!(
-        AttributesDiscriminants::CurrentFabricIndex,
-        AttributesDiscriminants::Fabrics,
-        AttributesDiscriminants::SupportedFabrics,
-        AttributesDiscriminants::CommissionedFabrics,
+    commands: commands!(
+        Command::new(Commands::AttReq as _, None, Access::WA),
+        Command::new(Commands::CertChainReq as _, None, Access::WA),
+        Command::new(Commands::CSRReq as _, None, Access::WA),
+        Command::new(Commands::AddNOC as _, None, Access::WA),
+        Command::new(Commands::UpdateFabricLabel as _, None, Access::WA),
+        Command::new(Commands::RemoveFabric as _, None, Access::WA),
+        Command::new(Commands::AddTrustedRootCert as _, None, Access::WA),
     ),
-    accepted_commands: accepted_commands!(
-        Commands::AttReq,
-        Commands::CertChainReq,
-        Commands::CSRReq,
-        Commands::AddNOC,
-        Commands::UpdateFabricLabel,
-        Commands::RemoveFabric,
-        Commands::AddTrustedRootCert,
-    ),
-    generated_commands: generated_commands!(),
+    with_attrs: Cluster::with_all_attrs,
+    with_cmds: Cluster::with_all_cmds,
 };
 
 #[derive(Debug, Clone)]

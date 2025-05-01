@@ -399,32 +399,3 @@ impl AttrUtfType {
         data.utf8().map_err(|_| IMStatusCode::InvalidDataType)
     }
 }
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! attribute_enum {
-    ($en:ty) => {
-        impl core::convert::TryFrom<$crate::data_model::objects::AttrId> for $en {
-            type Error = $crate::error::Error;
-
-            fn try_from(id: $crate::data_model::objects::AttrId) -> Result<Self, Self::Error> {
-                <$en>::from_repr(id)
-                    .ok_or_else(|| $crate::error::ErrorCode::AttributeNotFound.into())
-            }
-        }
-    };
-}
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! command_enum {
-    ($en:ty) => {
-        impl core::convert::TryFrom<$crate::data_model::objects::CmdId> for $en {
-            type Error = $crate::error::Error;
-
-            fn try_from(id: $crate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
-                <$en>::from_repr(id).ok_or_else(|| $crate::error::ErrorCode::CommandNotFound.into())
-            }
-        }
-    };
-}

@@ -27,6 +27,9 @@ use rs_matter_data_model::{AccessPrivilege, Cluster, StructType};
 use super::id::idl_attribute_name_to_enum_variant_name;
 use super::IdlGenerateContext;
 
+pub(crate) const NO_RESPONSE: &str = "DefaultSuccess";
+pub(crate) const GLOBAL_ATTR: core::ops::Range<u64> = 0xfff8..0xfffe;
+
 /// Return a TokenStream containing a simple enum with variants for each
 /// attribute in the given IDL cluster.
 pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
@@ -68,71 +71,13 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
         )
     });
 
-    let attributes_all = cluster.attributes.iter().map(|attr| {
-        let attr_name = Ident::new(
-            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-            Span::call_site(),
-        );
-
-        quote!(AttributeId::#attr_name as _,)
-    });
-
-    let attributes_mandatory = cluster
-        .attributes
-        .iter()
-        .filter(|attr| !attr.field.is_optional)
-        .map(|attr| {
-            let attr_name = Ident::new(
-                &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-                Span::call_site(),
-            );
-
-            quote!(AttributeId::#attr_name as _,)
-        });
-
-    let attributes_global = cluster
-        .attributes
-        .iter()
-        .filter(|attr| attr.field.field.code >= 0xf000 && attr.field.field.code < 0x10000)
-        .map(|attr| {
-            let attr_name = Ident::new(
-                &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-                Span::call_site(),
-            );
-
-            quote!(AttributeId::#attr_name as _,)
-        });
-
     quote!(
+        #[doc = "The attribute IDs for the cluster."]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, #krate::reexport::strum::FromRepr)]
         #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         #[repr(u32)]
         pub enum AttributeId {
             #(#attributes),*
-        }
-
-        impl AttributeId {
-            pub const fn all() -> &'static [u32] {
-                static ALL: &[u32] = &[#(#attributes_all)*];
-
-                ALL
-            }
-
-            pub const fn mandatory() -> &'static [u32] {
-                static MANDATORY: &[u32] = &[#(#attributes_mandatory)*];
-
-                MANDATORY
-            }
-
-            pub const fn global() -> &'static [u32] {
-                static GLOBAL: &[u32] = &[#(#attributes_global)*];
-
-                GLOBAL
-            }
-
-            pub const fn debug(&self, write: bool) -> MetaDataDebug<(Self, bool)> {
-                MetaDataDebug::<(Self, bool)>((*self, write))
-            }
         }
 
         impl core::convert::TryFrom<#krate::data_model::objects::AttrId> for AttributeId {
@@ -143,7 +88,7 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
             }
         }
 
-        impl core::fmt::Debug for MetaDataDebug<(AttributeId, bool)> {
+        impl core::fmt::Debug for MetadataDebug<(AttributeId, bool)> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 write!(f, "Attr::")?;
 
@@ -160,7 +105,7 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
         }
 
         #[cfg(feature = "defmt")]
-        impl #krate::reexport::defmt::Format for MetaDataDebug<(AttributeId, bool)> {
+        impl #krate::reexport::defmt::Format for MetadataDebug<(AttributeId, bool)> {
             fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
                 #krate::reexport::defmt::write!(f, "Attr::");
 
@@ -187,37 +132,31 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
         .commands
         .iter()
         .map(|cmd| {
-            let command_name = Ident::new(&cmd.id, Span::call_site());
-            let command_code = Literal::i64_unsuffixed(cmd.code as i64);
+            let cmd_name = Ident::new(&cmd.id, Span::call_site());
+            let cmd_code = Literal::i64_unsuffixed(cmd.code as i64);
 
             quote!(
-                #command_name = #command_code
+                #cmd_name = #cmd_code
             )
         })
         .collect::<Vec<_>>();
 
     let commands_debug = cluster.commands.iter().map(|cmd| {
-        let command_name = Ident::new(&cmd.id, Span::call_site());
-        let command_name_str = Literal::string(&cmd.id);
+        let cmd_name = Ident::new(&cmd.id, Span::call_site());
+        let cmd_name_str = Literal::string(&cmd.id);
 
         quote!(
-            CommandId::#command_name => write!(f, "{}(0x{:02x})", #command_name_str, CommandId::#command_name as u32)?,
+            CommandId::#cmd_name => write!(f, "{}(0x{:02x})", #cmd_name_str, CommandId::#cmd_name as u32)?,
         )
     });
 
     let commands_format = cluster.commands.iter().map(|cmd| {
-        let command_name = Ident::new(&cmd.id, Span::call_site());
-        let command_name_str = Literal::string(&cmd.id);
+        let cmd_name = Ident::new(&cmd.id, Span::call_site());
+        let cmd_name_str = Literal::string(&cmd.id);
 
         quote!(
-            CommandId::#command_name => #krate::reexport::defmt::write!(f, "{}(0x{:02x})", #command_name_str, CommandId::#command_name as u32),
+            CommandId::#cmd_name => #krate::reexport::defmt::write!(f, "{}(0x{:02x})", #cmd_name_str, CommandId::#cmd_name as u32),
         )
-    });
-
-    let commands_all = cluster.commands.iter().map(|cmd| {
-        let command_name = Ident::new(&cmd.id, Span::call_site());
-
-        quote!(CommandId::#command_name as _,)
     });
 
     let repr = if !commands.is_empty() {
@@ -249,6 +188,7 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
     };
 
     quote!(
+        #[doc = "The command IDs for the cluster."]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, #krate::reexport::strum::FromRepr)]
         #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         #repr
@@ -256,21 +196,9 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
             #(#commands),*
         }
 
-        impl CommandId {
-            pub const fn all() -> &'static [u32] {
-                static ALL: &[u32] = &[#(#commands_all)*];
-
-                ALL
-            }
-
-            pub const fn debug(&self, write: bool) -> MetaDataDebug<Self> {
-                MetaDataDebug::<Self>(*self)
-            }
-        }
-
         #try_from
 
-        impl core::fmt::Debug for MetaDataDebug<CommandId> {
+        impl core::fmt::Debug for MetadataDebug<CommandId> {
             #[allow(unreachable_code)]
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 write!(f, "Cmd::")?;
@@ -284,7 +212,7 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
         }
 
         #[cfg(feature = "defmt")]
-        impl #krate::reexport::defmt::Format for MetaDataDebug<CommandId> {
+        impl #krate::reexport::defmt::Format for MetadataDebug<CommandId> {
             #[allow(unreachable_code)]
             fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
                 #krate::reexport::defmt::write!(f, "Cmd::");
@@ -309,10 +237,10 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
         .iter()
         .filter_map(|s| {
             if let StructType::Response(code) = s.struct_type {
-                let command_name = Ident::new(&s.id, Span::call_site());
-                let command_code = Literal::i64_unsuffixed(code as i64);
+                let cmd_name = Ident::new(&s.id, Span::call_site());
+                let cmd_code = Literal::i64_unsuffixed(code as i64);
                 Some(quote!(
-                    #command_name = #command_code
+                    #cmd_name = #cmd_code
                 ))
             } else {
                 None
@@ -322,10 +250,10 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
 
     let command_responses_debug = cluster.structs.iter().filter_map(|s| {
         if let StructType::Response(_) = s.struct_type {
-            let command_name = Ident::new(&s.id, Span::call_site());
-            let command_name_str = Literal::string(&s.id);
+            let cmd_name = Ident::new(&s.id, Span::call_site());
+            let cmd_name_str = Literal::string(&s.id);
             Some(quote!(
-                CommandResponseId::#command_name => write!(f, "{}(0x{:02x})", #command_name_str, CommandResponseId::#command_name as u32)?,
+                CommandResponseId::#cmd_name => write!(f, "{}(0x{:02x})", #cmd_name_str, CommandResponseId::#cmd_name as u32)?,
             ))
         } else {
             None
@@ -334,21 +262,11 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
 
     let command_responses_format = cluster.structs.iter().filter_map(|s| {
         if let StructType::Response(_) = s.struct_type {
-            let command_name = Ident::new(&s.id, Span::call_site());
-            let command_name_str = Literal::string(&s.id);
+            let cmd_name = Ident::new(&s.id, Span::call_site());
+            let cmd_name_str = Literal::string(&s.id);
             Some(quote!(
-                CommandResponseId::#command_name => #krate::reexport::defmt::write!(f, "{}(0x{:02x})", #command_name_str, CommandResponseId::#command_name as u32),
+                CommandResponseId::#cmd_name => #krate::reexport::defmt::write!(f, "{}(0x{:02x})", #cmd_name_str, CommandResponseId::#cmd_name as u32),
             ))
-        } else {
-            None
-        }
-    });
-
-    let command_responses_all = cluster.structs.iter().filter_map(|s| {
-        if let StructType::Response(_) = s.struct_type {
-            let command_name = Ident::new(&s.id, Span::call_site());
-
-            Some(quote!(CommandResponseId::#command_name as _,))
         } else {
             None
         }
@@ -383,6 +301,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
     };
 
     quote!(
+        #[doc = "The command response IDs for the cluster."]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, #krate::reexport::strum::FromRepr)]
         #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         #repr
@@ -390,19 +309,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
             #(#command_responses),*
         }
 
-        impl CommandResponseId {
-            pub const fn all() -> &'static [u32] {
-                static ALL: &[u32] = &[#(#command_responses_all)*];
-
-                ALL
-            }
-
-            pub const fn debug(&self, write: bool) -> MetaDataDebug<Self> {
-                MetaDataDebug::<Self>(*self)
-            }
-        }
-
-        impl core::fmt::Debug for MetaDataDebug<CommandResponseId> {
+        impl core::fmt::Debug for MetadataDebug<CommandResponseId> {
             #[allow(unreachable_code)]
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 write!(f, "Cmd::")?;
@@ -416,7 +323,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
         }
 
         #[cfg(feature = "defmt")]
-        impl #krate::reexport::defmt::Format for MetaDataDebug<CommandResponseId> {
+        impl #krate::reexport::defmt::Format for MetadataDebug<CommandResponseId> {
             #[allow(unreachable_code)]
             fn format(&self, f: #krate::reexport::defmt::Formatter<'_>) {
                 #krate::reexport::defmt::write!(f, "Cmd::");
@@ -441,7 +348,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
 pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let attributes_access = cluster.attributes.iter().map(|attr| {
+    let attributes = cluster.attributes.iter().map(|attr| {
         let attr_name = Ident::new(
             &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
             Span::call_site(),
@@ -484,13 +391,46 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
             access = quote!(#access.union(#krate::data_model::objects::Access::FAB_SENSITIVE));
         }
 
+        let quality = if attr.field.is_optional {
+            quote!(#krate::data_model::objects::Quality::O)
+        } else {
+            quote!(#krate::data_model::objects::Quality::NONE)
+        };
+
         // TODO: Fabric Scoped seems to be on the struct level
 
         quote!(
             #krate::data_model::objects::Attribute::new(
                 AttributeId::#attr_name as _,
                 #access,
-                #krate::data_model::objects::Quality::SN, // TODO: Info not present in the IDL
+                #quality
+            ),
+        )
+    });
+
+    let commands = cluster.commands.iter().map(|cmd| {
+        let cmd_name = Ident::new(&cmd.id, Span::call_site());
+
+        let access = match cmd.access {
+            AccessPrivilege::View => panic!("Unsupported command access: {:?}", cmd.access),
+            AccessPrivilege::Operate => quote!(#krate::data_model::objects::Access::WO),
+            AccessPrivilege::Manage => quote!(#krate::data_model::objects::Access::WM),
+            AccessPrivilege::Administer => quote!(#krate::data_model::objects::Access::WA),
+        };
+
+        let resp_id = if cmd.output != NO_RESPONSE {
+            let cmd_name = Ident::new(&cmd.output, Span::call_site());
+
+            quote!(Some(CommandResponseId::#cmd_name as _))
+        } else {
+            quote!(None)
+        };
+
+        quote!(
+            #krate::data_model::objects::Command::new(
+                CommandId::#cmd_name as _,
+                #resp_id,
+                #access,
             ),
         )
     });
@@ -499,19 +439,19 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
 
     quote!(
-        static ATTRIBUTES_ACCESS: &[#krate::data_model::objects::Attribute] = &[#(#attributes_access)*];
-
-        pub const CLUSTER: #krate::data_model::objects::Cluster<'static> = #krate::data_model::objects::Cluster::new(
+        #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::conf` to reconfigure."]
+        pub const FULL_CLUSTER: #krate::data_model::objects::Cluster<'static> = #krate::data_model::objects::Cluster::new(
             #cluster_id,
             #cluster_revision,
             0,
-            ATTRIBUTES_ACCESS,
-            AttributeId::all(),
-            CommandId::all(),
-            CommandResponseId::all(),
+            &[#(#attributes)*],
+            &[#(#commands)*],
+            #krate::data_model::objects::Cluster::with_all_attrs,
+            #krate::data_model::objects::Cluster::with_all_cmds,
         );
 
-        pub struct MetaDataDebug<T>(pub T);
+        #[doc = "A helper struct to generate the cluster debug info."]
+        struct MetadataDebug<T>(pub T);
     )
 }
 

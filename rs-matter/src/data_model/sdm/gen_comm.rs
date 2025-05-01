@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::data_model::objects::{Dataver, InvokeContext, ReadContext, WriteContext};
+use crate::data_model::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 
@@ -102,6 +102,8 @@ impl CommissioningPolicy for bool {
         RegulatoryLocationTypeEnum::IndoorOutdoor
     }
 }
+
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER;
 
 #[derive(Clone)]
 pub struct GenCommHandler<'a> {

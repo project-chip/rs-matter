@@ -24,7 +24,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 
-use super::objects::{Dataver, InvokeContext, ReadContext, WriteContext};
+use super::objects::{AttrId, Cluster, Dataver, InvokeContext, Quality, ReadContext, WriteContext};
 
 pub use crate::data_model::clusters::basic_information::*;
 
@@ -124,6 +124,17 @@ impl Default for BasicInfoSettings {
         Self::new()
     }
 }
+
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.conf(
+    1,
+    0,
+    |attr, _, _| {
+        attr.is_system()
+            || !attr.quality.contains(Quality::OPTIONAL)
+            || attr.id == AttributeId::ProductLabel as AttrId
+    },
+    Cluster::with_no_cmds,
+);
 
 #[derive(Clone)]
 pub struct BasicInfoHandler(Dataver);

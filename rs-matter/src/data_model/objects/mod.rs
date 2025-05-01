@@ -19,6 +19,9 @@ use crate::tlv::ToTLV;
 mod attribute;
 pub use attribute::*;
 
+mod command;
+pub use command::*;
+
 mod cluster;
 pub use cluster::*;
 
