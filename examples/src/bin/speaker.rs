@@ -38,7 +38,7 @@ use rs_matter::data_model::objects::{InvokeContext, ReadContext, *};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::subscriptions::Subscriptions;
 use rs_matter::data_model::system_model::descriptor;
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
@@ -174,7 +174,12 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
     /// The metadata cluster definition corresponding to the handler
     const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
         .with_revision(1)
-        .with_attrs(with!(required));
+        .with_attrs(with!(required))
+        .with_cmds(with!(
+            media_playback::CommandId::Play
+                | media_playback::CommandId::Pause
+                | media_playback::CommandId::Stop
+        ));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -224,86 +229,78 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
     async fn handle_start_over<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_previous<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_next<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_rewind<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
         _request: RewindRequest<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_fast_forward<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
         _request: FastForwardRequest<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_skip_forward<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
         _request: SkipForwardRequest<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_skip_backward<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
         _request: SkipBackwardRequest<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_seek<P: TLVBuilderParent>(
         &self,
         _ctx: &InvokeContext<'_>,
         _request: SeekRequest<'_>,
-        response: PlaybackResponseBuilder<P>,
+        _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_activate_audio_track(
@@ -311,9 +308,8 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
         _ctx: &InvokeContext<'_>,
         _request: ActivateAudioTrackRequest<'_>,
     ) -> Result<(), Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        Ok(())
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_activate_text_track(
@@ -321,14 +317,12 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
         _ctx: &InvokeContext<'_>,
         _request: ActivateTextTrackRequest<'_>,
     ) -> Result<(), Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        Ok(())
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     async fn handle_deactivate_text_track(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
-        self.state.set(PlaybackStateEnum::Playing);
-
-        Ok(())
+        // Not supported
+        Err(ErrorCode::InvalidCommand.into())
     }
 }
