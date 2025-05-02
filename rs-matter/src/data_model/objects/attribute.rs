@@ -114,7 +114,7 @@ pub const CLUSTER_REVISION: Attribute = Attribute::new(
     Quality::NONE,
 );
 
-/// A proc-macro to generate the attributes for a cluster.
+/// A macro to generate the attributes for a cluster.
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! attributes {

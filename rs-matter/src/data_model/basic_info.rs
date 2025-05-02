@@ -23,8 +23,9 @@ use crate::transport::exchange::Exchange;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
+use crate::with;
 
-use super::objects::{AttrId, Cluster, Dataver, InvokeContext, Quality, ReadContext, WriteContext};
+use super::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 
 pub use crate::data_model::clusters::basic_information::*;
 
@@ -125,16 +126,10 @@ impl Default for BasicInfoSettings {
     }
 }
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.conf(
-    1,
-    0,
-    |attr, _, _| {
-        attr.is_system()
-            || !attr.quality.contains(Quality::OPTIONAL)
-            || attr.id == AttributeId::ProductLabel as AttrId
-    },
-    Cluster::with_no_cmds,
-);
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
+    .with_revision(1)
+    .with_attrs(with!(required; AttributeId::ProductLabel))
+    .with_cmds(with!());
 
 #[derive(Clone)]
 pub struct BasicInfoHandler(Dataver);
