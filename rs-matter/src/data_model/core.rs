@@ -607,6 +607,9 @@ where
         };
 
         if let Some(mut tx) = self.buffers.get().await {
+            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
+            unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+
             let primed = self
                 .report_data(
                     id,
