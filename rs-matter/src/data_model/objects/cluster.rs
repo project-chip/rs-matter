@@ -24,18 +24,40 @@ use crate::interaction_model::core::IMStatusCode;
 use crate::interaction_model::messages::GenericPath;
 use crate::tlv::{TLVTag, TLVWrite};
 
+/// A type alias for the attribute matching function
+pub type WithAttrs = fn(&Attribute, u16, u32) -> bool;
+/// A type alias for the command matching function
+pub type WithCmds = fn(&Command, u16, u32) -> bool;
+
 /// A struct modeling the cluster meta-data
 /// (i.e. what is the cluster ID, revision, features, attributes and their access, commands and their access)
 /// in the Matter data model.
 #[derive(Debug, Clone)]
 pub struct Cluster<'a> {
+    /// The ID of the cluster
     pub id: ClusterId,
+    /// The revision of the cluster
     pub revision: u16,
+    /// The feature map of the cluster
     pub feature_map: u32,
+    /// The attributes of the cluster.
+    ///
+    /// These could be all attributes as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_attrs` for more details.
     pub attributes: &'a [Attribute],
+    /// The commands of the cluster.
+    ///
+    /// These could be all commands as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_cmds` for more details.
     pub commands: &'a [Command],
-    pub with_attrs: fn(&Attribute, u16, u32) -> bool,
-    pub with_cmds: fn(&Command, u16, u32) -> bool,
+    /// A function that takes an attribute and returns a boolean indicating if the attribute
+    /// is supported by the cluster.
+    pub with_attrs: WithAttrs,
+    /// A function that takes a command and returns a boolean indicating if the command
+    /// is supported by the cluster.
+    pub with_cmds: WithCmds,
 }
 
 impl<'a> Cluster<'a> {
@@ -55,8 +77,8 @@ impl<'a> Cluster<'a> {
         feature_map: u32,
         attributes: &'a [Attribute],
         commands: &'a [Command],
-        with_attrs: fn(&Attribute, u16, u32) -> bool,
-        with_cmds: fn(&Command, u16, u32) -> bool,
+        with_attrs: WithAttrs,
+        with_cmds: WithCmds,
     ) -> Self {
         Self {
             id,
@@ -69,27 +91,24 @@ impl<'a> Cluster<'a> {
         }
     }
 
-    /// Create a new cluster based on this one but adjusted with the provided configuration
-    ///
-    /// # Arguments
-    /// - `revision`: The revision of the cluster
-    /// - `feature_map`: The feature map of the cluster
-    /// - `with_attrs`: A function that takes an attribute and returns a boolean indicating if the attribute should be included
-    /// - `with_cmds`: A function that takes a command and returns a boolean indicating if the command should be included
-    pub const fn conf(
-        self,
-        revision: u16,
-        feature_map: u32,
-        with_attrs: fn(&Attribute, u16, u32) -> bool,
-        with_cmds: fn(&Command, u16, u32) -> bool,
-    ) -> Self {
-        Self {
-            revision,
-            feature_map,
-            with_attrs,
-            with_cmds,
-            ..self
-        }
+    /// Return a new cluster with a modified revision
+    pub const fn with_revision(self, revision: u16) -> Self {
+        Self { revision, ..self }
+    }
+
+    /// Return a new cluster with a modified feature map
+    pub const fn with_features(self, revision: u16) -> Self {
+        Self { revision, ..self }
+    }
+
+    /// Return a new cluster with a modified attributes' matcher
+    pub const fn with_attrs(self, with_attrs: WithAttrs) -> Self {
+        Self { with_attrs, ..self }
+    }
+
+    /// Return a new cluster with a modified commands' matcher
+    pub const fn with_cmds(self, with_cmds: WithCmds) -> Self {
+        Self { with_cmds, ..self }
     }
 
     /// Check if the accessor has the required permissions to access the attribute
@@ -239,26 +258,6 @@ impl<'a> Cluster<'a> {
 
         tw.end_container()
     }
-
-    /// An attribute filtering function that always returns true.
-    pub fn with_all_attrs(_attr: &Attribute, _revision: u16, _feature_map: u32) -> bool {
-        true
-    }
-
-    /// An attribute filtering function that returns true if the attribute is not optional.
-    pub fn with_mandatory_attrs(attr: &Attribute, _revision: u16, _feature_map: u32) -> bool {
-        !attr.quality.contains(Quality::OPTIONAL)
-    }
-
-    /// A command filtering function that always returns true.
-    pub fn with_all_cmds(_cmd: &Command, _revision: u16, _feature_map: u32) -> bool {
-        true
-    }
-
-    /// A command filtering function that always returns false.
-    pub fn with_no_cmds(_cmd: &Command, _revision: u16, _feature_map: u32) -> bool {
-        false
-    }
 }
 
 impl core::fmt::Display for Cluster<'_> {
@@ -312,4 +311,55 @@ impl defmt::Format for Cluster<'_> {
 
         defmt::write!(f, "]")
     }
+}
+
+/// A macro that generates a "with" fn for matching attributes and commands
+///
+/// Usage:
+/// - `with!(all)` - returns true for all attributes and commands
+/// - `with!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for the specified attributes or commands
+/// - `with!(required; (attr1, attr2, ...))` - returns true for all mandatory attributes and the specified attributes
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! with {
+    () => {
+        |_, _, _| false
+    };
+    (all) => {
+        |_, _, _| true
+    };
+    (required) => {
+        |attr, _, _| attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL)
+    };
+    (required; $($id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |attr, _, _| {
+            if attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL) {
+                true
+            } else if let Ok(l) = attr.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+    ($id0:path $(| $id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |leaf, _, _| {
+            if let Ok(l) = leaf.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $id0 => true,
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
 }

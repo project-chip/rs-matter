@@ -25,7 +25,7 @@ use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
-use crate::{attribute_enum, attributes, commands};
+use crate::{attribute_enum, attributes, commands, with};
 
 pub const ID: u32 = 0x001F;
 
@@ -73,8 +73,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         ),
     ),
     commands: commands!(),
-    with_attrs: Cluster::with_all_attrs,
-    with_cmds: Cluster::with_all_cmds,
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug, Clone)]

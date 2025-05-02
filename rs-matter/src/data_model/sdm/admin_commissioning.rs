@@ -26,7 +26,7 @@ use crate::data_model::objects::{
 use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands};
+use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands, with};
 
 pub const ID: u32 = 0x003C;
 
@@ -85,8 +85,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Command::new(Commands::OpenBasicCommWindow as _, None, Access::WA),
         Command::new(Commands::RevokeComm as _, None, Access::WA),
     ),
-    with_attrs: Cluster::with_all_attrs,
-    with_cmds: Cluster::with_all_cmds,
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(FromTLV, Debug)]

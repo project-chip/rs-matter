@@ -15,21 +15,16 @@
  *    limitations under the License.
  */
 
-use crate::data_model::objects::{Cluster, Dataver, InvokeContext, Quality, ReadContext};
+use crate::data_model::objects::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
+use crate::with;
 
 pub use crate::data_model::clusters::ethernet_network_diagnostics::*;
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.conf(
-    1,
-    0,
-    |attr, _, _| {
-        !attr.quality.contains(Quality::OPTIONAL)
-            || attr.id == AttributeId::PacketRxCount as u32
-            || attr.id == AttributeId::PacketTxCount as u32
-    },
-    |cmd, _, _| cmd.id == CommandId::ResetCounts as u32,
-);
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
+    .with_revision(1)
+    .with_attrs(with!(required; AttributeId::PacketRxCount | AttributeId::PacketTxCount))
+    .with_cmds(with!(CommandId::ResetCounts));
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

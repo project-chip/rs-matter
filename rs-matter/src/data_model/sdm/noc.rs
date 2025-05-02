@@ -37,7 +37,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-use crate::{alloc, attribute_enum, attributes, cmd_enter, command_enum, commands};
+use crate::{alloc, attribute_enum, attributes, cmd_enter, command_enum, commands, with};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
@@ -192,16 +192,32 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         ),
     ),
     commands: commands!(
-        Command::new(Commands::AttReq as _, None, Access::WA),
-        Command::new(Commands::CertChainReq as _, None, Access::WA),
-        Command::new(Commands::CSRReq as _, None, Access::WA),
-        Command::new(Commands::AddNOC as _, None, Access::WA),
+        Command::new(
+            Commands::AttReq as _,
+            Some(RespCommands::AttReqResp as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::CertChainReq as _,
+            Some(RespCommands::CertChainResp as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::CSRReq as _,
+            Some(RespCommands::CSRResp as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::AddNOC as _,
+            Some(RespCommands::NOCResp as _),
+            Access::WA
+        ),
         Command::new(Commands::UpdateFabricLabel as _, None, Access::WA),
         Command::new(Commands::RemoveFabric as _, None, Access::WA),
         Command::new(Commands::AddTrustedRootCert as _, None, Access::WA),
     ),
-    with_attrs: Cluster::with_all_attrs,
-    with_cmds: Cluster::with_all_cmds,
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug, Clone)]

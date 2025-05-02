@@ -23,7 +23,7 @@ use crate::data_model::objects::*;
 use crate::error::Error;
 use crate::tlv::TLVTag;
 use crate::tlv::{TLVWrite, TLVWriter, TagType, ToTLV};
-use crate::{attribute_enum, attributes, commands};
+use crate::{attribute_enum, attributes, commands, with};
 
 pub const ID: u32 = 0x001D;
 
@@ -50,8 +50,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Attribute::new(Attributes::ClientList as _, Access::RV, Quality::NONE),
     ),
     commands: commands!(),
-    with_attrs: Cluster::with_all_attrs,
-    with_cmds: Cluster::with_all_cmds,
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug)]
