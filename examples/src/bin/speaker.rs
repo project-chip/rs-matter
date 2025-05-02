@@ -162,10 +162,22 @@ pub struct SpeakerHandler {
 }
 
 impl SpeakerHandler {
+    /// Create a new instance of the handler
     pub const fn new(dataver: Dataver) -> Self {
         Self {
             dataver,
             state: Cell::new(media_playback::PlaybackStateEnum::NotPlaying),
+        }
+    }
+
+    /// Update the state of the handler
+    fn set_state(&self, state: PlaybackStateEnum, ctx: &InvokeContext<'_>) {
+        let old_state = self.state.replace(state);
+
+        if old_state != state {
+            // Update the cluster data version and notify potential subscribers
+            self.dataver.changed();
+            ctx.notify_changed();
         }
     }
 }
@@ -198,30 +210,30 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
 
     async fn handle_play<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        ctx: &InvokeContext<'_>,
         response: media_playback::PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Playing);
+        self.set_state(PlaybackStateEnum::Playing, ctx);
 
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
     async fn handle_pause<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        ctx: &InvokeContext<'_>,
         response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::Paused);
+        self.set_state(PlaybackStateEnum::Paused, ctx);
 
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
     async fn handle_stop<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        ctx: &InvokeContext<'_>,
         response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
-        self.state.set(PlaybackStateEnum::NotPlaying);
+        self.set_state(PlaybackStateEnum::NotPlaying, ctx);
 
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
