@@ -48,6 +48,7 @@ use rs_matter::tlv::TLVBuilderParent;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::with;
 
 // Import the MediaPlayback cluster from `rs-matter`.
 //
@@ -154,8 +155,10 @@ fn dm_handler<'a>(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'a
     )
 }
 
-const CLUSTER: Cluster<'static> =
-    media_playback::FULL_CLUSTER.conf(1, 0, Cluster::with_mandatory_attrs, Cluster::with_all_cmds);
+/// The metadata cluster definition corresponding to the handler
+const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
+    .with_revision(1)
+    .with_attrs(with!(required));
 
 /// A sample NOOP handler for the MediaPlayback cluster.
 pub struct SpeakerHandler {

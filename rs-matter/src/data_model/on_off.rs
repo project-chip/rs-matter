@@ -18,21 +18,16 @@
 use core::cell::Cell;
 
 use crate::error::{Error, ErrorCode};
+use crate::with;
 
-use super::objects::{Cluster, CmdId, Dataver, InvokeContext, Quality, ReadContext};
+use super::objects::{Cluster, Dataver, InvokeContext, ReadContext};
 
 pub use crate::data_model::clusters::on_off::*;
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER.conf(
-    1,
-    0,
-    |attr, _, _| attr.is_system() || !attr.quality.contains(Quality::OPTIONAL),
-    |cmd, _, _| {
-        cmd.id == CommandId::On as CmdId
-            || cmd.id == CommandId::Off as CmdId
-            || cmd.id == CommandId::Toggle as CmdId
-    },
-);
+pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
+    .with_revision(1)
+    .with_attrs(with!(required))
+    .with_cmds(with!(CommandId::On | CommandId::Off | CommandId::Toggle));
 
 #[derive(Clone)]
 pub struct OnOffHandler {

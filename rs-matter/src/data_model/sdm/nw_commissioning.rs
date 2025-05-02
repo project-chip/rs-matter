@@ -106,12 +106,36 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
     );
 
     static COMMANDS: &[Command] = commands!(
-        Command::new(Commands::ScanNetworks as _, None, Access::WA),
-        Command::new(Commands::AddOrUpdateWifiNetwork as _, None, Access::WA),
-        Command::new(Commands::AddOrUpdateThreadNetwork as _, None, Access::WA),
-        Command::new(Commands::RemoveNetwork as _, None, Access::WA),
-        Command::new(Commands::ConnectNetwork as _, None, Access::WA),
-        Command::new(Commands::ReorderNetwork as _, None, Access::WA),
+        Command::new(
+            Commands::ScanNetworks as _,
+            Some(ResponseCommands::ScanNetworksResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::AddOrUpdateWifiNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::AddOrUpdateThreadNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::RemoveNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::ConnectNetwork as _,
+            Some(ResponseCommands::ConnectNetworkResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::ReorderNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
     );
 
     Cluster {

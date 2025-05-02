@@ -34,7 +34,7 @@ impl core::fmt::Display for Command {
     }
 }
 
-/// A proc-macro to generate the commands for a cluster.
+/// A macro to generate the commands for a cluster.
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! commands {

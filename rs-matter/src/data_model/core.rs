@@ -75,7 +75,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
 {
-    /// Create the handler.
+    /// Create the data model.
     ///
     /// The parameters are as follows:
     /// * `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
@@ -288,26 +288,14 @@ where
 
             let req = WriteReqRef::new(TLVElement::new(&rx));
 
-            req.respond(
-                &self.handler,
-                exchange,
-                &metadata.node(),
-                self.subscriptions,
-                &mut wb,
-            )
-            .await?
+            req.respond(&self.handler, exchange, &metadata.node(), self, &mut wb)
+                .await?
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(
-                &self.handler,
-                exchange,
-                &metadata.node(),
-                self.subscriptions,
-                &mut wb,
-            )
-            .await?
+            req.respond(&self.handler, exchange, &metadata.node(), self, &mut wb)
+                .await?
         };
 
         exchange.send(OpCode::WriteResponse, wb.as_slice()).await?;
@@ -375,7 +363,7 @@ where
                 &self.handler,
                 exchange,
                 &metadata.node(),
-                self.subscriptions,
+                self,
                 &mut wb,
                 false,
             )
@@ -388,7 +376,7 @@ where
                 &self.handler,
                 exchange,
                 &metadata.node(),
-                self.subscriptions,
+                self,
                 &mut wb,
                 false,
             )
@@ -539,7 +527,7 @@ where
                     .borrow_mut()
                     .retain(|sb| sb.subscription_id != id);
 
-                info!(
+                warn!(
                     "Subscription [F:{:x},P:{:x}]::{} removed due to inactivity",
                     fabric_idx, peer_node_id, id
                 );
@@ -835,6 +823,17 @@ where
 {
     async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         DataModel::handle(self, exchange).await
+    }
+}
+
+impl<const N: usize, B, T> ChangeNotify for DataModel<'_, N, B, T>
+where
+    T: DataModelHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    fn notify(&self, _endpt: EndptId, _clust: ClusterId) {
+        // TODO: Make use of endpt and clust
+        self.subscriptions.notify_changed();
     }
 }
 

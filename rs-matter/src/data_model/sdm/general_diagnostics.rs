@@ -22,7 +22,7 @@ use crate::data_model::objects::{
     Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
-use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands};
+use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands, with};
 
 pub const ID: u32 = 0x0033;
 
@@ -70,8 +70,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         None,
         Access::WA,
     )),
-    with_attrs: Cluster::with_all_attrs,
-    with_cmds: Cluster::with_all_cmds,
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug, Clone)]

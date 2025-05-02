@@ -26,8 +26,6 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::Notification;
 
-use super::objects::{ChangeNotify, ClusterId, EndptId};
-
 struct Subscription {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,
@@ -214,12 +212,5 @@ impl<const N: usize> Subscriptions<N> {
 impl<const N: usize> Default for Subscriptions<N> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<const N: usize> ChangeNotify for Subscriptions<N> {
-    fn notify(&self, _endpt: EndptId, _clust: ClusterId) {
-        // TODO: Make use of endpt and clust
-        self.notify_changed();
     }
 }

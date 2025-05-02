@@ -32,7 +32,7 @@ use rs_matter::data_model::objects::{
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
-use rs_matter::{attribute_enum, attributes, command_enum, commands};
+use rs_matter::{attribute_enum, attributes, command_enum, commands, with};
 
 pub const WRITE_LIST_MAX: usize = 5;
 
@@ -102,8 +102,8 @@ pub const CLUSTER: Cluster<'static> = Cluster {
         Some(RespCommands::EchoResp as _),
         Access::WA,
     ),),
-    with_attrs: Cluster::with_all_attrs,
-    with_cmds: Cluster::with_all_cmds,
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 /// This is used in the tests to validate any settings that may have happened

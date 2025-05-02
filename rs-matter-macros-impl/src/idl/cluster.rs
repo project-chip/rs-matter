@@ -446,8 +446,8 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
             0,
             &[#(#attributes)*],
             &[#(#commands)*],
-            #krate::data_model::objects::Cluster::with_all_attrs,
-            #krate::data_model::objects::Cluster::with_all_cmds,
+            |_, _, _| true,
+            |_, _, _| true,
         );
 
         #[doc = "A helper struct to generate the cluster debug info."]
