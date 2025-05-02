@@ -24,11 +24,6 @@ use super::objects::{Cluster, Dataver, InvokeContext, ReadContext};
 
 pub use crate::data_model::clusters::on_off::*;
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
-    .with_revision(1)
-    .with_attrs(with!(required))
-    .with_cmds(with!(CommandId::On | CommandId::Off | CommandId::Toggle));
-
 #[derive(Clone)]
 pub struct OnOffHandler {
     dataver: Dataver,
@@ -60,6 +55,11 @@ impl OnOffHandler {
 }
 
 impl ClusterHandler for OnOffHandler {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_revision(1)
+        .with_attrs(with!(required))
+        .with_cmds(with!(CommandId::On | CommandId::Off | CommandId::Toggle));
+
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }
