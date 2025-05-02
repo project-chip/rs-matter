@@ -27,9 +27,9 @@ use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use media_playback::{
-    ActivateAudioTrackRequest, ActivateTextTrackRequest, FastForwardRequest,
-    PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest, SkipBackwardRequest,
-    SkipForwardRequest, StatusEnum,
+    ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
+    FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
+    SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
 
 use rs_matter::core::{Matter, MATTER_PORT};
@@ -127,7 +127,7 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: &[DEV_TYPE_SMART_SPEAKER],
-            clusters: &[descriptor::CLUSTER, CLUSTER],
+            clusters: &[descriptor::CLUSTER, SpeakerHandler::CLUSTER],
         },
     ],
 };
@@ -147,18 +147,13 @@ fn dm_handler<'a>(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'a
             )
             .chain(
                 1,
-                CLUSTER.id,
+                SpeakerHandler::CLUSTER.id,
                 media_playback::HandlerAsyncAdaptor(SpeakerHandler::new(Dataver::new_rand(
                     matter.rand(),
                 ))),
             ),
     )
 }
-
-/// The metadata cluster definition corresponding to the handler
-const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
-    .with_revision(1)
-    .with_attrs(with!(required));
 
 /// A sample NOOP handler for the MediaPlayback cluster.
 pub struct SpeakerHandler {
@@ -176,6 +171,11 @@ impl SpeakerHandler {
 }
 
 impl media_playback::ClusterAsyncHandler for SpeakerHandler {
+    /// The metadata cluster definition corresponding to the handler
+    const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
+        .with_revision(1)
+        .with_attrs(with!(required));
+
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

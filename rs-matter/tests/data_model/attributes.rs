@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::{objects::GlobalElements, on_off};
+use rs_matter::data_model::objects::GlobalElements;
+use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
 use rs_matter::interaction_model::messages::GenericPath;
@@ -148,14 +149,14 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
 
     let wc_ep_onoff = GenericPath::new(
         None,
-        Some(on_off::CLUSTER.id),
+        Some(on_off::OnOffHandler::CLUSTER.id),
         Some(on_off::AttributeId::OnOff as u32),
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
     let expected = &[attr_data!(
         1,
-        on_off::CLUSTER.id,
+        on_off::OnOffHandler::CLUSTER.id,
         on_off::AttributeId::OnOff,
         Some(&false)
     )];

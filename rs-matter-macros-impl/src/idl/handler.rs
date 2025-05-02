@@ -82,6 +82,8 @@ pub fn handler(
             where
                 T: #handler_name
             {
+                const CLUSTER: #krate::data_model::objects::Cluster<'static> = T::CLUSTER;
+
                 fn dataver(&self) -> u32 { T::dataver(self) }
                 fn dataver_changed(&self) { T::dataver_changed(self) }
 
@@ -96,7 +98,11 @@ pub fn handler(
         quote!(
             #[doc = "The handler trait for the cluster."]
             pub trait #handler_name {
+                #[doc = "The cluster-metadata corresponding to this handler trait."]
+                const CLUSTER: #krate::data_model::objects::Cluster<'static>;
+
                 fn dataver(&self) -> u32;
+
                 fn dataver_changed(&self);
 
                 #(#handler_attribute_methods)*

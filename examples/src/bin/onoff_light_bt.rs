@@ -46,7 +46,7 @@ use rs_matter::core::Matter;
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::*;
-use rs_matter::data_model::on_off;
+use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
     self, WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
@@ -233,7 +233,7 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, on_off::CLUSTER],
+            clusters: &[descriptor::CLUSTER, on_off::OnOffHandler::CLUSTER],
         },
     ],
 };
@@ -272,6 +272,10 @@ fn dm_handler<'a>(
                 matter.rand(),
             ))),
         )
-        .chain(1, on_off::CLUSTER.id, Async(on_off::HandlerAdaptor(on_off))),
+        .chain(
+            1,
+            on_off::OnOffHandler::CLUSTER.id,
+            Async(on_off::HandlerAdaptor(on_off)),
+        ),
     )
 }

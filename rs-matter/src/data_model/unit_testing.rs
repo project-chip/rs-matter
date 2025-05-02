@@ -1,5 +1,5 @@
 use crate::data_model::objects::{
-    ArrayAttributeRead, ArrayAttributeWrite, InvokeContext, ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, Cluster, InvokeContext, ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
@@ -366,6 +366,8 @@ impl<'a> UnitTestingHandler<'a> {
 }
 
 impl ClusterHandler for UnitTestingHandler<'_> {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER;
+
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

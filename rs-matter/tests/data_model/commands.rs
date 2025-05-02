@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::on_off;
+use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::{CmdPath, CmdStatus};
 
@@ -115,12 +115,12 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
 
     let target = CmdPath::new(
         None,
-        Some(on_off::CLUSTER.id),
+        Some(on_off::OnOffHandler::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let expected_path = CmdPath::new(
         Some(1),
-        Some(on_off::CLUSTER.id),
+        Some(on_off::OnOffHandler::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let input = &[cmd_data!(target, 1)];

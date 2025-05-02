@@ -103,8 +103,6 @@ impl CommissioningPolicy for bool {
     }
 }
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER;
-
 #[derive(Clone)]
 pub struct GenCommHandler<'a> {
     dataver: Dataver,
@@ -125,6 +123,8 @@ impl<'a> GenCommHandler<'a> {
 }
 
 impl ClusterHandler for GenCommHandler<'_> {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER;
+
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

@@ -1,11 +1,11 @@
 use crate::handler_chain_type;
 use crate::utils::rand::Rand;
 
-use super::basic_info::{self, BasicInfoHandler};
+use super::basic_info::{self, BasicInfoHandler, ClusterHandler as _};
 use super::objects::{Async, Cluster, Dataver, EmptyHandler, Endpoint, EndptId};
 use super::sdm::admin_commissioning::{self, AdminCommCluster};
-use super::sdm::eth_nw_diag::{self, EthNwDiagHandler};
-use super::sdm::gen_comm::{self, CommissioningPolicy, GenCommHandler};
+use super::sdm::eth_nw_diag::{self, ClusterHandler as _, EthNwDiagHandler};
+use super::sdm::gen_comm::{self, ClusterHandler as _, CommissioningPolicy, GenCommHandler};
 use super::sdm::general_diagnostics::{self, GenDiagCluster};
 use super::sdm::group_key_management::{self, GrpKeyMgmtCluster};
 use super::sdm::noc::{self, NocCluster};
@@ -16,21 +16,21 @@ use super::system_model::descriptor::{self, DescriptorCluster};
 
 const ETH_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
-    basic_info::CLUSTER,
-    gen_comm::CLUSTER,
+    BasicInfoHandler::CLUSTER,
+    GenCommHandler::CLUSTER,
     nw_commissioning::ETH_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
     access_control::CLUSTER,
     general_diagnostics::CLUSTER,
-    eth_nw_diag::CLUSTER,
+    EthNwDiagHandler::CLUSTER,
     group_key_management::CLUSTER,
 ];
 
 const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
-    basic_info::CLUSTER,
-    gen_comm::CLUSTER,
+    BasicInfoHandler::CLUSTER,
+    GenCommHandler::CLUSTER,
     nw_commissioning::WIFI_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
@@ -42,8 +42,8 @@ const WIFI_NW_CLUSTERS: [Cluster<'static>; 10] = [
 
 const THREAD_NW_CLUSTERS: [Cluster<'static>; 10] = [
     descriptor::CLUSTER,
-    basic_info::CLUSTER,
-    gen_comm::CLUSTER,
+    BasicInfoHandler::CLUSTER,
+    GenCommHandler::CLUSTER,
     nw_commissioning::THR_CLUSTER,
     admin_commissioning::CLUSTER,
     noc::CLUSTER,
@@ -105,7 +105,7 @@ pub fn eth_handler(endpoint_id: u16, rand: Rand) -> EthRootEndpointHandler<'stat
     handler(
         endpoint_id,
         EthNwCommCluster::new(Dataver::new_rand(rand)),
-        eth_nw_diag::CLUSTER.id,
+        EthNwDiagHandler::CLUSTER.id,
         EthNwDiagHandler::new(Dataver::new_rand(rand)).adapt(),
         &true,
         rand,
@@ -170,14 +170,14 @@ fn wrap<NWCOMM, NWDIAG>(
         )
         .chain(
             endpoint_id,
-            gen_comm::CLUSTER.id,
+            GenCommHandler::CLUSTER.id,
             Async(
                 GenCommHandler::new(Dataver::new_rand(rand), concurrent_connection_policy).adapt(),
             ),
         )
         .chain(
             endpoint_id,
-            basic_info::CLUSTER.id,
+            BasicInfoHandler::CLUSTER.id,
             Async(BasicInfoHandler::new(Dataver::new_rand(rand)).adapt()),
         )
         .chain(
