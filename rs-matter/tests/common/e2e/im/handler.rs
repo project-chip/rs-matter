@@ -15,16 +15,16 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::basic_info;
+use rs_matter::data_model::basic_info::{BasicInfoHandler, ClusterHandler as _};
 use rs_matter::data_model::device_types::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::data_model::objects::{
     AsyncHandler, AsyncMetadata, AttrDataEncoder, CmdDataEncoder, Dataver, Endpoint, Handler,
     InvokeContext, Metadata, Node, NonBlockingHandler, ReadContext, WriteContext,
 };
-use rs_matter::data_model::on_off::{self, OnOffHandler};
+use rs_matter::data_model::on_off::{self, ClusterHandler as _, OnOffHandler};
 use rs_matter::data_model::root_endpoint::{self, EthRootEndpointHandler};
 use rs_matter::data_model::sdm::admin_commissioning;
-use rs_matter::data_model::sdm::gen_comm;
+use rs_matter::data_model::sdm::gen_comm::{ClusterHandler as _, GenCommHandler};
 use rs_matter::data_model::sdm::noc;
 use rs_matter::data_model::sdm::nw_commissioning;
 use rs_matter::data_model::system_model::access_control;
@@ -50,8 +50,8 @@ impl<'a> E2eTestHandler<'a> {
                 id: 0,
                 clusters: &[
                     descriptor::CLUSTER,
-                    basic_info::CLUSTER,
-                    gen_comm::CLUSTER,
+                    BasicInfoHandler::CLUSTER,
+                    GenCommHandler::CLUSTER,
                     nw_commissioning::ETH_CLUSTER,
                     admin_commissioning::CLUSTER,
                     noc::CLUSTER,
@@ -62,7 +62,11 @@ impl<'a> E2eTestHandler<'a> {
             },
             Endpoint {
                 id: 1,
-                clusters: &[descriptor::CLUSTER, on_off::CLUSTER, echo_cluster::CLUSTER],
+                clusters: &[
+                    descriptor::CLUSTER,
+                    OnOffHandler::CLUSTER,
+                    echo_cluster::CLUSTER,
+                ],
                 device_types: &[DEV_TYPE_ON_OFF_LIGHT],
             },
         ],
@@ -87,7 +91,7 @@ impl<'a> E2eTestHandler<'a> {
             )
             .chain(
                 1,
-                on_off::CLUSTER.id,
+                OnOffHandler::CLUSTER.id,
                 OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt(),
             );
 

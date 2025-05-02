@@ -329,12 +329,12 @@ macro_rules! with {
         |_, _, _| true
     };
     (required) => {
-        |attr, _, _| attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL)
+        |attr, _, _| !attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL)
     };
     (required; $($id:path $(|)?)*) => {
         #[allow(clippy::collapsible_match)]
         |attr, _, _| {
-            if attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL) {
+            if !attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL) {
                 true
             } else if let Ok(l) = attr.id.try_into() {
                 #[allow(unreachable_patterns)]

@@ -21,11 +21,6 @@ use crate::with;
 
 pub use crate::data_model::clusters::ethernet_network_diagnostics::*;
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
-    .with_revision(1)
-    .with_attrs(with!(required; AttributeId::PacketRxCount | AttributeId::PacketTxCount))
-    .with_cmds(with!(CommandId::ResetCounts));
-
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EthNwDiagHandler {
@@ -43,6 +38,11 @@ impl EthNwDiagHandler {
 }
 
 impl ClusterHandler for EthNwDiagHandler {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_revision(1)
+        .with_attrs(with!(required; AttributeId::PacketRxCount | AttributeId::PacketTxCount))
+        .with_cmds(with!(CommandId::ResetCounts));
+
     fn dataver(&self) -> u32 {
         self.dataver.get()
     }

@@ -126,11 +126,6 @@ impl Default for BasicInfoSettings {
     }
 }
 
-pub const CLUSTER: Cluster<'static> = FULL_CLUSTER
-    .with_revision(1)
-    .with_attrs(with!(required; AttributeId::ProductLabel))
-    .with_cmds(with!());
-
 #[derive(Clone)]
 pub struct BasicInfoHandler(Dataver);
 
@@ -153,6 +148,11 @@ impl BasicInfoHandler {
 }
 
 impl ClusterHandler for BasicInfoHandler {
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER
+        .with_revision(1)
+        .with_attrs(with!(required; AttributeId::ProductLabel))
+        .with_cmds(with!());
+
     fn dataver(&self) -> u32 {
         self.0.get()
     }
