@@ -51,6 +51,9 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
+// Statically allocate in BSS the bigger objects
+// `rs-matter` supports efficient initialization of BSS objects (with `init`)
+// as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<Subscriptions<3>> = StaticCell::new();
@@ -74,7 +77,7 @@ fn main() -> Result<(), Error> {
 
 fn run() -> Result<(), Error> {
     env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
     // NOTE: chip-tool tests need the log to go to `stdout` instead
@@ -98,25 +101,23 @@ fn run() -> Result<(), Error> {
         &test_device::TEST_DEV_DET,
         test_device::TEST_DEV_COMM,
         &test_device::TEST_DEV_ATT,
-        // NOTE:
-        // For `no_std` environments, provide your own epoch and rand functions here
         MdnsService::Builtin,
         rs_matter::utils::epoch::sys_epoch,
         rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
     ));
 
+    // Need to call this once
     matter.initialize_transport_buffers()?;
 
-    info!("Matter initialized");
-
+    // Create the transport buffers
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
-    info!("IM buffers initialized");
-
-    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
-
+    // Create the subscriptions
     let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+
+    // Our on-off cluster
+    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
     let dm_handler = Async(dm_handler(matter, &on_off));
@@ -147,24 +148,20 @@ fn run() -> Result<(), Error> {
         }
     });
 
-    // NOTE:
-    // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind for your custom UDP stack
-    // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
+    // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
-    // Run the Matter and mDNS transports
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
         core::mem::size_of_val(&matter.run(&socket, &socket, DiscoveryCapabilities::IP)),
         core::mem::size_of_val(&mdns::run_mdns(matter))
     );
 
+    // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
-
     let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
 
-    // NOTE:
-    // Replace with your own persister for e.g. `no_std` environments
+    // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
 
     info!(
@@ -187,11 +184,11 @@ fn run() -> Result<(), Error> {
         select(&mut respond, &mut device).coalesce(),
     );
 
-    // NOTE:
-    // Replace with a different executor for e.g. `no_std` environments
+    // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all.coalesce())
 }
 
+/// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
@@ -204,6 +201,8 @@ const NODE: Node<'static> = Node {
     ],
 };
 
+/// The Data Model handler + meta-data for our Matter device.
+/// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a>(
     matter: &'a Matter<'a>,
     on_off: &'a on_off::OnOffHandler,

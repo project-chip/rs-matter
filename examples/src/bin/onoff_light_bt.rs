@@ -17,11 +17,6 @@
 
 //! An example Matter device that implements the On/Off Light cluster with provisioning over Bluetooth (Linux only)
 //!
-//! Build with:
-//! `cargo build --features os,async-io,async-compat,zeroconf --example onoff_light_bt`
-//! or - if you don't use Avahi:
-//! `cargo build --features os,async-io,async-compat --example onoff_light_bt`
-//!
 //! Note that - in the absence of capabilities in the `rs-matter` core to setup and control
 //! Wifi networks - this example implements a _fake_ NwCommCluster which only pretends to manage
 //! Wifi networks, but in reality expects a pre-existing connection over Ethernet and/or Wifi on
@@ -43,7 +38,6 @@ use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
 use rs_matter::core::Matter;
-use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::objects::*;
 use rs_matter::data_model::on_off::{self, ClusterHandler as _};
@@ -71,61 +65,36 @@ mod comm;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
+/// Needs to be `'static`, for now
 static BTP_CONTEXT: BtpContext<StdRawMutex> = BtpContext::<StdRawMutex>::new();
 
 fn main() -> Result<(), Error> {
-    let thread = std::thread::Builder::new()
-        // Increase the stack size until the example can work without stack blowups.
-        // Note that the used stack size increases exponentially by lowering the level of compiler optimizations,
-        // as lower optimization settings prevent the Rust compiler from inlining constructor functions
-        // which often results in (unnecessary) memory moves and increased stack utilization:
-        // e.g., an opt-level of "0" will require a several times' larger stack.
-        //
-        // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(200 * 1024)
-        .spawn(run)
-        .unwrap();
-
-    thread.join().unwrap()
-}
-
-fn run() -> Result<(), Error> {
     env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
-    info!(
-        "Matter memory: Matter={}B, IM Buffers={}B",
-        core::mem::size_of::<Matter>(),
-        core::mem::size_of::<PooledBuffers<10, NoopRawMutex, IMBuffer>>()
-    );
-
-    let matter = Matter::new(
+    // Create the Matter object
+    let matter = Matter::new_default(
         &test_device::TEST_DEV_DET,
         test_device::TEST_DEV_COMM,
         &test_device::TEST_DEV_ATT,
-        // NOTE:
-        // For `no_std` environments, provide your own epoch and rand functions here
         MdnsService::Builtin,
-        rs_matter::utils::epoch::sys_epoch,
-        rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
     );
 
+    // Need to call this once
     matter.initialize_transport_buffers()?;
 
-    info!("Matter initialized");
-
+    // Create the transport buffers
     let buffers = PooledBuffers::<10, NoopRawMutex, _>::new(0);
 
-    info!("IM buffers initialized");
-
-    let mut mdns = pin!(mdns::run_mdns(&matter));
-
-    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
-
+    // Create the subscriptions
     let subscriptions = Subscriptions::<3>::new();
 
+    // Our on-off cluster
+    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
+
+    // A notification when the Wifi is setup, so that Matter over UDP can start
     let wifi_complete = Notification::new();
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
@@ -134,13 +103,8 @@ fn run() -> Result<(), Error> {
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
     let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
-    info!(
-        "Responder memory: Responder={}B, Runner={}B",
-        core::mem::size_of_val(&responder),
-        core::mem::size_of_val(&responder.run::<4, 4>())
-    );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultenously)
+    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
@@ -157,9 +121,7 @@ fn run() -> Result<(), Error> {
         }
     });
 
-    // NOTE:
-    // Replace with your own persister for e.g. `no_std` environments
-
+    // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
 
     let dir = std::env::temp_dir().join("rs-matter");
@@ -168,9 +130,13 @@ fn run() -> Result<(), Error> {
 
     let mut persist = pin!(psm.run(dir, &matter));
 
+    // Create and run the mDNS responder
+    let mut mdns = pin!(mdns::run_mdns(&matter));
+
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
 
+        // The BTP transport impl
         let btp = Btp::new_builtin(&BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run(
             "MT",
@@ -191,6 +157,7 @@ fn run() -> Result<(), Error> {
             Ok(())
         });
 
+        // Combine all async tasks in a single one
         let all = select4(
             &mut transport,
             &mut bluetooth,
@@ -198,16 +165,13 @@ fn run() -> Result<(), Error> {
             select(&mut respond, &mut device).coalesce(),
         );
 
-        // NOTE:
-        // Replace with a different executor for e.g. `no_std` environments
+        // Run with a simple `block_on`. Any local executor would do.
         futures_lite::future::block_on(async_compat::Compat::new(all.coalesce()))?;
 
         matter.reset_transport()?;
     }
 
-    // NOTE:
-    // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind for your custom UDP stack
-    // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
+    // Create the Matter UDP socket
     let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter transport
@@ -221,11 +185,11 @@ fn run() -> Result<(), Error> {
         select(&mut respond, &mut device).coalesce(),
     );
 
-    // NOTE:
-    // Replace with a different executor for e.g. `no_std` environments
+    // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(async_compat::Compat::new(all.coalesce()))
 }
 
+/// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
@@ -238,10 +202,12 @@ const NODE: Node<'static> = Node {
     ],
 };
 
+/// The Data Model handler + meta-data for our Matter device.
+/// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a>(
     matter: &'a Matter<'a>,
     on_off: &'a on_off::OnOffHandler,
-    wifi_complete: &'a Notification<NoopRawMutex>,
+    nw_setup_complete: &'a Notification<NoopRawMutex>,
 ) -> impl Metadata + NonBlockingHandler + 'a {
     (
         NODE,
@@ -249,7 +215,7 @@ fn dm_handler<'a>(
             0,
             Async(WifiNwCommCluster::new(
                 Dataver::new_rand(matter.rand()),
-                wifi_complete,
+                nw_setup_complete,
             )),
             wifi_nw_diagnostics::ID,
             Async(WifiNwDiagCluster::new(
