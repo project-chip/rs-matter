@@ -537,7 +537,7 @@ impl Session {
             min(MAX_MESSAGE_SIZE as u16 / mtu / 2, 255) as u8,
         );
 
-        info!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, req, version, mtu, window_size);
+        debug!("\n>>RCV (BTP IO) {} [{}]\n      HANDSHAKE REQ {:?}\nSelected version: {}, MTU: {}, window size: {}", address, hdr, req, version, mtu, window_size);
 
         Ok(Self::init(address, version, mtu, window_size))
     }
@@ -549,7 +549,7 @@ impl Session {
         let hdr = BtpHdr::from((&mut iter).copied())?;
         let payload = iter.as_slice();
 
-        info!(
+        debug!(
             "\n>>RCV (BTP IO) {} [{}]\n      READ {}B",
             self.address,
             hdr,
@@ -576,7 +576,7 @@ impl Session {
         hdr.set_handshake();
         hdr.set_opcode(Some(0x6c));
 
-        info!(
+        debug!(
             "\n<<SND (BTP IO) {} [{}]\n      HANDSHAKE RESP {:?}",
             self.address, hdr, resp
         );
@@ -646,7 +646,7 @@ impl Session {
         hdr.encode(&mut wb)?;
         wb.append(segment_data)?;
 
-        info!(
+        debug!(
             "\n<<SND (BTP IO) {} [{}]\n      WRITE {}B",
             self.address,
             hdr,

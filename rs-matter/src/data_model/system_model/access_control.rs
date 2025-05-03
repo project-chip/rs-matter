@@ -29,7 +29,8 @@ use crate::{attribute_enum, attributes, commands, with};
 
 pub const ID: u32 = 0x001F;
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     Acl(()) = 0,
@@ -117,8 +118,8 @@ impl AccessControlCluster {
                     )
                 })
             }
-            _ => {
-                error!("Attribute not yet supported: this shouldn't happen");
+            other => {
+                error!("Attribute {:?} not supported", other);
                 Err(ErrorCode::AttributeNotFound.into())
             }
         }
@@ -182,11 +183,11 @@ impl AccessControlCluster {
         data: &TLVElement,
         fab_idx: NonZeroU8,
     ) -> Result<(), Error> {
-        info!("Performing ACL operation {:?}", op);
+        debug!("Performing ACL operation {:?}", op);
         match op {
             ListOperation::AddItem | ListOperation::EditItem(_) => {
                 let acl_entry = AclEntry::from_tlv(data)?;
-                info!("ACL  {:?}", acl_entry);
+                debug!("ACL  {:?}", acl_entry);
 
                 if let ListOperation::EditItem(index) = op {
                     fabric_mgr.acl_update(fab_idx, *index as _, acl_entry)?;

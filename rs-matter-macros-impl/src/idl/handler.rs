@@ -177,11 +177,23 @@ pub fn handler_adaptor(
             match AttributeId::try_from(ctx.attr().attr_id)? {
                 #(#handler_adaptor_attribute_match)*
                 #[allow(unreachable_code)]
-                _ => Err(#krate::error::ErrorCode::AttributeNotFound.into()),
+                other => {
+                    #[cfg(feature = "defmt")]
+                    #krate::reexport::defmt::error!("Attribute {:?} not supported", other);
+                    #[cfg(feature = "log")]
+                    #krate::reexport::log::error!("Attribute {:?} not supported", other);
+
+                    Err(#krate::error::ErrorCode::AttributeNotFound.into())
+                }
             }
         )
     } else {
         quote!(
+            #[cfg(feature = "defmt")]
+            #krate::reexport::defmt::error!("No cluster-specific attributes");
+            #[cfg(feature = "log")]
+            #krate::reexport::log::error!("No cluster-specific attributes");
+
             Err(#krate::error::ErrorCode::AttributeNotFound.into())
         )
     };
@@ -190,11 +202,23 @@ pub fn handler_adaptor(
         quote!(
             match AttributeId::try_from(ctx.attr().attr_id)? {
                 #(#handler_adaptor_attribute_write_match)*
-                _ => return Err(#krate::error::ErrorCode::AttributeNotFound.into()),
+                other => {
+                    #[cfg(feature = "defmt")]
+                    #krate::reexport::defmt::error!("Attribute {:?} not supported", other);
+                    #[cfg(feature = "log")]
+                    #krate::reexport::log::error!("Attribute {:?} not supported", other);
+
+                    return Err(#krate::error::ErrorCode::AttributeNotFound.into());
+                }
             }
         )
     } else {
         quote!(
+            #[cfg(feature = "defmt")]
+            #krate::reexport::defmt::error!("No cluster-specific attributes");
+            #[cfg(feature = "log")]
+            #krate::reexport::log::error!("No cluster-specific attributes");
+
             return Err(#krate::error::ErrorCode::AttributeNotFound.into());
         )
     };
@@ -203,11 +227,23 @@ pub fn handler_adaptor(
         quote!(
             match CommandId::try_from(ctx.cmd().cmd_id)? {
                 #(#handler_adaptor_command_match)*
-                _ => return Err(#krate::error::ErrorCode::CommandNotFound.into()),
+                other => {
+                    #[cfg(feature = "defmt")]
+                    #krate::reexport::defmt::error!("Command {:?} not supported", other);
+                    #[cfg(feature = "log")]
+                    #krate::reexport::log::error!("Command {:?} not supported", other);
+
+                    return Err(#krate::error::ErrorCode::CommandNotFound.into());
+                }
             }
         )
     } else {
         quote!(
+            #[cfg(feature = "defmt")]
+            #krate::reexport::defmt::error!("No cluster-specific commands");
+            #[cfg(feature = "log")]
+            #krate::reexport::log::error!("No cluster-specific commands");
+
             return Err(#krate::error::ErrorCode::CommandNotFound.into());
         )
     };
@@ -663,23 +699,23 @@ fn handler_adaptor_attribute_match(
 
     let attr_read_debug_build_start = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?} -> (build) +", #attr_debug_id);
+        #krate::reexport::defmt::debug!("{:?} -> (build) +", #attr_debug_id);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?} -> (build) +", #attr_debug_id);
+        #krate::reexport::log::debug!("{:?} -> (build) +", #attr_debug_id);
     );
 
     let attr_read_debug_build_end = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?} -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
+        #krate::reexport::log::debug!("{:?} (end) -> {:?}", #attr_debug_id, attr_read_result.as_ref().map(|_| ()));
     );
 
     let attr_read_debug = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
+        #krate::reexport::log::debug!("{:?} -> {:?}", #attr_debug_id, attr_read_result);
     );
 
     if builder {
@@ -771,9 +807,9 @@ fn handler_adaptor_attribute_write_match(
 
     let attr_write_debug = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+        #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
+        #krate::reexport::log::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
     );
 
     if attr.field.field.data_type.is_list {
@@ -833,37 +869,37 @@ fn handler_adaptor_command_match(
 
     let cmd_invoke_debug_build_start = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+        #krate::reexport::defmt::debug!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
+        #krate::reexport::log::debug!("{:?}({:?}) -> (build) +", #cmd_debug_id, cmd_data);
     );
 
     let cmd_invoke_debug_noarg_build_start = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?} -> (build) +", #cmd_debug_id);
+        #krate::reexport::defmt::debug!("{:?} -> (build) +", #cmd_debug_id);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?} -> (build) +", #cmd_debug_id);
+        #krate::reexport::log::debug!("{:?} -> (build) +", #cmd_debug_id);
     );
 
     let cmd_invoke_debug_build_end = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
+        #krate::reexport::defmt::debug!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
+        #krate::reexport::log::debug!("{:?} (end) -> {:?}", #cmd_debug_id, cmd_invoke_result.as_ref().map(|_| ()));
     );
 
     let cmd_invoke_debug = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+        #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
+        #krate::reexport::log::debug!("{:?}({:?}) -> {:?}", #cmd_debug_id, cmd_data, cmd_invoke_result);
     );
 
     let cmd_invoke_debug_noarg = quote!(
         #[cfg(feature = "defmt")]
-        #krate::reexport::defmt::info!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+        #krate::reexport::defmt::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
         #[cfg(feature = "log")]
-        #krate::reexport::log::info!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
+        #krate::reexport::log::debug!("{:?} -> {:?}", #cmd_debug_id, cmd_invoke_result);
     );
 
     let field_req = cmd.input.as_ref().map(|id| {

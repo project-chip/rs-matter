@@ -93,7 +93,7 @@ impl<'a> MdnsImpl<'a> {
 
                 let mut txt_record = zeroconf::TxtRecord::new();
                 for (k, v) in txt_kvs {
-                    info!("mDNS TXT key {} val {}", k, v);
+                    debug!("mDNS TXT key {} val {}", k, v);
                     if let Err(err) = txt_record.insert(&k, &v) {
                         error!(
                             "Encountered error inserting kv-pair into txt record {}",

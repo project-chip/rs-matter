@@ -217,7 +217,7 @@ impl<'a> Cluster<'a> {
             GlobalElements::FeatureMap => writer.set(self.feature_map),
             GlobalElements::ClusterRevision => writer.set(self.revision),
             other => {
-                error!("This attribute is not yet handled {:?}", other);
+                error!("Attribute {:?} not supported", other);
                 Err(ErrorCode::AttributeNotFound.into())
             }
         }

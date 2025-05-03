@@ -26,7 +26,8 @@ use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands, with}
 
 pub const ID: u32 = 0x0033;
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     NetworkInterfaces(()) = 0x00,
@@ -36,7 +37,8 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Commands {
     TestEventTrigger = 0x0,
@@ -98,7 +100,10 @@ impl GenDiagCluster {
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::RebootCount(codec) => codec.encode(writer, 1),
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {

@@ -327,14 +327,16 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(all(feature = "std", feature = "backtrace"))]
         {
-            write!(
-                f,
-                "{:?}: {}",
-                self.code(),
-                self.inner
-                    .as_ref()
-                    .map_or(String::new(), |err| { err.to_string() })
-            )
+            let err_msg = self
+                .inner
+                .as_ref()
+                .map_or(String::new(), |err| err.to_string());
+
+            if err_msg.is_empty() {
+                write!(f, "{:?}", self.code())
+            } else {
+                write!(f, "{:?}: {}", self.code(), err_msg)
+            }
         }
         #[cfg(not(all(feature = "std", feature = "backtrace")))]
         {

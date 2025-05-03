@@ -31,7 +31,8 @@ use crate::{attribute_enum, attributes, command_enum, commands, with};
 
 pub const ID: u32 = 0x0036;
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     Bssid = 0x00,
@@ -51,7 +52,8 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Commands {
     ResetCounts = 0x0,
@@ -199,7 +201,10 @@ impl WifiNwDiagCluster {
                     Attributes::WifiVersion(codec) => codec.encode(writer, data.wifi_version),
                     Attributes::ChannelNumber(codec) => codec.encode(writer, data.channel_number),
                     Attributes::Rssi(codec) => codec.encode(writer, data.rssi),
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {
@@ -226,7 +231,7 @@ impl WifiNwDiagCluster {
 
         match cmd.cmd_id.try_into()? {
             Commands::ResetCounts => {
-                info!("ResetCounts: Not yet supported");
+                debug!("ResetCounts: Not yet supported");
             }
         }
 
