@@ -7,11 +7,11 @@ edition = "2021"
 
 [dependencies]
 quote = "1"
-rs-matter-data-model = { path = "../rs-matter-data-model", features = ["idl"] }
+rs-matter-data-model = { path = "../rs-matter-data-model" }
 syn = { version = "2", features = ["extra-traits", "parsing", "proc-macro"] }
 proc-macro2 = "1"
 convert_case = "0.6"
-log = { version = "0.4", features = ["max_level_debug", "release_max_level_debug"] }
+log = "0.4"
 env_logger = "0.11"
 
 [dev-dependencies]

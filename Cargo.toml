@@ -8,7 +8,7 @@ members = [
         "examples",
 ]
 
-exclude = ["examples/*", "tools/tlv"]
+exclude = ["tools/tlv"]
 
 [profile.release]
 opt-level = "z"
@@ -16,17 +16,6 @@ opt-level = "z"
 [profile.dev]
 debug = true
 opt-level = "z"
-
-[workspace.dependencies]
-clap = { version = "4", features = ["derive"] }
-miette = { version = "5", features = ["fancy"] }
-nom = "7"
-nom-greedyerror = "0.5"
-nom-supreme = "0.8"
-nom_locate = "4.2"
-thiserror = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
 
 [profile.flamegraph]
 inherits = "release"

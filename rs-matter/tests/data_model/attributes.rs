@@ -180,6 +180,7 @@ fn test_read_wc_endpoint_wc_attribute() {
         echo_cluster::AttributesDiscriminants::AttWriteList as _,
         GlobalElements::GeneratedCmdList as _,
         GlobalElements::AcceptedCmdList as _,
+        GlobalElements::EventList as _,
         GlobalElements::AttributeList as _,
         GlobalElements::FeatureMap as _,
         GlobalElements::ClusterRevision as _,
@@ -188,6 +189,8 @@ fn test_read_wc_endpoint_wc_attribute() {
     let gen_cmd_list: &[u32] = &[echo_cluster::RespCommands::EchoResp as _];
 
     let acc_cmd_list: &[u32] = &[echo_cluster::Commands::EchoReq as _];
+
+    let event_list: &[u32] = &[];
 
     let expected = &[
         attr_data!(
@@ -219,6 +222,12 @@ fn test_read_wc_endpoint_wc_attribute() {
             echo_cluster::ID,
             GlobalElements::AcceptedCmdList,
             Some(&acc_cmd_list)
+        ),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            GlobalElements::EventList,
+            Some(&event_list)
         ),
         attr_data!(
             0,
@@ -262,6 +271,12 @@ fn test_read_wc_endpoint_wc_attribute() {
             echo_cluster::ID,
             GlobalElements::AcceptedCmdList,
             Some(&acc_cmd_list)
+        ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            GlobalElements::EventList,
+            Some(&event_list)
         ),
         attr_data!(
             1,
