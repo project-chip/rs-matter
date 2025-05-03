@@ -21,7 +21,7 @@ pub fn init_env_logger() {
     #[cfg(all(feature = "std", not(target_os = "espidf")))]
     {
         let _ = env_logger::try_init_from_env(
-            env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
+            env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
         );
     }
 }

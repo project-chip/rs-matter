@@ -1066,82 +1066,83 @@ mod tests {
 
     use super::{handler, handler_adaptor};
 
+    const IDL: &str =
+    "
+        cluster OnOff = 6 {
+        revision 6;
+
+        enum DelayedAllOffEffectVariantEnum : enum8 {
+            kDelayedOffFastFade = 0;
+            kNoFade = 1;
+            kDelayedOffSlowFade = 2;
+        }
+
+        enum DyingLightEffectVariantEnum : enum8 {
+            kDyingLightFadeOff = 0;
+        }
+
+        enum EffectIdentifierEnum : enum8 {
+            kDelayedAllOff = 0;
+            kDyingLight = 1;
+        }
+
+        enum StartUpOnOffEnum : enum8 {
+            kOff = 0;
+            kOn = 1;
+            kToggle = 2;
+        }
+
+        bitmap Feature : bitmap32 {
+            kLighting = 0x1;
+            kDeadFrontBehavior = 0x2;
+            kOffOnly = 0x4;
+        }
+
+        bitmap OnOffControlBitmap : bitmap8 {
+            kAcceptOnlyWhenOn = 0x1;
+        }
+
+        readonly attribute boolean onOff = 0;
+        readonly attribute optional boolean globalSceneControl = 16384;
+        attribute optional int16u onTime = 16385;
+        attribute optional int16u offWaitTime = 16386;
+        attribute access(write: manage) optional nullable StartUpOnOffEnum startUpOnOff = 16387;
+        readonly attribute command_id generatedCommandList[] = 65528;
+        readonly attribute command_id acceptedCommandList[] = 65529;
+        readonly attribute event_id eventList[] = 65530;
+        readonly attribute attrib_id attributeList[] = 65531;
+        readonly attribute bitmap32 featureMap = 65532;
+        readonly attribute int16u clusterRevision = 65533;
+
+        request struct OffWithEffectRequest {
+            EffectIdentifierEnum effectIdentifier = 0;
+            enum8 effectVariant = 1;
+        }
+
+        request struct OnWithTimedOffRequest {
+            OnOffControlBitmap onOffControl = 0;
+            int16u onTime = 1;
+            int16u offWaitTime = 2;
+        }
+
+        /** On receipt of this command, a device SHALL enter its ‘Off’ state. This state is device dependent, but it is recommended that it is used for power off or similar functions. On receipt of the Off command, the OnTime attribute SHALL be set to 0. */
+        command Off(): DefaultSuccess = 0;
+        /** On receipt of this command, a device SHALL enter its ‘On’ state. This state is device dependent, but it is recommended that it is used for power on or similar functions. On receipt of the On command, if the value of the OnTime attribute is equal to 0, the device SHALL set the OffWaitTime attribute to 0. */
+        command On(): DefaultSuccess = 1;
+        /** On receipt of this command, if a device is in its ‘Off’ state it SHALL enter its ‘On’ state. Otherwise, if it is in its ‘On’ state it SHALL enter its ‘Off’ state. On receipt of the Toggle command, if the value of the OnOff attribute is equal to FALSE and if the value of the OnTime attribute is equal to 0, the device SHALL set the OffWaitTime attribute to 0. If the value of the OnOff attribute is equal to TRUE, the OnTime attribute SHALL be set to 0. */
+        command Toggle(): DefaultSuccess = 2;
+        /** The OffWithEffect command allows devices to be turned off using enhanced ways of fading. */
+        command OffWithEffect(OffWithEffectRequest): DefaultSuccess = 64;
+        /** The OnWithRecallGlobalScene command allows the recall of the settings when the device was turned off. */
+        command OnWithRecallGlobalScene(): DefaultSuccess = 65;
+        /** The OnWithTimedOff command allows devices to be turned on for a specific duration with a guarded off duration so that SHOULD the device be subsequently switched off, further OnWithTimedOff commands, received during this time, are prevented from turning the devices back on. */
+        command OnWithTimedOff(OnWithTimedOffRequest): DefaultSuccess = 66;
+        }
+    ";
+
     #[test]
-    fn test_cluster() {
-        let idl = parse_idl(
-            "
-              cluster OnOff = 6 {
-                revision 6;
-
-                enum DelayedAllOffEffectVariantEnum : enum8 {
-                  kDelayedOffFastFade = 0;
-                  kNoFade = 1;
-                  kDelayedOffSlowFade = 2;
-                }
-
-                enum DyingLightEffectVariantEnum : enum8 {
-                  kDyingLightFadeOff = 0;
-                }
-
-                enum EffectIdentifierEnum : enum8 {
-                  kDelayedAllOff = 0;
-                  kDyingLight = 1;
-                }
-
-                enum StartUpOnOffEnum : enum8 {
-                  kOff = 0;
-                  kOn = 1;
-                  kToggle = 2;
-                }
-
-                bitmap Feature : bitmap32 {
-                  kLighting = 0x1;
-                  kDeadFrontBehavior = 0x2;
-                  kOffOnly = 0x4;
-                }
-
-                bitmap OnOffControlBitmap : bitmap8 {
-                  kAcceptOnlyWhenOn = 0x1;
-                }
-
-                readonly attribute boolean onOff = 0;
-                readonly attribute optional boolean globalSceneControl = 16384;
-                attribute optional int16u onTime = 16385;
-                attribute optional int16u offWaitTime = 16386;
-                attribute access(write: manage) optional nullable StartUpOnOffEnum startUpOnOff = 16387;
-                readonly attribute command_id generatedCommandList[] = 65528;
-                readonly attribute command_id acceptedCommandList[] = 65529;
-                readonly attribute event_id eventList[] = 65530;
-                readonly attribute attrib_id attributeList[] = 65531;
-                readonly attribute bitmap32 featureMap = 65532;
-                readonly attribute int16u clusterRevision = 65533;
-
-                request struct OffWithEffectRequest {
-                  EffectIdentifierEnum effectIdentifier = 0;
-                  enum8 effectVariant = 1;
-                }
-
-                request struct OnWithTimedOffRequest {
-                  OnOffControlBitmap onOffControl = 0;
-                  int16u onTime = 1;
-                  int16u offWaitTime = 2;
-                }
-
-                /** On receipt of this command, a device SHALL enter its ‘Off’ state. This state is device dependent, but it is recommended that it is used for power off or similar functions. On receipt of the Off command, the OnTime attribute SHALL be set to 0. */
-                command Off(): DefaultSuccess = 0;
-                /** On receipt of this command, a device SHALL enter its ‘On’ state. This state is device dependent, but it is recommended that it is used for power on or similar functions. On receipt of the On command, if the value of the OnTime attribute is equal to 0, the device SHALL set the OffWaitTime attribute to 0. */
-                command On(): DefaultSuccess = 1;
-                /** On receipt of this command, if a device is in its ‘Off’ state it SHALL enter its ‘On’ state. Otherwise, if it is in its ‘On’ state it SHALL enter its ‘Off’ state. On receipt of the Toggle command, if the value of the OnOff attribute is equal to FALSE and if the value of the OnTime attribute is equal to 0, the device SHALL set the OffWaitTime attribute to 0. If the value of the OnOff attribute is equal to TRUE, the OnTime attribute SHALL be set to 0. */
-                command Toggle(): DefaultSuccess = 2;
-                /** The OffWithEffect command allows devices to be turned off using enhanced ways of fading. */
-                command OffWithEffect(OffWithEffectRequest): DefaultSuccess = 64;
-                /** The OnWithRecallGlobalScene command allows the recall of the settings when the device was turned off. */
-                command OnWithRecallGlobalScene(): DefaultSuccess = 65;
-                /** The OnWithTimedOff command allows devices to be turned on for a specific duration with a guarded off duration so that SHOULD the device be subsequently switched off, further OnWithTimedOff commands, received during this time, are prevented from turning the devices back on. */
-                command OnWithTimedOff(OnWithTimedOffRequest): DefaultSuccess = 66;
-              }
-        ",
-        );
+    fn test_handler() {
+        let idl = parse_idl(IDL);
 
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
@@ -1151,7 +1152,10 @@ mod tests {
         assert_tokenstreams_eq!(
             &handler(false, false, cluster, &context),
             &quote!(
-                pub trait OnOffHandler {
+                #[doc = "The handler trait for the cluster."]
+                pub trait ClusterHandler {
+                    #[doc = "The cluster-metadata corresponding to this handler trait."]
+                    const CLUSTER: rs_matter_crate::data_model::objects::Cluster<'static>;
                     fn dataver(&self) -> u32;
                     fn dataver_changed(&self);
                     fn on_off(
@@ -1236,105 +1240,17 @@ mod tests {
             )
         );
 
-        // panic!("====\n{}\n====", &handler(true, false, cluster, &context));
-
-        // NOTE: (Temporarily) commented out, as `assert_tokenstreams_eq` does not seem to understand
-        // Rust 2021
-        // assert_tokenstreams_eq!(
-        //     &handler(true, false, cluster, &context),
-        //     &quote!(
-        //         pub trait AsyncOnOffHandler {
-        //             fn dataver(&self) -> u32;
-        //             fn dataver_changed(&self);
-        //             async fn on_off(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
-        //             ) -> Result<bool, rs_matter_crate::error::Error>;
-        //             async fn global_scene_control(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
-        //             ) -> Result<bool, rs_matter_crate::error::Error> {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn on_time(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
-        //             ) -> Result<u16, rs_matter_crate::error::Error> {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn off_wait_time(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
-        //             ) -> Result<u16, rs_matter_crate::error::Error> {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn start_up_on_off(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
-        //             ) -> Result<rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>, rs_matter_crate::error::Error>
-        //             {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn set_on_time(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
-        //                 value: u16,
-        //             ) -> Result<(), rs_matter_crate::error::Error> {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn set_off_wait_time(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
-        //                 value: u16,
-        //             ) -> Result<(), rs_matter_crate::error::Error> {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn set_start_up_on_off(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
-        //                 value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
-        //             ) -> Result<(), rs_matter_crate::error::Error> {
-        //                 Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
-        //             }
-        //             async fn handle_off(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
-        //             ) -> Result<(), rs_matter_crate::error::Error>;
-        //             async fn handle_on(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
-        //             ) -> Result<(), rs_matter_crate::error::Error>;
-        //             async fn handle_toggle(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
-        //             ) -> Result<(), rs_matter_crate::error::Error>;
-        //             async fn handle_off_with_effect(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
-        //                 request: OffWithEffectRequest<'_>,
-        //             ) -> Result<(), rs_matter_crate::error::Error>;
-        //             async fn handle_on_with_recall_global_scene(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
-        //             ) -> Result<(), rs_matter_crate::error::Error>;
-        //             async fn handle_on_with_timed_off(
-        //                 &self,
-        //                 ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
-        //                 request: OnWithTimedOffRequest<'_>,
-        //             ) -> Result<(), rs_matter_crate::error::Error>;
-        //         }
-        //     )
-        // );
-
         // panic!("====\n{}\n====", &handler(false, true, cluster, &context));
 
         assert_tokenstreams_eq!(
             &handler(false, true, cluster, &context),
             &quote!(
-                impl<T> OnOffHandler for &T
+                impl<T> ClusterHandler for &T
                 where
-                    T: OnOffHandler,
+                    T: ClusterHandler,
                 {
+                    const CLUSTER: rs_matter_crate::data_model::objects::Cluster<'static> =
+                        T::CLUSTER;
                     fn dataver(&self) -> u32 {
                         T::dataver(self)
                     }
@@ -1436,60 +1352,175 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn test_handler_adaptor() {
+        let idl = parse_idl(IDL);
+
+        let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
+        let context = IdlGenerateContext::new("rs_matter_crate");
 
         // panic!("====\n{}\n====", &handler_adaptor(false, cluster, &context));
 
         assert_tokenstreams_eq!(
             &handler_adaptor(false, cluster, &context),
             &quote!(
-                pub struct OnOffAdaptor<T>(pub T);
-                impl<T> rs_matter_crate::data_model::objects::Handler for OnOffAdaptor<T>
+                #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
+                pub struct HandlerAdaptor<T>(pub T);
+                impl<T> rs_matter_crate::data_model::objects::Handler for HandlerAdaptor<T>
                 where
-                    T: OnOffHandler,
+                    T: ClusterHandler,
                 {
                     #[allow(unreachable_code)]
                     fn read(
                         &self,
-                        exchange: &rs_matter_crate::transport::exchange::Exchange<'_>,
-                        attr: &rs_matter_crate::data_model::objects::AttrDetails<'_>,
+                        ctx: &rs_matter_crate::data_model::objects::ReadContext<'_>,
                         encoder: rs_matter_crate::data_model::objects::AttrDataEncoder<'_, '_, '_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
-                            if attr.is_system() {
-                                attr.cluster()?.read(attr.attr_id, writer)
+                            if ctx.attr().is_system() {
+                                ctx.attr().cluster()?.read(ctx.attr().attr_id, writer)
                             } else {
-                                match AttributeId::try_from(attr.attr_id)? {
-                                    AttributeId::OnOff => writer.set(self.0.on_off(
-                                        &rs_matter_crate::data_model::objects::ReadContext::new(
-                                            exchange,
-                                        ),
-                                    )?),
-                                    AttributeId::GlobalSceneControl => {
-                                        writer.set(self.0.global_scene_control(
-                                            &rs_matter_crate::data_model::objects::ReadContext::new(
-                                                exchange,
-                                            ),
-                                        )?)
+                                match AttributeId::try_from(ctx.attr().attr_id)? {
+                                    AttributeId::OnOff => {
+                                        let attr_read_result = self.0.on_off(ctx);
+                                        #[cfg(feature = "defmt")]
+                                        rs_matter_crate::reexport::defmt::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::OnOff, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        #[cfg(feature = "log")]
+                                        rs_matter_crate::reexport::log::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::OnOff, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        writer.set(attr_read_result?)
                                     }
-                                    AttributeId::OnTime => writer.set(self.0.on_time(
-                                        &rs_matter_crate::data_model::objects::ReadContext::new(
-                                            exchange,
-                                        ),
-                                    )?),
-                                    AttributeId::OffWaitTime => writer.set(self.0.off_wait_time(
-                                        &rs_matter_crate::data_model::objects::ReadContext::new(
-                                            exchange,
-                                        ),
-                                    )?),
+                                    AttributeId::GlobalSceneControl => {
+                                        let attr_read_result = self.0.global_scene_control(ctx);
+                                        #[cfg(feature = "defmt")]
+                                        rs_matter_crate::reexport::defmt::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((
+                                                    AttributeId::GlobalSceneControl,
+                                                    false
+                                                ))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        #[cfg(feature = "log")]
+                                        rs_matter_crate::reexport::log::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((
+                                                    AttributeId::GlobalSceneControl,
+                                                    false
+                                                ))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        writer.set(attr_read_result?)
+                                    }
+                                    AttributeId::OnTime => {
+                                        let attr_read_result = self.0.on_time(ctx);
+                                        #[cfg(feature = "defmt")]
+                                        rs_matter_crate::reexport::defmt::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::OnTime, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        #[cfg(feature = "log")]
+                                        rs_matter_crate::reexport::log::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::OnTime, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        writer.set(attr_read_result?)
+                                    }
+                                    AttributeId::OffWaitTime => {
+                                        let attr_read_result = self.0.off_wait_time(ctx);
+                                        #[cfg(feature = "defmt")]
+                                        rs_matter_crate::reexport::defmt::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::OffWaitTime, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        #[cfg(feature = "log")]
+                                        rs_matter_crate::reexport::log::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::OffWaitTime, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        writer.set(attr_read_result?)
+                                    }
                                     AttributeId::StartUpOnOff => {
-                                        writer.set(self.0.start_up_on_off(
-                                            &rs_matter_crate::data_model::objects::ReadContext::new(
-                                                exchange,
-                                            ),
-                                        )?)
+                                        let attr_read_result = self.0.start_up_on_off(ctx);
+                                        #[cfg(feature = "defmt")]
+                                        rs_matter_crate::reexport::defmt::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::StartUpOnOff, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        #[cfg(feature = "log")]
+                                        rs_matter_crate::reexport::log::debug!(
+                                            "{:?} -> {:?}",
+                                            MetadataDebug((
+                                                ctx.attr().endpoint_id,
+                                                self,
+                                                MetadataDebug((AttributeId::StartUpOnOff, false))
+                                            )),
+                                            attr_read_result
+                                        );
+                                        writer.set(attr_read_result?)
                                     }
                                     #[allow(unreachable_code)]
-                                    _ => {
+                                    other => {
+                                        #[cfg(feature = "defmt")]
+                                        rs_matter_crate::reexport::defmt::error!(
+                                            "Attribute {:?} not supported",
+                                            other
+                                        );
+                                        #[cfg(feature = "log")]
+                                        rs_matter_crate::reexport::log::error!(
+                                            "Attribute {:?} not supported",
+                                            other
+                                        );
                                         Err(rs_matter_crate::error::ErrorCode::AttributeNotFound
                                             .into())
                                     }
@@ -1502,31 +1533,113 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn write(
                         &self,
-                        exchange: &rs_matter_crate::transport::exchange::Exchange<'_>,
-                        attr: &rs_matter_crate::data_model::objects::AttrDetails<'_>,
-                        data: rs_matter_crate::data_model::objects::AttrData<'_>,
+                        ctx: &rs_matter_crate::data_model::objects::WriteContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        let data = data.with_dataver(self.0.dataver())?;
-                        if attr.is_system() {
+                        ctx.attr().check_dataver(self.0.dataver())?;
+                        if ctx.attr().is_system() {
                             return Err(rs_matter_crate::error::ErrorCode::InvalidAction.into());
                         }
-                        match AttributeId::try_from(attr.attr_id)? {
-                            AttributeId::OnTime => self.0.set_on_time(
-                                &rs_matter_crate::data_model::objects::WriteContext::new(exchange),
-                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
-                            )?,
-                            AttributeId::OffWaitTime => self.0.set_off_wait_time(
-                                &rs_matter_crate::data_model::objects::WriteContext::new(exchange),
-                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
-                            )?,
-                            AttributeId::StartUpOnOff => self.0.set_start_up_on_off(
-                                &rs_matter_crate::data_model::objects::WriteContext::new(exchange),
-                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
-                            )?,
-                            _ => {
+                        match AttributeId::try_from(ctx.attr().attr_id)? {
+                            AttributeId::OnTime => {
+                                let attr_data: u16 =
+                                    rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                                let attr_write_result = self.0.set_on_time(ctx, attr_data.clone());
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.attr().endpoint_id,
+                                        self,
+                                        MetadataDebug((AttributeId::OnTime, false))
+                                    )),
+                                    attr_data,
+                                    attr_write_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.attr().endpoint_id,
+                                        self,
+                                        MetadataDebug((AttributeId::OnTime, false))
+                                    )),
+                                    attr_data,
+                                    attr_write_result
+                                );
+                                attr_write_result?;
+                            }
+                            AttributeId::OffWaitTime => {
+                                let attr_data: u16 =
+                                    rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                                let attr_write_result =
+                                    self.0.set_off_wait_time(ctx, attr_data.clone());
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.attr().endpoint_id,
+                                        self,
+                                        MetadataDebug((AttributeId::OffWaitTime, false))
+                                    )),
+                                    attr_data,
+                                    attr_write_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.attr().endpoint_id,
+                                        self,
+                                        MetadataDebug((AttributeId::OffWaitTime, false))
+                                    )),
+                                    attr_data,
+                                    attr_write_result
+                                );
+                                attr_write_result?;
+                            }
+                            AttributeId::StartUpOnOff => {
+                                let attr_data: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum> =
+                                    rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                                let attr_write_result =
+                                    self.0.set_start_up_on_off(ctx, attr_data.clone());
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.attr().endpoint_id,
+                                        self,
+                                        MetadataDebug((AttributeId::StartUpOnOff, false))
+                                    )),
+                                    attr_data,
+                                    attr_write_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.attr().endpoint_id,
+                                        self,
+                                        MetadataDebug((AttributeId::StartUpOnOff, false))
+                                    )),
+                                    attr_data,
+                                    attr_write_result
+                                );
+                                attr_write_result?;
+                            }
+                            other => {
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::error!(
+                                    "Attribute {:?} not supported",
+                                    other
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::error!(
+                                    "Attribute {:?} not supported",
+                                    other
+                                );
                                 return Err(
                                     rs_matter_crate::error::ErrorCode::AttributeNotFound.into()
-                                )
+                                );
                             }
                         }
                         self.0.dataver_changed();
@@ -1535,48 +1648,219 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn invoke(
                         &self,
-                        exchange: &rs_matter_crate::transport::exchange::Exchange<'_>,
-                        cmd: &rs_matter_crate::data_model::objects::CmdDetails<'_>,
-                        data: &rs_matter_crate::tlv::TLVElement<'_>,
+                        ctx: &rs_matter_crate::data_model::objects::InvokeContext<'_>,
                         encoder: rs_matter_crate::data_model::objects::CmdDataEncoder<'_, '_, '_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        match CommandId::try_from(cmd.cmd_id)? {
-                            CommandId::Off => self.0.handle_off(
-                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
-                            )?,
-                            CommandId::On => self.0.handle_on(
-                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
-                            )?,
-                            CommandId::Toggle => self.0.handle_toggle(
-                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
-                            )?,
-                            CommandId::OffWithEffect => self.0.handle_off_with_effect(
-                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
-                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
-                            )?,
-                            CommandId::OnWithRecallGlobalScene => {
-                                self.0.handle_on_with_recall_global_scene(
-                                    &rs_matter_crate::data_model::objects::InvokeContext::new(
-                                        exchange,
-                                    ),
-                                )?
+                        match CommandId::try_from(ctx.cmd().cmd_id)? {
+                            CommandId::Off => {
+                                let cmd_invoke_result = self.0.handle_off(ctx);
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::Off)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::Off)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                cmd_invoke_result?;
                             }
-                            CommandId::OnWithTimedOff => self.0.handle_on_with_timed_off(
-                                &rs_matter_crate::data_model::objects::InvokeContext::new(exchange),
-                                rs_matter_crate::tlv::FromTLV::from_tlv(&data)?,
-                            )?,
-                            _ => {
+                            CommandId::On => {
+                                let cmd_invoke_result = self.0.handle_on(ctx);
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::On)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::On)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                cmd_invoke_result?;
+                            }
+                            CommandId::Toggle => {
+                                let cmd_invoke_result = self.0.handle_toggle(ctx);
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::Toggle)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::Toggle)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                cmd_invoke_result?;
+                            }
+                            CommandId::OffWithEffect => {
+                                let cmd_data: OffWithEffectRequest<'_> =
+                                    rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                                let cmd_invoke_result =
+                                    self.0.handle_off_with_effect(ctx, cmd_data.clone());
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::OffWithEffect)
+                                    )),
+                                    cmd_data,
+                                    cmd_invoke_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::OffWithEffect)
+                                    )),
+                                    cmd_data,
+                                    cmd_invoke_result
+                                );
+                                cmd_invoke_result?;
+                            }
+                            CommandId::OnWithRecallGlobalScene => {
+                                let cmd_invoke_result =
+                                    self.0.handle_on_with_recall_global_scene(ctx);
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::OnWithRecallGlobalScene)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?} -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::OnWithRecallGlobalScene)
+                                    )),
+                                    cmd_invoke_result
+                                );
+                                cmd_invoke_result?;
+                            }
+                            CommandId::OnWithTimedOff => {
+                                let cmd_data: OnWithTimedOffRequest<'_> =
+                                    rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                                let cmd_invoke_result =
+                                    self.0.handle_on_with_timed_off(ctx, cmd_data.clone());
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::OnWithTimedOff)
+                                    )),
+                                    cmd_data,
+                                    cmd_invoke_result
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::debug!(
+                                    "{:?}({:?}) -> {:?}",
+                                    MetadataDebug((
+                                        ctx.cmd().endpoint_id,
+                                        self,
+                                        MetadataDebug(CommandId::OnWithTimedOff)
+                                    )),
+                                    cmd_data,
+                                    cmd_invoke_result
+                                );
+                                cmd_invoke_result?;
+                            }
+                            other => {
+                                #[cfg(feature = "defmt")]
+                                rs_matter_crate::reexport::defmt::error!(
+                                    "Command {:?} not supported",
+                                    other
+                                );
+                                #[cfg(feature = "log")]
+                                rs_matter_crate::reexport::log::error!(
+                                    "Command {:?} not supported",
+                                    other
+                                );
                                 return Err(
                                     rs_matter_crate::error::ErrorCode::CommandNotFound.into()
-                                )
+                                );
                             }
                         }
                         self.0.dataver_changed();
                         Ok(())
                     }
                 }
-                impl<T> rs_matter_crate::data_model::objects::NonBlockingHandler for OnOffAdaptor<T> where
-                    T: OnOffHandler
+                impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &HandlerAdaptor<T>, Q)>
+                where
+                    T: ClusterHandler,
+                    Q: core::fmt::Debug,
+                {
+                    #[allow(unreachable_code)]
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(
+                            f,
+                            "Endpt(0x{:02x})::Cluster::{}(0x{:04x})::{:?}",
+                            self.0 .0, "OnOff", 6u32, self.0 .2
+                        )
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<T, Q> rs_matter_crate::reexport::defmt::Format for MetadataDebug<(u16, &HandlerAdaptor<T>, Q)>
+                where
+                    T: ClusterHandler,
+                    Q: rs_matter_crate::reexport::defmt::Format,
+                {
+                    #[allow(unreachable_code)]
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "Endpt(0x{:02x})::Cluster::{}(0x{:04x})::{:?}",
+                            self.0 .0,
+                            "OnOff",
+                            6u32,
+                            self.0 .2
+                        )
+                    }
+                }
+                impl<T> rs_matter_crate::data_model::objects::NonBlockingHandler for HandlerAdaptor<T> where
+                    T: ClusterHandler
                 {
                 }
             )

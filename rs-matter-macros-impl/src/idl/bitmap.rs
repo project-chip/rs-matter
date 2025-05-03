@@ -115,51 +115,20 @@ mod test {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        // panic!("====\n{}\n====", &bitmaps(cluster, &context));
+
         assert_tokenstreams_eq!(
             &bitmaps(cluster, &context),
             &quote!(
                 #[cfg(not(feature = "defmt"))]
-                bitflags::bitflags! {
-                    #[repr(transparent)]
-                    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
-                    pub struct Feature : u32 {
-                        const LIGHTING = 1;
-                        const DEAD_FRONT_BEHAVIOR = 2;
-                        const OFF_ONLY = 4;
-                    }
-                }
-
+                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; } }
                 #[cfg(feature = "defmt")]
-                defmt::bitflags! {
-                    #[repr(transparent)]
-                    #[derive(Default)]
-                    pub struct Feature : u32 {
-                        const LIGHTING = 1;
-                        const DEAD_FRONT_BEHAVIOR = 2;
-                        const OFF_ONLY = 4;
-                    }
-                }
-
+                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; } }
                 rs_matter_crate::bitflags_tlv!(Feature, u32);
-
                 #[cfg(not(feature = "defmt"))]
-                bitflags::bitflags! {
-                    #[repr(transparent)]
-                    #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash)]
-                    pub struct OnOffControlBitmap : u8 {
-                        const ACCEPT_ONLY_WHEN_ON = 1;
-                    }
-                }
-
+                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; } }
                 #[cfg(feature = "defmt")]
-                defmt::bitflags! {
-                    #[repr(transparent)]
-                    #[derive(Default)]
-                    pub struct OnOffControlBitmap : u8 {
-                        const ACCEPT_ONLY_WHEN_ON = 1;
-                    }
-                }
-
+                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; } }
                 rs_matter_crate::bitflags_tlv!(OnOffControlBitmap, u8);
             )
         );

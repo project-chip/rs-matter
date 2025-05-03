@@ -108,6 +108,8 @@ mod test {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        // panic!("====\n{}\n====", &enums(cluster, &context));
+
         assert_tokenstreams_eq!(
             &enums(cluster, &context),
             &quote!(
@@ -118,10 +120,10 @@ mod test {
                     Copy,
                     Clone,
                     Hash,
-                    rs_matter_crate::tlv::FromTLV,
-                    rs_matter_crate::tlv::ToTLV,
+                    rs_matter_crate :: tlv :: FromTLV,
+                    rs_matter_crate :: tlv :: ToTLV,
                 )]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum DelayedAllOffEffectVariantEnum {
                     #[enumval(0)]
@@ -131,7 +133,6 @@ mod test {
                     #[enumval(2)]
                     DelayedOffSlowFade = 2,
                 }
-
                 #[derive(
                     Debug,
                     PartialEq,
@@ -139,16 +140,15 @@ mod test {
                     Copy,
                     Clone,
                     Hash,
-                    rs_matter_crate::tlv::FromTLV,
-                    rs_matter_crate::tlv::ToTLV,
+                    rs_matter_crate :: tlv :: FromTLV,
+                    rs_matter_crate :: tlv :: ToTLV,
                 )]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum DyingLightEffectVariantEnum {
                     #[enumval(0)]
                     DyingLightFadeOff = 0,
                 }
-
                 #[derive(
                     Debug,
                     PartialEq,
@@ -156,10 +156,10 @@ mod test {
                     Copy,
                     Clone,
                     Hash,
-                    rs_matter_crate::tlv::FromTLV,
-                    rs_matter_crate::tlv::ToTLV,
+                    rs_matter_crate :: tlv :: FromTLV,
+                    rs_matter_crate :: tlv :: ToTLV,
                 )]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum EffectIdentifierEnum {
                     #[enumval(0)]
@@ -167,7 +167,6 @@ mod test {
                     #[enumval(1)]
                     DyingLight = 1,
                 }
-
                 #[derive(
                     Debug,
                     PartialEq,
@@ -175,10 +174,10 @@ mod test {
                     Copy,
                     Clone,
                     Hash,
-                    rs_matter_crate::tlv::FromTLV,
-                    rs_matter_crate::tlv::ToTLV,
+                    rs_matter_crate :: tlv :: FromTLV,
+                    rs_matter_crate :: tlv :: ToTLV,
                 )]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum StartUpOnOffEnum {
                     #[enumval(0)]

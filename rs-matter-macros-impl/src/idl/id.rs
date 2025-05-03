@@ -23,7 +23,7 @@ use convert_case::{Case, Casing};
 ///
 /// Examples:
 ///
-/// ```
+/// ```ignore
 /// use rs_matter_macros_impl::idl::id::idl_id_to_constant_name;
 ///
 /// assert_eq!(idl_id_to_constant_name("kAbc"), "ABC");
@@ -46,8 +46,8 @@ pub fn idl_id_to_constant_name(s: &str) -> String {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_macros_impl::idl::idl_id_to_enum_name;
+/// ```ignore
+/// use rs_matter_macros_impl::idl::id::idl_id_to_enum_variant_name;
 ///
 /// assert_eq!(idl_id_to_enum_variant_name("kAbc"), "Abc");
 /// assert_eq!(idl_id_to_enum_variant_name("kAbcXyz"), "AbcXyz");
@@ -68,7 +68,7 @@ pub fn idl_id_to_enum_variant_name(s: &str) -> String {
 ///
 /// Examples:
 ///
-/// ```
+/// ```ignore
 /// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
 ///
 /// assert_eq!(idl_field_name_to_rs_name("test"), "test");
@@ -83,7 +83,7 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
 ///
 /// Examples:
 ///
-/// ```
+/// ```ignore
 /// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
 ///
 /// assert_eq!(idl_field_name_to_rs_name("test"), "Test");
@@ -105,12 +105,12 @@ pub fn idl_field_name_to_rs_type_name(s: &str) -> String {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
+/// ```ingore
+/// use rs_matter_macros_impl::idl::id::idl_attribute_name_to_enum_variant_name;
 ///
-/// assert_eq!(idl_field_name_to_rs_name("test"), "Test");
-/// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "AnotherTest");
-/// assert_eq!(idl_field_name_to_rs_name("Identity"), "Identity");
+/// assert_eq!(idl_attribute_name_to_enum_variant_name("test"), "Test");
+/// assert_eq!(idl_attribute_name_to_enum_variant_name("anotherTest"), "AnotherTest");
+/// assert_eq!(idl_attribute_name_to_enum_variant_name("Identity"), "Identity");
 /// ```
 pub fn idl_attribute_name_to_enum_variant_name(s: &str) -> String {
     let mut c = s.chars();

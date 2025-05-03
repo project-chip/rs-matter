@@ -552,48 +552,24 @@ mod tests {
         assert_tokenstreams_eq!(
             &cluster(cluster_meta, &context),
             &quote!(
-                const CLUSTER_REVISION: u16 = 6;
-
-                pub const CLUSTER: rs_matter_crate::data_model::objects::Cluster<'static> =
-                    ClusterConf::Default.cluster();
-
-                #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
-                pub enum ClusterConf<'a> {
-                    #[default]
-                    Default,
-                    Mandatory {
-                        revision: u16,
-                        feature_map: u32,
-                    },
-                    All {
-                        revision: u16,
-                        feature_map: u32,
-                    },
-                    Custom {
-                        revision: u16,
-                        feature_map: u32,
-                        supported_attributes: &'a [u32],
-                        accepted_commands: &'a [u32],
-                        generated_commands: &'a [u32],
-                    },
-                }
-
-                impl<'a> ClusterConf<'a> {
-                    pub const fn cluster(
-                        &self,
-                    ) -> rs_matter_crate::data_model::objects::Cluster<'a> {
-                        static ATTRIBUTES_ACCESS: &[rs_matter_crate::data_model::objects::Attribute] = &[
+                #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
+                pub const FULL_CLUSTER: rs_matter_crate::data_model::objects::Cluster<'static> =
+                    rs_matter_crate::data_model::objects::Cluster::new(
+                        6,
+                        6,
+                        0,
+                        &[
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::OnOff as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::GlobalSceneControl as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::O,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::OnTime as _,
@@ -608,7 +584,7 @@ mod tests {
                                             )
                                             .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
                                     ),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::O,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::OffWaitTime as _,
@@ -623,7 +599,7 @@ mod tests {
                                             )
                                             .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
                                     ),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::O,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::StartUpOnOff as _,
@@ -634,82 +610,82 @@ mod tests {
                                             .union(rs_matter_crate::data_model::objects::Access::NEED_ADMIN)
                                             .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
                                     ),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::O,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::GeneratedCommandList as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::AcceptedCommandList as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::EventList as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::AttributeList as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::FeatureMap as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
                             rs_matter_crate::data_model::objects::Attribute::new(
                                 AttributeId::ClusterRevision as _,
                                 rs_matter_crate::data_model::objects::Access::READ
                                     .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::SN,
+                                rs_matter_crate::data_model::objects::Quality::NONE,
                             ),
-                        ];
-                        rs_matter_crate::data_model::objects::Cluster {
-                            id: ID as _,
-                            attributes_access: ATTRIBUTES_ACCESS,
-                            revision: match self {
-                                ClusterConf::Default => CLUSTER_REVISION,
-                                ClusterConf::Mandatory { revision, .. } => *revision,
-                                ClusterConf::All { revision, .. } => *revision,
-                                ClusterConf::Custom { revision, .. } => *revision,
-                            },
-                            feature_map: match self {
-                                ClusterConf::Default => 0,
-                                ClusterConf::Mandatory { feature_map, .. } => *feature_map,
-                                ClusterConf::All { feature_map, .. } => *feature_map,
-                                ClusterConf::Custom { feature_map, .. } => *feature_map,
-                            },
-                            supported_attributes: match self {
-                                ClusterConf::Custom {
-                                    supported_attributes,
-                                    ..
-                                } => supported_attributes,
-                                _ => AttributeId::all(),
-                            },
-                            accepted_commands: match self {
-                                ClusterConf::Custom {
-                                    accepted_commands, ..
-                                } => accepted_commands,
-                                _ => CommandId::all(),
-                            },
-                            generated_commands: match self {
-                                ClusterConf::Custom {
-                                    generated_commands, ..
-                                } => generated_commands,
-                                _ => CommandResponseId::all(),
-                            },
-                        }
-                    }
-                }
+                        ],
+                        &[
+                            rs_matter_crate::data_model::objects::Command::new(
+                                CommandId::Off as _,
+                                None,
+                                rs_matter_crate::data_model::objects::Access::WO,
+                            ),
+                            rs_matter_crate::data_model::objects::Command::new(
+                                CommandId::On as _,
+                                None,
+                                rs_matter_crate::data_model::objects::Access::WO,
+                            ),
+                            rs_matter_crate::data_model::objects::Command::new(
+                                CommandId::Toggle as _,
+                                None,
+                                rs_matter_crate::data_model::objects::Access::WO,
+                            ),
+                            rs_matter_crate::data_model::objects::Command::new(
+                                CommandId::OffWithEffect as _,
+                                None,
+                                rs_matter_crate::data_model::objects::Access::WO,
+                            ),
+                            rs_matter_crate::data_model::objects::Command::new(
+                                CommandId::OnWithRecallGlobalScene as _,
+                                None,
+                                rs_matter_crate::data_model::objects::Access::WO,
+                            ),
+                            rs_matter_crate::data_model::objects::Command::new(
+                                CommandId::OnWithTimedOff as _,
+                                None,
+                                rs_matter_crate::data_model::objects::Access::WO,
+                            ),
+                        ],
+                        |_, _, _| true,
+                        |_, _, _| true,
+                    );
+                #[doc = "A helper struct to generate the cluster debug info."]
+                struct MetadataDebug<T>(pub T);
             )
         );
     }
