@@ -150,7 +150,7 @@ impl BasicInfoHandler {
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_revision(1)
-        .with_attrs(with!(required; AttributeId::ProductLabel))
+        .with_attrs(with!(required; AttributeId::SerialNumber))
         .with_cmds(with!());
 
     fn dataver(&self) -> u32 {
@@ -293,14 +293,6 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn max_paths_per_invoke(&self, _ctx: &ReadContext) -> Result<u16, Error> {
         Ok(1) // TODO: Report real value
-    }
-
-    fn product_label<P: TLVBuilderParent>(
-        &self,
-        ctx: &ReadContext,
-        out: Utf8StrBuilder<P>,
-    ) -> Result<P, Error> {
-        out.set(Self::config(ctx.exchange()).product_name)
     }
 
     fn handle_mfg_specific_ping(&self, _ctx: &InvokeContext) -> Result<(), Error> {
