@@ -293,28 +293,25 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        // panic!("====\n{}\n====", &structs(cluster, &context));
+
         assert_tokenstreams_eq!(
             &structs(cluster, &context),
             &quote!(
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct NetworkInfoStruct<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> NetworkInfoStruct<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn connected(&self) -> Result<bool, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
                     }
-
                     pub fn test_optional(&self) -> Result<Option<u8>, rs_matter_crate::error::Error> {
                         let element = self.0.structure()?.find_ctx(2)?;
                         if element.is_empty() {
@@ -323,13 +320,11 @@ mod tests {
                             Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
                         }
                     }
-
                     pub fn test_nullable(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(3)?)
                     }
-
                     pub fn test_both(
                         &self,
                     ) -> Result<Option<rs_matter_crate::tlv::Nullable<u32>>, rs_matter_crate::error::Error> {
@@ -341,7 +336,6 @@ mod tests {
                         }
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for NetworkInfoStruct<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -349,7 +343,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for NetworkInfoStruct<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -358,7 +351,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -367,27 +359,85 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
-
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                impl core::fmt::Debug for NetworkInfoStruct<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "NetworkInfoStruct")?;
+                        match self.connected() {
+                            Ok(value) => write!(f, "{}: {:?},", "connected", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "connected", e)?,
+                        }
+                        match self.test_optional() {
+                            Ok(Some(value)) => write!(f, "{}: Some({:?}),", "test_optional", value)?,
+                            Ok(None) => write!(f, "{}: None,", "test_optional")?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "test_optional", e)?,
+                        }
+                        match self.test_nullable() {
+                            Ok(value) => write!(f, "{}: {:?},", "test_nullable", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "test_nullable", e)?,
+                        }
+                        match self.test_both() {
+                            Ok(Some(value)) => write!(f, "{}: Some({:?}),", "test_both", value)?,
+                            Ok(None) => write!(f, "{}: None,", "test_both")?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "test_both", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for NetworkInfoStruct<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "NetworkInfoStruct");
+                        match self.connected() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "connected", value)
+                            }
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "connected", e),
+                        }
+                        match self.test_optional() {
+                            Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
+                                f,
+                                "{}: Some({:?}),",
+                                "test_optional",
+                                value
+                            ),
+                            Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "test_optional"),
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "test_optional", e)
+                            }
+                        }
+                        match self.test_nullable() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "test_nullable", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "test_nullable", e)
+                            }
+                        }
+                        match self.test_both() {
+                            Ok(Some(value)) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "test_both", value)
+                            }
+                            Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "test_both"),
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "test_both", e),
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct IdentifyRequest<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> IdentifyRequest<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn identify_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for IdentifyRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -395,7 +445,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for IdentifyRequest<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -404,7 +453,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -413,27 +461,46 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
-
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                impl core::fmt::Debug for IdentifyRequest<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "IdentifyRequest")?;
+                        match self.identify_time() {
+                            Ok(value) => write!(f, "{}: {:?},", "identify_time", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "identify_time", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for IdentifyRequest<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "IdentifyRequest");
+                        match self.identify_time() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "identify_time", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "identify_time", e)
+                            }
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct SomeRequest<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> SomeRequest<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn group(&self) -> Result<u16, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for SomeRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -441,7 +508,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for SomeRequest<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -450,7 +516,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -459,27 +524,42 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
-
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                impl core::fmt::Debug for SomeRequest<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "SomeRequest")?;
+                        match self.group() {
+                            Ok(value) => write!(f, "{}: {:?},", "group", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "group", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for SomeRequest<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "SomeRequest");
+                        match self.group() {
+                            Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "group", value),
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "group", e),
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct TestResponse<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> TestResponse<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn capacity(&self) -> Result<u8, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestResponse<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -487,7 +567,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for TestResponse<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -496,7 +575,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -505,31 +583,47 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
-
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                impl core::fmt::Debug for TestResponse<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "TestResponse")?;
+                        match self.capacity() {
+                            Ok(value) => write!(f, "{}: {:?},", "capacity", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "capacity", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for TestResponse<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "TestResponse");
+                        match self.capacity() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "capacity", value)
+                            }
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "capacity", e),
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct AnotherResponse<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> AnotherResponse<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn status(&self) -> Result<u8, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
                     }
-
                     pub fn group_id(&self) -> Result<u16, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(12)?)
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for AnotherResponse<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -537,7 +631,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for AnotherResponse<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -546,7 +639,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -555,14 +647,47 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
+                impl core::fmt::Debug for AnotherResponse<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "AnotherResponse")?;
+                        match self.status() {
+                            Ok(value) => write!(f, "{}: {:?},", "status", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "status", e)?,
+                        }
+                        match self.group_id() {
+                            Ok(value) => write!(f, "{}: {:?},", "group_id", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "group_id", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for AnotherResponse<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "AnotherResponse");
+                        match self.status() {
+                            Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "status", value),
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "status", e),
+                        }
+                        match self.group_id() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "group_id", value)
+                            }
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "group_id", e),
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
             )
         );
+
+        // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
             &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum NetworkInfoStructTag {
                     Connected = 1,
@@ -570,30 +695,26 @@ mod tests {
                     TestNullable = 3,
                     TestBoth = 4,
                 }
-
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum IdentifyRequestTag {
                     IdentifyTime = 0,
                 }
-
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum SomeRequestTag {
                     Group = 0,
                 }
-
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum TestResponseTag {
                     Capacity = 0,
                 }
-
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum AnotherResponseTag {
                     Status = 0,
@@ -627,33 +748,29 @@ mod tests {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        // panic!("====\n{}\n====", &structs(cluster, &context));
+
         assert_tokenstreams_eq!(
             &structs(cluster, &context),
             &quote!(
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct OffWithEffectRequest<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> OffWithEffectRequest<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn effect_identifier(&self) -> Result<EffectIdentifierEnum, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
                     }
-
                     pub fn effect_variant(&self) -> Result<u8, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for OffWithEffectRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -661,7 +778,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for OffWithEffectRequest<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -670,7 +786,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -679,35 +794,64 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
-
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                impl core::fmt::Debug for OffWithEffectRequest<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "OffWithEffectRequest")?;
+                        match self.effect_identifier() {
+                            Ok(value) => write!(f, "{}: {:?},", "effect_identifier", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "effect_identifier", e)?,
+                        }
+                        match self.effect_variant() {
+                            Ok(value) => write!(f, "{}: {:?},", "effect_variant", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "effect_variant", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for OffWithEffectRequest<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "OffWithEffectRequest");
+                        match self.effect_identifier() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "effect_identifier", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "effect_identifier", e)
+                            }
+                        }
+                        match self.effect_variant() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "effect_variant", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "effect_variant", e)
+                            }
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct OnWithTimedOffRequest<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> OnWithTimedOffRequest<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn on_off_control(&self) -> Result<OnOffControlBitmap, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
                     }
-
                     pub fn on_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
                     }
-
                     pub fn off_wait_time(&self) -> Result<u16, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for OnWithTimedOffRequest<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -715,7 +859,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for OnWithTimedOffRequest<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -724,7 +867,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -733,14 +875,61 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
+                impl core::fmt::Debug for OnWithTimedOffRequest<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "OnWithTimedOffRequest")?;
+                        match self.on_off_control() {
+                            Ok(value) => write!(f, "{}: {:?},", "on_off_control", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "on_off_control", e)?,
+                        }
+                        match self.on_time() {
+                            Ok(value) => write!(f, "{}: {:?},", "on_time", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "on_time", e)?,
+                        }
+                        match self.off_wait_time() {
+                            Ok(value) => write!(f, "{}: {:?},", "off_wait_time", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "off_wait_time", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for OnWithTimedOffRequest<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "OnWithTimedOffRequest");
+                        match self.on_off_control() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "on_off_control", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "on_off_control", e)
+                            }
+                        }
+                        match self.on_time() {
+                            Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "on_time", value),
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "on_time", e),
+                        }
+                        match self.off_wait_time() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "off_wait_time", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "off_wait_time", e)
+                            }
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
             )
         );
+
+        // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
             &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum OffWithEffectRequestTag {
                     EffectIdentifier = 0,
@@ -748,7 +937,7 @@ mod tests {
                 }
 
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum OnWithTimedOffRequestTag {
                     OnOffControl = 0,
@@ -777,35 +966,32 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        // panic!("====\n{}\n====", &structs(cluster, &context));
+
         assert_tokenstreams_eq!(
             &structs(cluster, &context),
             &quote!(
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct WithStringMember<'a>(rs_matter_crate::tlv::TLVElement<'a>);
                 impl<'a> WithStringMember<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn short_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
                     }
-
                     pub fn long_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
                     }
-
                     pub fn opt_str(
                         &self,
                     ) -> Result<Option<rs_matter_crate::tlv::Utf8Str<'_>>, rs_matter_crate::error::Error> {
@@ -816,7 +1002,6 @@ mod tests {
                             Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
                         }
                     }
-
                     pub fn opt_nul_str(
                         &self,
                     ) -> Result<
@@ -831,7 +1016,6 @@ mod tests {
                         }
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for WithStringMember<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -839,7 +1023,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for WithStringMember<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -848,7 +1031,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -857,14 +1039,79 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
+                impl core::fmt::Debug for WithStringMember<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "WithStringMember")?;
+                        match self.short_string() {
+                            Ok(value) => write!(f, "{}: {:?},", "short_string", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "short_string", e)?,
+                        }
+                        match self.long_string() {
+                            Ok(value) => write!(f, "{}: {:?},", "long_string", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "long_string", e)?,
+                        }
+                        match self.opt_str() {
+                            Ok(Some(value)) => write!(f, "{}: Some({:?}),", "opt_str", value)?,
+                            Ok(None) => write!(f, "{}: None,", "opt_str")?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "opt_str", e)?,
+                        }
+                        match self.opt_nul_str() {
+                            Ok(Some(value)) => write!(f, "{}: Some({:?}),", "opt_nul_str", value)?,
+                            Ok(None) => write!(f, "{}: None,", "opt_nul_str")?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "opt_nul_str", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for WithStringMember<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "WithStringMember");
+                        match self.short_string() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "short_string", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "short_string", e)
+                            }
+                        }
+                        match self.long_string() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "long_string", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "long_string", e)
+                            }
+                        }
+                        match self.opt_str() {
+                            Ok(Some(value)) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "opt_str", value)
+                            }
+                            Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "opt_str"),
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "opt_str", e),
+                        }
+                        match self.opt_nul_str() {
+                            Ok(Some(value)) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "opt_nul_str", value)
+                            }
+                            Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "opt_nul_str"),
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "opt_nul_str", e)
+                            }
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
             )
         );
+
+        // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
             &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum WithStringMemberTag {
                     ShortString = 1,
@@ -894,36 +1141,32 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
+        // panic!("====\n{}\n====", &structs(cluster, &context));
+
         assert_tokenstreams_eq!(
             &structs(cluster, &context),
             &quote!(
-                #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct WithStringMember<'a>(rs_matter_crate::tlv::TLVElement<'a>);
-
                 impl<'a> WithStringMember<'a> {
                     #[doc = "Create a new instance"]
                     pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
                         Self(element)
                     }
-
                     #[doc = "Return the underlying TLV element"]
                     pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
                         &self.0
                     }
-
                     pub fn short_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
                     }
-
                     pub fn long_string(
                         &self,
                     ) -> Result<rs_matter_crate::tlv::OctetStr<'_>, rs_matter_crate::error::Error> {
                         rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(2)?)
                     }
-
                     pub fn opt_str(
                         &self,
                     ) -> Result<Option<rs_matter_crate::tlv::OctetStr<'_>>, rs_matter_crate::error::Error> {
@@ -934,7 +1177,6 @@ mod tests {
                             Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
                         }
                     }
-
                     pub fn opt_nul_str(
                         &self,
                     ) -> Result<
@@ -949,7 +1191,6 @@ mod tests {
                         }
                     }
                 }
-
                 impl<'a> rs_matter_crate::tlv::FromTLV<'a> for WithStringMember<'a> {
                     fn from_tlv(
                         element: &rs_matter_crate::tlv::TLVElement<'a>,
@@ -957,7 +1198,6 @@ mod tests {
                         Ok(Self::new(element.clone()))
                     }
                 }
-
                 impl rs_matter_crate::tlv::ToTLV for WithStringMember<'_> {
                     fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
                         &self,
@@ -966,7 +1206,6 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         self.0.to_tlv(tag, tw)
                     }
-
                     fn tlv_iter(
                         &self,
                         tag: rs_matter_crate::tlv::TLVTag,
@@ -975,14 +1214,79 @@ mod tests {
                         self.0.tlv_iter(tag)
                     }
                 }
+                impl core::fmt::Debug for WithStringMember<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{} {{", "WithStringMember")?;
+                        match self.short_string() {
+                            Ok(value) => write!(f, "{}: {:?},", "short_string", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "short_string", e)?,
+                        }
+                        match self.long_string() {
+                            Ok(value) => write!(f, "{}: {:?},", "long_string", value)?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "long_string", e)?,
+                        }
+                        match self.opt_str() {
+                            Ok(Some(value)) => write!(f, "{}: Some({:?}),", "opt_str", value)?,
+                            Ok(None) => write!(f, "{}: None,", "opt_str")?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "opt_str", e)?,
+                        }
+                        match self.opt_nul_str() {
+                            Ok(Some(value)) => write!(f, "{}: Some({:?}),", "opt_nul_str", value)?,
+                            Ok(None) => write!(f, "{}: None,", "opt_nul_str")?,
+                            Err(e) => write!(f, "{}: ??? {:?},", "opt_nul_str", e)?,
+                        }
+                        write!(f, "}}")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl rs_matter_crate::reexport::defmt::Format for WithStringMember<'_> {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "WithStringMember");
+                        match self.short_string() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "short_string", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "short_string", e)
+                            }
+                        }
+                        match self.long_string() {
+                            Ok(value) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "long_string", value)
+                            }
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "long_string", e)
+                            }
+                        }
+                        match self.opt_str() {
+                            Ok(Some(value)) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "opt_str", value)
+                            }
+                            Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "opt_str"),
+                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "opt_str", e),
+                        }
+                        match self.opt_nul_str() {
+                            Ok(Some(value)) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "opt_nul_str", value)
+                            }
+                            Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "opt_nul_str"),
+                            Err(e) => {
+                                rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "opt_nul_str", e)
+                            }
+                        }
+                        rs_matter_crate::reexport::defmt::write!(f, "}}")
+                    }
+                }
             )
         );
+
+        // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
             &struct_tags(cluster, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum WithStringMemberTag {
                     ShortString = 1,
