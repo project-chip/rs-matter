@@ -32,6 +32,13 @@ use crate::utils::rand::Rand;
 use super::common::SCStatusCodes;
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PaseSessionType {
+    Basic,
+    Enhanced,
+}
+
 struct PaseSession {
     mdns_service_name: heapless::String<16>,
     verifier: VerifierData,
@@ -50,6 +57,14 @@ impl PaseSession {
             mdns_service_name: heapless::String::new(),
             verifier <- VerifierData::init(verifier, salt, count),
         }? Error)
+    }
+
+    fn session_type(&self) -> PaseSessionType {
+        if self.verifier.password.is_some() {
+            PaseSessionType::Basic
+        } else {
+            PaseSessionType::Enhanced
+        }
     }
 
     fn add_mdns(&mut self, discriminator: u16, rand: Rand, mdns: &dyn Mdns) -> Result<(), Error> {
@@ -96,8 +111,10 @@ impl PaseMgr {
         })
     }
 
-    pub fn is_pase_session_enabled(&self) -> bool {
-        self.session.is_some()
+    pub fn session_type(&self) -> Option<PaseSessionType> {
+        self.session
+            .as_opt_ref()
+            .map(|session| session.session_type())
     }
 
     pub fn enable_basic_pase_session(

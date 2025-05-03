@@ -105,7 +105,7 @@ where
                     similar::ChangeTag::Equal => " ",
                 };
 
-                write!(diff_str, "{}{}", sign, change).unwrap();
+                write!(diff_str, "{sign}{change}").unwrap();
             }
 
             panic!("Expected does not match actual:\n== Diff:\n{diff_str}");

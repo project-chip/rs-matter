@@ -18,6 +18,8 @@
 use crate::error::Error;
 
 /// Device Attestation Data Type
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataType {
     /// Certificate Declaration
     CertDeclaration,

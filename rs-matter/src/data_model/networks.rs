@@ -15,30 +15,24 @@
  *    limitations under the License.
  */
 
-use super::objects::DeviceType;
+//! A module containing various types for managing Ethernet, Thread and Wifi networks.
 
-pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
-    dtype: 0x0016,
-    drev: 1,
-};
+pub mod eth;
+#[cfg(all(unix, feature = "os", not(target_os = "espidf")))]
+pub mod unix;
+pub mod wireless;
 
-pub const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
-    dtype: 0x0100,
-    drev: 2,
-};
+/// A generic trait for network change notifications.
+pub trait NetChangeNotif {
+    /// Wait until a change occurs.
+    async fn wait_changed(&self);
+}
 
-pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
-    dtype: 0x0022,
-    drev: 2,
-};
-
-/// A macro to generate the devices for an endpoint.
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! devices {
-    ($($device:expr $(,)?)*) => {
-        &[
-            $($device,)*
-        ]
+impl<T> NetChangeNotif for &T
+where
+    T: NetChangeNotif,
+{
+    async fn wait_changed(&self) {
+        (*self).wait_changed().await
     }
 }

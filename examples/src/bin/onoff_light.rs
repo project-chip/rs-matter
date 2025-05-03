@@ -30,21 +30,25 @@ use log::info;
 use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::objects::*;
+use rs_matter::data_model::networks::unix::UnixNetifs;
+use rs_matter::data_model::objects::{
+    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, Node,
+};
 use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::data_model::root_endpoint;
+use rs_matter::data_model::sdm::net_comm::NetworkType;
 use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::data_model::system_model::descriptor;
+use rs_matter::data_model::system_model::desc::{self, ClusterHandler as _};
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::test_device;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::{clusters, devices, test_device};
 
 use static_cell::StaticCell;
 
@@ -68,7 +72,7 @@ fn main() -> Result<(), Error> {
         // e.g., an opt-level of "0" will require a several times' larger stack.
         //
         // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(45 * 1024)
+        .stack_size(55 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -120,7 +124,7 @@ fn run() -> Result<(), Error> {
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = Async(dm_handler(matter, &on_off));
+    let dm_handler = dm_handler(matter, &on_off);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -192,11 +196,11 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint::endpoint(0, root_endpoint::OperNwType::Ethernet),
+        root_endpoint::root_endpoint(NetworkType::Ethernet),
         Endpoint {
             id: 1,
-            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, on_off::OnOffHandler::CLUSTER],
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(desc::DescHandler::CLUSTER, on_off::OnOffHandler::CLUSTER),
         },
     ],
 };
@@ -206,21 +210,28 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a>(
     matter: &'a Matter<'a>,
     on_off: &'a on_off::OnOffHandler,
-) -> impl Metadata + NonBlockingHandler + 'a {
+) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
-        root_endpoint::eth_handler(0, matter.rand())
-            .chain(
-                1,
-                descriptor::ID,
-                Async(descriptor::DescriptorCluster::new(Dataver::new_rand(
-                    matter.rand(),
-                ))),
-            )
-            .chain(
-                1,
-                on_off::OnOffHandler::CLUSTER.id,
-                Async(on_off::HandlerAdaptor(on_off)),
+        root_endpoint::with_eth(
+            &(),
+            &UnixNetifs,
+            matter.rand(),
+            root_endpoint::with_sys(
+                &false,
+                matter.rand(),
+                EmptyHandler
+                    .chain(
+                        1,
+                        desc::DescHandler::CLUSTER.id,
+                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    )
+                    .chain(
+                        1,
+                        on_off::OnOffHandler::CLUSTER.id,
+                        Async(on_off::HandlerAdaptor(on_off)),
+                    ),
             ),
+        ),
     )
 }

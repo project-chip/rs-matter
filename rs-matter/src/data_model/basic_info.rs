@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+//! This module contains the implementation of the Basic Information cluster and its handler.
+
 use core::str::FromStr;
 
 use crate::error::{Error, ErrorCode};
@@ -126,14 +128,18 @@ impl Default for BasicInfoSettings {
     }
 }
 
-#[derive(Clone)]
+/// The system implementation of a handler for the Basic Information Matter cluster.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicInfoHandler(Dataver);
 
 impl BasicInfoHandler {
+    /// Create a new instance of `BasicInfoHandler` with the given `Dataver`
     pub fn new(dataver: Dataver) -> Self {
         Self(dataver)
     }
 
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
         HandlerAdaptor(self)
     }

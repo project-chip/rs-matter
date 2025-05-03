@@ -779,6 +779,11 @@ impl SessionMgr {
             None
         }
     }
+
+    /// Iterate over the sessions
+    pub fn iter(&self) -> impl Iterator<Item = &Session> {
+        self.sessions.iter()
+    }
 }
 
 impl fmt::Display for SessionMgr {

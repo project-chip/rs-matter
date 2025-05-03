@@ -10,7 +10,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 GraphicalReportHandler::new()
                     .render_report(&mut buf, &e)
                     .unwrap();
-                eprintln!("\n{}", buf);
+                eprintln!("\n{buf}");
             }
         })
     });

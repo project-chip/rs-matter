@@ -15,18 +15,23 @@
  *    limitations under the License.
  */
 
+//! This module contains the implementation of the `rs-matter` Access Control List (ACL)
+
 use core::{fmt::Display, num::NonZeroU8};
 
 use num_derive::FromPrimitive;
 
 use crate::data_model::objects::{Access, ClusterId, EndptId, Privilege};
+use crate::data_model::system_model::acl::{
+    AccessControlEntryAuthModeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
+};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::interaction_model::messages::GenericPath;
-use crate::tlv::{EitherIter, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
 use crate::utils::cell::RefCell;
-use crate::utils::init::{init, Init};
+use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
 /// Max subjects per ACL entry
@@ -41,14 +46,18 @@ pub const TARGETS_PER_ENTRY: usize = 3;
 // TODO: Make this configurable via a cargo feature
 pub const ENTRIES_PER_FABRIC: usize = 3;
 
+/// An enum modeling the different authentication modes
 // TODO: Check if this and the SessionMode can be combined into some generic data structure
 #[derive(FromPrimitive, Copy, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
 pub enum AuthMode {
-    Pase = 1,
-    Case = 2,
-    Group = 3,
-    Invalid = 4,
+    /// PASE authentication
+    Pase = AccessControlEntryAuthModeEnum::PASE as _,
+    /// CASE authentication
+    Case = AccessControlEntryAuthModeEnum::CASE as _,
+    /// Group authentication
+    Group = AccessControlEntryAuthModeEnum::Group as _,
 }
 
 impl FromTLV<'_> for AuthMode {
@@ -56,24 +65,36 @@ impl FromTLV<'_> for AuthMode {
     where
         Self: Sized,
     {
-        num::FromPrimitive::from_u32(t.u32()?)
-            .filter(|a| *a != AuthMode::Invalid)
-            .ok_or_else(|| ErrorCode::Invalid.into())
+        Ok(AccessControlEntryAuthModeEnum::from_tlv(t)?.into())
     }
 }
 
 impl ToTLV for AuthMode {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        match self {
-            AuthMode::Invalid => Ok(()),
-            _ => tw.u8(tag, *self as u8),
-        }
+        AccessControlEntryAuthModeEnum::from(*self).to_tlv(tag, &mut tw)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
-        match self {
-            AuthMode::Invalid => EitherIter::First(core::iter::empty()),
-            _ => EitherIter::Second(TLV::u8(tag, *self as u8).into_tlv_iter()),
+        TLV::u8(tag, AccessControlEntryAuthModeEnum::from(*self) as _).into_tlv_iter()
+    }
+}
+
+impl From<AuthMode> for AccessControlEntryAuthModeEnum {
+    fn from(value: AuthMode) -> Self {
+        match value {
+            AuthMode::Pase => AccessControlEntryAuthModeEnum::PASE,
+            AuthMode::Case => AccessControlEntryAuthModeEnum::CASE,
+            AuthMode::Group => AccessControlEntryAuthModeEnum::Group,
+        }
+    }
+}
+
+impl From<AccessControlEntryAuthModeEnum> for AuthMode {
+    fn from(value: AccessControlEntryAuthModeEnum) -> Self {
+        match value {
+            AccessControlEntryAuthModeEnum::PASE => AuthMode::Pase,
+            AccessControlEntryAuthModeEnum::CASE => AuthMode::Case,
+            AccessControlEntryAuthModeEnum::Group => AuthMode::Group,
         }
     }
 }
@@ -112,12 +133,15 @@ pub fn gen_noc_cat(id: u16, version: u16) -> u32 {
 pub struct AccessorSubjects([u64; MAX_ACCESSOR_SUBJECTS]);
 
 impl AccessorSubjects {
+    /// Create a new AccessorSubjects object
+    /// The first subject is the node id
     pub fn new(id: u64) -> Self {
         let mut a = Self(Default::default());
         a.0[0] = id;
         a
     }
 
+    /// Add a CAT id to the AccessorSubjects
     pub fn add_catid(&mut self, subject: u32) -> Result<(), Error> {
         for (i, val) in self.0.iter().enumerate() {
             if *val == 0 {
@@ -128,7 +152,7 @@ impl AccessorSubjects {
         Err(ErrorCode::NoSpace.into())
     }
 
-    /// Match the match_subject with any of the current subjects
+    /// Match the acl_subject with any of the current subjects
     /// If a NOC CAT is specified, CAT aware matching is also performed
     pub fn matches(&self, acl_subject: u64) -> bool {
         for v in self.0.iter() {
@@ -189,13 +213,14 @@ pub struct Accessor<'a> {
     pub fab_idx: u8,
     /// Accessor's subject: could be node-id, NoC CAT, group id
     subjects: AccessorSubjects,
-    /// The Authmode of this session
-    auth_mode: AuthMode,
+    /// The auth mode of this session. Might be `None` for plain-text sessions
+    auth_mode: Option<AuthMode>,
     // TODO: Is this the right place for this though, or should we just use a global-acl-handle-get
     fabric_mgr: &'a RefCell<FabricMgr>,
 }
 
 impl<'a> Accessor<'a> {
+    /// Create a new Accessor object for the given session
     pub fn for_session(session: &Session, fabric_mgr: &'a RefCell<FabricMgr>) -> Self {
         match session.get_session_mode() {
             SessionMode::Case {
@@ -208,25 +233,29 @@ impl<'a> Accessor<'a> {
                         let _ = subject.add_catid(i);
                     }
                 }
-                Accessor::new(fab_idx.get(), subject, AuthMode::Case, fabric_mgr)
+                Accessor::new(fab_idx.get(), subject, Some(AuthMode::Case), fabric_mgr)
             }
             SessionMode::Pase { fab_idx } => Accessor::new(
                 *fab_idx,
                 AccessorSubjects::new(1),
-                AuthMode::Pase,
+                Some(AuthMode::Pase),
                 fabric_mgr,
             ),
-
-            SessionMode::PlainText => {
-                Accessor::new(0, AccessorSubjects::new(1), AuthMode::Invalid, fabric_mgr)
-            }
+            SessionMode::PlainText => Accessor::new(0, AccessorSubjects::new(1), None, fabric_mgr),
         }
     }
 
+    /// Create a new Accessor object
+    ///
+    /// # Arguments
+    /// - `fab_idx`: The fabric index of the accessor (0 means no fabric index)
+    /// - `subjects`: The subjects of the accessor
+    /// - `auth_mode`: The auth mode of the accessor
+    /// - `fabric_mgr`: The fabric manager
     pub const fn new(
         fab_idx: u8,
         subjects: AccessorSubjects,
-        auth_mode: AuthMode,
+        auth_mode: Option<AuthMode>,
         fabric_mgr: &'a RefCell<FabricMgr>,
     ) -> Self {
         Self {
@@ -237,15 +266,18 @@ impl<'a> Accessor<'a> {
         }
     }
 
+    /// Return the subjects of the accessor
     pub fn subjects(&self) -> &AccessorSubjects {
         &self.subjects
     }
 
-    pub fn auth_mode(&self) -> AuthMode {
+    /// Return the auth mode of the accessor
+    pub fn auth_mode(&self) -> Option<AuthMode> {
         self.auth_mode
     }
 }
 
+/// Access Descriptor Object
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AccessDesc {
@@ -260,12 +292,14 @@ pub struct AccessDesc {
 
 /// Access Request Object
 pub struct AccessReq<'a> {
+    /// The accessor requesting access
     accessor: &'a Accessor<'a>,
+    /// The object being accessed
     object: AccessDesc,
 }
 
 impl<'a> AccessReq<'a> {
-    /// Creates an access request object
+    /// Create an access request object
     ///
     /// An access request specifies the _accessor_ attempting to access _path_
     /// with _operation_
@@ -280,10 +314,12 @@ impl<'a> AccessReq<'a> {
         }
     }
 
+    /// Return the accessor of the request
     pub fn accessor(&self) -> &Accessor {
         self.accessor
     }
 
+    /// Return the operation of the request
     pub fn operation(&self) -> Access {
         self.object.operation
     }
@@ -296,7 +332,7 @@ impl<'a> AccessReq<'a> {
         self.object.target_perms = Some(perms);
     }
 
-    /// Checks if access is allowed
+    /// Check if access is allowed
     ///
     /// This checks all the ACL list to identify if any of the ACLs provides the
     /// _accessor_ the necessary privileges to access the target as per its
@@ -306,16 +342,18 @@ impl<'a> AccessReq<'a> {
     }
 }
 
+/// The target object
 #[derive(FromTLV, ToTLV, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Target {
-    cluster: Option<ClusterId>,
-    endpoint: Option<EndptId>,
-    device_type: Option<u32>,
+    pub cluster: Option<ClusterId>,
+    pub endpoint: Option<EndptId>,
+    pub device_type: Option<u32>,
 }
 
 impl Target {
-    pub fn new(
+    /// Create a new target object
+    pub const fn new(
         endpoint: Option<EndptId>,
         cluster: Option<ClusterId>,
         device_type: Option<u32>,
@@ -328,13 +366,18 @@ impl Target {
     }
 }
 
+/// The ACL entry object
 #[derive(ToTLV, FromTLV, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 pub struct AclEntry {
+    /// The privilege of the entry
     privilege: Privilege,
+    /// The auth mode of the entry
     auth_mode: AuthMode,
-    subjects: Vec<u64, SUBJECTS_PER_ENTRY>,
+    /// The subjects of the entry
+    subjects: Nullable<Vec<u64, SUBJECTS_PER_ENTRY>>,
+    /// The targets of the entry
     targets: Nullable<Vec<Target, TARGETS_PER_ENTRY>>,
     // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
     // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
@@ -344,16 +387,23 @@ pub struct AclEntry {
 }
 
 impl AclEntry {
-    pub fn new(fab_idx: Option<NonZeroU8>, privilege: Privilege, auth_mode: AuthMode) -> Self {
+    /// Create a new ACL entry object
+    pub const fn new(
+        fab_idx: Option<NonZeroU8>,
+        privilege: Privilege,
+        auth_mode: AuthMode,
+    ) -> Self {
         Self {
             fab_idx,
             privilege,
             auth_mode,
-            subjects: Vec::new(),
+            subjects: Nullable::some(Vec::new()),
             targets: Nullable::some(Vec::new()),
         }
     }
 
+    /// Return an initializer for an ACL entry object
+    /// using the given fabric index, privilege and auth mode as input
     pub fn init(
         fab_idx: Option<NonZeroU8>,
         privilege: Privilege,
@@ -363,21 +413,127 @@ impl AclEntry {
             fab_idx,
             privilege,
             auth_mode,
-            subjects <- Vec::init(),
+            subjects <- Nullable::init_some(Vec::init()),
             targets <- Nullable::init_some(Vec::init()),
         })
     }
 
+    /// Return an initializer for an ACL entry object
+    /// using the given fabric index and TLV entry struct as input
+    pub fn init_with<'a>(
+        fab_idx: NonZeroU8,
+        entry: &'a AccessControlEntryStruct<'a>,
+    ) -> impl Init<Self, Error> + 'a {
+        Self::init(Some(fab_idx), Privilege::empty(), AuthMode::Pase)
+            .into_fallible()
+            .chain(|e| {
+                e.privilege = entry.privilege()?.into();
+                e.auth_mode = entry.auth_mode()?.into();
+
+                if let Some(subjects) = entry.subjects()?.into_option() {
+                    let esubjects = unwrap!(e.subjects.as_opt_mut());
+                    for subject in subjects {
+                        let subject = subject?;
+
+                        esubjects.push(subject).map_err(|_| ErrorCode::NoSpace)?;
+                    }
+                } else {
+                    e.subjects.clear();
+                }
+
+                if let Some(targets) = entry.targets()?.into_option() {
+                    let etargets = unwrap!(e.targets.as_opt_mut());
+                    for target in targets {
+                        let target = target?;
+
+                        etargets
+                            .push(Target::new(
+                                target.endpoint()?.into_option(),
+                                target.cluster()?.into_option(),
+                                target.device_type()?.into_option(),
+                            ))
+                            .map_err(|_| ErrorCode::NoSpace)?;
+                    }
+                } else {
+                    e.targets.clear();
+                }
+
+                Ok(())
+            })
+    }
+
+    /// Return the data of the ACL entry object
+    /// into the provided TLV builder
+    pub fn read_into<P: TLVBuilderParent>(
+        &self,
+        fab_idx: NonZeroU8,
+        builder: AccessControlEntryStructBuilder<P>,
+    ) -> Result<P, Error> {
+        builder
+            .privilege(self.privilege.into())?
+            .auth_mode(self.auth_mode.into())?
+            .subjects()?
+            .with_non_null(self.subjects(), |subjects, mut builder| {
+                for subject in *subjects {
+                    builder = builder.push(subject)?;
+                }
+
+                builder.end()
+            })?
+            .targets()?
+            .with_non_null(self.targets(), |targets, mut builder| {
+                for target in *targets {
+                    builder = builder
+                        .push()?
+                        .cluster(Nullable::new(target.cluster))?
+                        .endpoint(Nullable::new(target.endpoint))?
+                        .device_type(Nullable::new(target.device_type))?
+                        .end()?;
+                }
+
+                builder.end()
+            })?
+            .fabric_index(fab_idx.get())?
+            .end()
+    }
+
+    /// Return the auth mode of the ACL entry
+    pub fn auth_mode(&self) -> AuthMode {
+        self.auth_mode
+    }
+
+    /// Return the subjects of the ACL entry
+    pub fn subjects(&self) -> Nullable<&[u64]> {
+        Nullable::new(self.subjects.as_opt_ref().map(|v| v.as_slice()))
+    }
+
+    /// Return the targets of the ACL entry
+    pub fn targets(&self) -> Nullable<&[Target]> {
+        Nullable::new(self.targets.as_opt_ref().map(|v| v.as_slice()))
+    }
+
+    /// Check if the ACL entry allows access to the given accessor and object
+    pub fn allow(&self, req: &AccessReq) -> bool {
+        self.match_accessor(req.accessor) && self.match_access_desc(&req.object)
+    }
+
+    /// Add a subject to the ACL entry
     pub fn add_subject(&mut self, subject: u64) -> Result<(), Error> {
-        self.subjects
+        if self.subjects.is_none() {
+            self.subjects.reinit(Nullable::init_some(Vec::init()));
+        }
+
+        unwrap!(self.subjects.as_opt_mut())
             .push(subject)
             .map_err(|_| ErrorCode::NoSpace.into())
     }
 
+    /// Add a CAT id to the ACL entry
     pub fn add_subject_catid(&mut self, cat_id: u32) -> Result<(), Error> {
         self.add_subject(NOC_CAT_SUBJECT_PREFIX | cat_id as u64)
     }
 
+    /// Add a target to the ACL entry
     pub fn add_target(&mut self, target: Target) -> Result<(), Error> {
         if self.targets.is_none() {
             self.targets.reinit(Nullable::init_some(Vec::init()));
@@ -388,27 +544,16 @@ impl AclEntry {
             .map_err(|_| ErrorCode::NoSpace.into())
     }
 
-    pub fn auth_mode(&self) -> AuthMode {
-        self.auth_mode
-    }
-
     fn match_accessor(&self, accessor: &Accessor) -> bool {
-        if self.auth_mode != accessor.auth_mode {
+        if Some(self.auth_mode) != accessor.auth_mode {
             return false;
         }
 
-        let mut allow = false;
-        let mut entries_exist = false;
-        for s in &self.subjects {
-            entries_exist = true;
-            if accessor.subjects.matches(*s) {
-                allow = true;
-            }
-        }
-        if !entries_exist {
-            // Subjects array empty implies allow for all subjects
-            allow = true;
-        }
+        let allow = self.subjects().as_opt_ref().is_none_or(|subjects| {
+            // Subjects array null or empty implies allow for all subjects
+            // Otherwise, check if the accessor's subject matches any of the ACL entry's subjects
+            subjects.is_empty() || subjects.iter().any(|s| accessor.subjects.matches(*s))
+        });
 
         // true if both are true
         allow
@@ -419,25 +564,15 @@ impl AclEntry {
     }
 
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
-        let mut allow = false;
-        let mut entries_exist = false;
-        match self.targets.as_opt_ref() {
-            None => allow = true, // Allow if targets are NULL
-            Some(targets) => {
-                for t in targets {
-                    entries_exist = true;
-                    if (t.endpoint.is_none() || t.endpoint == object.path.endpoint)
+        let allow = self.targets.as_opt_ref().is_none_or(|targets| {
+            // Targets array null or empty implies allow for all targets
+            // Otherwise, check if the target matches any of the ACL entry's targets
+            targets.is_empty()
+                || targets.iter().any(|t| {
+                    (t.endpoint.is_none() || t.endpoint == object.path.endpoint)
                         && (t.cluster.is_none() || t.cluster == object.path.cluster)
-                    {
-                        allow = true
-                    }
-                }
-            }
-        }
-        if !entries_exist {
-            // Targets array empty implies allow for all targets
-            allow = true;
-        }
+                })
+        });
 
         if allow {
             // Check that the object's access allows this operation with this privilege
@@ -449,10 +584,6 @@ impl AclEntry {
         } else {
             false
         }
-    }
-
-    pub fn allow(&self, req: &AccessReq) -> bool {
-        self.match_accessor(req.accessor) && self.match_access_desc(&req.object)
     }
 }
 
@@ -485,7 +616,7 @@ pub(crate) mod tests {
     fn test_basic_empty_subject_target() {
         let fm = RefCell::new(FabricMgr::new());
 
-        let accessor = Accessor::new(0, AccessorSubjects::new(112233), AuthMode::Pase, &fm);
+        let accessor = Accessor::new(0, AccessorSubjects::new(112233), Some(AuthMode::Pase), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req_pase = AccessReq::new(&accessor, path, Access::READ);
         req_pase.set_target_perms(Access::RWVA);
@@ -493,7 +624,7 @@ pub(crate) mod tests {
         // Always allow for PASE sessions
         assert!(req_pase.allow());
 
-        let accessor = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, &fm);
+        let accessor = Accessor::new(2, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -538,7 +669,7 @@ pub(crate) mod tests {
             .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
+        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -573,7 +704,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v2)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, AuthMode::Case, &fm);
+        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -615,7 +746,7 @@ pub(crate) mod tests {
         let mut subjects = AccessorSubjects::new(112233);
         subjects.add_catid(gen_noc_cat(allow_cat, v3)).unwrap();
 
-        let accessor = Accessor::new(1, subjects, AuthMode::Case, &fm);
+        let accessor = Accessor::new(1, subjects, Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -643,7 +774,7 @@ pub(crate) mod tests {
             .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
+        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
         let mut req = AccessReq::new(&accessor, path, Access::READ);
         req.set_target_perms(Access::RWVA);
@@ -709,7 +840,7 @@ pub(crate) mod tests {
             .add_with_post_init(KeyPair::new(dummy_rand).unwrap(), |_| Ok(()))
             .unwrap();
 
-        let accessor = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
+        let accessor = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let path = GenericPath::new(Some(1), Some(1234), None);
 
         // Create an Exact Match ACL with View privilege
@@ -760,10 +891,10 @@ pub(crate) mod tests {
             .unwrap();
 
         let path = GenericPath::new(Some(1), Some(1234), None);
-        let accessor2 = Accessor::new(1, AccessorSubjects::new(112233), AuthMode::Case, &fm);
+        let accessor2 = Accessor::new(1, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let mut req1 = AccessReq::new(&accessor2, path.clone(), Access::READ);
         req1.set_target_perms(Access::RWVA);
-        let accessor3 = Accessor::new(2, AccessorSubjects::new(112233), AuthMode::Case, &fm);
+        let accessor3 = Accessor::new(2, AccessorSubjects::new(112233), Some(AuthMode::Case), &fm);
         let mut req2 = AccessReq::new(&accessor3, path, Access::READ);
         req2.set_target_perms(Access::RWVA);
 
