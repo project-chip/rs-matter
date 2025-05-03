@@ -35,13 +35,14 @@ use crate::common::e2e::tlv::TLVTest;
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
 
-static PART_1: &[TestAttrResp<'static>] = &[
+static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 29, descriptor::Attributes::DeviceTypeList, None),
     attr_data!(0, 29, descriptor::Attributes::ServerList, None),
     attr_data!(0, 29, descriptor::Attributes::PartsList, None),
     attr_data!(0, 29, descriptor::Attributes::ClientList, None),
     attr_data!(0, 29, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 29, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 29, GlobalElements::EventList, None),
     attr_data!(0, 29, GlobalElements::AttributeList, None),
     attr_data!(0, 29, GlobalElements::FeatureMap, None),
     attr_data!(0, 29, GlobalElements::ClusterRevision, None),
@@ -62,13 +63,14 @@ static PART_1: &[TestAttrResp<'static>] = &[
     attr_data!(0, 40, basic_info::AttributeId::MaxPathsPerInvoke, None),
     attr_data!(0, 40, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 40, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 40, GlobalElements::EventList, None),
     attr_data!(0, 40, GlobalElements::AttributeList, None),
     attr_data!(0, 40, GlobalElements::FeatureMap, None),
     attr_data!(0, 40, GlobalElements::ClusterRevision, None),
     attr_data!(0, 48, gen_comm::AttributeId::Breadcrumb, None),
+    attr_data!(0, 48, gen_comm::AttributeId::BasicCommissioningInfo, None),
     attr_data!(0, 48, gen_comm::AttributeId::RegulatoryConfig, None),
     attr_data!(0, 48, gen_comm::AttributeId::LocationCapability, None),
-    attr_data!(0, 48, gen_comm::AttributeId::BasicCommissioningInfo, None),
     attr_data!(
         0,
         48,
@@ -77,10 +79,8 @@ static PART_1: &[TestAttrResp<'static>] = &[
     ),
     attr_data!(0, 48, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 48, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 48, GlobalElements::EventList, None),
     attr_data!(0, 48, GlobalElements::AttributeList, None),
-];
-
-static PART_2: &[TestAttrResp<'static>] = &[
     attr_data!(0, 48, GlobalElements::FeatureMap, None),
     attr_data!(0, 48, GlobalElements::ClusterRevision, None),
     attr_data!(0, 49, nw_commissioning::Attributes::MaxNetworks, None),
@@ -107,6 +107,7 @@ static PART_2: &[TestAttrResp<'static>] = &[
     ),
     attr_data!(0, 49, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 49, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 49, GlobalElements::EventList, None),
     attr_data!(0, 49, GlobalElements::AttributeList, None),
     attr_data!(0, 49, GlobalElements::FeatureMap, None),
     attr_data!(0, 49, GlobalElements::ClusterRevision, None),
@@ -125,6 +126,7 @@ static PART_2: &[TestAttrResp<'static>] = &[
     ),
     attr_data!(0, 60, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 60, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 60, GlobalElements::EventList, None),
     attr_data!(0, 60, GlobalElements::AttributeList, None),
     attr_data!(0, 60, GlobalElements::FeatureMap, None),
     attr_data!(0, 60, GlobalElements::ClusterRevision, None),
@@ -144,6 +146,7 @@ static PART_2: &[TestAttrResp<'static>] = &[
     ),
     attr_data!(0, 62, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 62, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 62, GlobalElements::EventList, None),
     attr_data!(0, 62, GlobalElements::AttributeList, None),
     attr_data!(0, 62, GlobalElements::FeatureMap, None),
     attr_data!(0, 62, GlobalElements::ClusterRevision, None),
@@ -154,9 +157,7 @@ static PART_2: &[TestAttrResp<'static>] = &[
     attr_data!(0, 31, acl::AttributesDiscriminants::EntriesPerFabric, None),
     attr_data!(0, 31, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, 31, GlobalElements::AcceptedCmdList, None),
-];
-
-static PART_3: &[TestAttrResp<'static>] = &[
+    attr_data!(0, 31, GlobalElements::EventList, None),
     attr_data!(0, 31, GlobalElements::AttributeList, None),
     attr_data!(0, 31, GlobalElements::FeatureMap, None),
     attr_data!(0, 31, GlobalElements::ClusterRevision, None),
@@ -165,6 +166,7 @@ static PART_3: &[TestAttrResp<'static>] = &[
     attr_data!(0, echo::ID, echo::AttributesDiscriminants::AttCustom, None),
     attr_data!(0, echo::ID, GlobalElements::GeneratedCmdList, None),
     attr_data!(0, echo::ID, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, echo::ID, GlobalElements::EventList, None),
     attr_data!(0, echo::ID, GlobalElements::AttributeList, None),
     attr_data!(0, echo::ID, GlobalElements::FeatureMap, None),
     attr_data!(0, echo::ID, GlobalElements::ClusterRevision, None),
@@ -174,12 +176,14 @@ static PART_3: &[TestAttrResp<'static>] = &[
     attr_data!(1, 29, descriptor::Attributes::ClientList, None),
     attr_data!(1, 29, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, 29, GlobalElements::AcceptedCmdList, None),
+    attr_data!(1, 29, GlobalElements::EventList, None),
     attr_data!(1, 29, GlobalElements::AttributeList, None),
     attr_data!(1, 29, GlobalElements::FeatureMap, None),
     attr_data!(1, 29, GlobalElements::ClusterRevision, None),
     attr_data!(1, 6, on_off::AttributeId::OnOff, None),
     attr_data!(1, 6, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
+    attr_data!(1, 6, GlobalElements::EventList, None),
     attr_data!(1, 6, GlobalElements::AttributeList, None),
     attr_data!(1, 6, GlobalElements::FeatureMap, None),
     attr_data!(1, 6, GlobalElements::ClusterRevision, None),
@@ -188,6 +192,7 @@ static PART_3: &[TestAttrResp<'static>] = &[
     attr_data!(1, echo::ID, echo::AttributesDiscriminants::AttCustom, None),
     attr_data!(1, echo::ID, GlobalElements::GeneratedCmdList, None),
     attr_data!(1, echo::ID, GlobalElements::AcceptedCmdList, None),
+    attr_data!(1, echo::ID, GlobalElements::EventList, None),
     attr_data!(1, echo::ID, GlobalElements::AttributeList, None),
     attr_data!(1, echo::ID, GlobalElements::FeatureMap, None),
     attr_data!(1, echo::ID, GlobalElements::ClusterRevision, None),
@@ -195,6 +200,10 @@ static PART_3: &[TestAttrResp<'static>] = &[
 
 #[test]
 fn test_long_read_success() {
+    const PART_1: usize = 38;
+    const PART_2: usize = 36;
+    const PART_3: usize = 37;
+
     // Read the entire attribute database, which requires 3 reads to complete
     init_env_logger();
 
@@ -209,7 +218,7 @@ fn test_long_read_success() {
             &TLVTest::read(
                 TestReadReq::reqs(&[AttrPath::new(&GenericPath::new(None, None, None))]),
                 TestReportDataMsg {
-                    attr_reports: Some(PART_1),
+                    attr_reports: Some(&ATTR_RESPS[..PART_1]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -220,7 +229,7 @@ fn test_long_read_success() {
                     status: IMStatusCode::Success,
                 },
                 TestReportDataMsg {
-                    attr_reports: Some(PART_2),
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][..PART_2]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -231,7 +240,18 @@ fn test_long_read_success() {
                     status: IMStatusCode::Success,
                 },
                 TestReportDataMsg {
-                    attr_reports: Some(PART_3),
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][..PART_3]),
+                    more_chunks: Some(true),
+                    ..Default::default()
+                },
+                ReplyProcessor::remove_attr_data,
+            ),
+            &TLVTest::continue_report(
+                StatusResp {
+                    status: IMStatusCode::Success,
+                },
+                TestReportDataMsg {
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..]),
                     suppress_response: Some(true),
                     ..Default::default()
                 },
@@ -243,6 +263,10 @@ fn test_long_read_success() {
 
 #[test]
 fn test_long_read_subscription_success() {
+    const PART_1: usize = 38;
+    const PART_2: usize = 36;
+    const PART_3: usize = 36;
+
     // Subscribe to the entire attribute database, which requires 3 reads to complete
     init_env_logger();
 
@@ -262,7 +286,7 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(PART_1),
+                    attr_reports: Some(&ATTR_RESPS[..PART_1]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -274,7 +298,7 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(PART_2),
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][..PART_2]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -286,7 +310,19 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(PART_3),
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][..PART_3]),
+                    more_chunks: Some(true),
+                    ..Default::default()
+                },
+                ReplyProcessor::remove_attr_data,
+            ),
+            &TLVTest::continue_report(
+                StatusResp {
+                    status: IMStatusCode::Success,
+                },
+                TestReportDataMsg {
+                    subscription_id: Some(1),
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..]),
                     ..Default::default()
                 },
                 ReplyProcessor::remove_attr_data,

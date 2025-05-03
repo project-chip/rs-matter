@@ -36,24 +36,29 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Fmt
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo fmt -- --check
 
+      - name: Clippy - All
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cargo clippy --no-deps -- -Dwarnings
+
       - name: Clippy
-        run: cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log -- -Dwarnings
+        run: cd rs-matter; cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log -- -Dwarnings
 
       - name: Clippy | defmt
-        run: export DEFMT_LOG=trace;cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt -- -Dwarnings
+        run: export DEFMT_LOG=trace; cd rs-matter; cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt -- -Dwarnings
 
       - name: Build
-        run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
+        run: cd rs-matter; cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
 
       - name: Benchmark
-        run: cargo bench --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
+        run: cd rs-matter; cargo bench --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
 
       - name: Test
         if: matrix.features == 'os'
-        run: cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
+        run: cd rs-matter; cargo test --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
 
       - name: Examples
-        if: matrix.features == 'os'
-        run: cargo build --examples --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},examples,log
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cargo build --examples --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log

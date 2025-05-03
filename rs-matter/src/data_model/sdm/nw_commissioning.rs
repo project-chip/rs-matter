@@ -173,9 +173,11 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
                     id,
                     Attributes::MaxNetworks
                         | Attributes::Networks
+                        | Attributes::ConnectMaxTimeSecs
                         | Attributes::InterfaceEnabled
                         | Attributes::LastNetworkingStatus
                         | Attributes::LastNetworkID
+                        | Attributes::LastConnectErrorValue
                 ),
             }
         },
@@ -192,7 +194,8 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
                 FeatureMap::Wifi => {
                     matches!(
                         id,
-                        |Commands::ScanNetworks| Commands::AddOrUpdateWifiNetwork
+                        Commands::ScanNetworks
+                            | Commands::AddOrUpdateWifiNetwork
                             | Commands::RemoveNetwork
                             | Commands::ConnectNetwork
                             | Commands::ReorderNetwork
@@ -201,7 +204,8 @@ const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
                 FeatureMap::Thread => {
                     matches!(
                         id,
-                        |Commands::ScanNetworks| Commands::AddOrUpdateThreadNetwork
+                        Commands::ScanNetworks
+                            | Commands::AddOrUpdateThreadNetwork
                             | Commands::RemoveNetwork
                             | Commands::ConnectNetwork
                             | Commands::ReorderNetwork

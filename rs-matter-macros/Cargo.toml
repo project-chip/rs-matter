@@ -24,5 +24,5 @@ quote = "1"
 proc-macro2 = "1"
 proc-macro-crate = "3"
 
-rs-matter-data-model = { path = "../rs-matter-data-model", features = ["idl"] }
+rs-matter-data-model = { path = "../rs-matter-data-model" }
 rs-matter-macros-impl = { path = "../rs-matter-macros-impl" }

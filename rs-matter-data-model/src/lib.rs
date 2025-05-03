@@ -1,7 +1,5 @@
-#[cfg(feature = "idl")]
-pub mod idl;
-
 pub mod endpoint_composition;
+pub mod idl;
 
 pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-clusters.matter");
 
