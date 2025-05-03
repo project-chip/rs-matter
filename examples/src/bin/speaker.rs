@@ -29,27 +29,32 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::info;
 use media_playback::{
     ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
-    FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
-    SkipBackwardRequest, SkipForwardRequest, StatusEnum,
+    FastForwardRequest, HandlerAsyncAdaptor, PlaybackResponseBuilder, PlaybackStateEnum,
+    RewindRequest, SeekRequest, SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
 
 use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::data_model::device_types::DEV_TYPE_SMART_SPEAKER;
-use rs_matter::data_model::objects::{InvokeContext, ReadContext, *};
+use rs_matter::data_model::networks::unix::UnixNetifs;
+use rs_matter::data_model::objects::{
+    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, InvokeContext,
+    Node, ReadContext,
+};
 use rs_matter::data_model::root_endpoint;
+use rs_matter::data_model::sdm::net_comm::NetworkType;
 use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::data_model::system_model::descriptor;
+use rs_matter::data_model::system_model::desc::{self, ClusterHandler as _};
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::test_device;
 use rs_matter::tlv::TLVBuilderParent;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::with;
+use rs_matter::{clusters, test_device};
 
 // Import the MediaPlayback cluster from `rs-matter`.
 //
@@ -124,35 +129,40 @@ fn main() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint::endpoint(0, root_endpoint::OperNwType::Ethernet),
+        root_endpoint::root_endpoint(NetworkType::Ethernet),
         Endpoint {
             id: 1,
             device_types: &[DEV_TYPE_SMART_SPEAKER],
-            clusters: &[descriptor::CLUSTER, SpeakerHandler::CLUSTER],
+            clusters: clusters!(desc::DescHandler::CLUSTER, SpeakerHandler::CLUSTER),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Speaker handler and its descriptor.
-fn dm_handler<'a>(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'a {
+fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
     (
         NODE,
-        root_endpoint::eth_handler(0, matter.rand())
-            .chain(
-                1,
-                descriptor::ID,
-                Async(descriptor::DescriptorCluster::new(Dataver::new_rand(
-                    matter.rand(),
-                ))),
-            )
-            .chain(
-                1,
-                SpeakerHandler::CLUSTER.id,
-                media_playback::HandlerAsyncAdaptor(SpeakerHandler::new(Dataver::new_rand(
-                    matter.rand(),
-                ))),
+        root_endpoint::with_eth(
+            &(),
+            &UnixNetifs,
+            matter.rand(),
+            root_endpoint::with_sys(
+                &false,
+                matter.rand(),
+                EmptyHandler
+                    .chain(
+                        1,
+                        desc::DescHandler::CLUSTER.id,
+                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    )
+                    .chain(
+                        1,
+                        SpeakerHandler::CLUSTER.id,
+                        SpeakerHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                    ),
             ),
+        ),
     )
 }
 
@@ -169,6 +179,11 @@ impl SpeakerHandler {
             dataver,
             state: Cell::new(media_playback::PlaybackStateEnum::NotPlaying),
         }
+    }
+
+    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
+    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
+        HandlerAsyncAdaptor(self)
     }
 
     /// Update the state of the handler

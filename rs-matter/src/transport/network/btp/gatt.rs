@@ -137,6 +137,8 @@ impl AdvData {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattPeripheralEvent<'a> {
+    NotifyConnected(BtAddr),
+    NotifyDisconnected(BtAddr),
     /// A GATT central has subscribed for notifications from characteristic `C2`.
     /// In other words, the GATT central is now ready to receive BTP packets.
     ///

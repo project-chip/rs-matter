@@ -167,6 +167,14 @@ where
         }
     }
 
+    pub fn conn_ct(&self) -> usize {
+        self.context.borrow().conn_ct()
+    }
+
+    pub async fn wait_changed(&self) {
+        self.context.borrow().wait_changed().await
+    }
+
     /// Wait until there is at least one Matter (a.k.a. BTP SDU) packet available for consumption.
     pub async fn wait_available(&self) -> Result<(), Error> {
         self.context.borrow().wait_available().await

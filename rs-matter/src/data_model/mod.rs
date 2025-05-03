@@ -19,6 +19,7 @@ pub mod basic_info;
 mod clusters;
 pub mod core;
 pub mod device_types;
+pub mod networks;
 pub mod objects;
 pub mod on_off;
 pub mod root_endpoint;

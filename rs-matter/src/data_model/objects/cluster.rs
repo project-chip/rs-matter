@@ -217,8 +217,20 @@ impl<'a> Cluster<'a> {
                 self.encode_attribute_ids(&AttrDataWriter::TAG, &mut *writer)?;
                 writer.complete()
             }
-            GlobalElements::FeatureMap => writer.set(self.feature_map),
-            GlobalElements::ClusterRevision => writer.set(self.revision),
+            GlobalElements::FeatureMap => {
+                debug!(
+                    "Endpt(0x??)::Cluster(0x{:04x})::Attr::FeatureMap(0xfffc)::Read -> Ok({:08x})",
+                    self.id, self.feature_map
+                );
+                writer.set(self.feature_map)
+            }
+            GlobalElements::ClusterRevision => {
+                debug!(
+                    "Endpt(0x??)::Cluster(0x{:04x})::Attr::ClusterRevision(0xfffd)::Read -> Ok({})",
+                    self.id, self.revision
+                );
+                writer.set(self.revision)
+            }
             other => {
                 error!("Attribute {:?} not supported", other);
                 Err(ErrorCode::AttributeNotFound.into())
@@ -227,26 +239,50 @@ impl<'a> Cluster<'a> {
     }
 
     fn encode_attribute_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        debug!("Endpt(0x??)::Cluster(:04x)::Attr::AttributeIDs(0xNN)::Read -> Ok([");
+
         tw.start_array(tag)?;
-        for a in self.attributes() {
-            tw.u32(&TLVTag::Anonymous, a.id)?;
+        for attr in self.attributes() {
+            tw.u32(&TLVTag::Anonymous, attr.id)?;
+            debug!("    Attr: 0x{:02x},", attr.id);
         }
 
-        tw.end_container()
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 
     fn encode_accepted_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AcceptedCmdIDs(0xfff9)::Read -> Ok([",
+            self.id
+        );
         Self::encode_command_ids(tag, tw, self.commands().map(|cmd| cmd.id))
     }
 
     fn encode_generated_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read -> Ok([",
+            self.id
+        );
         Self::encode_command_ids(tag, tw, self.commands().filter_map(|cmd| cmd.resp_id))
     }
 
     fn encode_event_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::EventIDs(0xfffa)::Read -> Ok([",
+            self.id
+        );
+
         // No events for now
         tw.start_array(tag)?;
-        tw.end_container()
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 
     fn encode_command_ids<W: TLVWrite>(
@@ -257,9 +293,14 @@ impl<'a> Cluster<'a> {
         tw.start_array(tag)?;
         for cmd in cmds {
             tw.u32(&TLVTag::Anonymous, cmd)?;
+            debug!("    Cmd: 0x{:02x}, ", cmd);
         }
 
-        tw.end_container()
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 }
 
@@ -316,6 +357,54 @@ impl defmt::Format for Cluster<'_> {
     }
 }
 
+/// A macro to generate the clusters for an endpoint.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! clusters {
+    (sys; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            <$crate::data_model::system_model::desc::DescHandler as $crate::data_model::system_model::desc::ClusterHandler>::CLUSTER,
+            <$crate::data_model::system_model::acl::AclHandler as $crate::data_model::system_model::acl::ClusterHandler>::CLUSTER,
+            <$crate::data_model::basic_info::BasicInfoHandler as $crate::data_model::basic_info::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::gen_comm::GenCommHandler as $crate::data_model::sdm::gen_comm::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::gen_diag::GenDiagHandler as $crate::data_model::sdm::gen_diag::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::adm_comm::AdminCommHandler as $crate::data_model::sdm::adm_comm::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::noc::NocHandler as $crate::data_model::sdm::noc::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::grp_key_mgmt::GrpKeyMgmtHandler as $crate::data_model::sdm::grp_key_mgmt::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    (eth; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            sys;
+            $crate::data_model::sdm::net_comm::NetworkType::Ethernet.cluster(),
+            <$crate::data_model::sdm::eth_diag::EthDiagHandler as $crate::data_model::sdm::eth_diag::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    (thread; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            sys;
+            $crate::data_model::sdm::net_comm::NetworkType::Thread.cluster(),
+            <$crate::data_model::sdm::thread_diag::ThreadDiagHandler as $crate::data_model::sdm::thread_diag::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    (wifi; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            sys;
+            $crate::data_model::sdm::net_comm::NetworkType::Wifi.cluster(),
+            <$crate::data_model::sdm::wifi_diag::WifiDiagHandler as $crate::data_model::sdm::wifi_diag::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    ($($cluster:expr $(,)?)*) => {
+        &[
+            $($cluster,)*
+        ]
+    }
+}
+
 /// A macro that generates a "with" fn for matching attributes and commands
 ///
 /// Usage:
@@ -338,6 +427,25 @@ macro_rules! with {
         #[allow(clippy::collapsible_match)]
         |attr, _, _| {
             if !attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL) {
+                true
+            } else if let Ok(l) = attr.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+    (system) => {
+        |attr, _, _| attr.is_system()
+    };
+    (system; $($id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |attr, _, _| {
+            if attr.is_system() {
                 true
             } else if let Ok(l) = attr.id.try_into() {
                 #[allow(unreachable_patterns)]

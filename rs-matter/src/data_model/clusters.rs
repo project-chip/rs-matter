@@ -27,6 +27,7 @@ crate::import!(
     BasicInformation,
     Descriptor,
     EthernetNetworkDiagnostics,
+    GeneralDiagnostics,
     GeneralCommissioning,
     GroupKeyManagement,
     NetworkCommissioning,
@@ -34,5 +35,5 @@ crate::import!(
     OperationalCredentials,
     ThreadNetworkDiagnostics,
     UnitTesting,
-    WifiNetworkDiagnostics,
+    WiFiNetworkDiagnostics,
 );
