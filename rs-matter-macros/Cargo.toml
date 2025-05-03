@@ -23,6 +23,19 @@ syn = { version = "2", features = ["extra-traits", "parsing"] }
 quote = "1"
 proc-macro2 = "1"
 proc-macro-crate = "3"
+miette = { version = "5", features = ["fancy"] }
+nom = "7"
+nom-greedyerror = "0.5"
+nom-supreme = "0.8"
+nom_locate = "4.2"
+convert_case = "0.6"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
 
-rs-matter-data-model = { path = "../rs-matter-data-model" }
-rs-matter-macros-impl = { path = "../rs-matter-macros-impl" }
+[dev-dependencies]
+assert-tokenstreams-eq = "0.1.0"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+divan = "0.1.4"
+rstest = "0.18.2"
+clap = { version = "4", features = ["derive"] }

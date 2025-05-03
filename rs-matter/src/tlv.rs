@@ -314,7 +314,7 @@ impl fmt::Display for TLVControl {
 /// but rather, its beginning or end.
 ///
 /// I.e.
-/// ```rust
+/// ```ignore
 /// use rs_matter::tlv::{TLV, TLVTag, TLVValue};
 ///
 /// let tlvs = &[

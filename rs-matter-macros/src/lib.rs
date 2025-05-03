@@ -19,33 +19,54 @@ use std::collections::HashSet;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Punct};
+
 use quote::quote;
-use rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL;
-use rs_matter_macros_impl::idl::{cluster, IdlGenerateContext};
+
+use crate::idl::{cluster, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL};
+
 use syn::{parse::Parse, parse_macro_input, DeriveInput};
 
-fn get_crate_name() -> String {
-    let found_crate = proc_macro_crate::crate_name("rs-matter").unwrap_or_else(|err| {
-        eprintln!("Warning: defaulting to `crate` {err}");
-        proc_macro_crate::FoundCrate::Itself
-    });
+mod idl;
+mod tlv;
 
-    match found_crate {
-        proc_macro_crate::FoundCrate::Itself => String::from("crate"),
-        proc_macro_crate::FoundCrate::Name(name) => name,
-    }
-}
-
-#[proc_macro_derive(ToTLV, attributes(tlvargs, tagval, enumval))]
-pub fn derive_totlv(item: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(item as DeriveInput);
-    rs_matter_macros_impl::tlv::derive_totlv(ast, get_crate_name()).into()
-}
-
+/// Generate code that derives `FromTLV` for the provided Rust type.
 #[proc_macro_derive(FromTLV, attributes(tlvargs, tagval, enumval))]
 pub fn derive_fromtlv(item: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
-    rs_matter_macros_impl::tlv::derive_fromtlv(ast, get_crate_name()).into()
+    crate::tlv::derive_fromtlv(ast, get_crate_name()).into()
+}
+
+/// Generate code that derives `ToTLV` for the provided Rust type.
+#[proc_macro_derive(ToTLV, attributes(tlvargs, tagval, enumval))]
+pub fn derive_totlv(item: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(item as DeriveInput);
+    crate::tlv::derive_totlv(ast, get_crate_name()).into()
+}
+
+/// Generate code for one or more Matter cluster definitions as specified in the Matter IDL/ZAP file.
+///
+/// The IDL file used is rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL, so
+/// at this time only "standard" clusters can be imported.
+///
+/// `import!(OnOff)` imports the OnOff cluster
+#[proc_macro]
+pub fn import(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as MatterImportArgs);
+
+    let idl = crate::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
+    let context = IdlGenerateContext::new(input.rs_matter_crate);
+
+    let clusters = idl
+        .clusters
+        .iter()
+        .filter(|c| input.clusters.is_empty() || input.clusters.contains(&c.id))
+        .map(|c| cluster(c, &context));
+
+    quote!(
+        // IDL-generated code:
+        #(#clusters)*
+    )
+    .into()
 }
 
 #[derive(Debug)]
@@ -85,28 +106,14 @@ impl Parse for MatterImportArgs {
     }
 }
 
-/// Generate code for one or more Matter cluster definitions as specified in the Matter IDL/ZAP file.
-///
-/// The IDL file used is rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL, so
-/// at this time only "standard" clusters can be imported.
-///
-/// `import!(OnOff)` imports the OnOff cluster
-#[proc_macro]
-pub fn import(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as MatterImportArgs);
+fn get_crate_name() -> String {
+    let found_crate = proc_macro_crate::crate_name("rs-matter").unwrap_or_else(|err| {
+        eprintln!("Warning: defaulting to `crate` {err}");
+        proc_macro_crate::FoundCrate::Itself
+    });
 
-    let idl = rs_matter_data_model::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
-    let context = IdlGenerateContext::new(input.rs_matter_crate);
-
-    let clusters = idl
-        .clusters
-        .iter()
-        .filter(|c| input.clusters.is_empty() || input.clusters.contains(&c.id))
-        .map(|c| cluster(c, &context));
-
-    quote!(
-        // IDL-generated code:
-        #(#clusters)*
-    )
-    .into()
+    match found_crate {
+        proc_macro_crate::FoundCrate::Itself => String::from("crate"),
+        proc_macro_crate::FoundCrate::Name(name) => name,
+    }
 }
