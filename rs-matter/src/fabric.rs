@@ -28,25 +28,11 @@ use crate::data_model::objects::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
 use crate::mdns::{Mdns, ServiceMode};
-use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, TagType, ToTLV, UtfStr};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
-
-#[derive(Debug, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a", start = 1)]
-pub struct FabricDescriptor<'a> {
-    root_public_key: OctetStr<'a>,
-    vendor_id: u16,
-    fabric_id: u64,
-    node_id: u64,
-    label: UtfStr<'a>,
-    // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
-    #[tagval(0xFE)]
-    pub fab_idx: NonZeroU8,
-}
 
 /// Fabric type
 #[derive(Debug, ToTLV, FromTLV)]
@@ -231,6 +217,16 @@ impl Fabric {
         self.fab_idx
     }
 
+    /// Return the fabric's Vendor ID
+    pub fn vendor_id(&self) -> u16 {
+        self.vendor_id
+    }
+
+    /// Return the fabric's label
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
     /// Return the fabric's Root CA in encoded TLV form
     ///
     /// Use `CertRef` to decode on the fly
@@ -258,23 +254,6 @@ impl Fabric {
         &self.ipk
     }
 
-    /// Return the fabric's descriptor
-    pub fn descriptor<'a>(
-        &'a self,
-        root_ca_cert: &'a CertRef<'a>,
-    ) -> Result<FabricDescriptor<'a>, Error> {
-        let desc = FabricDescriptor {
-            root_public_key: OctetStr::new(root_ca_cert.pubkey()?),
-            vendor_id: self.vendor_id,
-            fabric_id: self.fabric_id,
-            node_id: self.node_id,
-            label: self.label.as_str(),
-            fab_idx: self.fab_idx,
-        };
-
-        Ok(desc)
-    }
-
     /// Return an iterator over the ACL entries of the fabric
     pub fn acl_iter(&self) -> impl Iterator<Item = &AclEntry> {
         self.acl.iter()
@@ -297,6 +276,29 @@ impl Fabric {
         Ok(self.acl.len() - 1)
     }
 
+    /// Add a new ACL entry to the fabric using the supplied initializer.
+    ///
+    /// Return the index of the added entry.
+    fn acl_add_init<I>(&mut self, init: I) -> Result<usize, Error>
+    where
+        I: Init<AclEntry, Error>,
+    {
+        // if entry.auth_mode() == AuthMode::Pase {
+        //     // Reserved for future use
+        //     Err(ErrorCode::ConstraintError)?;
+        // }
+
+        self.acl.push_init(init, || ErrorCode::NoSpace.into())?;
+
+        let idx = self.acl.len() - 1;
+        let entry = &mut self.acl[idx];
+
+        // Overwrite the fabric index with our accessing fabric index
+        entry.fab_idx = Some(self.fab_idx);
+
+        Ok(idx)
+    }
+
     /// Update an existing ACL entry in the fabric
     fn acl_update(&mut self, idx: usize, mut entry: AclEntry) -> Result<(), Error> {
         if self.acl.len() <= idx {
@@ -307,6 +309,27 @@ impl Fabric {
         entry.fab_idx = Some(self.fab_idx);
 
         self.acl[idx] = entry;
+
+        Ok(())
+    }
+
+    /// Update an existing ACL entry in the fabric using the supplied initializer
+    fn acl_update_init<I>(&mut self, idx: usize, init: I) -> Result<(), Error>
+    where
+        I: Init<AclEntry, Error>,
+    {
+        if self.acl.len() <= idx {
+            return Err(ErrorCode::NotFound.into());
+        }
+
+        // TODO: Needs #214
+        let mut entry = MaybeUninit::uninit();
+        let entry = entry.try_init_with(init)?.clone();
+
+        self.acl[idx] = entry;
+
+        // Overwrite the fabric index with our accessing fabric index
+        self.acl[idx].fab_idx = Some(self.fab_idx);
 
         Ok(())
     }
@@ -338,7 +361,7 @@ impl Fabric {
             }
         }
 
-        error!(
+        debug!(
             "ACL Disallow for subjects {} fab idx {}",
             req.accessor().subjects(),
             req.accessor().fab_idx
@@ -654,7 +677,7 @@ impl FabricMgr {
         //     ],
         //     Extension: []
         // }
-        if req.accessor().auth_mode() == AuthMode::Pase {
+        if req.accessor().auth_mode() == Some(AuthMode::Pase) {
             return true;
         }
 
@@ -682,6 +705,22 @@ impl FabricMgr {
         Ok(index)
     }
 
+    /// Add a new ACL entry to the fabric with the provided local index and initializer
+    ///
+    /// Return the index of the added entry.
+    pub fn acl_add_init<I>(&mut self, fab_idx: NonZeroU8, init: I) -> Result<usize, Error>
+    where
+        I: Init<AclEntry, Error>,
+    {
+        let index = self
+            .get_mut(fab_idx)
+            .ok_or(ErrorCode::NotFound)?
+            .acl_add_init(init)?;
+        self.changed = true;
+
+        Ok(index)
+    }
+
     /// Update an existing ACL entry in the fabric with the provided local index
     pub fn acl_update(
         &mut self,
@@ -692,6 +731,24 @@ impl FabricMgr {
         self.get_mut(fab_idx)
             .ok_or(ErrorCode::NotFound)?
             .acl_update(idx, entry)?;
+        self.changed = true;
+
+        Ok(())
+    }
+
+    /// Update an existing ACL entry in the fabric with the provided local index and initializer
+    pub fn acl_update_init<I>(
+        &mut self,
+        fab_idx: NonZeroU8,
+        idx: usize,
+        init: I,
+    ) -> Result<(), Error>
+    where
+        I: Init<AclEntry, Error>,
+    {
+        self.get_mut(fab_idx)
+            .ok_or(ErrorCode::NotFound)?
+            .acl_update_init(idx, init)?;
         self.changed = true;
 
         Ok(())

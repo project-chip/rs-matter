@@ -134,8 +134,8 @@ impl TestChecker {
     }
 }
 
-/// A sample cluster that echoes back the input data. Useful for testing.
-pub struct EchoCluster {
+/// A sample cluster handler that echoes back the input data. Useful for testing.
+pub struct EchoHandler {
     pub data_ver: Dataver,
     pub multiplier: u8,
     pub att1: Cell<u16>,
@@ -144,7 +144,7 @@ pub struct EchoCluster {
     pub att_custom: Cell<u32>,
 }
 
-impl EchoCluster {
+impl EchoHandler {
     pub const fn new(multiplier: u8, data_ver: Dataver) -> Self {
         Self {
             data_ver,
@@ -278,17 +278,17 @@ impl EchoCluster {
     }
 }
 
-impl Handler for EchoCluster {
+impl Handler for EchoHandler {
     fn read(
         &self,
         ctx: &ReadContext<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        EchoCluster::read(self, ctx, encoder)
+        EchoHandler::read(self, ctx, encoder)
     }
 
     fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
-        EchoCluster::write(self, ctx)
+        EchoHandler::write(self, ctx)
     }
 
     fn invoke(
@@ -296,8 +296,8 @@ impl Handler for EchoCluster {
         ctx: &InvokeContext<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        EchoCluster::invoke(self, ctx, encoder)
+        EchoHandler::invoke(self, ctx, encoder)
     }
 }
 
-impl NonBlockingHandler for EchoCluster {}
+impl NonBlockingHandler for EchoHandler {}

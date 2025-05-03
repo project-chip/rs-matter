@@ -30,38 +30,40 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use comm::WifiNwCommCluster;
 use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use log::{info, warn};
+use log::info;
 
 use rs_matter::core::Matter;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::objects::*;
+use rs_matter::data_model::networks::unix::UnixNetifs;
+use rs_matter::data_model::networks::wireless::{
+    NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,
+};
+use rs_matter::data_model::objects::{
+    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, Node,
+};
 use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::data_model::root_endpoint;
-use rs_matter::data_model::sdm::wifi_nw_diagnostics::{
-    self, WiFiSecurity, WiFiVersion, WifiNwDiagCluster, WifiNwDiagData,
-};
+use rs_matter::data_model::sdm::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
+use rs_matter::data_model::sdm::wifi_diag::WifiDiag;
 use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::data_model::system_model::descriptor;
+use rs_matter::data_model::system_model::desc::{self, ClusterHandler as _};
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::test_device;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::utils::sync::{blocking::raw::StdRawMutex, Notification};
-use rs_matter::MATTER_PORT;
+use rs_matter::utils::sync::blocking::raw::StdRawMutex;
+use rs_matter::{clusters, test_device};
+use rs_matter::{devices, MATTER_PORT};
 
-#[path = "../common/comm.rs"]
-mod comm;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
@@ -94,11 +96,17 @@ fn main() -> Result<(), Error> {
     // Our on-off cluster
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
-    // A notification when the Wifi is setup, so that Matter over UDP can start
-    let wifi_complete = Notification::new();
+    // A storage for the Wifi networks
+    let networks = WifiNetworks::<3, NoopRawMutex>::new();
+
+    // The network controller
+    // We would be using a "fake" network controller that does not actually manage any Wifi networks
+    let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
+    let net_ctl =
+        NetCtlWithStatusImpl::new(&net_ctl_state, NoopWirelessNetCtl::new(NetworkType::Wifi));
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = Async(dm_handler(&matter, &on_off, &wifi_complete));
+    let dm_handler = dm_handler(&matter, &on_off, &net_ctl, &networks);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -127,8 +135,9 @@ fn main() -> Result<(), Error> {
     let dir = std::env::temp_dir().join("rs-matter");
 
     psm.load(&dir, &matter)?;
+    psm.load_networks(&dir, &networks)?;
 
-    let mut persist = pin!(psm.run(dir, &matter));
+    let mut persist = pin!(psm.run_with_networks(dir, &matter, Some(&networks)));
 
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter));
@@ -145,15 +154,8 @@ fn main() -> Result<(), Error> {
         ));
 
         let mut transport = pin!(matter.run(&btp, &btp, DiscoveryCapabilities::BLE));
-
-        let mut wifi_complete_task = pin!(async {
-            wifi_complete.wait().await;
-            warn!(
-                "Wifi setup complete, giving 4 seconds to BTP to finish any outstanding messages"
-            );
-
-            Timer::after(Duration::from_secs(4)).await;
-
+        let mut wifi_prov_task = pin!(async {
+            NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
             Ok(())
         });
 
@@ -161,7 +163,7 @@ fn main() -> Result<(), Error> {
         let all = select4(
             &mut transport,
             &mut bluetooth,
-            select(&mut wifi_complete_task, &mut persist).coalesce(),
+            select(&mut wifi_prov_task, &mut persist).coalesce(),
             select(&mut respond, &mut device).coalesce(),
         );
 
@@ -193,55 +195,49 @@ fn main() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint::endpoint(0, root_endpoint::OperNwType::Wifi),
+        root_endpoint::root_endpoint(NetworkType::Wifi),
         Endpoint {
             id: 1,
-            device_types: &[DEV_TYPE_ON_OFF_LIGHT],
-            clusters: &[descriptor::CLUSTER, on_off::OnOffHandler::CLUSTER],
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            clusters: clusters!(desc::DescHandler::CLUSTER, on_off::OnOffHandler::CLUSTER),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn dm_handler<'a, N>(
     matter: &'a Matter<'a>,
     on_off: &'a on_off::OnOffHandler,
-    nw_setup_complete: &'a Notification<NoopRawMutex>,
-) -> impl Metadata + NonBlockingHandler + 'a {
+    net_ctl: &'a N,
+    networks: &'a dyn Networks,
+) -> impl AsyncMetadata + AsyncHandler + 'a
+where
+    N: NetCtl + NetCtlStatus + WifiDiag,
+{
     (
         NODE,
-        root_endpoint::handler(
-            0,
-            Async(WifiNwCommCluster::new(
-                Dataver::new_rand(matter.rand()),
-                nw_setup_complete,
-            )),
-            wifi_nw_diagnostics::ID,
-            Async(WifiNwDiagCluster::new(
-                Dataver::new_rand(matter.rand()),
-                WifiNwDiagData {
-                    bssid: [0; 6],
-                    security_type: WiFiSecurity::Wpa2Personal,
-                    wifi_version: WiFiVersion::B,
-                    channel_number: 20,
-                    rssi: 0,
-                },
-            )),
-            &false,
+        root_endpoint::with_wifi(
+            &(),
+            &UnixNetifs,
+            net_ctl,
+            networks,
             matter.rand(),
-        )
-        .chain(
-            1,
-            descriptor::ID,
-            Async(descriptor::DescriptorCluster::new(Dataver::new_rand(
+            root_endpoint::with_sys(
+                &false,
                 matter.rand(),
-            ))),
-        )
-        .chain(
-            1,
-            on_off::OnOffHandler::CLUSTER.id,
-            Async(on_off::HandlerAdaptor(on_off)),
+                EmptyHandler
+                    .chain(
+                        1,
+                        desc::DescHandler::CLUSTER.id,
+                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    )
+                    .chain(
+                        1,
+                        on_off::OnOffHandler::CLUSTER.id,
+                        Async(on_off::HandlerAdaptor(on_off)),
+                    ),
+            ),
         ),
     )
 }

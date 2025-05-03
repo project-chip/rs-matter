@@ -86,6 +86,7 @@ pub mod crypto;
 pub mod data_model;
 pub mod error;
 pub mod fabric;
+pub mod failsafe;
 pub mod group_keys;
 pub mod interaction_model;
 pub mod mdns;

@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
+use core::sync::atomic::Ordering;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use portable_atomic::AtomicUsize;
 
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
@@ -190,6 +193,8 @@ where
     pub(crate) recv_notif: Notification<M>,
     pub(crate) ack_notif: Notification<M>,
     pub(crate) send_notif: Notification<M>,
+    pub(crate) changed_notif: Notification<M>,
+    pub(crate) conn_ct: AtomicUsize,
 }
 
 impl<M> Default for BtpContext<M>
@@ -215,6 +220,8 @@ where
             recv_notif: Notification::new(),
             ack_notif: Notification::new(),
             send_notif: Notification::new(),
+            changed_notif: Notification::new(),
+            conn_ct: AtomicUsize::new(0),
         }
     }
 
@@ -227,6 +234,8 @@ where
             recv_notif: Notification::new(),
             ack_notif: Notification::new(),
             send_notif: Notification::new(),
+            changed_notif: Notification::new(),
+            conn_ct: AtomicUsize::new(0),
         })
     }
 }
@@ -239,6 +248,8 @@ where
     /// so that the peripheral can report to it subscribe, unsubscribe and write events.
     pub(crate) fn on_event(&self, event: GattPeripheralEvent) {
         let result = match event {
+            GattPeripheralEvent::NotifyConnected(address) => self.on_connect(address),
+            GattPeripheralEvent::NotifyDisconnected(address) => self.on_disconnect(address),
             GattPeripheralEvent::NotifySubscribed(address) => self.on_subscribe(address),
             GattPeripheralEvent::NotifyUnsubscribed(address) => self.on_unsubscribe(address),
             GattPeripheralEvent::Write {
@@ -310,6 +321,26 @@ where
     }
 
     /// Handles a subscribe event to characteristic `C2` from the GATT peripheral.
+    fn on_connect(&self, address: BtAddr) -> Result<(), Error> {
+        debug!("Connect request from {}", address);
+
+        self.conn_ct.fetch_add(1, Ordering::SeqCst);
+        self.changed_notif.notify();
+
+        Ok(())
+    }
+
+    /// Handles an unsubscribe event to characteristic `C2` from the GATT peripheral.
+    fn on_disconnect(&self, address: BtAddr) -> Result<(), Error> {
+        debug!("Disconnect request from {}", address);
+
+        self.conn_ct.fetch_sub(1, Ordering::SeqCst);
+        self.changed_notif.notify();
+
+        Ok(())
+    }
+
+    /// Handles a subscribe event to characteristic `C2` from the GATT peripheral.
     fn on_subscribe(&self, address: BtAddr) -> Result<(), Error> {
         debug!("Subscribe request from {}", address);
 
@@ -329,6 +360,8 @@ where
                 warn!("No session for address {}", address);
             }
 
+            self.changed_notif.notify();
+
             Ok(())
         })
     }
@@ -337,7 +370,19 @@ where
     fn on_unsubscribe(&self, address: BtAddr) -> Result<(), Error> {
         debug!("Unsubscribe request from {}", address);
 
-        self.remove(|session| session.address() == address)
+        self.remove(|session| session.address() == address)?;
+
+        self.changed_notif.notify();
+
+        Ok(())
+    }
+
+    pub fn conn_ct(&self) -> usize {
+        self.conn_ct.load(Ordering::SeqCst)
+    }
+
+    pub async fn wait_changed(&self) {
+        self.changed_notif.wait().await;
     }
 
     /// Removes all sesssions that match the provided condition.

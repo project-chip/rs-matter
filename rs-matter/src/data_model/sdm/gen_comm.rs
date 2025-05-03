@@ -15,11 +15,14 @@
  *    limitations under the License.
  */
 
+//! This module contains the implementation of the General Commissioning cluster and its handler.
+
 use crate::data_model::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 
 pub use crate::data_model::clusters::general_commissioning::*;
+use crate::with;
 
 impl CommissioningErrorEnum {
     fn map(result: Result<(), Error>) -> Result<Self, Error> {
@@ -37,7 +40,7 @@ impl CommissioningErrorEnum {
 
 /// A trait indicating the commissioning policy supported by `rs-matter`.
 /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
-pub trait CommissioningPolicy {
+pub trait CommPolicy {
     /// Return true if the device supports concurrent connection
     /// (i.e. co-existence of the BLE/BTP network and the operational network during commissioning).
     fn concurrent_connection_supported(&self) -> bool;
@@ -56,9 +59,9 @@ pub trait CommissioningPolicy {
     fn location_cap(&self) -> RegulatoryLocationTypeEnum;
 }
 
-impl<T> CommissioningPolicy for &T
+impl<T> CommPolicy for &T
 where
-    T: CommissioningPolicy,
+    T: CommPolicy,
 {
     fn concurrent_connection_supported(&self) -> bool {
         (*self).concurrent_connection_supported()
@@ -81,7 +84,7 @@ where
     }
 }
 
-impl CommissioningPolicy for bool {
+impl CommPolicy for bool {
     fn concurrent_connection_supported(&self) -> bool {
         *self
     }
@@ -103,27 +106,30 @@ impl CommissioningPolicy for bool {
     }
 }
 
+/// The system implementation of a handler for the General Commissioning Matter cluster.
 #[derive(Clone)]
 pub struct GenCommHandler<'a> {
     dataver: Dataver,
-    commissioning_policy: &'a dyn CommissioningPolicy,
+    commissioning_policy: &'a dyn CommPolicy,
 }
 
 impl<'a> GenCommHandler<'a> {
-    pub const fn new(dataver: Dataver, commissioning_policy: &'a dyn CommissioningPolicy) -> Self {
+    /// Create a new instance of `GenCommHandler` with the given `Dataver` and `CommissioningPolicy`.
+    pub const fn new(dataver: Dataver, commissioning_policy: &'a dyn CommPolicy) -> Self {
         Self {
             dataver,
             commissioning_policy,
         }
     }
 
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
         HandlerAdaptor(self)
     }
 }
 
 impl ClusterHandler for GenCommHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER;
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_revision(1).with_attrs(with!(required));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()

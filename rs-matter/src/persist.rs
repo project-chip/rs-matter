@@ -25,12 +25,17 @@ pub mod fileio {
     use std::io::{Read, Write};
     use std::path::Path;
 
+    use embassy_futures::select::{select, Either};
+    use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+
+    use crate::data_model::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
     use crate::error::{Error, ErrorCode};
     use crate::utils::init::{init, Init};
     use crate::Matter;
 
     const KEY_FABRICS: &str = "fabrics";
     const KEY_BASIC_INFO: &str = "basic_info";
+    const KEY_WIRELESS_NETWORKS: &str = "wireless_networks";
 
     pub struct Psm<const N: usize = 4096> {
         buf: MaybeUninit<[u8; N]>,
@@ -96,11 +101,69 @@ pub mod fileio {
             Ok(())
         }
 
+        pub fn load_networks<const W: usize, M, T>(
+            &mut self,
+            dir: &Path,
+            networks: &WirelessNetworks<W, M, T>,
+        ) -> Result<(), Error>
+        where
+            M: RawMutex,
+            T: WirelessNetwork,
+        {
+            fs::create_dir_all(dir)?;
+
+            if let Some(data) = Self::load_key(dir, KEY_WIRELESS_NETWORKS, unsafe {
+                self.buf.assume_init_mut()
+            })? {
+                networks.load(data)?;
+            }
+
+            Ok(())
+        }
+
+        pub fn store_networks<const W: usize, M, T>(
+            &mut self,
+            dir: &Path,
+            networks: &WirelessNetworks<W, M, T>,
+        ) -> Result<(), Error>
+        where
+            M: RawMutex,
+            T: WirelessNetwork,
+        {
+            if networks.changed() {
+                fs::create_dir_all(dir)?;
+
+                if let Some(data) = networks.store(unsafe { self.buf.assume_init_mut() })? {
+                    Self::store_key(dir, KEY_WIRELESS_NETWORKS, data)?;
+                }
+            }
+
+            Ok(())
+        }
+
         pub async fn run<P: AsRef<Path>>(
             &mut self,
             dir: P,
             matter: &Matter<'_>,
         ) -> Result<(), Error> {
+            self.run_with_networks(
+                dir,
+                matter,
+                Option::<&WirelessNetworks<0, NoopRawMutex, Wifi>>::None,
+            )
+            .await
+        }
+
+        pub async fn run_with_networks<P: AsRef<Path>, const W: usize, M, T>(
+            &mut self,
+            dir: P,
+            matter: &Matter<'_>,
+            networks: Option<&WirelessNetworks<W, M, T>>,
+        ) -> Result<(), Error>
+        where
+            M: RawMutex,
+            T: WirelessNetwork,
+        {
             let dir = dir.as_ref();
 
             // NOTE: Calling `load` here does not make sense, because the `Psm::run` future / async method is executed
@@ -110,11 +173,24 @@ pub mod fileio {
             //
             // User is supposed to instead explicitly call `load` before calling `Psm::run` and `Matter::run`
             // self.load(dir, matter)?;
+            // self.load_networks(dir, networks)?;
 
             loop {
-                matter.wait_persist().await;
-
-                self.store(dir, matter)?;
+                if let Some(networks) = networks {
+                    match select(matter.wait_persist(), networks.wait_persist()).await {
+                        Either::First(_) => {
+                            matter.wait_persist().await;
+                            self.store(dir, matter)?;
+                        }
+                        Either::Second(_) => {
+                            networks.wait_persist().await;
+                            self.store_networks(dir, networks)?;
+                        }
+                    }
+                } else {
+                    matter.wait_persist().await;
+                    self.store(dir, matter)?;
+                }
             }
         }
 

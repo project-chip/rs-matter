@@ -17,10 +17,6 @@
 
 //! A module containing the mDNS code used in the examples
 
-use std::net::UdpSocket;
-
-use log::info;
-
 use rs_matter::core::Matter;
 use rs_matter::error::Error;
 
@@ -34,6 +30,10 @@ pub async fn run_mdns(_matter: &Matter<'_>) -> Result<(), Error> {
 #[cfg(not(any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))))]
 #[allow(unused)]
 pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
+    use std::net::UdpSocket;
+
+    use log::info;
+
     use rs_matter::transport::network::{Ipv4Addr, Ipv6Addr};
 
     // NOTE:

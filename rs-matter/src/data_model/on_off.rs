@@ -15,6 +15,11 @@
  *    limitations under the License.
  */
 
+//! This module contains the implementation of the On/Off cluster and its handler.
+//!
+//! While this cluster is not necessary for the operation of `rs-matter`, this
+//! implementation is useful in examples and tests.
+
 use core::cell::Cell;
 
 use crate::error::{Error, ErrorCode};
@@ -24,13 +29,15 @@ use super::objects::{Cluster, Dataver, InvokeContext, ReadContext};
 
 pub use crate::data_model::clusters::on_off::*;
 
-#[derive(Clone)]
+/// A sample implementation of a handler for the On/Off Matter cluster.
+#[derive(Clone, Debug)]
 pub struct OnOffHandler {
     dataver: Dataver,
     on: Cell<bool>,
 }
 
 impl OnOffHandler {
+    /// Creates a new instance of `OnOffHandler` with the given `Dataver`.
     pub const fn new(dataver: Dataver) -> Self {
         Self {
             dataver,
@@ -38,14 +45,17 @@ impl OnOffHandler {
         }
     }
 
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
         HandlerAdaptor(self)
     }
 
+    /// Return the current state of the On/Off attribute.
     pub fn get(&self) -> bool {
         self.on.get()
     }
 
+    /// Set the On/Off attribute to the given value and notify potential subscribers.
     pub fn set(&self, on: bool) {
         if self.on.get() != on {
             self.on.set(on);

@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-use crate::error::{Error, ErrorCode};
+use crate::data_model::system_model::acl::AccessControlEntryPrivilegeEnum;
+use crate::error::Error;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::bitflags::bitflags;
 
@@ -36,48 +37,50 @@ bitflags! {
     }
 }
 
-impl Privilege {
-    pub fn raw_value(&self) -> u8 {
-        if self.contains(Privilege::ADMIN) {
-            5
-        } else if self.contains(Privilege::OPERATE) {
-            4
-        } else if self.contains(Privilege::MANAGE) {
-            3
-        } else if self.contains(Privilege::VIEW) {
-            1
-        } else {
-            0
-        }
-    }
-}
-
 impl FromTLV<'_> for Privilege {
     fn from_tlv(t: &TLVElement) -> Result<Self, Error>
     where
         Self: Sized,
     {
-        match t.u32()? {
-            1 => Ok(Privilege::VIEW),
-            2 => {
-                error!("ProxyView privilege not yet supporteds");
-                Err(ErrorCode::Invalid.into())
-            }
-            3 => Ok(Privilege::OPERATE),
-            4 => Ok(Privilege::MANAGE),
-            5 => Ok(Privilege::ADMIN),
-            _ => Err(ErrorCode::Invalid.into()),
-        }
+        Ok(AccessControlEntryPrivilegeEnum::from_tlv(t)?.into())
     }
 }
 
 impl ToTLV for Privilege {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        tw.u8(tag, self.raw_value())
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+        AccessControlEntryPrivilegeEnum::from(*self).to_tlv(tag, tw)
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
-        TLV::u8(tag, self.raw_value()).into_tlv_iter()
+        TLV::u8(tag, AccessControlEntryPrivilegeEnum::from(*self) as _).into_tlv_iter()
+    }
+}
+
+impl From<Privilege> for AccessControlEntryPrivilegeEnum {
+    fn from(value: Privilege) -> Self {
+        if value.contains(Privilege::A) {
+            AccessControlEntryPrivilegeEnum::Administer
+        } else if value.contains(Privilege::M) {
+            AccessControlEntryPrivilegeEnum::Manage
+        } else if value.contains(Privilege::O) {
+            AccessControlEntryPrivilegeEnum::Operate
+        } else if value.contains(Privilege::V) {
+            AccessControlEntryPrivilegeEnum::View
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl From<AccessControlEntryPrivilegeEnum> for Privilege {
+    fn from(value: AccessControlEntryPrivilegeEnum) -> Self {
+        match value {
+            AccessControlEntryPrivilegeEnum::View => Privilege::VIEW,
+            AccessControlEntryPrivilegeEnum::Manage => Privilege::MANAGE,
+            AccessControlEntryPrivilegeEnum::Operate => Privilege::OPERATE,
+            AccessControlEntryPrivilegeEnum::Administer => Privilege::ADMIN,
+            _ => Privilege::empty(),
+        }
     }
 }
 

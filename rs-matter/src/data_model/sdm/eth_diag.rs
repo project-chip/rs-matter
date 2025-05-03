@@ -15,33 +15,38 @@
  *    limitations under the License.
  */
 
-use crate::data_model::objects::{Cluster, Dataver, InvokeContext, ReadContext};
-use crate::error::Error;
+//! This module contains the implementation of the Ethernet Network Diagnostics cluster and its handler.
+
+use crate::data_model::objects::{Cluster, Dataver, InvokeContext};
+use crate::error::{Error, ErrorCode};
 use crate::with;
 
 pub use crate::data_model::clusters::ethernet_network_diagnostics::*;
 
+/// The system implementation of a handler for the Ethernet Network Diagnostics Matter cluster.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct EthNwDiagHandler {
+pub struct EthDiagHandler {
     dataver: Dataver,
 }
 
-impl EthNwDiagHandler {
+impl EthDiagHandler {
+    /// Create a new instance of `EthDiagHandler` with the given `Dataver`.
     pub const fn new(dataver: Dataver) -> Self {
         Self { dataver }
     }
 
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
         HandlerAdaptor(self)
     }
 }
 
-impl ClusterHandler for EthNwDiagHandler {
+impl ClusterHandler for EthDiagHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_revision(1)
-        .with_attrs(with!(required; AttributeId::PacketRxCount | AttributeId::PacketTxCount))
-        .with_cmds(with!(CommandId::ResetCounts));
+        .with_attrs(with!(required))
+        .with_cmds(with!());
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -51,15 +56,7 @@ impl ClusterHandler for EthNwDiagHandler {
         self.dataver.changed();
     }
 
-    fn packet_rx_count(&self, _ctx: &ReadContext) -> Result<u64, Error> {
-        Ok(1) // TODO
-    }
-
-    fn packet_tx_count(&self, _ctx: &ReadContext) -> Result<u64, Error> {
-        Ok(1) // TODO
-    }
-
     fn handle_reset_counts(&self, _ctx: &InvokeContext) -> Result<(), Error> {
-        Ok(()) // TODO
+        Err(ErrorCode::InvalidAction.into())
     }
 }

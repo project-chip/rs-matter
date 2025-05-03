@@ -82,7 +82,8 @@ where
     /// * `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
     ///   number of subscriptions that can be managed by this handler.
     /// * `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
-    ///   clusters of the data model.
+    ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
+    ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::data_model::root_endpoint::with_` methods
     #[inline(always)]
     pub const fn new(buffers: &'a B, subscriptions: &'a Subscriptions<N>, handler: T) -> Self {
         Self {

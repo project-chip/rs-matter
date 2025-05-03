@@ -76,6 +76,10 @@ rand = { version = "0.8", optional = true, default-features = false, features = 
 async-io = { version = "2", optional = true, default-features = false }
 async-compat = { version = "0.2", optional = true, default-features = false }
 
+[target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
+bitflags = "2"
+nix = { version = "0.27", features = ["net"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 astro-dnssd = { version = "0.3" }
 

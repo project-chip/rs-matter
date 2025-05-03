@@ -75,7 +75,7 @@ pub struct WriteContext<'a> {
     exchange: &'a Exchange<'a>,
     attr: &'a AttrDetails<'a>,
     data: &'a TLVElement<'a>,
-    notify: &'a dyn ChangeNotify,
+    pub(crate) notify: &'a dyn ChangeNotify,
 }
 
 impl<'a> WriteContext<'a> {

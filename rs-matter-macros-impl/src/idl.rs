@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_unit_testing_cluster() {
-        let idl = parse_idl(&CSA_STANDARD_CLUSTERS_IDL);
+        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL);
 
         let cluster = get_cluster_named(&idl, "UnitTesting").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");

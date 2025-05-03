@@ -18,7 +18,8 @@
 use core::num::NonZeroU8;
 
 use rs_matter::acl::{gen_noc_cat, AclEntry, AuthMode, Target};
-use rs_matter::data_model::{objects::Privilege, system_model::access_control};
+use rs_matter::data_model::objects::Privilege;
+use rs_matter::data_model::system_model::acl::{self, ClusterHandler as _};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::{
     AttrPath, AttrStatus, ClusterPath, DataVersionFilter,
@@ -403,8 +404,8 @@ fn write_with_runtime_acl_add() {
 
     let acl_att = GenericPath::new(
         Some(0),
-        Some(access_control::ID),
-        Some(access_control::AttributesDiscriminants::Acl as u32),
+        Some(acl::AclHandler::CLUSTER.id),
+        Some(acl::AttributeId::Acl as u32),
     );
     let acl_input = TestAttrData::new(None, AttrPath::new(&acl_att), &allow_acl);
 
@@ -412,7 +413,11 @@ fn write_with_runtime_acl_add() {
     let mut basic_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
     basic_acl.add_subject(IM_ENGINE_PEER_ID).unwrap();
     basic_acl
-        .add_target(Target::new(Some(0), Some(access_control::ID), None))
+        .add_target(Target::new(
+            Some(0),
+            Some(acl::AclHandler::CLUSTER.id),
+            None,
+        ))
         .unwrap();
     im.matter
         .fabric_mgr

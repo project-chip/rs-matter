@@ -195,7 +195,7 @@ pub enum ServiceMode {
 impl ServiceMode {
     pub fn service<R, F: for<'a> FnOnce(&Service<'a>) -> Result<R, Error>>(
         &self,
-        dev_att: &BasicInfoConfig,
+        dev_det: &BasicInfoConfig,
         matter_port: u16,
         name: &str,
         f: F,
@@ -211,18 +211,18 @@ impl ServiceMode {
             }),
             ServiceMode::Commissionable(discriminator) => {
                 let discriminator_str = Self::get_discriminator_str(*discriminator);
-                let vp = Self::get_vp(dev_att.vid, dev_att.pid);
+                let vp = Self::get_vp(dev_det.vid, dev_det.pid);
 
                 let mut sai_str = heapless::String::<5>::new();
-                write_unwrap!(sai_str, "{}", dev_att.sai.unwrap_or(300));
+                write_unwrap!(sai_str, "{}", dev_det.sai.unwrap_or(300));
 
                 let mut sii_str = heapless::String::<5>::new();
-                write_unwrap!(sii_str, "{}", dev_att.sii.unwrap_or(5000));
+                write_unwrap!(sii_str, "{}", dev_det.sii.unwrap_or(5000));
 
                 let txt_kvs = &[
                     ("D", discriminator_str.as_str()),
                     ("CM", "1"),
-                    ("DN", dev_att.device_name),
+                    ("DN", dev_det.device_name),
                     ("VP", &vp),
                     ("SAI", sai_str.as_str()), // Session Active Interval
                     ("SII", sii_str.as_str()), // Session Idle Interval

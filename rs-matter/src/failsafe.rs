@@ -327,6 +327,8 @@ impl FailSafe {
             })?
             .fab_idx();
 
+        info!("Added operational fabric with local index {}", fab_idx);
+
         let State::Armed(ctx) = &mut self.state else {
             // Impossible to be in any other state because otherwise
             // check_state would have failed
