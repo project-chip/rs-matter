@@ -296,9 +296,9 @@ fn struct_field_builder(
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
                     #[cfg(feature = "defmt")]
-                    #krate::reexport::defmt::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
                     #[cfg(feature = "log")]
-                    #krate::reexport::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::log::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
 
                     #krate::tlv::ToTLV::to_tlv(
                         &value,
@@ -318,7 +318,7 @@ fn struct_field_builder(
                 #doc_comment
                 pub fn #name(mut self, value: #field_type) -> Result<#next_parent, #krate::error::Error> {
                     #[cfg(feature = "log")]
-                    #krate::reexport::log::info!("{:?}::{} -> {:?} +", self, #name_str, value);
+                    #krate::reexport::log::debug!("{:?}::{} -> {:?} +", self, #name_str, value);
 
                     #krate::tlv::ToTLV::to_tlv(
                         &value,

@@ -373,7 +373,7 @@ where
         T: core::fmt::Debug,
     {
         #[cfg(feature = "log")]
-        log::info!("{:?}::TLV -> {:?} +", self, tlv);
+        log::debug!("{:?}::TLV -> {:?} +", self, tlv);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -385,7 +385,7 @@ where
     where
         T: core::fmt::Debug + defmt::Format,
     {
-        defmt::info!("{:?}::TLV[] -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::TLV[] -> {:?} +", self, tlv);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -471,7 +471,7 @@ where
         T: core::fmt::Debug,
     {
         #[cfg(feature = "log")]
-        log::info!("{:?}::TLV[] -> {:?} +", self, tlv);
+        log::debug!("{:?}::TLV[] -> {:?} +", self, tlv);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -483,7 +483,7 @@ where
     where
         T: core::fmt::Debug + defmt::Format,
     {
-        defmt::info!("{:?}::TLV[] -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::TLV[] -> {:?} +", self, tlv);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -563,9 +563,9 @@ where
     /// Write the Utf8 string type into the writer.
     pub fn set(mut self, tlv: Utf8Str<'_>) -> Result<P, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::Utf8 -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Utf8 -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::Utf8 -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Utf8 -> {:?} +", self, tlv);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -636,9 +636,9 @@ where
     /// Push a new Utf8 string into the array.
     pub fn push(mut self, tlv: Utf8Str<'_>) -> Result<Self, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::Utf8[] -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Utf8[] -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::Utf8[] -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Utf8[] -> {:?} +", self, tlv);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -717,9 +717,9 @@ where
     /// Write the TLV type into the writer.
     pub fn set(mut self, tlv: Octets<'_>) -> Result<P, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::Octets -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Octets -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::Octets -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Octets -> {:?} +", self, tlv);
 
         tlv.to_tlv(&self.tag, self.parent.writer())?;
 
@@ -790,9 +790,9 @@ where
     /// Push a new octet string into the array.
     pub fn push(mut self, tlv: Octets<'_>) -> Result<Self, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::Octets[] -> {:?} +", self, tlv);
+        defmt::debug!("{:?}::Octets[] -> {:?} +", self, tlv);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::Octets[] -> {:?} +", self, tlv);
+        ::log::debug!("{:?}::Octets[] -> {:?} +", self, tlv);
 
         tlv.to_tlv(&TLVTag::Anonymous, self.parent.writer())?;
 
@@ -874,9 +874,9 @@ where
     /// Write a null value into the TLV and return the parent.
     pub fn null(mut self) -> Result<P, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::nullable -> null +", self);
+        defmt::debug!("{:?}::nullable -> null +", self);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::nullable -> null +", self);
+        ::log::debug!("{:?}::nullable -> null +", self);
 
         self.parent.writer().null(&self.tag)?;
 
@@ -886,9 +886,9 @@ where
     /// Create and return the builder for the non-null value.
     pub fn non_null(self) -> Result<T, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::nullable -> (not_null) +", self);
+        defmt::debug!("{:?}::nullable -> (not_null) +", self);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::nullable -> (not_null) +", self);
+        ::log::debug!("{:?}::nullable -> (not_null) +", self);
 
         T::new(self.parent, &self.tag)
     }
@@ -975,9 +975,9 @@ where
     /// Skip writing the TLV type and return the parent.
     pub fn none(self) -> P {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::optional -> none +", self);
+        defmt::debug!("{:?}::optional -> none +", self);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::optional -> none +", self);
+        ::log::debug!("{:?}::optional -> none +", self);
 
         self.parent
     }
@@ -985,9 +985,9 @@ where
     /// Create and return the builder for the non-optional value.
     pub fn some(self) -> Result<T, Error> {
         #[cfg(feature = "defmt")]
-        defmt::info!("{:?}::optional -> (some) +", self);
+        defmt::debug!("{:?}::optional -> (some) +", self);
         #[cfg(feature = "log")]
-        ::log::info!("{:?}::optional -> (some) +", self);
+        ::log::debug!("{:?}::optional -> (some) +", self);
 
         T::new(self.parent, &self.tag)
     }

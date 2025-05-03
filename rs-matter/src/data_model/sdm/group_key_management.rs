@@ -26,7 +26,8 @@ use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands, with}
 
 pub const ID: u32 = 0x003F;
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     GroupKeyMap(()) = 0x00,
@@ -37,7 +38,8 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Commands {
     KeySetWrite = 0x0,
@@ -105,7 +107,10 @@ impl GrpKeyMgmtCluster {
                 match attr.attr_id.try_into()? {
                     Attributes::MaxGroupsPerFabric(codec) => codec.encode(writer, 1),
                     Attributes::MaxGroupKeysPerFabric(codec) => codec.encode(writer, 1),
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {

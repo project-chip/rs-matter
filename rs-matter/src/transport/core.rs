@@ -215,7 +215,7 @@ impl<'m> TransportMgr<'m> {
 
         let id = ExchangeId::new(session.id, exch_index);
 
-        info!("Exchange {}: Initiated", id.display(session));
+        debug!("Exchange {}: Initiated", id.display(session));
 
         Ok(Exchange::new(id, matter))
     }
@@ -257,7 +257,7 @@ impl<'m> TransportMgr<'m> {
 
                 let id = ExchangeId::new(session.id, exch_index);
 
-                info!("Exchange {}: Accepted", id.display(session));
+                debug!("Exchange {}: Accepted", id.display(session));
 
                 let exchange = Exchange::new(id, matter);
 
@@ -362,7 +362,7 @@ impl<'m> TransportMgr<'m> {
         S: NetworkSend,
     {
         loop {
-            debug!("Waiting for outgoing packet");
+            trace!("Waiting for outgoing packet");
 
             let mut tx = self.get_if(&self.tx, |packet| !packet.buf.is_empty()).await;
             tx.clear_on_drop(true);
@@ -381,7 +381,7 @@ impl<'m> TransportMgr<'m> {
         S: NetworkSend,
     {
         loop {
-            debug!("Waiting for incoming packet");
+            trace!("Waiting for incoming packet");
 
             recv.wait_available().await?;
 
@@ -440,7 +440,7 @@ impl<'m> TransportMgr<'m> {
 
     async fn process_orphaned_rx(&self) -> Result<(), Error> {
         loop {
-            info!("Waiting for orphaned RX packets");
+            trace!("Waiting for orphaned RX packets");
 
             self.with_locked(&self.rx, |packet| {
                 self.handle_orphaned_rx_packet(packet).then_some(())
@@ -492,7 +492,7 @@ impl<'m> TransportMgr<'m> {
                 if !packet.peer.is_reliable()
                     && !MessageMeta::from(&packet.header.proto).is_standalone_ack()
                 {
-                    info!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
+                    debug!("\n>>RCV {}\n      => Duplicate, sending ACK", packet);
 
                     {
                         let mut session_mgr = self.session_mgr.borrow_mut();
@@ -518,7 +518,7 @@ impl<'m> TransportMgr<'m> {
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
                 } else {
-                    info!("\n>>RCV {}\n      => Duplicate, discarding", packet);
+                    debug!("\n>>RCV {}\n      => Duplicate, discarding", packet);
                 }
             }
             Err(e) if matches!(e.code(), ErrorCode::NoSpaceSessions) => {
@@ -616,7 +616,7 @@ impl<'m> TransportMgr<'m> {
 
                 if meta.is_standalone_ack() {
                     // No need to propagate this further
-                    info!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
+                    debug!("\n>>RCV {}\n      => Standalone Ack, dropping", packet);
                 } else if meta.is_sc_status()
                     && matches!(
                         Self::is_close_session(&mut packet.buf[packet.payload_start..]),
@@ -637,13 +637,13 @@ impl<'m> TransportMgr<'m> {
                         self.session_removed.notify();
                     }
                 } else {
-                    info!(
+                    debug!(
                         "\n>>RCV {}\n      => Processing{}",
                         packet,
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
-                    debug!(
+                    trace!(
                         "{}",
                         Packet::<0>::display_payload(
                             &packet.header.proto,
@@ -921,7 +921,7 @@ impl<'m> TransportMgr<'m> {
             false
         };
 
-        info!(
+        debug!(
             "\n<<SND {}\n      => {} (system)",
             Packet::<0>::display(&packet.peer, &packet.header),
             if retransmission {
@@ -931,7 +931,7 @@ impl<'m> TransportMgr<'m> {
             }
         );
 
-        debug!(
+        trace!(
             "{}",
             Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
         );
@@ -980,7 +980,7 @@ impl<'m> TransportMgr<'m> {
         let mut session = unwrap!(session_mgr.remove(id));
         self.session_removed.notify();
 
-        info!(
+        debug!(
             "Evicting session {} [SID:{:x},RSID:{:x}]",
             session.id,
             session.get_local_sess_id(),
@@ -1010,7 +1010,7 @@ impl<'m> TransportMgr<'m> {
     {
         match recv.recv_from(buf).await {
             Ok((len, addr)) => {
-                debug!("\n>>RCV {} {}B:\n     {}", addr, len, Bytes(&buf[..len]));
+                trace!("\n>>RCV {} {}B:\n     {}", addr, len, Bytes(&buf[..len]));
 
                 Ok((len, addr))
             }
@@ -1033,7 +1033,7 @@ impl<'m> TransportMgr<'m> {
     {
         match send.lock().await.send_to(data, peer).await {
             Ok(_) => {
-                debug!(
+                trace!(
                     "\n<<SND {} {}B{}: {}",
                     peer,
                     data.len(),

@@ -62,6 +62,7 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
                         if e.code() == ErrorCode::NoSpace {
                             return Ok(false);
                         } else {
+                            error!("Error reading attribute: {}", e);
                             attr.status(e.into())?
                         }
                     }
@@ -91,7 +92,10 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
                     .await;
                 match result {
                     Ok(()) => attr.status(IMStatusCode::Success)?,
-                    Err(error) => attr.status(error.into())?,
+                    Err(error) => {
+                        error!("Error writing attribute: {}", error);
+                        attr.status(error.into())?
+                    }
                 }
             }
             Err(status) => Some(status.clone()),

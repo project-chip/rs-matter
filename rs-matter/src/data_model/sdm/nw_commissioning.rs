@@ -28,7 +28,8 @@ use crate::{attribute_enum, attributes, bitflags_tlv, command_enum, commands};
 
 pub const ID: u32 = 0x0031;
 
-#[derive(FromRepr)]
+#[derive(FromRepr, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     MaxNetworks = 0x00,
@@ -404,7 +405,10 @@ impl EthNwCommCluster {
                         writer.null(&AttrDataWriter::TAG)?;
                         writer.complete()
                     }
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {

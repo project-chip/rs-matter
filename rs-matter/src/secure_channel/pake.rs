@@ -427,7 +427,7 @@ impl Pake {
 
             if let Some(sd) = pase.timeout.as_mut() {
                 if sd.exch_id != exchange.id() {
-                    info!("Other PAKE session in progress");
+                    debug!("Other PAKE session in progress");
                     Some(SCStatusCodes::Busy)
                 } else {
                     None

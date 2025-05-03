@@ -26,6 +26,7 @@ use std::net::UdpSocket;
 use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use log::info;
 use media_playback::{
     ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
     FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
@@ -213,6 +214,8 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
         ctx: &InvokeContext<'_>,
         response: media_playback::PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
+        info!("Playback started");
+
         self.set_state(PlaybackStateEnum::Playing, ctx);
 
         response.status(StatusEnum::Success)?.data(None)?.end()
@@ -223,6 +226,8 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
         ctx: &InvokeContext<'_>,
         response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
+        info!("Playback paused");
+
         self.set_state(PlaybackStateEnum::Paused, ctx);
 
         response.status(StatusEnum::Success)?.data(None)?.end()
@@ -233,6 +238,8 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
         ctx: &InvokeContext<'_>,
         response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
+        info!("Playback stopped");
+
         self.set_state(PlaybackStateEnum::NotPlaying, ctx);
 
         response.status(StatusEnum::Success)?.data(None)?.end()

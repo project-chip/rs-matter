@@ -415,7 +415,7 @@ where
                 .borrow_mut()
                 .retain(|sb| sb.fabric_idx != fabric_idx || sb.peer_node_id != peer_node_id);
 
-            info!(
+            debug!(
                 "All subscriptions for [F:{:x},P:{:x}] removed",
                 fabric_idx, peer_node_id
             );
@@ -462,7 +462,7 @@ where
                 })
                 .await?;
 
-            info!(
+            debug!(
                 "Subscription [F:{:x},P:{:x}]::{} created",
                 fabric_idx, peer_node_id, id
             );
@@ -509,7 +509,7 @@ where
                     .borrow_mut()
                     .retain(|sb| sb.subscription_id != id);
 
-                info!(
+                debug!(
                     "Subscription [F:{:x},P:{:x}]::{} removed since its session ({}) had been removed too",
                     fabric_idx,
                     peer_node_id,
@@ -537,7 +537,7 @@ where
                 let sub = self.subscriptions.find_report_due(now);
 
                 if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
-                    info!(
+                    debug!(
                         "About to report data for subscription [F:{:x},P:{:x}]::{}",
                         fabric_idx, peer_node_id, id
                     );
@@ -720,7 +720,7 @@ where
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
                 if !Self::recv_status_success(exchange).await? {
-                    info!(
+                    debug!(
                         "Subscription [F:{:x},P:{:x}]::{} removed during reporting",
                         fabric_idx, peer_node_id, id
                     );
