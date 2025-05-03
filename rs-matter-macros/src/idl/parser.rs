@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2024 Project CHIP Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! A module for parsing all cluster definitions in a `*.matter` IDL file.
+
 use std::collections::HashSet;
 
 use miette::{Diagnostic, NamedSource, SourceSpan};
@@ -17,14 +35,15 @@ use nom_supreme::ParserExt;
 use thiserror::Error;
 use tracing::warn;
 
-use crate::{
-    endpoint_composition::{
-        AttributeHandlingType, AttributeInstantiation, ClusterInstantiation, DefaultAttributeValue,
-        DeviceType, Endpoint,
-    },
-    AccessPrivilege, ApiMaturity, Attribute, Bitmap, Cluster, Command, ConstantEntry, DataType,
-    Enum, Event, EventPriority, Field, Struct, StructField, StructType,
+use endpoint_composition::{
+    AttributeHandlingType, AttributeInstantiation, ClusterInstantiation, DefaultAttributeValue,
+    DeviceType, Endpoint,
 };
+
+pub use ast::*; // TODO
+
+mod ast;
+mod endpoint_composition;
 
 // easier to type and not move str around
 type Span<'a> = LocatedSpan<&'a str>;
@@ -96,9 +115,9 @@ where
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::ApiMaturity;
-/// use rs_matter_data_model::idl::api_maturity;
+/// ```ignore
+/// use crate::idl::parser::ApiMaturity;
+/// use crate::idl::parser::idl::api_maturity;
 ///
 /// assert_eq!(
 ///    api_maturity("123".into()),
@@ -109,7 +128,7 @@ where
 /// assert_eq!(result.0.fragment().to_string(), " 123");
 /// assert_eq!(result.1, ApiMaturity::Provisional);
 /// ```
-pub fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
+fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
     if let Ok((span, _)) = keyword("stable").parse(span) {
         return Ok((span, ApiMaturity::Stable));
     }
@@ -130,8 +149,8 @@ pub fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::hex_integer;
+/// ```ignore
+/// use crate::idl::parser::hex_integer;
 ///
 /// let result = hex_integer("0x12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -141,7 +160,7 @@ pub fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
 /// assert_eq!(result.0.fragment().to_string(), "test");
 /// assert_eq!(result.1, 0x12abc);
 /// ```
-pub fn hex_integer(span: Span) -> IResult<Span, u64, ParseError> {
+fn hex_integer(span: Span) -> IResult<Span, u64, ParseError> {
     hex_digit1::<Span, ParseError>
         .preceded_by(tag_no_case("0x"))
         .map(|r| u64::from_str_radix(r.fragment(), 16).expect("valid hex digits"))
@@ -151,7 +170,7 @@ pub fn hex_integer(span: Span) -> IResult<Span, u64, ParseError> {
 /// Parses a keyword
 ///
 /// A keyword is an identifier that is case-insensitive
-pub fn keyword<'a>(
+fn keyword<'a>(
     keyword: &'a str,
 ) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Span<'a>, ParseError<'a>> + 'a {
     move |span| {
@@ -174,8 +193,8 @@ pub fn keyword<'a>(
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::decimal_integer;
+/// ```ignore
+/// use crate::idl::parser::decimal_integer;
 ///
 /// let result = decimal_integer("12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -185,7 +204,7 @@ pub fn keyword<'a>(
 /// assert_eq!(result.0.fragment().to_string(), "abctest");
 /// assert_eq!(result.1, 12);
 /// ```
-pub fn decimal_integer(span: Span) -> IResult<Span, u64, ParseError> {
+fn decimal_integer(span: Span) -> IResult<Span, u64, ParseError> {
     digit1::<Span, ParseError>
         .map(|s| s.fragment().parse::<u64>().expect("valid digits"))
         .parse(span)
@@ -195,8 +214,8 @@ pub fn decimal_integer(span: Span) -> IResult<Span, u64, ParseError> {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::positive_integer;
+/// ```ignore
+/// use crate::idl::parser::positive_integer;
 ///
 /// let result = positive_integer("12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -210,7 +229,7 @@ pub fn decimal_integer(span: Span) -> IResult<Span, u64, ParseError> {
 /// assert_eq!(result.0.fragment().to_string(), "test");
 /// assert_eq!(result.1, 0x12abc);
 /// ```
-pub fn positive_integer(span: Span) -> IResult<Span, u64, ParseError> {
+fn positive_integer(span: Span) -> IResult<Span, u64, ParseError> {
     // NOTE: orer is important so that
     // 0x123 is a hex not 0 followed by "x123"
     if let Ok(r) = hex_integer.parse(span) {
@@ -233,6 +252,7 @@ pub struct DocComment<'a>(pub &'a str);
 ///
 /// Contains the underlying content of the whitespace, which is
 /// especially useful for documentation comments.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Whitespace<'a> {
     DocComment(&'a str), // /** ... */
@@ -244,7 +264,7 @@ pub enum Whitespace<'a> {
 /// Parses whitespace (space/tab/newline and comments).
 ///
 /// returns the content of the comment
-pub fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError> {
+fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError> {
     // NOTE: split into cases intentional. Using an ALT pattern here
     //       seems to slow down things quite a bit (as whitespace is used a lot
     //       inside our parsing)
@@ -282,8 +302,8 @@ pub fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError>
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::{whitespace0, DocComment};
+/// ```ignore
+/// use crate::idl::parser::{whitespace0, DocComment};
 ///
 /// let result = whitespace0(" /*comment*/\n12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), "12 abc");
@@ -297,7 +317,7 @@ pub fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError>
 /// assert_eq!(result.0.fragment().to_string(), "no whitespace");
 /// assert_eq!(result.1, None);
 /// ```
-pub fn whitespace0(span: Span) -> IResult<Span, Option<DocComment>, ParseError> {
+fn whitespace0(span: Span) -> IResult<Span, Option<DocComment>, ParseError> {
     // early bail out if it cannot be whitespace
     // Whitespace is only tab/newline/space or `/` for cpp/c comments
     match span.chars().next() {
@@ -334,8 +354,8 @@ pub fn whitespace0(span: Span) -> IResult<Span, Option<DocComment>, ParseError> 
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::{whitespace1, DocComment};
+/// ```ignore
+/// use crate::idl::parser::{whitespace1, DocComment};
 ///
 /// let result = whitespace1(" /*comment*/\n12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), "12 abc");
@@ -345,7 +365,7 @@ pub fn whitespace0(span: Span) -> IResult<Span, Option<DocComment>, ParseError> 
 /// assert_eq!(result.0.fragment().to_string(), "abc");
 /// assert_eq!(result.1, Some(DocComment("doc comment")));
 /// ```
-pub fn whitespace1(span: Span) -> IResult<Span, Option<DocComment>, ParseError> {
+fn whitespace1(span: Span) -> IResult<Span, Option<DocComment>, ParseError> {
     let parsed = whitespace0(span)?;
 
     if span == parsed.0 {
@@ -359,7 +379,7 @@ pub fn whitespace1(span: Span) -> IResult<Span, Option<DocComment>, ParseError> 
 /// Parses a name id, of the form /[a-zA-Z_][a-zA-Z0-9_]*/
 ///
 /// Returns the parsed id as a string slice
-pub fn parse_id(span: Span) -> IResult<Span, &str, ParseError> {
+fn parse_id(span: Span) -> IResult<Span, &str, ParseError> {
     parse_id_span(span).map(|(span, data)| (span, *data.fragment()))
 }
 
@@ -377,9 +397,9 @@ fn parse_id_span(span: Span) -> IResult<Span, Span, ParseError> {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::{ConstantEntry, ApiMaturity};
-/// use rs_matter_data_model::idl::constant_entry;
+/// ```ignore
+/// use crate::idl::parser::{ConstantEntry, ApiMaturity};
+/// use crate::idl::parser::constant_entry;
 ///
 /// let parsed = constant_entry("provisional kConstant = 0x123 ;".into()).expect("valid");
 /// assert_eq!(parsed.0.fragment().to_string(), "");
@@ -392,7 +412,7 @@ fn parse_id_span(span: Span) -> IResult<Span, Span, ParseError> {
 ///         }
 /// );
 /// ```
-pub fn constant_entry(span: Span) -> IResult<Span, ConstantEntry, ParseError> {
+fn constant_entry(span: Span) -> IResult<Span, ConstantEntry, ParseError> {
     tuple((
         whitespace0,
         api_maturity,
@@ -429,7 +449,8 @@ fn constant_entries_list(span: Span) -> IResult<Span, Vec<ConstantEntry>, ParseE
     .parse(span)
 }
 
-pub fn parse_enum(span: Span) -> IResult<Span, Enum, ParseError> {
+#[allow(unused)]
+fn parse_enum(span: Span) -> IResult<Span, Enum, ParseError> {
     let (span, comment) = whitespace0(span)?;
     let doc_comment = comment.map(|DocComment(comment)| comment);
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
@@ -463,7 +484,8 @@ fn parse_enum_after_doc_maturity<'a>(
     .parse(span)
 }
 
-pub fn parse_bitmap(span: Span) -> IResult<Span, Bitmap, ParseError> {
+#[allow(unused)]
+fn parse_bitmap(span: Span) -> IResult<Span, Bitmap, ParseError> {
     let (span, comment) = whitespace0(span)?;
     let doc_comment = comment.map(|DocComment(comment)| comment);
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
@@ -471,7 +493,7 @@ pub fn parse_bitmap(span: Span) -> IResult<Span, Bitmap, ParseError> {
     parse_bitmap_after_doc_maturity(doc_comment, maturity, span)
 }
 
-pub fn parse_bitmap_after_doc_maturity<'a>(
+fn parse_bitmap_after_doc_maturity<'a>(
     doc_comment: Option<&str>,
     maturity: ApiMaturity,
     span: Span<'a>,
@@ -497,7 +519,7 @@ pub fn parse_bitmap_after_doc_maturity<'a>(
     .parse(span)
 }
 
-pub fn parse_field(span: Span) -> IResult<Span, Field, ParseError> {
+fn parse_field(span: Span) -> IResult<Span, Field, ParseError> {
     tuple((
         whitespace0,
         parse_id,
@@ -564,7 +586,7 @@ macro_rules! keywords_set {
     };
 }
 
-pub fn parse_struct_field(span: Span) -> IResult<Span, StructField, ParseError> {
+fn parse_struct_field(span: Span) -> IResult<Span, StructField, ParseError> {
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
     let (span, attributes) = keywords_set!(span, "optional", "nullable", "fabric_sensitive");
 
@@ -599,7 +621,8 @@ fn struct_fields(span: Span) -> IResult<Span, Vec<StructField>, ParseError> {
     .parse(span)
 }
 
-pub fn parse_struct(span: Span) -> IResult<Span, Struct, ParseError> {
+#[allow(unused)]
+fn parse_struct(span: Span) -> IResult<Span, Struct, ParseError> {
     let (span, doc_comment) = whitespace0.parse(span)?;
     let doc_comment = doc_comment.map(|DocComment(s)| s);
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
@@ -651,7 +674,7 @@ fn parse_struct_after_doc_maturity<'a>(
     ))
 }
 
-pub fn access_privilege(span: Span) -> IResult<Span, AccessPrivilege, ParseError> {
+fn access_privilege(span: Span) -> IResult<Span, AccessPrivilege, ParseError> {
     if let Ok((span, _)) = keyword("view").parse(span) {
         return Ok((span, AccessPrivilege::View));
     }
@@ -665,7 +688,7 @@ pub fn access_privilege(span: Span) -> IResult<Span, AccessPrivilege, ParseError
     value(AccessPrivilege::Administer, keyword("administer")).parse(span)
 }
 
-pub fn event_priority(span: Span) -> IResult<Span, EventPriority, ParseError> {
+fn event_priority(span: Span) -> IResult<Span, EventPriority, ParseError> {
     if let Ok((span, _)) = keyword("info").parse(span) {
         return Ok((span, EventPriority::Info));
     }
@@ -677,7 +700,8 @@ pub fn event_priority(span: Span) -> IResult<Span, EventPriority, ParseError> {
     value(EventPriority::Debug, keyword("debug")).parse(span)
 }
 
-pub fn parse_event(span: Span) -> IResult<Span, Event, ParseError> {
+#[allow(unused)]
+fn parse_event(span: Span) -> IResult<Span, Event, ParseError> {
     let (span, doc_comment) = whitespace0.parse(span)?;
     let doc_comment = doc_comment.map(|DocComment(s)| s);
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
@@ -732,7 +756,8 @@ fn parse_event_after_doc_maturity<'a>(
     .parse(span)
 }
 
-pub fn parse_command(span: Span) -> IResult<Span, Command, ParseError> {
+#[allow(unused)]
+fn parse_command(span: Span) -> IResult<Span, Command, ParseError> {
     let (span, doc_comment) = whitespace0.parse(span)?;
     let doc_comment = doc_comment.map(|DocComment(s)| s);
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
@@ -740,7 +765,7 @@ pub fn parse_command(span: Span) -> IResult<Span, Command, ParseError> {
     parse_command_after_doc_maturity(doc_comment, maturity, span)
 }
 
-pub fn parse_command_after_doc_maturity<'a>(
+fn parse_command_after_doc_maturity<'a>(
     doc_comment: Option<&str>,
     maturity: ApiMaturity,
     span: Span<'a>,
@@ -839,7 +864,8 @@ fn attribute_access(span: Span) -> IResult<Span, (AccessPrivilege, AccessPrivile
     Ok((span, (read_acl, write_acl)))
 }
 
-pub fn parse_attribute(span: Span) -> IResult<Span, Attribute, ParseError> {
+#[allow(unused)]
+fn parse_attribute(span: Span) -> IResult<Span, Attribute, ParseError> {
     let (span, doc_comment) = whitespace0.parse(span)?;
     let doc_comment = doc_comment.map(|DocComment(s)| s);
     let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
@@ -847,7 +873,7 @@ pub fn parse_attribute(span: Span) -> IResult<Span, Attribute, ParseError> {
     parse_attribute_after_doc_maturity(doc_comment, maturity, span)
 }
 
-pub fn parse_attribute_after_doc_maturity<'a>(
+fn parse_attribute_after_doc_maturity<'a>(
     doc_comment: Option<&str>,
     maturity: ApiMaturity,
     span: Span<'a>,
@@ -929,7 +955,7 @@ fn parse_cluster_member<'a>(c: &mut Cluster, span: Span<'a>) -> Option<Span<'a>>
     None
 }
 
-pub fn parse_cluster(span: Span) -> IResult<Span, Cluster, ParseError> {
+fn parse_cluster(span: Span) -> IResult<Span, Cluster, ParseError> {
     let (span, doc_comment) = whitespace0.parse(span)?;
     let doc_comment = doc_comment.map(|DocComment(s)| s);
 
@@ -974,7 +1000,7 @@ pub fn parse_cluster(span: Span) -> IResult<Span, Cluster, ParseError> {
 }
 
 /// parse a device type. Does NOT expect preceeding whitespace
-pub fn device_type(span: Span) -> IResult<Span, DeviceType, ParseError> {
+fn device_type(span: Span) -> IResult<Span, DeviceType, ParseError> {
     tuple((
         parse_id.preceded_by(tuple((
             keyword("device"),
@@ -1004,7 +1030,7 @@ pub fn device_type(span: Span) -> IResult<Span, DeviceType, ParseError> {
 /// Parses a default attribute value.
 ///
 /// Does NOT consume leading spaces or spaces after the value
-pub fn default_attribute_value(span: Span) -> IResult<Span, DefaultAttributeValue, ParseError> {
+fn default_attribute_value(span: Span) -> IResult<Span, DefaultAttributeValue, ParseError> {
     let mut deepest_error = DeepestError::new();
 
     // make sure we have some default before trying to parse
@@ -1074,7 +1100,7 @@ pub fn default_attribute_value(span: Span) -> IResult<Span, DefaultAttributeValu
     Ok((span, DefaultAttributeValue::String(result)))
 }
 
-pub fn attribute_handling_type(span: Span) -> IResult<Span, AttributeHandlingType, ParseError> {
+fn attribute_handling_type(span: Span) -> IResult<Span, AttributeHandlingType, ParseError> {
     if let Ok(r) = value(AttributeHandlingType::Ram, keyword("ram")).parse(span) {
         return Ok(r);
     }
@@ -1084,7 +1110,7 @@ pub fn attribute_handling_type(span: Span) -> IResult<Span, AttributeHandlingTyp
     value(AttributeHandlingType::Persist, keyword("persist")).parse(span)
 }
 
-pub fn attribute_instantiation(span: Span) -> IResult<Span, AttributeInstantiation, ParseError> {
+fn attribute_instantiation(span: Span) -> IResult<Span, AttributeInstantiation, ParseError> {
     // TODO: if opt fails here, error reporting does not recurse deep inside the optional
     //       since it is optional and the "terminated" will refuse
     // May need to figure out how to detect the farthest we ever parsed, maybe using span itself
@@ -1103,7 +1129,7 @@ pub fn attribute_instantiation(span: Span) -> IResult<Span, AttributeInstantiati
     .parse(span)
 }
 
-pub fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, ParseError> {
+fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, ParseError> {
     let (mut span, name) = parse_id
         .preceded_by(tuple((
             whitespace0,
@@ -1178,7 +1204,7 @@ pub fn cluster_instantiation(span: Span) -> IResult<Span, ClusterInstantiation, 
     }
 }
 
-pub fn endpoint(span: Span) -> IResult<Span, Endpoint, ParseError> {
+fn endpoint(span: Span) -> IResult<Span, Endpoint, ParseError> {
     let (mut span, id) = positive_integer
         .preceded_by(tuple((whitespace0, keyword("endpoint"), whitespace1)))
         .terminated(tuple((whitespace0, tag("{"))))
@@ -1331,7 +1357,7 @@ mod tests {
 
     #[test]
     fn parse_idl_success() {
-        let r = Idl::parse(include_str!("./test_input1.matter").into());
+        let r = Idl::parse(include_str!("parser/test_input1.matter").into());
         assert!(r.is_ok());
         let idl = r.unwrap();
 

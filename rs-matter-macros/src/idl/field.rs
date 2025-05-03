@@ -19,9 +19,8 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
-use rs_matter_data_model::{Cluster, DataType};
-
 use super::id::ident;
+use super::parser::{Cluster, DataType};
 
 /// Return a stream representing the Rust type that corresponds to the given
 /// IDL type.

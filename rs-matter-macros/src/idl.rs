@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
+use parser::Cluster;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
-
-use rs_matter_data_model::Cluster;
 
 mod bitmap;
 mod cluster;
@@ -25,8 +24,13 @@ mod enumeration;
 mod field;
 mod handler;
 mod id;
+mod parser;
 mod struct_in;
 mod struct_out;
+
+pub use parser::Idl;
+
+pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/parser/controller-clusters.matter");
 
 /// Some context data for IDL generation
 ///
@@ -142,8 +146,8 @@ fn cluster_internal(
 mod tests {
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
 
-    use rs_matter_data_model::idl::Idl;
-    use rs_matter_data_model::{Cluster, CSA_STANDARD_CLUSTERS_IDL};
+    use super::Idl;
+    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL};
 
     use crate::idl::IdlGenerateContext;
 

@@ -1,6 +1,6 @@
 use divan::black_box;
 use miette::GraphicalReportHandler;
-use rs_matter_data_model::{idl::Idl, CSA_STANDARD_CLUSTERS_IDL};
+use rs_matter_macros::{idl::Idl, CSA_STANDARD_CLUSTERS_IDL};
 
 fn main() {
     // Run registered benchmarks.
