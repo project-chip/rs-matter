@@ -34,7 +34,7 @@ use super::messages::msg::{ReadReqRef, StatusResp, SubscribeReqRef, SubscribeRes
 macro_rules! cmd_enter {
     ($e:expr) => {{
         use owo_colors::OwoColorize;
-        info! {"Got CMD {}", $e.cyan()}
+        debug! {"Got CMD {}", $e.cyan()}
     }};
 }
 
@@ -42,7 +42,7 @@ macro_rules! cmd_enter {
 #[cfg(feature = "defmt")]
 macro_rules! cmd_enter {
     ($e:expr) => {{
-        info!("Got CMD {}", $e);
+        debug!("Got CMD {}", $e);
     }};
 }
 

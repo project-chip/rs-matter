@@ -57,7 +57,7 @@ impl<'a> MdnsImpl<'a> {
                 .with_name(service.name);
 
             for kvs in service.txt_kvs {
-                info!("mDNS TXT key {} val {}", kvs.0, kvs.1);
+                debug!("mDNS TXT key {} val {}", kvs.0, kvs.1);
                 builder = builder.with_key_value(kvs.0.to_string(), kvs.1.to_string());
             }
 

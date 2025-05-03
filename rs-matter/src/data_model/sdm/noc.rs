@@ -76,6 +76,8 @@ pub enum Commands {
 
 command_enum!(Commands);
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum RespCommands {
     AttReqResp = 0x01,
@@ -84,7 +86,8 @@ pub enum RespCommands {
     NOCResp = 0x08,
 }
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     NOCs = 0,
@@ -271,8 +274,8 @@ impl NocCluster {
                         writer,
                         exchange.matter().fabric_mgr.borrow().iter().count() as _,
                     ),
-                    _ => {
-                        error!("Attribute not supported: this shouldn't happen");
+                    other => {
+                        error!("Attribute {:?} not supported", other);
                         Err(ErrorCode::AttributeNotFound.into())
                     }
                 }
@@ -320,7 +323,7 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("Update Fabric Label");
         let req = UpdateFabricLabelReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Fabric Label: {:?}", req);
+        debug!("Received Fabric Label: {:?}", req);
 
         let mut updated_fab_idx = 0;
 
@@ -356,7 +359,7 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("Remove Fabric");
         let req = RemoveFabricReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Fabric Index: {:?}", req);
+        debug!("Received Fabric Index: {:?}", req);
 
         if exchange
             .matter()
@@ -397,7 +400,7 @@ impl NocCluster {
 
         let r = AddNocReq::from_tlv(data).map_err(Error::map_invalid_command)?;
 
-        info!(
+        debug!(
             "Received NOC as: {}",
             CertRef::new(TLVElement::new(r.noc_value.0))
         );
@@ -408,7 +411,7 @@ impl NocCluster {
             .map(|icac| icac.0)
             .filter(|icac| !icac.is_empty());
         if let Some(icac) = icac {
-            info!("Received ICAC as: {}", CertRef::new(TLVElement::new(icac)));
+            debug!("Received ICAC as: {}", CertRef::new(TLVElement::new(icac)));
         }
 
         let mut added_fab_idx = 0;
@@ -469,7 +472,7 @@ impl NocCluster {
         cmd_enter!("AttestationRequest");
 
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Attestation Nonce:{:?}", req.str);
+        debug!("Received Attestation Nonce:{:?}", req.str);
 
         exchange.with_session(|sess| {
             let mut writer = encoder.with_command(RespCommands::AttReqResp as _)?;
@@ -522,7 +525,7 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("CertChainRequest");
 
-        info!("Received data: {}", data);
+        debug!("Received data: {}", data);
         let cert_type =
             Self::get_certchainrequest_params(data).map_err(Error::map_invalid_command)?;
 
@@ -546,7 +549,7 @@ impl NocCluster {
         cmd_enter!("CSRRequest");
 
         let req = CsrReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received CSR: {:?}", req);
+        debug!("Received CSR: {:?}", req);
 
         exchange.with_session(|sess| {
             let mut failsafe = exchange.matter().failsafe.borrow_mut();
@@ -601,7 +604,7 @@ impl NocCluster {
         cmd_enter!("AddTrustedRootCert");
 
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Trusted Cert: {}", Bytes(&req.str));
+        debug!("Received Trusted Cert: {}", Bytes(&req.str));
 
         exchange.with_session(|sess| {
             exchange
@@ -660,7 +663,7 @@ impl NocCluster {
 
         const CERT_TYPE_DAC: u8 = 1;
         const CERT_TYPE_PAI: u8 = 2;
-        info!("Received Cert Type:{:?}", cert_type);
+        debug!("Received Cert Type:{:?}", cert_type);
         match cert_type {
             CERT_TYPE_DAC => Ok(dev_att::DataType::DAC),
             CERT_TYPE_PAI => Ok(dev_att::DataType::PAI),

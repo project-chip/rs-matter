@@ -670,7 +670,7 @@ impl TxMessage<'_> {
 
         self.packet.peer = peer;
 
-        info!(
+        debug!(
             "\n<<SND {}\n      => {}",
             Packet::<0>::display(&self.packet.peer, &self.packet.header),
             if retransmission {
@@ -680,7 +680,7 @@ impl TxMessage<'_> {
             },
         );
 
-        debug!(
+        trace!(
             "{}",
             Packet::<0>::display_payload(
                 &self.packet.header.proto,

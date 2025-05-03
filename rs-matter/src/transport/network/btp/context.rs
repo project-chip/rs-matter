@@ -311,7 +311,7 @@ where
 
     /// Handles a subscribe event to characteristic `C2` from the GATT peripheral.
     fn on_subscribe(&self, address: BtAddr) -> Result<(), Error> {
-        info!("Subscribe request from {}", address);
+        debug!("Subscribe request from {}", address);
 
         self.sessions.lock(|sessions| {
             let mut sessions = sessions.borrow_mut();
@@ -335,7 +335,7 @@ where
 
     /// Handles an unsubscribe event to characteristic `C2` from the GATT peripheral.
     fn on_unsubscribe(&self, address: BtAddr) -> Result<(), Error> {
-        info!("Unsubscribe request from {}", address);
+        debug!("Unsubscribe request from {}", address);
 
         self.remove(|session| session.address() == address)
     }
@@ -349,7 +349,7 @@ where
             let mut sessions = sessions.borrow_mut();
             while let Some(index) = sessions.iter().position(&condition) {
                 let session = sessions.swap_remove(index);
-                info!("Session {} removed", session.address());
+                debug!("Session {} removed", session.address());
 
                 self.send_notif.notify();
             }

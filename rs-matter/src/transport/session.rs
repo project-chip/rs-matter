@@ -406,7 +406,7 @@ impl Session {
 
         let exch_id = ExchangeId::new(self.id, exch_index);
 
-        info!("New exchange: {} :: {:?}", exch_id.display(self), role);
+        debug!("New exchange: {} :: {:?}", exch_id.display(self), role);
 
         Some(exch_index)
     }
