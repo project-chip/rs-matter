@@ -388,7 +388,6 @@ mod tests {
             &struct_builders(cluster, &context),
             &quote!(
                 pub struct NetworkInfoStructBuilder<P, const F: usize = 1usize>(P);
-
                 impl<P> NetworkInfoStructBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -403,16 +402,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
-
+                #[cfg(feature = "defmt")]
                 impl<P> NetworkInfoStructBuilder<P, 1>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn connected(
                         mut self,
                         value: bool,
                     ) -> Result<NetworkInfoStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "connected",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "connected",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(1),
@@ -421,16 +436,57 @@ mod tests {
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> NetworkInfoStructBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn connected(
+                        mut self,
+                        value: bool,
+                    ) -> Result<NetworkInfoStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "connected",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(NetworkInfoStructBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> NetworkInfoStructBuilder<P, 2>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn test_optional(
                         mut self,
                         value: Option<u8>,
                     ) -> Result<NetworkInfoStructBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_optional",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_optional",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(2),
@@ -439,16 +495,57 @@ mod tests {
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> NetworkInfoStructBuilder<P, 2>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn test_optional(
+                        mut self,
+                        value: Option<u8>,
+                    ) -> Result<NetworkInfoStructBuilder<P, 3usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_optional",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(2),
+                            self.0.writer(),
+                        )?;
+                        Ok(NetworkInfoStructBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> NetworkInfoStructBuilder<P, 3>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn test_nullable(
                         mut self,
                         value: rs_matter_crate::tlv::Nullable<u16>,
                     ) -> Result<NetworkInfoStructBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_nullable",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_nullable",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(3),
@@ -457,16 +554,57 @@ mod tests {
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> NetworkInfoStructBuilder<P, 3>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn test_nullable(
+                        mut self,
+                        value: rs_matter_crate::tlv::Nullable<u16>,
+                    ) -> Result<NetworkInfoStructBuilder<P, 4usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_nullable",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(3),
+                            self.0.writer(),
+                        )?;
+                        Ok(NetworkInfoStructBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> NetworkInfoStructBuilder<P, 4>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn test_both(
                         mut self,
                         value: Option<rs_matter_crate::tlv::Nullable<u32>>,
                     ) -> Result<NetworkInfoStructBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_both",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_both",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(4),
@@ -475,7 +613,31 @@ mod tests {
                         Ok(NetworkInfoStructBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> NetworkInfoStructBuilder<P, 4>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn test_both(
+                        mut self,
+                        value: Option<rs_matter_crate::tlv::Nullable<u32>>,
+                    ) -> Result<NetworkInfoStructBuilder<P, 5usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "test_both",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(4),
+                            self.0.writer(),
+                        )?;
+                        Ok(NetworkInfoStructBuilder(self.0))
+                    }
+                }
                 impl<P> NetworkInfoStructBuilder<P, 5usize>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -487,7 +649,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P, const F: usize> core::fmt::Debug for NetworkInfoStructBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "NetworkInfoStruct")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for NetworkInfoStructBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "NetworkInfoStruct"
+                        )
+                    }
+                }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for NetworkInfoStructBuilder<P, F>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -497,7 +680,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for NetworkInfoStructBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -512,9 +694,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct NetworkInfoStructArrayBuilder<P>(P);
-
                 impl<P> NetworkInfoStructArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -528,7 +708,6 @@ mod tests {
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
                     }
-
                     #[doc = "Push a new element into the array"]
                     pub fn push(
                         self,
@@ -541,7 +720,6 @@ mod tests {
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
                     }
-
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
                         use rs_matter_crate::tlv::TLVWrite;
@@ -549,7 +727,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P> core::fmt::Debug for NetworkInfoStructArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "NetworkInfoStruct[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for NetworkInfoStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "NetworkInfoStruct[]"
+                        )
+                    }
+                }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for NetworkInfoStructArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -559,7 +758,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for NetworkInfoStructArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -574,9 +772,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct IdentifyRequestBuilder<P, const F: usize = 0usize>(P);
-
                 impl<P> IdentifyRequestBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -591,16 +787,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
-
+                #[cfg(feature = "defmt")]
                 impl<P> IdentifyRequestBuilder<P, 0>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn identify_time(
                         mut self,
                         value: u16,
                     ) -> Result<IdentifyRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "identifyTime",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "identifyTime",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(0),
@@ -609,7 +821,31 @@ mod tests {
                         Ok(IdentifyRequestBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> IdentifyRequestBuilder<P, 0>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn identify_time(
+                        mut self,
+                        value: u16,
+                    ) -> Result<IdentifyRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "identifyTime",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(0),
+                            self.0.writer(),
+                        )?;
+                        Ok(IdentifyRequestBuilder(self.0))
+                    }
+                }
                 impl<P> IdentifyRequestBuilder<P, 1usize>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -621,7 +857,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P, const F: usize> core::fmt::Debug for IdentifyRequestBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "IdentifyRequest")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for IdentifyRequestBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "IdentifyRequest"
+                        )
+                    }
+                }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for IdentifyRequestBuilder<P, F>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -631,7 +888,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for IdentifyRequestBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -646,9 +902,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct IdentifyRequestArrayBuilder<P>(P);
-
                 impl<P> IdentifyRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -662,7 +916,6 @@ mod tests {
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
                     }
-
                     #[doc = "Push a new element into the array"]
                     pub fn push(
                         self,
@@ -675,7 +928,6 @@ mod tests {
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
                     }
-
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
                         use rs_matter_crate::tlv::TLVWrite;
@@ -683,7 +935,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P> core::fmt::Debug for IdentifyRequestArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "IdentifyRequest[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for IdentifyRequestArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "IdentifyRequest[]"
+                        )
+                    }
+                }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for IdentifyRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -693,7 +966,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for IdentifyRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -708,9 +980,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct SomeRequestBuilder<P, const F: usize = 0usize>(P);
-
                 impl<P> SomeRequestBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -725,16 +995,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
-
+                #[cfg(feature = "defmt")]
                 impl<P> SomeRequestBuilder<P, 0>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn group(
                         mut self,
                         value: u16,
                     ) -> Result<SomeRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "group",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "group",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(0),
@@ -743,7 +1029,31 @@ mod tests {
                         Ok(SomeRequestBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> SomeRequestBuilder<P, 0>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn group(
+                        mut self,
+                        value: u16,
+                    ) -> Result<SomeRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "group",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(0),
+                            self.0.writer(),
+                        )?;
+                        Ok(SomeRequestBuilder(self.0))
+                    }
+                }
                 impl<P> SomeRequestBuilder<P, 1usize>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -755,7 +1065,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P, const F: usize> core::fmt::Debug for SomeRequestBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "SomeRequest")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for SomeRequestBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "SomeRequest"
+                        )
+                    }
+                }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for SomeRequestBuilder<P, F>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -765,7 +1096,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for SomeRequestBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -780,9 +1110,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct SomeRequestArrayBuilder<P>(P);
-
                 impl<P> SomeRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -796,7 +1124,6 @@ mod tests {
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
                     }
-
                     #[doc = "Push a new element into the array"]
                     pub fn push(
                         self,
@@ -809,7 +1136,6 @@ mod tests {
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
                     }
-
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
                         use rs_matter_crate::tlv::TLVWrite;
@@ -817,7 +1143,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P> core::fmt::Debug for SomeRequestArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "SomeRequest[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for SomeRequestArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "SomeRequest[]"
+                        )
+                    }
+                }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for SomeRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -827,7 +1174,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for SomeRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -842,9 +1188,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct TestResponseBuilder<P, const F: usize = 0usize>(P);
-
                 impl<P> TestResponseBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -859,16 +1203,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
-
+                #[cfg(feature = "defmt")]
                 impl<P> TestResponseBuilder<P, 0>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn capacity(
                         mut self,
                         value: u8,
                     ) -> Result<TestResponseBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "capacity",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "capacity",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(0),
@@ -877,7 +1237,31 @@ mod tests {
                         Ok(TestResponseBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> TestResponseBuilder<P, 0>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn capacity(
+                        mut self,
+                        value: u8,
+                    ) -> Result<TestResponseBuilder<P, 1usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "capacity",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(0),
+                            self.0.writer(),
+                        )?;
+                        Ok(TestResponseBuilder(self.0))
+                    }
+                }
                 impl<P> TestResponseBuilder<P, 1usize>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -889,7 +1273,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P, const F: usize> core::fmt::Debug for TestResponseBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "TestResponse")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for TestResponseBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "TestResponse"
+                        )
+                    }
+                }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for TestResponseBuilder<P, F>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -899,7 +1304,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestResponseBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -914,9 +1318,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct TestResponseArrayBuilder<P>(P);
-
                 impl<P> TestResponseArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -930,7 +1332,6 @@ mod tests {
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
                     }
-
                     #[doc = "Push a new element into the array"]
                     pub fn push(
                         self,
@@ -943,7 +1344,6 @@ mod tests {
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
                     }
-
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
                         use rs_matter_crate::tlv::TLVWrite;
@@ -951,7 +1351,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P> core::fmt::Debug for TestResponseArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "TestResponse[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for TestResponseArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "TestResponse[]"
+                        )
+                    }
+                }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for TestResponseArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -961,7 +1382,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestResponseArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -972,14 +1392,11 @@ mod tests {
                     ) -> Result<Self, rs_matter_crate::error::Error> {
                         Self::new(parent, tag)
                     }
-
                     fn unchecked_into_parent(self) -> P {
                         self.0
                     }
                 }
-
                 pub struct AnotherResponseBuilder<P, const F: usize = 0usize>(P);
-
                 impl<P> AnotherResponseBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -994,16 +1411,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
-
+                #[cfg(feature = "defmt")]
                 impl<P> AnotherResponseBuilder<P, 0>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn status(
                         mut self,
                         value: u8,
                     ) -> Result<AnotherResponseBuilder<P, 12usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "status",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "status",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(0),
@@ -1012,16 +1445,57 @@ mod tests {
                         Ok(AnotherResponseBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> AnotherResponseBuilder<P, 0>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn status(
+                        mut self,
+                        value: u8,
+                    ) -> Result<AnotherResponseBuilder<P, 12usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "status",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(0),
+                            self.0.writer(),
+                        )?;
+                        Ok(AnotherResponseBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> AnotherResponseBuilder<P, 12>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn group_id(
                         mut self,
                         value: u16,
                     ) -> Result<AnotherResponseBuilder<P, 13usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "groupID",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "groupID",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(12),
@@ -1030,7 +1504,31 @@ mod tests {
                         Ok(AnotherResponseBuilder(self.0))
                     }
                 }
-
+                #[cfg(not(feature = "defmt"))]
+                impl<P> AnotherResponseBuilder<P, 12>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn group_id(
+                        mut self,
+                        value: u16,
+                    ) -> Result<AnotherResponseBuilder<P, 13usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "groupID",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(12),
+                            self.0.writer(),
+                        )?;
+                        Ok(AnotherResponseBuilder(self.0))
+                    }
+                }
                 impl<P> AnotherResponseBuilder<P, 13usize>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -1042,7 +1540,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P, const F: usize> core::fmt::Debug for AnotherResponseBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "AnotherResponse")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for AnotherResponseBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "AnotherResponse"
+                        )
+                    }
+                }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for AnotherResponseBuilder<P, F>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -1052,7 +1571,6 @@ mod tests {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for AnotherResponseBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -1067,9 +1585,7 @@ mod tests {
                         self.0
                     }
                 }
-
                 pub struct AnotherResponseArrayBuilder<P>(P);
-
                 impl<P> AnotherResponseArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -1083,7 +1599,6 @@ mod tests {
                         parent.writer().start_array(tag)?;
                         Ok(Self(parent))
                     }
-
                     #[doc = "Push a new element into the array"]
                     pub fn push(
                         self,
@@ -1096,7 +1611,6 @@ mod tests {
                             &rs_matter_crate::tlv::TLVTag::Anonymous,
                         )
                     }
-
                     #[doc = "Finish the array and return the parent"]
                     pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
                         use rs_matter_crate::tlv::TLVWrite;
@@ -1104,18 +1618,37 @@ mod tests {
                         Ok(self.0)
                     }
                 }
-
+                impl<P> core::fmt::Debug for AnotherResponseArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "AnotherResponse[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for AnotherResponseArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "AnotherResponse[]"
+                        )
+                    }
+                }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for AnotherResponseArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
                 {
                     type Write = P::Write;
-
                     fn writer(&mut self) -> &mut P::Write {
                         self.0.writer()
                     }
                 }
-
                 impl<P> rs_matter_crate::tlv::TLVBuilder<P> for AnotherResponseArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -1126,7 +1659,6 @@ mod tests {
                     ) -> Result<Self, rs_matter_crate::error::Error> {
                         Self::new(parent, tag)
                     }
-
                     fn unchecked_into_parent(self) -> P {
                         self.0
                     }
@@ -1179,15 +1711,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
+                #[cfg(feature = "defmt")]
                 impl<P> OffWithEffectRequestBuilder<P, 0>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn effect_identifier(
                         mut self,
                         value: EffectIdentifierEnum,
                     ) -> Result<OffWithEffectRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "effectIdentifier",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "effectIdentifier",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(0),
@@ -1196,15 +1745,82 @@ mod tests {
                         Ok(OffWithEffectRequestBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> OffWithEffectRequestBuilder<P, 0>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn effect_identifier(
+                        mut self,
+                        value: EffectIdentifierEnum,
+                    ) -> Result<OffWithEffectRequestBuilder<P, 1usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "effectIdentifier",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(0),
+                            self.0.writer(),
+                        )?;
+                        Ok(OffWithEffectRequestBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> OffWithEffectRequestBuilder<P, 1>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn effect_variant(
                         mut self,
                         value: u8,
                     ) -> Result<OffWithEffectRequestBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "effectVariant",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "effectVariant",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(OffWithEffectRequestBuilder(self.0))
+                    }
+                }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> OffWithEffectRequestBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn effect_variant(
+                        mut self,
+                        value: u8,
+                    ) -> Result<OffWithEffectRequestBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "effectVariant",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(1),
@@ -1222,6 +1838,29 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P, const F: usize> core::fmt::Debug for OffWithEffectRequestBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "OffWithEffectRequest")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format
+                    for OffWithEffectRequestBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "OffWithEffectRequest"
+                        )
                     }
                 }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for OffWithEffectRequestBuilder<P, F>
@@ -1280,6 +1919,28 @@ mod tests {
                         Ok(self.0)
                     }
                 }
+                impl<P> core::fmt::Debug for OffWithEffectRequestArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "OffWithEffectRequest[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for OffWithEffectRequestArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "OffWithEffectRequest[]"
+                        )
+                    }
+                }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for OffWithEffectRequestArrayBuilder<P>
                 where
                     P: rs_matter_crate::tlv::TLVBuilderParent,
@@ -1318,9 +1979,12 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
+                #[cfg(feature = "defmt")]
                 impl<P> OnWithTimedOffRequestBuilder<P, 0>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn on_off_control(
                         mut self,
@@ -1329,6 +1993,20 @@ mod tests {
                         OnWithTimedOffRequestBuilder<P, 1usize>,
                         rs_matter_crate::error::Error,
                     > {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "onOffControl",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "onOffControl",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(0),
@@ -1337,9 +2015,39 @@ mod tests {
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> OnWithTimedOffRequestBuilder<P, 0>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn on_off_control(
+                        mut self,
+                        value: OnOffControlBitmap,
+                    ) -> Result<
+                        OnWithTimedOffRequestBuilder<P, 1usize>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "onOffControl",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(0),
+                            self.0.writer(),
+                        )?;
+                        Ok(OnWithTimedOffRequestBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> OnWithTimedOffRequestBuilder<P, 1>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn on_time(
                         mut self,
@@ -1348,6 +2056,20 @@ mod tests {
                         OnWithTimedOffRequestBuilder<P, 2usize>,
                         rs_matter_crate::error::Error,
                     > {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "onTime",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "onTime",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(1),
@@ -1356,9 +2078,39 @@ mod tests {
                         Ok(OnWithTimedOffRequestBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> OnWithTimedOffRequestBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn on_time(
+                        mut self,
+                        value: u16,
+                    ) -> Result<
+                        OnWithTimedOffRequestBuilder<P, 2usize>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "onTime",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(OnWithTimedOffRequestBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> OnWithTimedOffRequestBuilder<P, 2>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn off_wait_time(
                         mut self,
@@ -1367,6 +2119,47 @@ mod tests {
                         OnWithTimedOffRequestBuilder<P, 3usize>,
                         rs_matter_crate::error::Error,
                     > {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "offWaitTime",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "offWaitTime",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(2),
+                            self.0.writer(),
+                        )?;
+                        Ok(OnWithTimedOffRequestBuilder(self.0))
+                    }
+                }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> OnWithTimedOffRequestBuilder<P, 2>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn off_wait_time(
+                        mut self,
+                        value: u16,
+                    ) -> Result<
+                        OnWithTimedOffRequestBuilder<P, 3usize>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "offWaitTime",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(2),
@@ -1384,6 +2177,29 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P, const F: usize> core::fmt::Debug for OnWithTimedOffRequestBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "OnWithTimedOffRequest")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format
+                    for OnWithTimedOffRequestBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "OnWithTimedOffRequest"
+                        )
                     }
                 }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent
@@ -1441,6 +2257,28 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P> core::fmt::Debug for OnWithTimedOffRequestArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "OnWithTimedOffRequest[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for OnWithTimedOffRequestArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "OnWithTimedOffRequest[]"
+                        )
                     }
                 }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for OnWithTimedOffRequestArrayBuilder<P>
@@ -1508,15 +2346,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 1>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn short_string(
                         mut self,
                         value: rs_matter_crate::tlv::Utf8Str<'_>,
                     ) -> Result<WithStringMemberBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "short_string",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "short_string",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(1),
@@ -1525,15 +2380,57 @@ mod tests {
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn short_string(
+                        mut self,
+                        value: rs_matter_crate::tlv::Utf8Str<'_>,
+                    ) -> Result<WithStringMemberBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "short_string",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 2>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn long_string(
                         mut self,
                         value: rs_matter_crate::tlv::Utf8Str<'_>,
                     ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "long_string",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "long_string",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(2),
@@ -1542,15 +2439,57 @@ mod tests {
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 2>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn long_string(
+                        mut self,
+                        value: rs_matter_crate::tlv::Utf8Str<'_>,
+                    ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "long_string",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(2),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 3>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn opt_str(
                         mut self,
                         value: Option<rs_matter_crate::tlv::Utf8Str<'_>>,
                     ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_str",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_str",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(3),
@@ -1559,9 +2498,37 @@ mod tests {
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 3>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn opt_str(
+                        mut self,
+                        value: Option<rs_matter_crate::tlv::Utf8Str<'_>>,
+                    ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_str",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(3),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 4>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn opt_nul_str(
                         mut self,
@@ -1570,6 +2537,47 @@ mod tests {
                         >,
                     ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_nul_str",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_nul_str",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(4),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 4>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn opt_nul_str(
+                        mut self,
+                        value: Option<
+                            rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
+                        >,
+                    ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_nul_str",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(4),
@@ -1587,6 +2595,28 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P, const F: usize> core::fmt::Debug for WithStringMemberBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "WithStringMember")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for WithStringMemberBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "WithStringMember"
+                        )
                     }
                 }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for WithStringMemberBuilder<P, F>
@@ -1643,6 +2673,28 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P> core::fmt::Debug for WithStringMemberArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "WithStringMember[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for WithStringMemberArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "WithStringMember[]"
+                        )
                     }
                 }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for WithStringMemberArrayBuilder<P>
@@ -1710,15 +2762,32 @@ mod tests {
                         Ok(Self(parent))
                     }
                 }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 1>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn short_string(
                         mut self,
                         value: rs_matter_crate::tlv::OctetStr<'_>,
                     ) -> Result<WithStringMemberBuilder<P, 2usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "short_string",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "short_string",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(1),
@@ -1727,15 +2796,57 @@ mod tests {
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn short_string(
+                        mut self,
+                        value: rs_matter_crate::tlv::OctetStr<'_>,
+                    ) -> Result<WithStringMemberBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "short_string",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 2>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn long_string(
                         mut self,
                         value: rs_matter_crate::tlv::OctetStr<'_>,
                     ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "long_string",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "long_string",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(2),
@@ -1744,15 +2855,57 @@ mod tests {
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 2>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn long_string(
+                        mut self,
+                        value: rs_matter_crate::tlv::OctetStr<'_>,
+                    ) -> Result<WithStringMemberBuilder<P, 3usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "long_string",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(2),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 3>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn opt_str(
                         mut self,
                         value: Option<rs_matter_crate::tlv::OctetStr<'_>>,
                     ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_str",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_str",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(3),
@@ -1761,9 +2914,37 @@ mod tests {
                         Ok(WithStringMemberBuilder(self.0))
                     }
                 }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 3>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn opt_str(
+                        mut self,
+                        value: Option<rs_matter_crate::tlv::OctetStr<'_>>,
+                    ) -> Result<WithStringMemberBuilder<P, 4usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_str",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(3),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(feature = "defmt")]
                 impl<P> WithStringMemberBuilder<P, 4>
                 where
-                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
                 {
                     pub fn opt_nul_str(
                         mut self,
@@ -1772,6 +2953,47 @@ mod tests {
                         >,
                     ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
                     {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_nul_str",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_nul_str",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(4),
+                            self.0.writer(),
+                        )?;
+                        Ok(WithStringMemberBuilder(self.0))
+                    }
+                }
+                #[cfg(not(feature = "defmt"))]
+                impl<P> WithStringMemberBuilder<P, 4>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn opt_nul_str(
+                        mut self,
+                        value: Option<
+                            rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
+                        >,
+                    ) -> Result<WithStringMemberBuilder<P, 5usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "opt_nul_str",
+                            value
+                        );
                         rs_matter_crate::tlv::ToTLV::to_tlv(
                             &value,
                             &rs_matter_crate::tlv::TLVTag::Context(4),
@@ -1789,6 +3011,28 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P, const F: usize> core::fmt::Debug for WithStringMemberBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "WithStringMember")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for WithStringMemberBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "WithStringMember"
+                        )
                     }
                 }
                 impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for WithStringMemberBuilder<P, F>
@@ -1845,6 +3089,28 @@ mod tests {
                         use rs_matter_crate::tlv::TLVWrite;
                         self.0.writer().end_container()?;
                         Ok(self.0)
+                    }
+                }
+                impl<P> core::fmt::Debug for WithStringMemberArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "WithStringMember[]")
+                    }
+                }
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for WithStringMemberArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "WithStringMember[]"
+                        )
                     }
                 }
                 impl<P> rs_matter_crate::tlv::TLVBuilderParent for WithStringMemberArrayBuilder<P>
