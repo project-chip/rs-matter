@@ -23,6 +23,7 @@ use super::{
     TLVWrite, TLV,
 };
 
+pub use builder::*;
 pub use container::*;
 pub use maybe::*;
 pub use octets::*;
@@ -31,6 +32,7 @@ pub use str::*;
 
 mod array;
 mod bitflags;
+mod builder;
 mod container;
 mod maybe;
 mod octets;
@@ -213,7 +215,7 @@ mod tests {
         ::core::assert_eq!(writebuf.as_slice(), expected);
     }
 
-    #[derive(ToTLV)]
+    #[derive(ToTLV, Debug)]
     struct TestDerive {
         a: u16,
         b: u32,

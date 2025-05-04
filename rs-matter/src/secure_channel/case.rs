@@ -569,7 +569,8 @@ impl Default for Case {
     }
 }
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1, lifetime = "'a")]
 struct Sigma1Req<'a> {
     initiator_random: OctetStr<'a>,
@@ -578,7 +579,8 @@ struct Sigma1Req<'a> {
     peer_pub_key: OctetStr<'a>,
 }
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1, lifetime = "'a")]
 struct Sigma3Decrypt<'a> {
     initiator_noc: OctetStr<'a>,

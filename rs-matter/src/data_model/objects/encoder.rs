@@ -31,7 +31,10 @@ use crate::{
     tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV},
 };
 
-use super::{AttrDetails, CmdDetails, DataModelHandler};
+use super::{
+    AttrDetails, ChangeNotify, CmdDetails, DataModelHandler, InvokeContext, ReadContext,
+    WriteContext,
+};
 
 pub struct AttrDataEncoder<'a, 'b, 'c> {
     dataver_filter: Option<u32>,
@@ -50,13 +53,16 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
             Ok(attr) => {
                 let encoder = AttrDataEncoder::new(attr, tw);
 
-                let result = handler.read(exchange, attr, encoder).await;
+                let result = handler
+                    .read(&ReadContext::new(exchange, attr), encoder)
+                    .await;
                 match result {
                     Ok(()) => None,
                     Err(e) => {
                         if e.code() == ErrorCode::NoSpace {
                             return Ok(false);
                         } else {
+                            error!("Error reading attribute: {}", e);
                             attr.status(e.into())?
                         }
                     }
@@ -72,20 +78,24 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         Ok(true)
     }
 
-    pub async fn handle_write<T: DataModelHandler>(
+    pub(crate) async fn handle_write<T: DataModelHandler>(
         exchange: &Exchange<'_>,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
+        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((attr, data)) => {
                 let result = handler
-                    .write(exchange, attr, AttrData::new(attr.dataver, data))
+                    .write(&WriteContext::new(exchange, attr, data, notify))
                     .await;
                 match result {
                     Ok(()) => attr.status(IMStatusCode::Success)?,
-                    Err(error) => attr.status(error.into())?,
+                    Err(error) => {
+                        error!("Error writing attribute: {}", error);
+                        attr.status(error.into())?
+                    }
                 }
             }
             Err(status) => Some(status.clone()),
@@ -160,6 +170,10 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
         Ok(())
     }
 
+    pub fn writer(&mut self) -> &mut TLVWriter<'b, 'c> {
+        self.tw
+    }
+
     fn reset(&mut self) {
         self.tw.rewind_to(self.anchor);
     }
@@ -184,27 +198,6 @@ impl<'b, 'c> Deref for AttrDataWriter<'_, 'b, 'c> {
 impl DerefMut for AttrDataWriter<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.tw
-    }
-}
-
-pub struct AttrData<'a> {
-    for_dataver: Option<u32>,
-    data: &'a TLVElement<'a>,
-}
-
-impl<'a> AttrData<'a> {
-    pub fn new(for_dataver: Option<u32>, data: &'a TLVElement<'a>) -> Self {
-        Self { for_dataver, data }
-    }
-
-    pub fn with_dataver(self, dataver: u32) -> Result<&'a TLVElement<'a>, Error> {
-        if let Some(req_dataver) = self.for_dataver {
-            if req_dataver != dataver {
-                Err(ErrorCode::DataVersionMismatch)?;
-            }
-        }
-
-        Ok(self.data)
     }
 }
 
@@ -234,18 +227,21 @@ pub struct CmdDataEncoder<'a, 'b, 'c> {
 }
 
 impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
-    pub async fn handle<T: DataModelHandler>(
+    pub(crate) async fn handle<T: DataModelHandler>(
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
         handler: &T,
         tw: &mut TLVWriter<'_, '_>,
         exchange: &Exchange<'_>,
+        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((cmd, data)) => {
                 let mut tracker = CmdDataTracker::new();
                 let encoder = CmdDataEncoder::new(cmd, &mut tracker, tw);
 
-                let result = handler.invoke(exchange, cmd, data, encoder).await;
+                let result = handler
+                    .invoke(&InvokeContext::new(exchange, cmd, data, notify), encoder)
+                    .await;
                 match result {
                     Ok(()) => cmd.success(&tracker),
                     Err(error) => {
@@ -279,7 +275,7 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
         }
     }
 
-    pub fn with_command(mut self, cmd: u16) -> Result<CmdDataWriter<'a, 'b, 'c>, Error> {
+    pub fn with_command(mut self, cmd: u32) -> Result<CmdDataWriter<'a, 'b, 'c>, Error> {
         let mut writer = CmdDataWriter::new(self.tracker, self.tw);
 
         writer.start_struct(&TLVTag::Anonymous)?;
@@ -327,6 +323,10 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
         self.tracker.complete();
 
         Ok(())
+    }
+
+    pub fn writer(&mut self) -> &mut TLVWriter<'b, 'c> {
+        self.tw
     }
 
     fn reset(&mut self) {
@@ -402,33 +402,4 @@ impl AttrUtfType {
     pub fn decode<'a>(&self, data: &TLVElement<'a>) -> Result<&'a str, IMStatusCode> {
         data.utf8().map_err(|_| IMStatusCode::InvalidDataType)
     }
-}
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! attribute_enum {
-    ($en:ty) => {
-        impl core::convert::TryFrom<$crate::data_model::objects::AttrId> for $en {
-            type Error = $crate::error::Error;
-
-            fn try_from(id: $crate::data_model::objects::AttrId) -> Result<Self, Self::Error> {
-                <$en>::from_repr(id)
-                    .ok_or_else(|| $crate::error::ErrorCode::AttributeNotFound.into())
-            }
-        }
-    };
-}
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! command_enum {
-    ($en:ty) => {
-        impl core::convert::TryFrom<$crate::data_model::objects::CmdId> for $en {
-            type Error = $crate::error::Error;
-
-            fn try_from(id: $crate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
-                <$en>::from_repr(id).ok_or_else(|| $crate::error::ErrorCode::CommandNotFound.into())
-            }
-        }
-    };
 }

@@ -383,7 +383,7 @@ impl AclEntry {
             self.targets.reinit(Nullable::init_some(Vec::init()));
         }
 
-        unwrap!(self.targets.as_mut())
+        unwrap!(self.targets.as_opt_mut())
             .push(target)
             .map_err(|_| ErrorCode::NoSpace.into())
     }
@@ -421,7 +421,7 @@ impl AclEntry {
     fn match_access_desc(&self, object: &AccessDesc) -> bool {
         let mut allow = false;
         let mut entries_exist = false;
-        match self.targets.as_ref() {
+        match self.targets.as_opt_ref() {
             None => allow = true, // Allow if targets are NULL
             Some(targets) => {
                 for t in targets {

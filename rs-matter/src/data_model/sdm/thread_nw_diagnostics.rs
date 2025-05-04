@@ -19,15 +19,18 @@ use core::net::Ipv6Addr;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder, Command,
+    Dataver, Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
+};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, command_enum};
+use crate::tlv::{FromTLV, TLVTag, TLVWrite, ToTLV};
+use crate::{attribute_enum, attributes, command_enum, commands, with};
 
 pub const ID: u32 = 0x0036;
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     Channel(AttrType<u16>) = 0x00,
@@ -97,7 +100,8 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Commands {
     ResetCounts = 0x0,
@@ -109,7 +113,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::Channel as _,
             Access::RV,
@@ -196,8 +200,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
     ),
-    accepted_commands: &[CommandsDiscriminants::ResetCounts as _],
-    generated_commands: &[],
+    commands: commands!(Command::new(
+        CommandsDiscriminants::ResetCounts as _,
+        None,
+        Access::WA,
+    ),),
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, FromTLV, ToTLV, FromRepr)]
@@ -343,10 +352,11 @@ impl<'a> ThreadNwDiagCluster<'a> {
     /// Read the value of an attribute.
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -422,7 +432,10 @@ impl<'a> ThreadNwDiagCluster<'a> {
 
                         writer.end_container()
                     }
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {
@@ -431,13 +444,8 @@ impl<'a> ThreadNwDiagCluster<'a> {
     }
 
     /// Write the value of an attribute.
-    pub fn write(
-        &self,
-        _exchange: &Exchange,
-        _attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let _data = data.with_dataver(self.data_ver.get())?;
+    pub fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        ctx.attr().check_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
 
@@ -447,14 +455,14 @@ impl<'a> ThreadNwDiagCluster<'a> {
     /// Invoke a command.
     pub fn invoke(
         &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        _data: &TLVElement,
-        _encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+
         match cmd.cmd_id.try_into()? {
             Commands::ResetCounts => {
-                info!("ResetCounts: Not yet supported");
+                debug!("ResetCounts: Not yet supported");
             }
         }
 
@@ -467,25 +475,22 @@ impl<'a> ThreadNwDiagCluster<'a> {
 impl Handler for ThreadNwDiagCluster<'_> {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        ThreadNwDiagCluster::read(self, exchange, attr, encoder)
+        ThreadNwDiagCluster::read(self, ctx, encoder)
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        ThreadNwDiagCluster::write(self, exchange, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        ThreadNwDiagCluster::write(self, ctx)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        ThreadNwDiagCluster::invoke(self, exchange, cmd, data, encoder)
+        ThreadNwDiagCluster::invoke(self, ctx, encoder)
     }
 }
 

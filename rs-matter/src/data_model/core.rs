@@ -75,7 +75,7 @@ where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
 {
-    /// Create the handler.
+    /// Create the data model.
     ///
     /// The parameters are as follows:
     /// * `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
@@ -158,7 +158,7 @@ where
 
         for item in metadata.node().read(&req, &exchange.accessor()?)? {
             if item?
-                .map(|attr| self.handler.read_awaits(exchange, &attr))
+                .map(|attr| self.handler.read_awaits(&ReadContext::new(exchange, &attr)))
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -261,7 +261,14 @@ where
 
         for item in metadata.node().write(&req, &exchange.accessor()?)? {
             if item?
-                .map(|(attr, _)| self.handler.write_awaits(exchange, &attr))
+                .map(|(attr, _)| {
+                    self.handler.write_awaits(&WriteContext::new(
+                        exchange,
+                        &attr,
+                        &TLVElement::new(&[]),
+                        &(),
+                    ))
+                })
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -281,13 +288,13 @@ where
 
             let req = WriteReqRef::new(TLVElement::new(&rx));
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+            req.respond(&self.handler, exchange, &metadata.node(), self, &mut wb)
                 .await?
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb)
+            req.respond(&self.handler, exchange, &metadata.node(), self, &mut wb)
                 .await?
         };
 
@@ -325,7 +332,14 @@ where
 
         for item in metadata.node().invoke(&req, &exchange.accessor()?)? {
             if item?
-                .map(|(cmd, _)| self.handler.invoke_awaits(exchange, &cmd))
+                .map(|(cmd, _)| {
+                    self.handler.invoke_awaits(&InvokeContext::new(
+                        exchange,
+                        &cmd,
+                        &TLVElement::new(&[]),
+                        &(),
+                    ))
+                })
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -345,14 +359,28 @@ where
 
             let req = InvReqRef::new(TLVElement::new(&rx));
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb, false)
-                .await?;
+            req.respond(
+                &self.handler,
+                exchange,
+                &metadata.node(),
+                self,
+                &mut wb,
+                false,
+            )
+            .await?;
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(&self.handler, exchange, &metadata.node(), &mut wb, false)
-                .await?;
+            req.respond(
+                &self.handler,
+                exchange,
+                &metadata.node(),
+                self,
+                &mut wb,
+                false,
+            )
+            .await?;
         }
 
         exchange.send(OpCode::InvokeResponse, wb.as_slice()).await?;
@@ -387,7 +415,7 @@ where
                 .borrow_mut()
                 .retain(|sb| sb.fabric_idx != fabric_idx || sb.peer_node_id != peer_node_id);
 
-            info!(
+            debug!(
                 "All subscriptions for [F:{:x},P:{:x}] removed",
                 fabric_idx, peer_node_id
             );
@@ -434,7 +462,7 @@ where
                 })
                 .await?;
 
-            info!(
+            debug!(
                 "Subscription [F:{:x},P:{:x}]::{} created",
                 fabric_idx, peer_node_id, id
             );
@@ -481,7 +509,7 @@ where
                     .borrow_mut()
                     .retain(|sb| sb.subscription_id != id);
 
-                info!(
+                debug!(
                     "Subscription [F:{:x},P:{:x}]::{} removed since its session ({}) had been removed too",
                     fabric_idx,
                     peer_node_id,
@@ -499,7 +527,7 @@ where
                     .borrow_mut()
                     .retain(|sb| sb.subscription_id != id);
 
-                info!(
+                warn!(
                     "Subscription [F:{:x},P:{:x}]::{} removed due to inactivity",
                     fabric_idx, peer_node_id, id
                 );
@@ -509,7 +537,7 @@ where
                 let sub = self.subscriptions.find_report_due(now);
 
                 if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
-                    info!(
+                    debug!(
                         "About to report data for subscription [F:{:x},P:{:x}]::{}",
                         fabric_idx, peer_node_id, id
                     );
@@ -579,6 +607,9 @@ where
         };
 
         if let Some(mut tx) = self.buffers.get().await {
+            // Always safe as `IMBuffer` is defined to be `MAX_EXCHANGE_RX_BUF_SIZE`, which is bigger than `MAX_EXCHANGE_TX_BUF_SIZE`
+            unwrap!(tx.resize_default(MAX_EXCHANGE_TX_BUF_SIZE));
+
             let primed = self
                 .report_data(
                     id,
@@ -689,7 +720,7 @@ where
                 exchange.send(OpCode::ReportData, wb.as_slice()).await?;
 
                 if !Self::recv_status_success(exchange).await? {
-                    info!(
+                    debug!(
                         "Subscription [F:{:x},P:{:x}]::{} removed during reporting",
                         fabric_idx, peer_node_id, id
                     );
@@ -798,6 +829,17 @@ where
     }
 }
 
+impl<const N: usize, B, T> ChangeNotify for DataModel<'_, N, B, T>
+where
+    T: DataModelHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    fn notify(&self, _endpt: EndptId, _clust: ClusterId) {
+        // TODO: Make use of endpt and clust
+        self.subscriptions.notify_changed();
+    }
+}
+
 impl<'a> ReportDataReq<'a> {
     // This is the amount of space we reserve for other things to be attached towards
     // the end of long reads.
@@ -886,6 +928,7 @@ impl WriteReqRef<'_> {
         handler: T,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
+        notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error>
     where
@@ -914,7 +957,7 @@ impl WriteReqRef<'_> {
             node.write(self, &accessor)?.collect();
 
         for item in write_attrs {
-            AttrDataEncoder::handle_write(exchange, &item?, &handler, &mut tw).await?;
+            AttrDataEncoder::handle_write(exchange, &item?, &handler, &mut tw, notify).await?;
         }
 
         tw.end_container()?;
@@ -930,6 +973,7 @@ impl InvReqRef<'_> {
         handler: T,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
+        notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
         suppress_resp: bool,
     ) -> Result<(), Error>
@@ -957,7 +1001,7 @@ impl InvReqRef<'_> {
         let accessor = exchange.accessor()?;
 
         for item in node.invoke(self, &accessor)? {
-            CmdDataEncoder::handle(&item?, &handler, &mut tw, exchange).await?;
+            CmdDataEncoder::handle(&item?, &handler, &mut tw, exchange, notify).await?;
         }
 
         if has_requests {

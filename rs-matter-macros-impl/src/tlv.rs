@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2024 Project CHIP Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 use std::collections::HashSet;
 
 use proc_macro2::{Ident, Literal, Span, TokenStream};
@@ -108,10 +124,7 @@ fn get_unit_enum_func_and_tags(
         // "struct" is the default, so we make it equivalent to u8 for convenience
         "struct" | "u8" => {
             if tags.iter().any(|v| *v > 0xFF) {
-                panic!(
-                    "Enum discriminator value larger that 0xFF for {:?}",
-                    enum_name
-                )
+                panic!("Enum discriminator value larger that 0xFF for {enum_name:?}")
             }
             (
                 Ident::new("u8", Span::call_site()),
@@ -124,7 +137,7 @@ fn get_unit_enum_func_and_tags(
             Ident::new("u16", Span::call_site()),
             tags.into_iter().map(Literal::u16_suffixed).collect(),
         ),
-        _ => panic!("Invalid data type {:?} for enum {:?}", data_type, enum_name),
+        _ => panic!("Invalid data type {data_type:?} for enum {enum_name:?}"),
     }
 }
 
@@ -312,14 +325,11 @@ fn gen_totlv_for_enum(
     } else {
         // tags MUST be context-tags (up to u8 range)
         if tags.iter().any(|v| *v > u8::MAX as _) {
-            panic!(
-                "Enum discriminator value larger that 0xFF for {:?}",
-                enum_name
-            )
+            panic!("Enum discriminator value larger that 0xFF for {enum_name:?}")
         }
 
         if tags.len() > 6 {
-            panic!("More than 6 enum variants for {:?}", enum_name)
+            panic!("More than 6 enum variants for {enum_name:?}")
         }
 
         let either_ident = if tags.len() != 2 {
@@ -686,10 +696,7 @@ fn gen_fromtlv_for_enum(
     } else {
         // tags MUST be context-tags (up to u8 range)
         if tags.iter().any(|v| *v > 0xFF) {
-            panic!(
-                "Enum discriminator value larger that 0xFF for {:?}",
-                enum_name
-            )
+            panic!("Enum discriminator value larger that 0xFF for {enum_name:?}")
         }
         let tags = tags
             .into_iter()
@@ -754,7 +761,7 @@ fn gen_fromtlv_for_enum(
 
 fn normalize_fromtlv_type(ty: &syn::Type) -> TokenStream {
     let Type::Path(type_path) = ty else {
-        panic!("Don't know what to do {:?}", ty);
+        panic!("Don't know what to do {ty:?}");
     };
 
     // When paths are like `matter_rs::tlv::Nullable<u32>`

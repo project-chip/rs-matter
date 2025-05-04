@@ -17,15 +17,17 @@
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Command, Dataver,
+    Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext, WriteContext,
+};
 use crate::error::{Error, ErrorCode};
-use crate::tlv::TLVElement;
-use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter, command_enum};
+use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands, with};
 
 pub const ID: u32 = 0x003F;
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     GroupKeyMap(()) = 0x00,
@@ -36,7 +38,8 @@ pub enum Attributes {
 
 attribute_enum!(Attributes);
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Commands {
     KeySetWrite = 0x0,
@@ -48,7 +51,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::GroupKeyMap as _,
             Access::RWFVM,
@@ -70,8 +73,13 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::FIXED,
         ),
     ),
-    accepted_commands: &[CommandsDiscriminants::KeySetWrite as _],
-    generated_commands: &[],
+    commands: commands!(Command::new(
+        CommandsDiscriminants::KeySetWrite as _,
+        None,
+        Access::WA,
+    ),),
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug, Clone)]
@@ -87,10 +95,11 @@ impl GrpKeyMgmtCluster {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -98,7 +107,10 @@ impl GrpKeyMgmtCluster {
                 match attr.attr_id.try_into()? {
                     Attributes::MaxGroupsPerFabric(codec) => codec.encode(writer, 1),
                     Attributes::MaxGroupKeysPerFabric(codec) => codec.encode(writer, 1),
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {
@@ -106,13 +118,8 @@ impl GrpKeyMgmtCluster {
         }
     }
 
-    pub fn write(
-        &self,
-        _exchange: &Exchange,
-        _attr: &AttrDetails,
-        data: AttrData,
-    ) -> Result<(), Error> {
-        let _data = data.with_dataver(self.data_ver.get())?;
+    pub fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        ctx.attr().check_dataver(self.data_ver.get())?;
 
         self.data_ver.changed();
 
@@ -121,11 +128,11 @@ impl GrpKeyMgmtCluster {
 
     pub fn invoke(
         &self,
-        _exchange: &Exchange,
-        cmd: &CmdDetails,
-        _data: &TLVElement,
-        _encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let cmd = ctx.cmd();
+
         match cmd.cmd_id.try_into()? {
             Commands::KeySetWrite => {
                 cmd_enter!("KeySetWrite: Not yet supported");
@@ -141,33 +148,24 @@ impl GrpKeyMgmtCluster {
 impl Handler for GrpKeyMgmtCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        GrpKeyMgmtCluster::read(self, exchange, attr, encoder)
+        GrpKeyMgmtCluster::read(self, ctx, encoder)
     }
 
-    fn write(&self, exchange: &Exchange, attr: &AttrDetails, data: AttrData) -> Result<(), Error> {
-        GrpKeyMgmtCluster::write(self, exchange, attr, data)
+    fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+        GrpKeyMgmtCluster::write(self, ctx)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        GrpKeyMgmtCluster::invoke(self, exchange, cmd, data, encoder)
+        GrpKeyMgmtCluster::invoke(self, ctx, encoder)
     }
 }
 
 // TODO: Might be removed once the `on` member is externalized
 impl NonBlockingHandler for GrpKeyMgmtCluster {}
-
-impl ChangeNotifier<()> for GrpKeyMgmtCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

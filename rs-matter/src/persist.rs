@@ -145,7 +145,7 @@ pub mod fileio {
 
                     let data = &buf[..offset];
 
-                    debug!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
+                    trace!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
 
                     Ok(Some(data))
                 }
@@ -160,7 +160,7 @@ pub mod fileio {
 
             file.write_all(data)?;
 
-            debug!("Key {}: stored {} bytes {:?}", key, data.len(), data);
+            trace!("Key {}: stored {} bytes {:?}", key, data.len(), data);
 
             Ok(())
         }

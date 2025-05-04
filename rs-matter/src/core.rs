@@ -18,7 +18,7 @@
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::data_model::{
-    cluster_basic_information::{BasicInfoConfig, BasicInfoSettings},
+    basic_info::{BasicInfoConfig, BasicInfoSettings},
     sdm::{dev_att::DevAttDataFetcher, failsafe::FailSafe},
 };
 use crate::error::*;

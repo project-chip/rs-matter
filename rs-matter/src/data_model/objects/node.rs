@@ -28,7 +28,7 @@ use crate::interaction_model::messages::msg::{InvReqRef, WriteReqRef};
 use crate::interaction_model::messages::GenericPath;
 use crate::tlv::{TLVArray, TLVElement};
 
-use super::{AttrDetails, Cluster, ClusterId, CmdDetails, EndptId};
+use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
@@ -44,6 +44,11 @@ impl<'a> Node<'a> {
     /// Create a new node with the given ID and endpoints.
     pub const fn new(id: u16, endpoints: &'a [Endpoint<'a>]) -> Self {
         Self { id, endpoints }
+    }
+
+    /// Return a reference to the endpoint with the given ID, if it exists.
+    pub fn endpoint(&self, id: EndptId) -> Option<&Endpoint<'a>> {
+        self.endpoints.iter().find(|endpoint| endpoint.id == id)
     }
 
     /// Expand (potentially wildcard) read requests into concrete attribute details
@@ -436,32 +441,42 @@ where
 
                     if path.cluster.is_none() || path.cluster == Some(cluster.id) {
                         let cluster_leaves_len = if command {
-                            cluster.accepted_commands.len()
+                            cluster.commands().count()
                         } else {
-                            cluster.attributes.len()
+                            cluster.attributes().count()
                         };
 
                         while (self.leaf_index as usize) < cluster_leaves_len {
                             let leaf_id = if command {
-                                cluster.accepted_commands[self.leaf_index as usize]
+                                unwrap!(cluster
+                                    .commands()
+                                    .map(|cmd| cmd.id)
+                                    .nth(self.leaf_index as usize))
                             } else {
-                                cluster.attributes[self.leaf_index as usize].id as _
+                                unwrap!(cluster
+                                    .attributes()
+                                    .map(|attr| attr.id)
+                                    .nth(self.leaf_index as usize))
                             };
 
                             if path.leaf.is_none() || path.leaf == Some(leaf_id as _) {
                                 // Leaf found, check its access rights
 
                                 let check = if matches!(T::OPERATION, Operation::Invoke) {
-                                    Cluster::check_cmd_access(
+                                    cluster.check_cmd_access(
                                         self.accessor,
                                         GenericPath::new(
                                             Some(endpoint.id),
                                             Some(cluster.id),
                                             Some(leaf_id),
                                         ),
+                                        unwrap!(cluster
+                                            .commands()
+                                            .map(|cmd| cmd.id)
+                                            .nth(self.leaf_index as usize)),
                                     )
                                 } else {
-                                    Cluster::check_attr_access(
+                                    cluster.check_attr_access(
                                         self.accessor,
                                         GenericPath::new(
                                             Some(endpoint.id),
@@ -469,7 +484,10 @@ where
                                             Some(leaf_id),
                                         ),
                                         matches!(T::OPERATION, Operation::Write),
-                                        cluster.attributes[self.leaf_index as usize].access,
+                                        unwrap!(cluster
+                                            .attributes()
+                                            .map(|attr| attr.id)
+                                            .nth(self.leaf_index as usize)),
                                     )
                                 };
 
@@ -608,7 +626,7 @@ fn dataver(
 mod test {
     use crate::acl::{Accessor, AccessorSubjects, AuthMode};
     use crate::data_model::objects::{
-        Access, Attribute, Cluster, ClusterId, DeviceType, Endpoint, EndptId, Quality,
+        Access, Attribute, Cluster, ClusterId, Command, DeviceType, Endpoint, EndptId, Quality,
     };
     use crate::error::{Error, ErrorCode};
     use crate::fabric::FabricMgr;
@@ -702,8 +720,9 @@ mod test {
                     1,
                     0,
                     &[Attribute::new(0, Access::all(), Quality::all())],
-                    &[],
-                    &[],
+                    &[Command::new(0, None, Access::all())],
+                    |_, _, _| true,
+                    |_, _, _| true,
                 )],
             )],
         );
@@ -810,16 +829,18 @@ mod test {
                             1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
-                            &[],
-                            &[],
+                            &[Command::new(1, None, Access::all())],
+                            |_, _, _| true,
+                            |_, _, _| true,
                         ),
                         Cluster::new(
                             10,
                             1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
-                            &[],
-                            &[],
+                            &[Command::new(1, None, Access::all())],
+                            |_, _, _| true,
+                            |_, _, _| true,
                         ),
                     ],
                 ),
@@ -832,8 +853,9 @@ mod test {
                             1,
                             0,
                             &[Attribute::new(1, Access::all(), Quality::all())],
-                            &[],
-                            &[],
+                            &[Command::new(1, None, Access::all())],
+                            |_, _, _| true,
+                            |_, _, _| true,
                         ),
                         Cluster::new(
                             20,
@@ -843,8 +865,12 @@ mod test {
                                 Attribute::new(20, Access::all(), Quality::all()),
                                 Attribute::new(30, Access::all(), Quality::all()),
                             ],
-                            &[],
-                            &[],
+                            &[
+                                Command::new(20, None, Access::all()),
+                                Command::new(30, None, Access::all()),
+                            ],
+                            |_, _, _| true,
+                            |_, _, _| true,
                         ),
                     ],
                 ),
