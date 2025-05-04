@@ -97,8 +97,11 @@ impl<'a> Cluster<'a> {
     }
 
     /// Return a new cluster with a modified feature map
-    pub const fn with_features(self, revision: u16) -> Self {
-        Self { revision, ..self }
+    pub const fn with_features(self, feature_map: u32) -> Self {
+        Self {
+            feature_map,
+            ..self
+        }
     }
 
     /// Return a new cluster with a modified attributes' matcher
