@@ -17,13 +17,13 @@
 //! A module for generating Rust builder types corresponding to structures
 //! in an IDL cluster.
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, Struct, StructField};
 
 use super::field::{field_type_builder, BuilderPolicy};
-use super::id::idl_field_name_to_rs_name;
+use super::id::{ident, idl_field_name_to_rs_name};
 use super::struct_in::struct_field_comment;
 use super::IdlGenerateContext;
 
@@ -52,9 +52,9 @@ pub fn struct_builders(cluster: &Cluster, context: &IdlGenerateContext) -> Token
 pub fn struct_builder(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let name = Ident::new(&format!("{}Builder", s.id), Span::call_site());
+    let name = ident(&format!("{}Builder", s.id));
     let name_str = Literal::string(&s.id);
-    let name_array = Ident::new(&format!("{}ArrayBuilder", s.id), Span::call_site());
+    let name_array = ident(&format!("{}ArrayBuilder", s.id));
     let name_array_str = Literal::string(&format!("{}[]", s.id));
 
     let start_code = s
@@ -258,7 +258,7 @@ fn struct_field_builder(
     let parent = quote!(#parent_name<P, #code>);
     let next_parent = quote!(#parent_name<P, #next_code>);
 
-    let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+    let name = ident(&idl_field_name_to_rs_name(&f.field.id));
     let name_str = Literal::string(&f.field.id);
 
     let (field_type, builder) = field_type_builder(

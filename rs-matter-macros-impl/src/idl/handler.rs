@@ -17,14 +17,14 @@
 //! A module for generating the the handler trait and its
 //! adaptor for a given IDL cluster.
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Attribute, Cluster, Command, DataType, StructType};
 
 use super::cluster::{GLOBAL_ATTR, NO_RESPONSE};
 use super::field::{field_type, field_type_builder, BuilderPolicy};
-use super::id::{idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
+use super::id::{ident, idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
 use super::IdlGenerateContext;
 
 /// Return a token stream defining the handler trait for the provided IDL cluster.
@@ -53,10 +53,10 @@ pub fn handler(
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let handler_name = Ident::new(
-        &format!("Cluster{}Handler", if asynch { "Async" } else { "" }),
-        Span::call_site(),
-    );
+    let handler_name = ident(&format!(
+        "Cluster{}Handler",
+        if asynch { "Async" } else { "" }
+    ));
 
     let handler_attribute_methods = cluster
         .attributes
@@ -137,20 +137,17 @@ pub fn handler_adaptor(
     let cluster_name_str = Literal::string(&cluster.id);
     let cluster_code = Literal::u32_suffixed(cluster.code as _);
 
-    let handler_name = Ident::new(
-        &format!("Cluster{}Handler", if asynch { "Async" } else { "" }),
-        Span::call_site(),
-    );
+    let handler_name = ident(&format!(
+        "Cluster{}Handler",
+        if asynch { "Async" } else { "" }
+    ));
 
-    let handler_adaptor_name = Ident::new(
-        &format!("Handler{}Adaptor", if asynch { "Async" } else { "" }),
-        Span::call_site(),
-    );
+    let handler_adaptor_name = ident(&format!(
+        "Handler{}Adaptor",
+        if asynch { "Async" } else { "" }
+    ));
 
-    let generic_handler_name = Ident::new(
-        &format!("{}Handler", if asynch { "Async" } else { "" }),
-        Span::call_site(),
-    );
+    let generic_handler_name = ident(&format!("{}Handler", if asynch { "Async" } else { "" }));
 
     let handler_adaptor_attribute_match = cluster
         .attributes
@@ -361,10 +358,7 @@ fn handler_attribute(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let attr_name = Ident::new(
-        &idl_field_name_to_rs_name(&attr.field.field.id),
-        Span::call_site(),
-    );
+    let attr_name = ident(&idl_field_name_to_rs_name(&attr.field.field.id));
 
     let parent = quote!(P);
     let (pasync, sawait) = if asynch {
@@ -454,10 +448,10 @@ fn handler_attribute_write(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let attr_name = Ident::new(
-        &format!("set_{}", &idl_field_name_to_rs_name(&attr.field.field.id)),
-        Span::call_site(),
-    );
+    let attr_name = ident(&format!(
+        "set_{}",
+        &idl_field_name_to_rs_name(&attr.field.field.id)
+    ));
 
     let (pasync, sawait) = if asynch {
         (quote!(async), quote!(.await))
@@ -524,10 +518,7 @@ fn handler_command(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let cmd_name = Ident::new(
-        &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
-        Span::call_site(),
-    );
+    let cmd_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
 
     let (pasync, sawait) = if asynch {
         (quote!(async), quote!(.await))
@@ -673,16 +664,12 @@ fn handler_adaptor_attribute_match(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let attr_name = Ident::new(
-        &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-        Span::call_site(),
-    );
+    let attr_name = ident(&idl_attribute_name_to_enum_variant_name(
+        &attr.field.field.id,
+    ));
     let attr_debug_id = quote!(MetadataDebug((ctx.attr().endpoint_id, self, MetadataDebug((AttributeId::#attr_name, false)))));
 
-    let attr_method_name = Ident::new(
-        &idl_field_name_to_rs_name(&attr.field.field.id),
-        Span::call_site(),
-    );
+    let attr_method_name = ident(&idl_field_name_to_rs_name(&attr.field.field.id));
 
     let parent = quote!(P);
     let sawait = if asynch { quote!(.await) } else { quote!() };
@@ -784,16 +771,15 @@ fn handler_adaptor_attribute_write_match(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let attr_name = Ident::new(
-        &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-        Span::call_site(),
-    );
+    let attr_name = ident(&idl_attribute_name_to_enum_variant_name(
+        &attr.field.field.id,
+    ));
     let attr_debug_id = quote!(MetadataDebug((ctx.attr().endpoint_id, self, MetadataDebug((AttributeId::#attr_name, false)))));
 
-    let attr_method_name = Ident::new(
-        &format!("set_{}", &idl_field_name_to_rs_name(&attr.field.field.id)),
-        Span::call_site(),
-    );
+    let attr_method_name = ident(&format!(
+        "set_{}",
+        &idl_field_name_to_rs_name(&attr.field.field.id)
+    ));
 
     let attr_type = field_type(
         &attr.field.field.data_type,
@@ -853,17 +839,11 @@ fn handler_adaptor_command_match(
     cluster: &Cluster,
     krate: &Ident,
 ) -> TokenStream {
-    let cmd_name = Ident::new(
-        &idl_attribute_name_to_enum_variant_name(&cmd.id),
-        Span::call_site(),
-    );
+    let cmd_name = ident(&idl_attribute_name_to_enum_variant_name(&cmd.id));
     let cmd_debug_id =
         quote!(MetadataDebug((ctx.cmd().endpoint_id, self, MetadataDebug(CommandId::#cmd_name))));
 
-    let cmd_method_name = Ident::new(
-        &format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)),
-        Span::call_site(),
-    );
+    let cmd_method_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
 
     let sawait = if asynch { quote!(.await) } else { quote!() };
 

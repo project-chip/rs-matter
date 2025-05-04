@@ -16,10 +16,12 @@
 
 //! A module for converting IDL field types to Rust types.
 
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, DataType};
+
+use super::id::ident;
 
 /// Return a stream representing the Rust type that corresponds to the given
 /// IDL type.
@@ -38,7 +40,7 @@ pub fn field_type(
     krate: &Ident,
 ) -> TokenStream {
     let mut field_type = field_type_builtin(f, krate, true).unwrap_or_else(|| {
-        let ident = Ident::new(f.name.as_str(), Span::call_site());
+        let ident = ident(f.name.as_str());
 
         let structure = cluster.structs.iter().any(|s| s.id == f.name);
         if structure {
@@ -138,14 +140,11 @@ pub fn field_type_builder(
             (quote!(#copy), false)
         }
     } else {
-        let ident = Ident::new(
-            &format!(
-                "{}{}Builder",
-                data_type.name.as_str(),
-                if data_type.is_list { "Array" } else { "" }
-            ),
-            Span::call_site(),
-        );
+        let ident = ident(&format!(
+            "{}{}Builder",
+            data_type.name.as_str(),
+            if data_type.is_list { "Array" } else { "" }
+        ));
 
         (quote!(#ident<#parent>), true)
     };
@@ -191,7 +190,7 @@ fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<Tok
     }
 
     if cluster.structs.iter().all(|s| s.id != f.name) {
-        let ident = Ident::new(f.name.as_str(), Span::call_site());
+        let ident = ident(f.name.as_str());
         return Some(quote!(#ident));
     }
 
