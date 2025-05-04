@@ -17,6 +17,7 @@
 //! A collection of utilities for converting IDL identifiers to Rust identifiers.
 
 use convert_case::{Case, Casing};
+use proc_macro2::{Ident, Span};
 
 /// Convert an IDL identifier (like `kFoo`) into a name suitable for
 /// constants based on Rust guidelines
@@ -117,5 +118,13 @@ pub fn idl_attribute_name_to_enum_variant_name(s: &str) -> String {
     match c.next() {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
+/// Create a new proc-macro identifier from a string, with `call_site` span.
+pub fn ident(name: &str) -> Ident {
+    match name {
+        "type" => Ident::new_raw(name, Span::call_site()), // TODO: Enhance with more Rust keywords
+        _ => Ident::new(name, Span::call_site()),
     }
 }

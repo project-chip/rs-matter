@@ -16,13 +16,13 @@
 
 //! A module for generating Rust types corresponding to bitmap definitions in an IDL cluster.
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Literal, TokenStream};
 
 use quote::quote;
 
 use rs_matter_data_model::{Bitmap, Cluster};
 
-use super::id::idl_id_to_constant_name;
+use super::id::{ident, idl_id_to_constant_name};
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all bitmap definitions in the provided IDL cluster.
@@ -43,13 +43,13 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
         "bitmap64" => quote!(u64),
         other => panic!("Unknown bitmap base type {other}"),
     };
-    let name = Ident::new(&b.id, Span::call_site());
+    let name = ident(&b.id);
 
     let items = b
         .entries
         .iter()
         .map(|c| {
-            let constant_name = Ident::new(&idl_id_to_constant_name(&c.id), Span::call_site());
+            let constant_name = ident(&idl_id_to_constant_name(&c.id));
             let constant_value = Literal::i64_unsuffixed(c.code as i64);
             quote!(
               const #constant_name = #constant_value;

@@ -19,12 +19,12 @@
 //! In other words, the `Cluster<'static>` static instance as well as simple enums for
 //! the IDs of the cluster attributes, commands and command responses.
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{AccessPrivilege, Cluster, StructType};
 
-use super::id::idl_attribute_name_to_enum_variant_name;
+use super::id::{ident, idl_attribute_name_to_enum_variant_name};
 use super::IdlGenerateContext;
 
 pub(crate) const NO_RESPONSE: &str = "DefaultSuccess";
@@ -36,10 +36,9 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
     let krate = context.rs_matter_crate.clone();
 
     let attributes = cluster.attributes.iter().map(|attr| {
-        let attr_name = Ident::new(
-            &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-            Span::call_site(),
-        );
+        let attr_name = ident(&idl_attribute_name_to_enum_variant_name(
+            &attr.field.field.id,
+        ));
         let attr_code = Literal::i64_unsuffixed(attr.field.field.code as i64);
 
         quote!(
@@ -48,9 +47,8 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
     });
 
     let attributes_debug = cluster.attributes.iter().map(|attr| {
-        let attr_name = Ident::new(
+        let attr_name = ident(
             &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-            Span::call_site(),
         );
         let attr_name_str = Literal::string(&idl_attribute_name_to_enum_variant_name(&attr.field.field.id));
 
@@ -60,9 +58,8 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
     });
 
     let attributes_format = cluster.attributes.iter().map(|attr| {
-        let attr_name = Ident::new(
+        let attr_name = ident(
             &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-            Span::call_site(),
         );
         let attr_name_str = Literal::string(&idl_attribute_name_to_enum_variant_name(&attr.field.field.id));
 
@@ -132,7 +129,7 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
         .commands
         .iter()
         .map(|cmd| {
-            let cmd_name = Ident::new(&cmd.id, Span::call_site());
+            let cmd_name = ident(&cmd.id);
             let cmd_code = Literal::i64_unsuffixed(cmd.code as i64);
 
             quote!(
@@ -142,7 +139,7 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
         .collect::<Vec<_>>();
 
     let commands_debug = cluster.commands.iter().map(|cmd| {
-        let cmd_name = Ident::new(&cmd.id, Span::call_site());
+        let cmd_name = ident(&cmd.id);
         let cmd_name_str = Literal::string(&cmd.id);
 
         quote!(
@@ -151,7 +148,7 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
     });
 
     let commands_format = cluster.commands.iter().map(|cmd| {
-        let cmd_name = Ident::new(&cmd.id, Span::call_site());
+        let cmd_name = ident(&cmd.id);
         let cmd_name_str = Literal::string(&cmd.id);
 
         quote!(
@@ -237,7 +234,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
         .iter()
         .filter_map(|s| {
             if let StructType::Response(code) = s.struct_type {
-                let cmd_name = Ident::new(&s.id, Span::call_site());
+                let cmd_name = ident(&s.id);
                 let cmd_code = Literal::i64_unsuffixed(code as i64);
                 Some(quote!(
                     #cmd_name = #cmd_code
@@ -250,7 +247,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
 
     let command_responses_debug = cluster.structs.iter().filter_map(|s| {
         if let StructType::Response(_) = s.struct_type {
-            let cmd_name = Ident::new(&s.id, Span::call_site());
+            let cmd_name = ident(&s.id);
             let cmd_name_str = Literal::string(&s.id);
             Some(quote!(
                 CommandResponseId::#cmd_name => write!(f, "{}(0x{:02x})", #cmd_name_str, CommandResponseId::#cmd_name as u32)?,
@@ -262,7 +259,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
 
     let command_responses_format = cluster.structs.iter().filter_map(|s| {
         if let StructType::Response(_) = s.struct_type {
-            let cmd_name = Ident::new(&s.id, Span::call_site());
+            let cmd_name = ident(&s.id);
             let cmd_name_str = Literal::string(&s.id);
             Some(quote!(
                 CommandResponseId::#cmd_name => #krate::reexport::defmt::write!(f, "{}(0x{:02x})", #cmd_name_str, CommandResponseId::#cmd_name as u32),
@@ -349,9 +346,8 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
     let attributes = cluster.attributes.iter().map(|attr| {
-        let attr_name = Ident::new(
+        let attr_name = ident(
             &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
-            Span::call_site(),
         );
 
         let mut rw = quote!(#krate::data_model::objects::Access::READ);
@@ -409,7 +405,7 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     });
 
     let commands = cluster.commands.iter().map(|cmd| {
-        let cmd_name = Ident::new(&cmd.id, Span::call_site());
+        let cmd_name = ident(&cmd.id);
 
         let access = match cmd.access {
             AccessPrivilege::View => panic!("Unsupported command access: {:?}", cmd.access),
@@ -419,7 +415,7 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
         };
 
         let resp_id = if cmd.output != NO_RESPONSE {
-            let cmd_name = Ident::new(&cmd.output, Span::call_site());
+            let cmd_name = ident(&cmd.output);
 
             quote!(Some(CommandResponseId::#cmd_name as _))
         } else {

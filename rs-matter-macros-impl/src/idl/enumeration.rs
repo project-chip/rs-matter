@@ -16,12 +16,12 @@
 
 //! A module for generating Rust types corresponding to enum definitions in an IDL cluster.
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, Enum};
 
-use super::id::idl_id_to_enum_variant_name;
+use super::id::{ident, idl_id_to_enum_variant_name};
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all enum definitions in the provided IDL cluster.
@@ -42,10 +42,10 @@ fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
         "enum16" => quote!(u16),
         other => panic!("Unknown enumeration base type {other}"),
     };
-    let name = Ident::new(&e.id, Span::call_site());
+    let name = ident(&e.id);
 
     let items = e.entries.iter().map(|c| {
-        let constant_name = Ident::new(&idl_id_to_enum_variant_name(&c.id), Span::call_site());
+        let constant_name = ident(&idl_id_to_enum_variant_name(&c.id));
         let constant_value = Literal::i64_unsuffixed(c.code as i64);
         quote!(
             #[enumval(#constant_value)]

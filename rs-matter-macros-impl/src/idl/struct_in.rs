@@ -16,13 +16,13 @@
 
 //! A module for generating Rust types corresponding to structures in an IDL cluster.
 
-use proc_macro2::{Ident, Literal, Span, TokenStream};
+use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
 use rs_matter_data_model::{Cluster, Struct, StructField};
 
 use super::field::field_type;
-use super::id::{idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
+use super::id::{ident, idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
 use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
@@ -55,7 +55,7 @@ pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 ///
 /// Provide the raw `enum FooTag { }` declaration.
 fn struct_tag(s: &Struct, krate: &Ident) -> TokenStream {
-    let name = Ident::new(&format!("{}Tag", s.id), Span::call_site());
+    let name = ident(&format!("{}Tag", s.id));
 
     let fields = s.fields.iter().map(struct_tag_field);
 
@@ -77,7 +77,7 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
 
     let krate = context.rs_matter_crate.clone();
 
-    let name = Ident::new(&s.id, Span::call_site());
+    let name = ident(&s.id);
     let name_str = Literal::string(&s.id);
 
     let fields = s.fields.iter().map(|f| struct_field(f, cluster, context));
@@ -160,7 +160,7 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
         cluster,
         &krate,
     );
-    let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+    let name = ident(&idl_field_name_to_rs_name(&f.field.id));
 
     if f.is_optional {
         quote!(
@@ -187,7 +187,7 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
 
 /// Create the token stream corresponding to a debug printout of a field inside a structure
 fn struct_field_debug(f: &StructField, defmt: bool, krate: &Ident) -> TokenStream {
-    let name = Ident::new(&idl_field_name_to_rs_name(&f.field.id), Span::call_site());
+    let name = ident(&idl_field_name_to_rs_name(&f.field.id));
     let name_str = Literal::string(&idl_field_name_to_rs_name(&f.field.id));
     let write = if defmt {
         quote!(#krate::reexport::defmt::write!)
@@ -222,10 +222,7 @@ fn struct_tag_field(f: &StructField) -> TokenStream {
     let doc_comment = struct_field_comment(f);
 
     let code = Literal::u8_unsuffixed(f.field.code as u8);
-    let name = Ident::new(
-        &idl_field_name_to_rs_type_name(&f.field.id),
-        Span::call_site(),
-    );
+    let name = ident(&idl_field_name_to_rs_type_name(&f.field.id));
 
     quote!(
         #doc_comment
