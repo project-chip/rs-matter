@@ -227,10 +227,6 @@ impl<'a> TLVElement<'a> {
         Ok(value)
     }
 
-    pub fn len(&self) -> Result<usize, Error> {
-        todo!()
-    }
-
     /// Return the value of this TLV element as an `i8`.
     ///
     /// Returns an error with code `ErrorCode::TLVTypeMismatch` if the wrapped TLV byte slice
