@@ -385,7 +385,7 @@ impl ccm::aead::Buffer for SliceBuffer<'_> {
     fn extend_from_slice(&mut self, slice: &[u8]) -> ccm::aead::Result<()> {
         if self.len + slice.len() > self.slice.len() {
             error!("Buffer overflow");
-            Err(ccm::aead::Error)?;
+            return Err(ccm::aead::Error);
         }
 
         self.slice[self.len..][..slice.len()].copy_from_slice(slice);
