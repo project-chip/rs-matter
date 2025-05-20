@@ -217,13 +217,13 @@ impl KeyPair {
             },
             attributes: Default::default(),
         };
-        let mut message = vec![];
-        info.encode(&mut VecWriter(&mut message))?;
+        let mut encoded_info = SliceBuffer::new(out_csr, 0);
+        info.encode(&mut encoded_info)?;
 
         // Can't use self.sign_msg as the signature has to be in DER format
         let private_key = self.private_key()?;
         let signing_key = SigningKey::from(private_key);
-        let sig: Signature = signing_key.sign(&message);
+        let sig: Signature = signing_key.sign(encoded_info.as_ref());
         let to_der = sig.to_der();
         let signature = to_der.as_bytes();
 
@@ -236,11 +236,7 @@ impl KeyPair {
             },
             signature: BitString::from_bytes(signature)?,
         };
-        let out = cert.to_der()?;
-        let a = &mut out_csr[0..out.len()];
-        a.copy_from_slice(&out);
-
-        Ok(a)
+        Ok(cert.encode_to_slice(out_csr)?)
     }
     pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
         let point = self.public_key_point().to_encoded_point(false);
@@ -364,7 +360,7 @@ struct SliceBuffer<'a> {
 }
 
 impl<'a> SliceBuffer<'a> {
-    fn new(slice: &'a mut [u8], len: usize) -> Self {
+    const fn new(slice: &'a mut [u8], len: usize) -> Self {
         Self { slice, len }
     }
 
@@ -386,9 +382,15 @@ impl AsRef<[u8]> for SliceBuffer<'_> {
 }
 
 impl ccm::aead::Buffer for SliceBuffer<'_> {
-    fn extend_from_slice(&mut self, other: &[u8]) -> ccm::aead::Result<()> {
-        self.slice[self.len..][..other.len()].copy_from_slice(other);
-        self.len += other.len();
+    fn extend_from_slice(&mut self, slice: &[u8]) -> ccm::aead::Result<()> {
+        if self.len + slice.len() > self.slice.len() {
+            error!("Buffer overflow");
+            return Err(ccm::aead::Error);
+        }
+
+        self.slice[self.len..][..slice.len()].copy_from_slice(slice);
+        self.len += slice.len();
+
         Ok(())
     }
 
@@ -397,11 +399,15 @@ impl ccm::aead::Buffer for SliceBuffer<'_> {
     }
 }
 
-struct VecWriter<'a>(&'a mut alloc::vec::Vec<u8>);
-
-impl Writer for VecWriter<'_> {
+impl Writer for SliceBuffer<'_> {
     fn write(&mut self, slice: &[u8]) -> x509_cert::der::Result<()> {
-        self.0.extend_from_slice(slice);
+        if self.len + slice.len() > self.slice.len() {
+            error!("Buffer overflow");
+            Err(x509_cert::der::ErrorKind::Failed)?;
+        }
+
+        self.slice[self.len..][..slice.len()].copy_from_slice(slice);
+        self.len += slice.len();
 
         Ok(())
     }
