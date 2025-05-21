@@ -19,9 +19,8 @@
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use rs_matter_data_model::{Cluster, Enum};
-
 use super::id::{ident, idl_id_to_enum_variant_name};
+use super::parser::{Cluster, Enum};
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all enum definitions in the provided IDL cluster.

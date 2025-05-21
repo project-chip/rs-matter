@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2024 Project CHIP Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! A module for parsing all cluster definitions in a `*.matter` IDL file.
+
 use std::collections::HashSet;
 
 use miette::{Diagnostic, NamedSource, SourceSpan};
@@ -17,14 +35,15 @@ use nom_supreme::ParserExt;
 use thiserror::Error;
 use tracing::warn;
 
-use crate::{
-    endpoint_composition::{
-        AttributeHandlingType, AttributeInstantiation, ClusterInstantiation, DefaultAttributeValue,
-        DeviceType, Endpoint,
-    },
-    AccessPrivilege, ApiMaturity, Attribute, Bitmap, Cluster, Command, ConstantEntry, DataType,
-    Enum, Event, EventPriority, Field, Struct, StructField, StructType,
+use endpoint_composition::{
+    AttributeHandlingType, AttributeInstantiation, ClusterInstantiation, DefaultAttributeValue,
+    DeviceType, Endpoint,
 };
+
+pub use ast::*; // TODO
+
+mod ast;
+mod endpoint_composition;
 
 // easier to type and not move str around
 type Span<'a> = LocatedSpan<&'a str>;
@@ -96,9 +115,9 @@ where
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::ApiMaturity;
-/// use rs_matter_data_model::idl::api_maturity;
+/// ```ignore
+/// use crate::idl::parser::ApiMaturity;
+/// use crate::idl::parser::idl::api_maturity;
 ///
 /// assert_eq!(
 ///    api_maturity("123".into()),
@@ -130,8 +149,8 @@ pub fn api_maturity(span: Span) -> IResult<Span, ApiMaturity, ParseError> {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::hex_integer;
+/// ```ignore
+/// use crate::idl::parser::hex_integer;
 ///
 /// let result = hex_integer("0x12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -174,8 +193,8 @@ pub fn keyword<'a>(
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::decimal_integer;
+/// ```ignore
+/// use crate::idl::parser::decimal_integer;
 ///
 /// let result = decimal_integer("12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -195,8 +214,8 @@ pub fn decimal_integer(span: Span) -> IResult<Span, u64, ParseError> {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::positive_integer;
+/// ```ignore
+/// use crate::idl::parser::positive_integer;
 ///
 /// let result = positive_integer("12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), " abc");
@@ -282,8 +301,8 @@ pub fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError>
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::{whitespace0, DocComment};
+/// ```ignore
+/// use crate::idl::parser::{whitespace0, DocComment};
 ///
 /// let result = whitespace0(" /*comment*/\n12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), "12 abc");
@@ -334,8 +353,8 @@ pub fn whitespace0(span: Span) -> IResult<Span, Option<DocComment>, ParseError> 
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::idl::{whitespace1, DocComment};
+/// ```ignore
+/// use crate::idl::parser::{whitespace1, DocComment};
 ///
 /// let result = whitespace1(" /*comment*/\n12 abc".into()).expect("Valid");
 /// assert_eq!(result.0.fragment().to_string(), "12 abc");
@@ -377,9 +396,9 @@ fn parse_id_span(span: Span) -> IResult<Span, Span, ParseError> {
 ///
 /// Examples:
 ///
-/// ```
-/// use rs_matter_data_model::{ConstantEntry, ApiMaturity};
-/// use rs_matter_data_model::idl::constant_entry;
+/// ```ignore
+/// use crate::idl::parser::{ConstantEntry, ApiMaturity};
+/// use crate::idl::parser::constant_entry;
 ///
 /// let parsed = constant_entry("provisional kConstant = 0x123 ;".into()).expect("valid");
 /// assert_eq!(parsed.0.fragment().to_string(), "");
@@ -1331,7 +1350,7 @@ mod tests {
 
     #[test]
     fn parse_idl_success() {
-        let r = Idl::parse(include_str!("./test_input1.matter").into());
+        let r = Idl::parse(include_str!("parser/test_input1.matter").into());
         assert!(r.is_ok());
         let idl = r.unwrap();
 
