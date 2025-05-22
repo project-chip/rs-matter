@@ -15,16 +15,26 @@
 $ cargo build
 ```
 
-### Building and running the example (Linux, MacOS X)
+### Building and running the On-Off Light example (Linux, MacOS X)
 
 ```
-$ cargo run --example onoff_light --features examples
+$ cargo run --example onoff_light
 ```
 
-### Building and running the BLE example (Linux, MacOS X)
+### Building all examples (Linux, MacOS X)
 
 ```
-$ cargo run --example onoff_light_bt --features examples
+$ cargo build --examples
+```
+
+NOTE: If you are on Linux and are running the Avahi daemon, you might want to build with:
+```
+$ cargo build --examples --features zeroconf
+```
+
+### Unit Tests
+```
+$ cargo test -- --test-threads 1
 ```
 
 ## Test
@@ -54,20 +64,12 @@ $ chip-tool onoff read on-off 12344321 1
 $ chip-tool onoff on 12344321 1
 ```
 
-## Functionality
+# Test with Google/Apple/Alexa controllers
 
-- Secure Channel:
-  - PASE
-  - CASE
-- Interactions:
-  - Invoke Command(s), Read Attribute(s), Write Attribute(s)
-- Commissioning:
-  - over Ethernet
-  - Network Commissioning Cluster
-  - General Commissioning Cluster
-  - Operational Certificates Cluster
-- Some [TODO](TODO.md) are captured here
+All of these should work. Follow the instructions in your controller phone app.
 
 ## Notes
 
-The matter-rs project is a work-in-progress and does NOT yet fully implement Matter.
+The `rs-matter` implementation is relatively complete, yet still a work-in-progress and does not yet fully implement all Matter system clusters.
+
+With that said, making it run against the Matter C++ SDK Test Suite is in progress.

@@ -19,11 +19,14 @@ use num_derive::FromPrimitive;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrType, Attribute, Cluster, CmdDataEncoder, Command, Dataver,
+    Handler, InvokeContext, NonBlockingHandler, Quality, ReadContext,
+};
+use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, OctetStr, TLVElement};
 use crate::transport::exchange::Exchange;
-use crate::{attribute_enum, cluster_attrs, cmd_enter};
-use crate::{command_enum, error::*};
+use crate::{attribute_enum, attributes, cmd_enter, command_enum, commands, with};
 
 pub const ID: u32 = 0x003C;
 
@@ -60,7 +63,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::WindowStatus as _,
             Access::RV,
@@ -77,15 +80,17 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NULLABLE,
         ),
     ),
-    accepted_commands: &[
-        Commands::OpenCommWindow as _,
-        Commands::OpenBasicCommWindow as _,
-        Commands::RevokeComm as _,
-    ],
-    generated_commands: &[],
+    commands: commands!(
+        Command::new(Commands::OpenCommWindow as _, None, Access::WA),
+        Command::new(Commands::OpenBasicCommWindow as _, None, Access::WA),
+        Command::new(Commands::RevokeComm as _, None, Access::WA),
+    ),
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a")]
 pub struct OpenCommWindowReq<'a> {
     timeout: u16,
@@ -95,7 +100,8 @@ pub struct OpenCommWindowReq<'a> {
     salt: OctetStr<'a>,
 }
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct OpenBasicCommWindowReq {
     timeout: u16,
 }
@@ -113,10 +119,11 @@ impl AdminCommCluster {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         if let Some(writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -134,11 +141,13 @@ impl AdminCommCluster {
 
     pub fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        _encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        _encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let cmd = ctx.cmd();
+        let data = ctx.data();
+
         match cmd.cmd_id.try_into()? {
             Commands::OpenCommWindow => self.handle_command_opencomm_win(exchange, data)?,
             Commands::OpenBasicCommWindow => {
@@ -211,28 +220,19 @@ impl AdminCommCluster {
 impl Handler for AdminCommCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        AdminCommCluster::read(self, exchange, attr, encoder)
+        AdminCommCluster::read(self, ctx, encoder)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        AdminCommCluster::invoke(self, exchange, cmd, data, encoder)
+        AdminCommCluster::invoke(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for AdminCommCluster {}
-
-impl ChangeNotifier<()> for AdminCommCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

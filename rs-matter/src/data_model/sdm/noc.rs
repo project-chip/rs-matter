@@ -23,8 +23,13 @@ use strum::{EnumDiscriminants, FromRepr};
 
 use crate::cert::CertRef;
 use crate::crypto::{self, KeyPair};
-use crate::data_model::objects::*;
+use crate::data_model::objects::{
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
+    CmdDataWriter, Command, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality,
+    ReadContext,
+};
 use crate::data_model::sdm::dev_att;
+use crate::error::{Error, ErrorCode};
 use crate::fabric::MAX_SUPPORTED_FABRICS;
 use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV, UtfStr};
@@ -32,7 +37,7 @@ use crate::transport::exchange::Exchange;
 use crate::transport::session::SessionMode;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
-use crate::{alloc, attribute_enum, cluster_attrs, cmd_enter, command_enum, error::*};
+use crate::{alloc, attribute_enum, attributes, cmd_enter, command_enum, commands, with};
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
@@ -71,6 +76,8 @@ pub enum Commands {
 
 command_enum!(Commands);
 
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum RespCommands {
     AttReqResp = 0x01,
@@ -79,7 +86,8 @@ pub enum RespCommands {
     NOCResp = 0x08,
 }
 
-#[derive(FromRepr, EnumDiscriminants)]
+#[derive(FromRepr, EnumDiscriminants, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     NOCs = 0,
@@ -164,7 +172,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
     id: ID as _,
     revision: 1,
     feature_map: 0,
-    attributes: cluster_attrs!(
+    attributes: attributes!(
         Attribute::new(
             AttributesDiscriminants::CurrentFabricIndex as _,
             Access::RV,
@@ -186,16 +194,33 @@ pub const CLUSTER: Cluster<'static> = Cluster {
             Quality::NONE,
         ),
     ),
-    accepted_commands: &[
-        Commands::AttReq as _,
-        Commands::CertChainReq as _,
-        Commands::CSRReq as _,
-        Commands::AddNOC as _,
-        Commands::UpdateFabricLabel as _,
-        Commands::RemoveFabric as _,
-        Commands::AddTrustedRootCert as _,
-    ],
-    generated_commands: &[RespCommands::NOCResp as _],
+    commands: commands!(
+        Command::new(
+            Commands::AttReq as _,
+            Some(RespCommands::AttReqResp as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::CertChainReq as _,
+            Some(RespCommands::CertChainResp as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::CSRReq as _,
+            Some(RespCommands::CSRResp as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::AddNOC as _,
+            Some(RespCommands::NOCResp as _),
+            Access::WA
+        ),
+        Command::new(Commands::UpdateFabricLabel as _, None, Access::WA),
+        Command::new(Commands::RemoveFabric as _, None, Access::WA),
+        Command::new(Commands::AddTrustedRootCert as _, None, Access::WA),
+    ),
+    with_attrs: with!(all),
+    with_cmds: with!(all),
 };
 
 #[derive(Debug, Clone)]
@@ -211,10 +236,12 @@ impl NocCluster {
 
     pub fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let attr = ctx.attr();
+
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
                 CLUSTER.read(attr.attr_id, writer)
@@ -247,8 +274,8 @@ impl NocCluster {
                         writer,
                         exchange.matter().fabric_mgr.borrow().iter().count() as _,
                     ),
-                    _ => {
-                        error!("Attribute not supported: this shouldn't happen");
+                    other => {
+                        error!("Attribute {:?} not supported", other);
                         Err(ErrorCode::AttributeNotFound.into())
                     }
                 }
@@ -260,11 +287,13 @@ impl NocCluster {
 
     pub fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let exchange = ctx.exchange();
+        let cmd = ctx.cmd();
+        let data = ctx.data();
+
         match cmd.cmd_id.try_into()? {
             Commands::AddNOC => self.handle_command_addnoc(exchange, data, encoder)?,
             Commands::CSRReq => self.handle_command_csrrequest(exchange, data, encoder)?,
@@ -294,7 +323,7 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("Update Fabric Label");
         let req = UpdateFabricLabelReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Fabric Label: {:?}", req);
+        debug!("Received Fabric Label: {:?}", req);
 
         let mut updated_fab_idx = 0;
 
@@ -330,7 +359,7 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("Remove Fabric");
         let req = RemoveFabricReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Fabric Index: {:?}", req);
+        debug!("Received Fabric Index: {:?}", req);
 
         if exchange
             .matter()
@@ -371,7 +400,7 @@ impl NocCluster {
 
         let r = AddNocReq::from_tlv(data).map_err(Error::map_invalid_command)?;
 
-        info!(
+        debug!(
             "Received NOC as: {}",
             CertRef::new(TLVElement::new(r.noc_value.0))
         );
@@ -382,7 +411,7 @@ impl NocCluster {
             .map(|icac| icac.0)
             .filter(|icac| !icac.is_empty());
         if let Some(icac) = icac {
-            info!("Received ICAC as: {}", CertRef::new(TLVElement::new(icac)));
+            debug!("Received ICAC as: {}", CertRef::new(TLVElement::new(icac)));
         }
 
         let mut added_fab_idx = 0;
@@ -443,7 +472,7 @@ impl NocCluster {
         cmd_enter!("AttestationRequest");
 
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Attestation Nonce:{:?}", req.str);
+        debug!("Received Attestation Nonce:{:?}", req.str);
 
         exchange.with_session(|sess| {
             let mut writer = encoder.with_command(RespCommands::AttReqResp as _)?;
@@ -496,7 +525,7 @@ impl NocCluster {
     ) -> Result<(), Error> {
         cmd_enter!("CertChainRequest");
 
-        info!("Received data: {}", data);
+        debug!("Received data: {}", data);
         let cert_type =
             Self::get_certchainrequest_params(data).map_err(Error::map_invalid_command)?;
 
@@ -520,7 +549,7 @@ impl NocCluster {
         cmd_enter!("CSRRequest");
 
         let req = CsrReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received CSR: {:?}", req);
+        debug!("Received CSR: {:?}", req);
 
         exchange.with_session(|sess| {
             let mut failsafe = exchange.matter().failsafe.borrow_mut();
@@ -575,7 +604,7 @@ impl NocCluster {
         cmd_enter!("AddTrustedRootCert");
 
         let req = CommonReq::from_tlv(data).map_err(Error::map_invalid_command)?;
-        info!("Received Trusted Cert: {}", Bytes(&req.str));
+        debug!("Received Trusted Cert: {}", Bytes(&req.str));
 
         exchange.with_session(|sess| {
             exchange
@@ -634,7 +663,7 @@ impl NocCluster {
 
         const CERT_TYPE_DAC: u8 = 1;
         const CERT_TYPE_PAI: u8 = 2;
-        info!("Received Cert Type:{:?}", cert_type);
+        debug!("Received Cert Type:{:?}", cert_type);
         match cert_type {
             CERT_TYPE_DAC => Ok(dev_att::DataType::DAC),
             CERT_TYPE_PAI => Ok(dev_att::DataType::PAI),
@@ -646,28 +675,19 @@ impl NocCluster {
 impl Handler for NocCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        NocCluster::read(self, exchange, attr, encoder)
+        NocCluster::read(self, ctx, encoder)
     }
 
     fn invoke(
         &self,
-        exchange: &Exchange,
-        cmd: &CmdDetails,
-        data: &TLVElement,
-        encoder: CmdDataEncoder,
+        ctx: &InvokeContext<'_>,
+        encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        NocCluster::invoke(self, exchange, cmd, data, encoder)
+        NocCluster::invoke(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for NocCluster {}
-
-impl ChangeNotifier<()> for NocCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}

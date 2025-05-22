@@ -19,7 +19,7 @@ use crate::data_model::objects::Node;
 
 pub use asynch::*;
 
-use super::HandlerCompat;
+use super::Async;
 
 pub trait MetadataGuard {
     fn node(&self) -> Node<'_>;
@@ -116,7 +116,7 @@ where
     }
 }
 
-impl<T> Metadata for HandlerCompat<T>
+impl<T> Metadata for Async<T>
 where
     T: Metadata,
 {
@@ -130,8 +130,8 @@ where
     }
 }
 
-pub mod asynch {
-    use crate::data_model::objects::{HandlerCompat, Node};
+mod asynch {
+    use crate::data_model::objects::{Async, Node};
 
     use super::{Metadata, MetadataGuard};
 
@@ -199,7 +199,7 @@ pub mod asynch {
         }
     }
 
-    impl<T> AsyncMetadata for HandlerCompat<T>
+    impl<T> AsyncMetadata for Async<T>
     where
         T: Metadata,
     {

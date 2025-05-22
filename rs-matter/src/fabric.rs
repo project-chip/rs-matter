@@ -586,6 +586,8 @@ impl FabricMgr {
             .push_str(label)
             .map_err(|_| ErrorCode::NoSpace)?;
 
+        self.changed = true;
+
         Ok(())
     }
 
@@ -598,6 +600,8 @@ impl FabricMgr {
         mdns.remove(&fabric.mdns_service_name)?;
 
         self.fabrics.retain(|fabric| fabric.fab_idx != fab_idx);
+
+        self.changed = true;
 
         Ok(())
     }

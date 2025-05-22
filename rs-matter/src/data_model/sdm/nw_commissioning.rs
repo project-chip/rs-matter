@@ -18,18 +18,18 @@
 use strum::FromRepr;
 
 use crate::data_model::objects::{
-    Access, AttrDataEncoder, AttrDataWriter, AttrDetails, AttrType, Attribute, ChangeNotifier,
-    Cluster, Dataver, Handler, NonBlockingHandler, Quality,
+    Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, Command, Dataver,
+    Handler, NonBlockingHandler, Quality, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetStr, TLVArray, TLVTag, TLVWrite, ToTLV};
-use crate::transport::exchange::Exchange;
 use crate::utils::bitflags::bitflags;
-use crate::{attribute_enum, bitflags_tlv, cluster_attrs, command_enum};
+use crate::{attribute_enum, attributes, bitflags_tlv, command_enum, commands};
 
 pub const ID: u32 = 0x0031;
 
-#[derive(FromRepr)]
+#[derive(FromRepr, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum Attributes {
     MaxNetworks = 0x00,
@@ -73,76 +73,147 @@ pub enum FeatureMap {
     Ethernet = 0x04,
 }
 
-pub const ATTR_MAX_NETWORKS: Attribute =
-    Attribute::new(Attributes::MaxNetworks as _, Access::RA, Quality::F);
-pub const ATTR_NETWORKS: Attribute =
-    Attribute::new(Attributes::Networks as _, Access::RA, Quality::NONE);
-pub const ATTR_SCAN_MAX_TIME_SECS: Attribute =
-    Attribute::new(Attributes::ScanMaxTimeSecs as _, Access::RV, Quality::F);
-pub const ATTR_CONNECT_MAX_TIME_SECS: Attribute =
-    Attribute::new(Attributes::ConnectMaxTimeSecs as _, Access::RV, Quality::F);
-pub const ATTR_INTERFACE_ENABLED: Attribute =
-    Attribute::new(Attributes::InterfaceEnabled as _, Access::RWVA, Quality::N);
-pub const ATTR_LAST_NETWORKING_STATUS: Attribute = Attribute::new(
-    Attributes::LastNetworkingStatus as _,
-    Access::RA,
-    Quality::X,
-);
-pub const ATTR_LAST_NETWORK_ID: Attribute =
-    Attribute::new(Attributes::LastNetworkID as _, Access::RA, Quality::X);
-pub const ATTR_LAST_CONNECT_ERROR_VALUE: Attribute = Attribute::new(
-    Attributes::LastConnectErrorValue as _,
-    Access::RA,
-    Quality::X,
-);
+impl TryFrom<u32> for FeatureMap {
+    type Error = Error;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(FeatureMap::Wifi),
+            0x02 => Ok(FeatureMap::Thread),
+            0x04 => Ok(FeatureMap::Ethernet),
+            _ => Err(ErrorCode::Invalid.into()),
+        }
+    }
+}
 
 const fn cluster(feature_map: FeatureMap) -> Cluster<'static> {
+    static ATTRIBUTES: &[Attribute] = attributes!(
+        Attribute::new(Attributes::MaxNetworks as _, Access::RA, Quality::F),
+        Attribute::new(Attributes::Networks as _, Access::RA, Quality::NONE),
+        Attribute::new(Attributes::ScanMaxTimeSecs as _, Access::RV, Quality::F),
+        Attribute::new(Attributes::ConnectMaxTimeSecs as _, Access::RV, Quality::F),
+        Attribute::new(Attributes::InterfaceEnabled as _, Access::RWVA, Quality::N),
+        Attribute::new(
+            Attributes::LastNetworkingStatus as _,
+            Access::RA,
+            Quality::X,
+        ),
+        Attribute::new(Attributes::LastNetworkID as _, Access::RA, Quality::X),
+        Attribute::new(
+            Attributes::LastConnectErrorValue as _,
+            Access::RA,
+            Quality::X,
+        ),
+    );
+
+    static COMMANDS: &[Command] = commands!(
+        Command::new(
+            Commands::ScanNetworks as _,
+            Some(ResponseCommands::ScanNetworksResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::AddOrUpdateWifiNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::AddOrUpdateThreadNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::RemoveNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::ConnectNetwork as _,
+            Some(ResponseCommands::ConnectNetworkResponse as _),
+            Access::WA
+        ),
+        Command::new(
+            Commands::ReorderNetwork as _,
+            Some(ResponseCommands::NetworkConfigResponse as _),
+            Access::WA
+        ),
+    );
+
     Cluster {
         id: ID as _,
         revision: 1,
         feature_map: feature_map as _,
-        attributes: match feature_map {
-            FeatureMap::Wifi | FeatureMap::Thread => cluster_attrs!(
-                ATTR_MAX_NETWORKS,
-                ATTR_NETWORKS,
-                ATTR_SCAN_MAX_TIME_SECS,
-                ATTR_CONNECT_MAX_TIME_SECS,
-                ATTR_INTERFACE_ENABLED,
-                ATTR_LAST_NETWORKING_STATUS,
-                ATTR_LAST_NETWORK_ID,
-                ATTR_LAST_CONNECT_ERROR_VALUE,
-            ),
-            FeatureMap::Ethernet => cluster_attrs!(
-                ATTR_MAX_NETWORKS,
-                ATTR_NETWORKS,
-                ATTR_CONNECT_MAX_TIME_SECS,
-                ATTR_INTERFACE_ENABLED,
-                ATTR_LAST_NETWORKING_STATUS,
-                ATTR_LAST_NETWORK_ID,
-                ATTR_LAST_CONNECT_ERROR_VALUE,
-            ),
+        attributes: ATTRIBUTES,
+        commands: COMMANDS,
+        with_attrs: |attr, _, feature_map| {
+            if attr.is_system() {
+                return true;
+            }
+
+            let Ok(feature_map) = feature_map.try_into() else {
+                return false;
+            };
+
+            let Ok(id) = attr.id.try_into() else {
+                return false;
+            };
+
+            match feature_map {
+                FeatureMap::Wifi | FeatureMap::Thread => matches!(
+                    id,
+                    Attributes::MaxNetworks
+                        | Attributes::Networks
+                        | Attributes::ScanMaxTimeSecs
+                        | Attributes::ConnectMaxTimeSecs
+                        | Attributes::InterfaceEnabled
+                        | Attributes::LastNetworkingStatus
+                        | Attributes::LastNetworkID
+                        | Attributes::LastConnectErrorValue
+                ),
+                FeatureMap::Ethernet => matches!(
+                    id,
+                    Attributes::MaxNetworks
+                        | Attributes::Networks
+                        | Attributes::ConnectMaxTimeSecs
+                        | Attributes::InterfaceEnabled
+                        | Attributes::LastNetworkingStatus
+                        | Attributes::LastNetworkID
+                        | Attributes::LastConnectErrorValue
+                ),
+            }
         },
-        accepted_commands: match feature_map {
-            FeatureMap::Wifi => &[
-                Commands::ScanNetworks as _,
-                Commands::AddOrUpdateWifiNetwork as _,
-                Commands::RemoveNetwork as _,
-                Commands::ConnectNetwork as _,
-                Commands::ReorderNetwork as _,
-            ],
-            FeatureMap::Thread => &[
-                Commands::ScanNetworks as _,
-                Commands::AddOrUpdateThreadNetwork as _,
-                Commands::RemoveNetwork as _,
-                Commands::ConnectNetwork as _,
-                Commands::ReorderNetwork as _,
-            ],
-            FeatureMap::Ethernet => &[],
-        },
-        generated_commands: match feature_map {
-            FeatureMap::Wifi => &[ResponseCommands::ScanNetworksResponse as _],
-            FeatureMap::Thread => &[ResponseCommands::ScanNetworksResponse as _],
-            FeatureMap::Ethernet => &[],
+        with_cmds: |cmd, _, feature_map| {
+            let Ok(feature_map) = feature_map.try_into() else {
+                return false;
+            };
+
+            let Ok(id) = cmd.id.try_into() else {
+                return false;
+            };
+
+            match feature_map {
+                FeatureMap::Wifi => {
+                    matches!(
+                        id,
+                        Commands::ScanNetworks
+                            | Commands::AddOrUpdateWifiNetwork
+                            | Commands::RemoveNetwork
+                            | Commands::ConnectNetwork
+                            | Commands::ReorderNetwork
+                    )
+                }
+                FeatureMap::Thread => {
+                    matches!(
+                        id,
+                        Commands::ScanNetworks
+                            | Commands::AddOrUpdateThreadNetwork
+                            | Commands::RemoveNetwork
+                            | Commands::ConnectNetwork
+                            | Commands::ReorderNetwork
+                    )
+                }
+                FeatureMap::Ethernet => false,
+            }
         },
     }
 }
@@ -297,10 +368,11 @@ impl EthNwCommCluster {
 
     pub fn read(
         &self,
-        _exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
+        let attr = ctx.attr();
+
         let info = self.get_network_info();
         if let Some(mut writer) = encoder.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
@@ -333,7 +405,10 @@ impl EthNwCommCluster {
                         writer.null(&AttrDataWriter::TAG)?;
                         writer.complete()
                     }
-                    _ => Err(ErrorCode::AttributeNotFound.into()),
+                    other => {
+                        error!("Attribute {:?} not supported", other);
+                        Err(ErrorCode::AttributeNotFound.into())
+                    }
                 }
             }
         } else {
@@ -393,18 +468,11 @@ pub enum NetworkCommissioningStatus {
 impl Handler for EthNwCommCluster {
     fn read(
         &self,
-        exchange: &Exchange,
-        attr: &AttrDetails,
-        encoder: AttrDataEncoder,
+        ctx: &ReadContext<'_>,
+        encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        EthNwCommCluster::read(self, exchange, attr, encoder)
+        EthNwCommCluster::read(self, ctx, encoder)
     }
 }
 
 impl NonBlockingHandler for EthNwCommCluster {}
-
-impl ChangeNotifier<()> for EthNwCommCluster {
-    fn consume_change(&mut self) -> Option<()> {
-        self.data_ver.consume_change(())
-    }
-}
