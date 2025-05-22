@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use miette::GraphicalReportHandler;
-use rs_matter_data_model::{idl::Idl, CSA_STANDARD_CLUSTERS_IDL};
+use rs_matter_macros::{idl::Idl, CSA_STANDARD_CLUSTERS_IDL};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("load example client clusters", |b| {

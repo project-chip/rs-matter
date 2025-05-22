@@ -252,6 +252,7 @@ pub struct DocComment<'a>(pub &'a str);
 ///
 /// Contains the underlying content of the whitespace, which is
 /// especially useful for documentation comments.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Whitespace<'a> {
     DocComment(&'a str), // /** ... */
