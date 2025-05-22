@@ -15,248 +15,103 @@
  *    limitations under the License.
  */
 
-use strum::FromRepr;
-
-use crate::{
-    acl::{AccessReq, Accessor},
-    attribute_enum,
-    data_model::objects::*,
-    error::{Error, ErrorCode},
-    interaction_model::{
-        core::IMStatusCode,
-        messages::{
-            ib::{AttrPath, AttrStatus, CmdPath, CmdStatus},
-            GenericPath,
-        },
-    },
-    // TODO: This layer shouldn't really depend on the TLV layer, should create an abstraction layer
-    tlv::{Nullable, TLVTag, TLVWrite},
-};
 use core::fmt::{self, Debug};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u32)]
-pub enum GlobalElements {
-    ClusterRevision = 0xFFFD,
-    FeatureMap = 0xFFFC,
-    AttributeList = 0xFFFB,
-    _EventList = 0xFFFA,
-    AcceptedCmdList = 0xFFF9,
-    GeneratedCmdList = 0xFFF8,
-    FabricIndex = 0xFE,
-}
+use crate::acl::{AccessReq, Accessor};
+use crate::data_model::objects::*;
+use crate::error::{Error, ErrorCode};
+use crate::interaction_model::core::IMStatusCode;
+use crate::interaction_model::messages::GenericPath;
+use crate::tlv::{TLVTag, TLVWrite};
 
-attribute_enum!(GlobalElements);
+/// A type alias for the attribute matching function
+pub type WithAttrs = fn(&Attribute, u16, u32) -> bool;
+/// A type alias for the command matching function
+pub type WithCmds = fn(&Command, u16, u32) -> bool;
 
-pub const CLUSTER_REVISION: Attribute = Attribute::new(
-    GlobalElements::ClusterRevision as _,
-    Access::RV,
-    Quality::NONE,
-);
-
-pub const FEATURE_MAP: Attribute =
-    Attribute::new(GlobalElements::FeatureMap as _, Access::RV, Quality::NONE);
-
-pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
-    GlobalElements::AttributeList as _,
-    Access::RV,
-    Quality::NONE,
-);
-
-pub const ACCEPTED_COMMAND_LIST: Attribute = Attribute::new(
-    GlobalElements::AcceptedCmdList as _,
-    Access::RV,
-    Quality::NONE,
-);
-
-pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
-    GlobalElements::GeneratedCmdList as _,
-    Access::RV,
-    Quality::NONE,
-);
-
-#[allow(unused_macros)]
-#[macro_export]
-macro_rules! cluster_attrs {
-    () => {
-        &[
-            $crate::data_model::objects::GENERATED_COMMAND_LIST,
-            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
-            $crate::data_model::objects::ATTRIBUTE_LIST,
-            $crate::data_model::objects::FEATURE_MAP,
-            $crate::data_model::objects::CLUSTER_REVISION,
-        ]
-    };
-    ($attr0:expr $(, $attr:expr)* $(,)?) => {
-        &[
-            $attr0,
-            $($attr,)*
-            $crate::data_model::objects::GENERATED_COMMAND_LIST,
-            $crate::data_model::objects::ACCEPTED_COMMAND_LIST,
-            $crate::data_model::objects::ATTRIBUTE_LIST,
-            $crate::data_model::objects::FEATURE_MAP,
-            $crate::data_model::objects::CLUSTER_REVISION,
-        ]
-    }
-}
-
-// TODO: What if we instead of creating this, we just pass the AttrData/AttrPath to the read/write
-// methods?
-/// The Attribute Details structure records the details about the attribute under consideration.
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttrDetails<'a> {
-    pub node: &'a Node<'a>,
-    /// The actual endpoint ID
-    pub endpoint_id: EndptId,
-    /// The actual cluster ID
-    pub cluster_id: ClusterId,
-    /// The actual attribute ID
-    pub attr_id: AttrId,
-    /// List Index, if any
-    pub list_index: Option<Nullable<u16>>,
-    /// The current Fabric Index
-    pub fab_idx: u8,
-    /// Fabric Filtering Activated
-    pub fab_filter: bool,
-    pub dataver: Option<u32>,
-    pub wildcard: bool,
-}
-
-impl AttrDetails<'_> {
-    pub fn is_system(&self) -> bool {
-        Attribute::is_system_attr(self.attr_id)
-    }
-
-    pub fn path(&self) -> AttrPath {
-        AttrPath {
-            endpoint: Some(self.endpoint_id),
-            cluster: Some(self.cluster_id),
-            attr: Some(self.attr_id),
-            list_index: self.list_index.clone(),
-            ..Default::default()
-        }
-    }
-
-    pub fn status(&self, status: IMStatusCode) -> Result<Option<AttrStatus>, Error> {
-        if self.should_report(status) {
-            Ok(Some(AttrStatus::new(
-                &GenericPath {
-                    endpoint: Some(self.endpoint_id),
-                    cluster: Some(self.cluster_id),
-                    leaf: Some(self.attr_id as _),
-                },
-                status,
-                0,
-            )))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn should_report(&self, status: IMStatusCode) -> bool {
-        !self.wildcard
-            || !matches!(
-                status,
-                IMStatusCode::UnsupportedEndpoint
-                    | IMStatusCode::UnsupportedCluster
-                    | IMStatusCode::UnsupportedAttribute
-                    | IMStatusCode::UnsupportedCommand
-                    | IMStatusCode::UnsupportedAccess
-                    | IMStatusCode::UnsupportedRead
-                    | IMStatusCode::UnsupportedWrite
-                    | IMStatusCode::DataVersionMismatch
-            )
-    }
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct CmdDetails<'a> {
-    pub node: &'a Node<'a>,
-    pub endpoint_id: EndptId,
-    pub cluster_id: ClusterId,
-    pub cmd_id: CmdId,
-    pub wildcard: bool,
-}
-
-impl CmdDetails<'_> {
-    pub fn path(&self) -> CmdPath {
-        CmdPath::new(
-            Some(self.endpoint_id),
-            Some(self.cluster_id),
-            Some(self.cmd_id),
-        )
-    }
-
-    pub fn success(&self, tracker: &CmdDataTracker) -> Option<CmdStatus> {
-        if tracker.needs_status() {
-            self.status(IMStatusCode::Success)
-        } else {
-            None
-        }
-    }
-
-    pub fn status(&self, status: IMStatusCode) -> Option<CmdStatus> {
-        if self.should_report(status) {
-            Some(CmdStatus::new(
-                CmdPath::new(
-                    Some(self.endpoint_id),
-                    Some(self.cluster_id),
-                    Some(self.cmd_id),
-                ),
-                status,
-                0,
-            ))
-        } else {
-            None
-        }
-    }
-
-    fn should_report(&self, status: IMStatusCode) -> bool {
-        !self.wildcard
-            || !matches!(
-                status,
-                IMStatusCode::UnsupportedEndpoint
-                    | IMStatusCode::UnsupportedCluster
-                    | IMStatusCode::UnsupportedAttribute
-                    | IMStatusCode::UnsupportedCommand
-                    | IMStatusCode::UnsupportedAccess
-                    | IMStatusCode::UnsupportedRead
-                    | IMStatusCode::UnsupportedWrite
-            )
-    }
-}
-
+/// A struct modeling the cluster meta-data
+/// (i.e. what is the cluster ID, revision, features, attributes and their access, commands and their access)
+/// in the Matter data model.
 #[derive(Debug, Clone)]
 pub struct Cluster<'a> {
+    /// The ID of the cluster
     pub id: ClusterId,
+    /// The revision of the cluster
     pub revision: u16,
+    /// The feature map of the cluster
     pub feature_map: u32,
+    /// The attributes of the cluster.
+    ///
+    /// These could be all attributes as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_attrs` for more details.
     pub attributes: &'a [Attribute],
-    pub accepted_commands: &'a [CmdId],
-    pub generated_commands: &'a [CmdId],
+    /// The commands of the cluster.
+    ///
+    /// These could be all commands as specified in the Matter spec,
+    /// even if the concrete instantiation of the cluster supports only a subset of these.
+    /// See` with_cmds` for more details.
+    pub commands: &'a [Command],
+    /// A function that takes an attribute and returns a boolean indicating if the attribute
+    /// is supported by the cluster.
+    pub with_attrs: WithAttrs,
+    /// A function that takes a command and returns a boolean indicating if the command
+    /// is supported by the cluster.
+    pub with_cmds: WithCmds,
 }
 
 impl<'a> Cluster<'a> {
-    /// Create a new cluster with the provided parameters.
+    /// Create a new cluster
+    ///
+    /// # Arguments
+    /// - `id`: The ID of the cluster
+    /// - `revision`: The revision of the cluster
+    /// - `feature_map`: The feature map of the cluster
+    /// - `attributes`: The attributes of the cluster
+    /// - `commands`: The commands of the cluster
+    /// - `with_attrs`: A function that takes an attribute and returns a boolean indicating if the attribute should be included
+    /// - `with_cmds`: A function that takes a command and returns a boolean indicating if the command should be included
     pub const fn new(
         id: ClusterId,
         revision: u16,
         feature_map: u32,
         attributes: &'a [Attribute],
-        accepted_commands: &'a [CmdId],
-        generated_commands: &'a [CmdId],
+        commands: &'a [Command],
+        with_attrs: WithAttrs,
+        with_cmds: WithCmds,
     ) -> Self {
         Self {
             id,
             revision,
             feature_map,
             attributes,
-            accepted_commands,
-            generated_commands,
+            commands,
+            with_attrs,
+            with_cmds,
         }
+    }
+
+    /// Return a new cluster with a modified revision
+    pub const fn with_revision(self, revision: u16) -> Self {
+        Self { revision, ..self }
+    }
+
+    /// Return a new cluster with a modified feature map
+    pub const fn with_features(self, feature_map: u32) -> Self {
+        Self {
+            feature_map,
+            ..self
+        }
+    }
+
+    /// Return a new cluster with a modified attributes' matcher
+    pub const fn with_attrs(self, with_attrs: WithAttrs) -> Self {
+        Self { with_attrs, ..self }
+    }
+
+    /// Return a new cluster with a modified commands' matcher
+    pub const fn with_cmds(self, with_cmds: WithCmds) -> Self {
+        Self { with_cmds, ..self }
     }
 
     /// Check if the accessor has the required permissions to access the attribute
@@ -264,16 +119,24 @@ impl<'a> Cluster<'a> {
     ///
     /// if `write` is true, the operation is a write operation, otherwise it is a read operation.
     pub(crate) fn check_attr_access(
+        &self,
         accessor: &Accessor,
         path: GenericPath,
         write: bool,
-        target_perms: Access,
+        attr_id: AttrId,
     ) -> Result<(), IMStatusCode> {
         let mut access_req = AccessReq::new(
             accessor,
             path,
             if write { Access::WRITE } else { Access::READ },
         );
+
+        let target_perms = self
+            .attributes
+            .iter()
+            .find(|attr| attr.id == attr_id)
+            .map(|attr| attr.access)
+            .unwrap_or(Access::empty());
 
         if !target_perms.contains(access_req.operation()) {
             Err(if matches!(access_req.operation(), Access::WRITE) {
@@ -294,17 +157,21 @@ impl<'a> Cluster<'a> {
     /// Check if the accessor has the required permissions to access the command
     /// designated by the provided path.
     pub(crate) fn check_cmd_access(
+        &self,
         accessor: &Accessor,
         path: GenericPath,
+        cmd_id: CmdId,
     ) -> Result<(), IMStatusCode> {
         let mut access_req = AccessReq::new(accessor, path, Access::WRITE);
 
-        access_req.set_target_perms(
-            Access::WRITE
-                .union(Access::NEED_OPERATE)
-                .union(Access::NEED_MANAGE)
-                .union(Access::NEED_ADMIN),
-        ); // TODO
+        let target_perms = self
+            .commands
+            .iter()
+            .find(|cmd| cmd.id == cmd_id)
+            .map(|cmd| cmd.access)
+            .unwrap_or(Access::empty());
+
+        access_req.set_target_perms(target_perms);
         if access_req.allow() {
             Ok(())
         } else {
@@ -312,6 +179,26 @@ impl<'a> Cluster<'a> {
         }
     }
 
+    /// Return an iterator over the attributes of the cluster which are
+    /// configured to be included based on the provided configuration.
+    pub(crate) fn attributes(&self) -> impl Iterator<Item = &Attribute> + '_ {
+        self.attributes
+            .iter()
+            .filter(|attr| (self.with_attrs)(attr, self.revision, self.feature_map))
+    }
+
+    /// Return an iterator over the commands of the cluster which are
+    /// configured to be included based on the provided configuration.
+    pub(crate) fn commands(&self) -> impl Iterator<Item = &Command> + '_ {
+        self.commands
+            .iter()
+            .filter(|cmd| (self.with_cmds)(cmd, self.revision, self.feature_map))
+    }
+
+    /// Performs an IM attribute read for the given attribute ID.
+    ///
+    /// The provided attribute ID must be a global attribute, or else
+    /// an error will be returned.
     pub fn read(&self, attr: AttrId, mut writer: AttrDataWriter) -> Result<(), Error> {
         match attr.try_into()? {
             GlobalElements::GeneratedCmdList => {
@@ -322,53 +209,98 @@ impl<'a> Cluster<'a> {
                 self.encode_accepted_command_ids(&AttrDataWriter::TAG, &mut *writer)?;
                 writer.complete()
             }
+            GlobalElements::EventList => {
+                self.encode_event_ids(&AttrDataWriter::TAG, &mut *writer)?;
+                writer.complete()
+            }
             GlobalElements::AttributeList => {
                 self.encode_attribute_ids(&AttrDataWriter::TAG, &mut *writer)?;
                 writer.complete()
             }
-            GlobalElements::FeatureMap => writer.set(self.feature_map),
-            GlobalElements::ClusterRevision => writer.set(self.revision),
+            GlobalElements::FeatureMap => {
+                debug!(
+                    "Endpt(0x??)::Cluster(0x{:04x})::Attr::FeatureMap(0xfffc)::Read -> Ok({:08x})",
+                    self.id, self.feature_map
+                );
+                writer.set(self.feature_map)
+            }
+            GlobalElements::ClusterRevision => {
+                debug!(
+                    "Endpt(0x??)::Cluster(0x{:04x})::Attr::ClusterRevision(0xfffd)::Read -> Ok({})",
+                    self.id, self.revision
+                );
+                writer.set(self.revision)
+            }
             other => {
-                error!("This attribute is not yet handled {:?}", other);
+                error!("Attribute {:?} not supported", other);
                 Err(ErrorCode::AttributeNotFound.into())
             }
         }
     }
 
     fn encode_attribute_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        debug!("Endpt(0x??)::Cluster(:04x)::Attr::AttributeIDs(0xNN)::Read -> Ok([");
+
         tw.start_array(tag)?;
-        for a in self.attributes.iter().filter(|a| !a.is_system()) {
-            tw.u32(&TLVTag::Anonymous, a.id)?;
+        for attr in self.attributes() {
+            tw.u32(&TLVTag::Anonymous, attr.id)?;
+            debug!("    Attr: 0x{:02x},", attr.id);
         }
 
-        tw.u32(&TLVTag::Anonymous, GlobalElements::GeneratedCmdList as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::AcceptedCmdList as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::AttributeList as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::FeatureMap as _)?;
-        tw.u32(&TLVTag::Anonymous, GlobalElements::ClusterRevision as _)?;
+        tw.end_container()?;
 
-        tw.end_container()
+        debug!("])");
+
+        Ok(())
     }
 
     fn encode_accepted_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
-        Self::encode_command_ids(tag, tw, self.accepted_commands)
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AcceptedCmdIDs(0xfff9)::Read -> Ok([",
+            self.id
+        );
+        Self::encode_command_ids(tag, tw, self.commands().map(|cmd| cmd.id))
     }
 
     fn encode_generated_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
-        Self::encode_command_ids(tag, tw, self.generated_commands)
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read -> Ok([",
+            self.id
+        );
+        Self::encode_command_ids(tag, tw, self.commands().filter_map(|cmd| cmd.resp_id))
+    }
+
+    fn encode_event_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::EventIDs(0xfffa)::Read -> Ok([",
+            self.id
+        );
+
+        // No events for now
+        tw.start_array(tag)?;
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 
     fn encode_command_ids<W: TLVWrite>(
         tag: &TLVTag,
         mut tw: W,
-        cmds: &[CmdId],
+        cmds: impl Iterator<Item = CmdId>,
     ) -> Result<(), Error> {
         tw.start_array(tag)?;
-        for a in cmds {
-            tw.u32(&TLVTag::Anonymous, *a)?;
+        for cmd in cmds {
+            tw.u32(&TLVTag::Anonymous, cmd)?;
+            debug!("    Cmd: 0x{:02x}, ", cmd);
         }
 
-        tw.end_container()
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 }
 
@@ -377,7 +309,7 @@ impl core::fmt::Display for Cluster<'_> {
         write!(f, "id: {}, ", self.id)?;
 
         write!(f, "attrs [")?;
-        for (index, attr) in self.attributes.iter().enumerate() {
+        for (index, attr) in self.attributes().enumerate() {
             if index > 0 {
                 write!(f, ", {}", attr)?;
             } else {
@@ -385,17 +317,8 @@ impl core::fmt::Display for Cluster<'_> {
             }
         }
 
-        write!(f, "], acc-cmds [")?;
-        for (index, cmd) in self.accepted_commands.iter().enumerate() {
-            if index > 0 {
-                write!(f, ", {}", cmd)?;
-            } else {
-                write!(f, "{}", cmd)?;
-            }
-        }
-
-        write!(f, "], gen-cmds [")?;
-        for (index, cmd) in self.generated_commands.iter().enumerate() {
+        write!(f, "], cmds [")?;
+        for (index, cmd) in self.commands().enumerate() {
             if index > 0 {
                 write!(f, ", {}", cmd)?;
             } else {
@@ -413,7 +336,7 @@ impl defmt::Format for Cluster<'_> {
         defmt::write!(f, "id: {}, ", self.id);
 
         defmt::write!(f, "attrs [");
-        for (index, attr) in self.attributes.iter().enumerate() {
+        for (index, attr) in self.attributes().enumerate() {
             if index > 0 {
                 defmt::write!(f, ", {}", attr);
             } else {
@@ -421,17 +344,8 @@ impl defmt::Format for Cluster<'_> {
             }
         }
 
-        defmt::write!(f, "], acc-cmds [");
-        for (index, cmd) in self.accepted_commands.iter().enumerate() {
-            if index > 0 {
-                defmt::write!(f, ", {}", cmd);
-            } else {
-                defmt::write!(f, "{}", cmd);
-            }
-        }
-
-        defmt::write!(f, "], gen-cmds [");
-        for (index, cmd) in self.generated_commands.iter().enumerate() {
+        defmt::write!(f, "], cmds [");
+        for (index, cmd) in self.commands().enumerate() {
             if index > 0 {
                 defmt::write!(f, ", {}", cmd);
             } else {
@@ -441,4 +355,122 @@ impl defmt::Format for Cluster<'_> {
 
         defmt::write!(f, "]")
     }
+}
+
+/// A macro to generate the clusters for an endpoint.
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! clusters {
+    (sys; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            <$crate::data_model::system_model::desc::DescHandler as $crate::data_model::system_model::desc::ClusterHandler>::CLUSTER,
+            <$crate::data_model::system_model::acl::AclHandler as $crate::data_model::system_model::acl::ClusterHandler>::CLUSTER,
+            <$crate::data_model::basic_info::BasicInfoHandler as $crate::data_model::basic_info::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::gen_comm::GenCommHandler as $crate::data_model::sdm::gen_comm::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::gen_diag::GenDiagHandler as $crate::data_model::sdm::gen_diag::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::adm_comm::AdminCommHandler as $crate::data_model::sdm::adm_comm::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::noc::NocHandler as $crate::data_model::sdm::noc::ClusterHandler>::CLUSTER,
+            <$crate::data_model::sdm::grp_key_mgmt::GrpKeyMgmtHandler as $crate::data_model::sdm::grp_key_mgmt::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    (eth; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            sys;
+            $crate::data_model::sdm::net_comm::NetworkType::Ethernet.cluster(),
+            <$crate::data_model::sdm::eth_diag::EthDiagHandler as $crate::data_model::sdm::eth_diag::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    (thread; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            sys;
+            $crate::data_model::sdm::net_comm::NetworkType::Thread.cluster(),
+            <$crate::data_model::sdm::thread_diag::ThreadDiagHandler as $crate::data_model::sdm::thread_diag::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    (wifi; $($cluster:expr $(,)?)*) => {
+        $crate::clusters!(
+            sys;
+            $crate::data_model::sdm::net_comm::NetworkType::Wifi.cluster(),
+            <$crate::data_model::sdm::wifi_diag::WifiDiagHandler as $crate::data_model::sdm::wifi_diag::ClusterHandler>::CLUSTER,
+            $($cluster,)*
+        )
+    };
+    ($($cluster:expr $(,)?)*) => {
+        &[
+            $($cluster,)*
+        ]
+    }
+}
+
+/// A macro that generates a "with" fn for matching attributes and commands
+///
+/// Usage:
+/// - `with!(all)` - returns true for all attributes and commands
+/// - `with!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for the specified attributes or commands
+/// - `with!(required; (attr1, attr2, ...))` - returns true for all mandatory attributes and the specified attributes
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! with {
+    () => {
+        |_, _, _| false
+    };
+    (all) => {
+        |_, _, _| true
+    };
+    (required) => {
+        |attr, _, _| !attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL)
+    };
+    (required; $($id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |attr, _, _| {
+            if !attr.quality.contains($crate::data_model::objects::Quality::OPTIONAL) {
+                true
+            } else if let Ok(l) = attr.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+    (system) => {
+        |attr, _, _| attr.is_system()
+    };
+    (system; $($id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |attr, _, _| {
+            if attr.is_system() {
+                true
+            } else if let Ok(l) = attr.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+    ($id0:path $(| $id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |leaf, _, _| {
+            if let Ok(l) = leaf.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $id0 => true,
+                    $($id => true,)*
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
 }

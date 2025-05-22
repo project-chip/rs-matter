@@ -2,30 +2,18 @@
 resolver = "2"
 members = [
         "rs-matter",
-        "rs-matter-data-model",
         "rs-matter-macros",
-        "rs-matter-macros-impl",
+        "examples",
 ]
 
-exclude = ["examples/*", "tools/tlv"]
+exclude = ["tools/tlv"]
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 
 [profile.dev]
 debug = true
-opt-level = 3
-
-[workspace.dependencies]
-clap = { version = "4", features = ["derive"] }
-miette = { version = "5", features = ["fancy"] }
-nom = "7"
-nom-greedyerror = "0.5"
-nom-supreme = "0.8"
-nom_locate = "4.2"
-thiserror = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
+opt-level = "z"
 
 [profile.flamegraph]
 inherits = "release"

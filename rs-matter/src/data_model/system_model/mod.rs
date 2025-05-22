@@ -15,5 +15,5 @@
  *    limitations under the License.
  */
 
-pub mod access_control;
-pub mod descriptor;
+pub mod acl;
+pub mod desc;
