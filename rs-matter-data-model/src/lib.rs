@@ -1,7 +1,5 @@
-#[cfg(feature = "idl")]
-pub mod idl;
-
 pub mod endpoint_composition;
+pub mod idl;
 
 pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-clusters.matter");
 
@@ -51,7 +49,7 @@ pub struct Bitmap {
     pub entries: Vec<ConstantEntry>,
 }
 
-/// A generic type such as integers, strings, enums etc.
+/// A generic type such as integers, strings, enums, structs etc.
 ///
 /// Supports information if this is repeated/list as well
 /// as a maximum length (if applicable).
@@ -63,6 +61,14 @@ pub struct DataType {
 }
 
 impl DataType {
+    pub fn is_utf8_string(&self) -> bool {
+        matches!(self.name.as_str(), "char_string" | "long_char_string")
+    }
+
+    pub fn is_octet_string(&self) -> bool {
+        matches!(self.name.as_str(), "octet_string" | "long_octet_string")
+    }
+
     pub fn scalar<T: Into<String>>(name: T) -> Self {
         Self {
             name: name.into(),

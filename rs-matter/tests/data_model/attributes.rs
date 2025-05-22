@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::{cluster_on_off, objects::GlobalElements};
+use rs_matter::data_model::objects::GlobalElements;
+use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::interaction_model::core::IMStatusCode;
 use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
 use rs_matter::interaction_model::messages::GenericPath;
@@ -148,15 +149,15 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
 
     let wc_ep_onoff = GenericPath::new(
         None,
-        Some(cluster_on_off::ID),
-        Some(cluster_on_off::AttributesDiscriminants::OnOff as u32),
+        Some(on_off::OnOffHandler::CLUSTER.id),
+        Some(on_off::AttributeId::OnOff as u32),
     );
     let input = &[AttrPath::new(&wc_ep_onoff)];
 
     let expected = &[attr_data!(
         1,
-        cluster_on_off::ID,
-        cluster_on_off::AttributesDiscriminants::OnOff,
+        on_off::OnOffHandler::CLUSTER.id,
+        on_off::AttributeId::OnOff,
         Some(&false)
     )];
     ImEngine::read_reqs(input, expected);
@@ -179,6 +180,7 @@ fn test_read_wc_endpoint_wc_attribute() {
         echo_cluster::AttributesDiscriminants::AttWriteList as _,
         GlobalElements::GeneratedCmdList as _,
         GlobalElements::AcceptedCmdList as _,
+        GlobalElements::EventList as _,
         GlobalElements::AttributeList as _,
         GlobalElements::FeatureMap as _,
         GlobalElements::ClusterRevision as _,
@@ -187,6 +189,8 @@ fn test_read_wc_endpoint_wc_attribute() {
     let gen_cmd_list: &[u32] = &[echo_cluster::RespCommands::EchoResp as _];
 
     let acc_cmd_list: &[u32] = &[echo_cluster::Commands::EchoReq as _];
+
+    let event_list: &[u32] = &[];
 
     let expected = &[
         attr_data!(
@@ -218,6 +222,12 @@ fn test_read_wc_endpoint_wc_attribute() {
             echo_cluster::ID,
             GlobalElements::AcceptedCmdList,
             Some(&acc_cmd_list)
+        ),
+        attr_data!(
+            0,
+            echo_cluster::ID,
+            GlobalElements::EventList,
+            Some(&event_list)
         ),
         attr_data!(
             0,
@@ -261,6 +271,12 @@ fn test_read_wc_endpoint_wc_attribute() {
             echo_cluster::ID,
             GlobalElements::AcceptedCmdList,
             Some(&acc_cmd_list)
+        ),
+        attr_data!(
+            1,
+            echo_cluster::ID,
+            GlobalElements::EventList,
+            Some(&event_list)
         ),
         attr_data!(
             1,

@@ -15,6 +15,6 @@ fn parse_client_clusters() {
         GraphicalReportHandler::new()
             .render_report(&mut buf, &e)
             .unwrap();
-        eprintln!("\n{}", buf);
+        eprintln!("\n{buf}");
     }
 }

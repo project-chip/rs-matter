@@ -149,7 +149,7 @@ where
         info!("{}: Creating {} handlers", self.name, N);
 
         let mut handlers = heapless::Vec::<_, N>::new();
-        info!(
+        debug!(
             "{}: Handlers size: {}B",
             self.name,
             core::mem::size_of_val(&handlers)
@@ -184,7 +184,7 @@ where
                 exchange.id()
             );
         } else {
-            info!(
+            debug!(
                 "{}: Handler {} / exchange {}: Starting",
                 self.name,
                 display2format!(&handler_id),
@@ -210,7 +210,7 @@ where
                 exchange.id()
             );
         } else {
-            info!(
+            debug!(
                 "{}: Handler {} / exchange {}: Completed",
                 self.name,
                 display2format!(&handler_id),

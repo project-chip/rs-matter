@@ -3,7 +3,7 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 
 use zeroconf::{prelude::TEventLoop, service::TMdnsService, txt_record::TTxtRecord, ServiceType};
 
-use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::data_model::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -93,7 +93,7 @@ impl<'a> MdnsImpl<'a> {
 
                 let mut txt_record = zeroconf::TxtRecord::new();
                 for (k, v) in txt_kvs {
-                    info!("mDNS TXT key {} val {}", k, v);
+                    debug!("mDNS TXT key {} val {}", k, v);
                     if let Err(err) = txt_record.insert(&k, &v) {
                         error!(
                             "Encountered error inserting kv-pair into txt record {}",

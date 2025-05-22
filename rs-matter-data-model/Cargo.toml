@@ -6,28 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap.workspace=true
-tracing.workspace=true
-tracing-subscriber.workspace=true
-
-miette = { workspace = true, optional = true }
-nom = { workspace = true, optional = true }
-nom-greedyerror = { workspace = true, optional = true }
-nom-supreme = { workspace = true, optional = true }
-nom_locate = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
-
-
-[features]
-default=["idl"]
-idl = [
-    "miette",
-    "nom",
-    "nom-greedyerror",
-    "nom-supreme",
-    "nom_locate",
-    "thiserror",
-]
+clap = { version = "4", features = ["derive"] }
+miette = { version = "5", features = ["fancy"] }
+nom = "7"
+nom-greedyerror = "0.5"
+nom-supreme = "0.8"
+nom_locate = "4.2"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

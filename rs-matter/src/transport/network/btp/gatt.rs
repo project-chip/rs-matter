@@ -17,7 +17,7 @@
 
 use core::iter::{empty, once};
 
-use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::data_model::basic_info::BasicInfoConfig;
 use crate::error::Error;
 use crate::transport::network::BtAddr;
 
@@ -137,6 +137,8 @@ impl AdvData {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GattPeripheralEvent<'a> {
+    NotifyConnected(BtAddr),
+    NotifyDisconnected(BtAddr),
     /// A GATT central has subscribed for notifications from characteristic `C2`.
     /// In other words, the GATT central is now ready to receive BTP packets.
     ///

@@ -28,7 +28,7 @@ use context::LockError;
 
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
-use crate::data_model::cluster_basic_information::BasicInfoConfig;
+use crate::data_model::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend};
@@ -165,6 +165,14 @@ where
             .coalesce()
             .await
         }
+    }
+
+    pub fn conn_ct(&self) -> usize {
+        self.context.borrow().conn_ct()
+    }
+
+    pub async fn wait_changed(&self) {
+        self.context.borrow().wait_changed().await
     }
 
     /// Wait until there is at least one Matter (a.k.a. BTP SDU) packet available for consumption.

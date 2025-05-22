@@ -32,6 +32,13 @@ use crate::utils::rand::Rand;
 use super::common::SCStatusCodes;
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PaseSessionType {
+    Basic,
+    Enhanced,
+}
+
 struct PaseSession {
     mdns_service_name: heapless::String<16>,
     verifier: VerifierData,
@@ -50,6 +57,14 @@ impl PaseSession {
             mdns_service_name: heapless::String::new(),
             verifier <- VerifierData::init(verifier, salt, count),
         }? Error)
+    }
+
+    fn session_type(&self) -> PaseSessionType {
+        if self.verifier.password.is_some() {
+            PaseSessionType::Basic
+        } else {
+            PaseSessionType::Enhanced
+        }
     }
 
     fn add_mdns(&mut self, discriminator: u16, rand: Rand, mdns: &dyn Mdns) -> Result<(), Error> {
@@ -96,8 +111,10 @@ impl PaseMgr {
         })
     }
 
-    pub fn is_pase_session_enabled(&self) -> bool {
-        self.session.is_some()
+    pub fn session_type(&self) -> Option<PaseSessionType> {
+        self.session
+            .as_opt_ref()
+            .map(|session| session.session_type())
     }
 
     pub fn enable_basic_pase_session(
@@ -117,7 +134,7 @@ impl PaseMgr {
             )));
 
         // Can't fail as we just initialized the session
-        let session = unwrap!(self.session.as_mut());
+        let session = unwrap!(self.session.as_opt_mut());
 
         session.add_mdns(discriminator, self.rand, mdns)
     }
@@ -139,13 +156,13 @@ impl PaseMgr {
             .try_reinit(Maybe::init_some(PaseSession::init(verifier, salt, count)))?;
 
         // Can't fail as we just initialized the session
-        let session = unwrap!(self.session.as_mut());
+        let session = unwrap!(self.session.as_opt_mut());
 
         session.add_mdns(discriminator, self.rand, mdns)
     }
 
     pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<bool, Error> {
-        let disabled = if let Some(session) = self.session.as_ref() {
+        let disabled = if let Some(session) = self.session.as_opt_ref() {
             mdns.remove(&session.mdns_service_name)?;
 
             true
@@ -305,7 +322,7 @@ impl Pake {
 
         {
             let pase = exchange.matter().pase_mgr.borrow();
-            let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+            let session = pase.session.as_opt_ref().ok_or(ErrorCode::NoSession)?;
 
             spake2p.start_verifier(&session.verifier)?;
             spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
@@ -338,7 +355,7 @@ impl Pake {
 
         let resp = {
             let pase = exchange.matter().pase_mgr.borrow();
-            let session = pase.session.as_ref().ok_or(ErrorCode::NoSession)?;
+            let session = pase.session.as_opt_ref().ok_or(ErrorCode::NoSession)?;
 
             let a = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
             if a.passcode_id != 0 {
@@ -427,7 +444,7 @@ impl Pake {
 
             if let Some(sd) = pase.timeout.as_mut() {
                 if sd.exch_id != exchange.id() {
-                    info!("Other PAKE session in progress");
+                    debug!("Other PAKE session in progress");
                     Some(SCStatusCodes::Busy)
                 } else {
                     None
@@ -470,21 +487,24 @@ impl Default for Pake {
     }
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct Pake1Resp<'a> {
     pb: OctetStr<'a>,
     cb: OctetStr<'a>,
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct PBKDFParamRespParams<'a> {
     count: u32,
     salt: OctetStr<'a>,
 }
 
-#[derive(ToTLV)]
+#[derive(ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(start = 1)]
 struct PBKDFParamResp<'a> {
     init_random: OctetStr<'a>,
@@ -500,7 +520,8 @@ fn extract_pasepake_1_or_3_params(buf: &[u8]) -> Result<&[u8], Error> {
     Ok(pA)
 }
 
-#[derive(FromTLV)]
+#[derive(FromTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(lifetime = "'a", start = 1)]
 struct PBKDFParamReq<'a> {
     initiator_random: OctetStr<'a>,
