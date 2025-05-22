@@ -448,14 +448,6 @@ fn constant_entries_list(span: Span) -> IResult<Span, Vec<ConstantEntry>, ParseE
     .parse(span)
 }
 
-pub fn parse_enum(span: Span) -> IResult<Span, Enum, ParseError> {
-    let (span, comment) = whitespace0(span)?;
-    let doc_comment = comment.map(|DocComment(comment)| comment);
-    let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-
-    parse_enum_after_doc_maturity(doc_comment, maturity, span)
-}
-
 fn parse_enum_after_doc_maturity<'a>(
     doc_comment: Option<&str>,
     maturity: ApiMaturity,
@@ -480,14 +472,6 @@ fn parse_enum_after_doc_maturity<'a>(
         entries,
     })
     .parse(span)
-}
-
-pub fn parse_bitmap(span: Span) -> IResult<Span, Bitmap, ParseError> {
-    let (span, comment) = whitespace0(span)?;
-    let doc_comment = comment.map(|DocComment(comment)| comment);
-    let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-
-    parse_bitmap_after_doc_maturity(doc_comment, maturity, span)
 }
 
 pub fn parse_bitmap_after_doc_maturity<'a>(
@@ -618,14 +602,6 @@ fn struct_fields(span: Span) -> IResult<Span, Vec<StructField>, ParseError> {
     .parse(span)
 }
 
-pub fn parse_struct(span: Span) -> IResult<Span, Struct, ParseError> {
-    let (span, doc_comment) = whitespace0.parse(span)?;
-    let doc_comment = doc_comment.map(|DocComment(s)| s);
-    let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-
-    parse_struct_after_doc_maturity(doc_comment, maturity, span)
-}
-
 fn parse_struct_after_doc_maturity<'a>(
     doc_comment: Option<&str>,
     maturity: ApiMaturity,
@@ -696,14 +672,6 @@ pub fn event_priority(span: Span) -> IResult<Span, EventPriority, ParseError> {
     value(EventPriority::Debug, keyword("debug")).parse(span)
 }
 
-pub fn parse_event(span: Span) -> IResult<Span, Event, ParseError> {
-    let (span, doc_comment) = whitespace0.parse(span)?;
-    let doc_comment = doc_comment.map(|DocComment(s)| s);
-    let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-
-    parse_event_after_doc_maturity(doc_comment, maturity, span)
-}
-
 fn parse_event_after_doc_maturity<'a>(
     doc_comment: Option<&str>,
     maturity: ApiMaturity,
@@ -749,14 +717,6 @@ fn parse_event_after_doc_maturity<'a>(
         is_fabric_sensitive,
     })
     .parse(span)
-}
-
-pub fn parse_command(span: Span) -> IResult<Span, Command, ParseError> {
-    let (span, doc_comment) = whitespace0.parse(span)?;
-    let doc_comment = doc_comment.map(|DocComment(s)| s);
-    let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-
-    parse_command_after_doc_maturity(doc_comment, maturity, span)
 }
 
 pub fn parse_command_after_doc_maturity<'a>(
@@ -856,14 +816,6 @@ fn attribute_access(span: Span) -> IResult<Span, (AccessPrivilege, AccessPrivile
     }
 
     Ok((span, (read_acl, write_acl)))
-}
-
-pub fn parse_attribute(span: Span) -> IResult<Span, Attribute, ParseError> {
-    let (span, doc_comment) = whitespace0.parse(span)?;
-    let doc_comment = doc_comment.map(|DocComment(s)| s);
-    let (span, maturity) = delimited(whitespace0, api_maturity, whitespace0).parse(span)?;
-
-    parse_attribute_after_doc_maturity(doc_comment, maturity, span)
 }
 
 pub fn parse_attribute_after_doc_maturity<'a>(
