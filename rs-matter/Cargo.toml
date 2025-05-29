@@ -44,7 +44,7 @@ verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1"
 embassy-time = "0.4"
 embassy-time-queue-utils = "0.1"
-embassy-sync = "0.6"
+embassy-sync = "0.7"
 critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
