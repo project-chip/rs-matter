@@ -2,9 +2,7 @@
 resolver = "2"
 members = [
         "rs-matter",
-        "rs-matter-data-model",
         "rs-matter-macros",
-        "rs-matter-macros-impl",
         "examples",
 ]
 

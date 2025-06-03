@@ -1,8 +1,3 @@
-pub mod endpoint_composition;
-pub mod idl;
-
-pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/controller-clusters.matter");
-
 /// How mature/usable a member of an API is
 ///
 /// Most things should be stable, however while spec is developed
@@ -67,30 +62,6 @@ impl DataType {
 
     pub fn is_octet_string(&self) -> bool {
         matches!(self.name.as_str(), "octet_string" | "long_octet_string")
-    }
-
-    pub fn scalar<T: Into<String>>(name: T) -> Self {
-        Self {
-            name: name.into(),
-            is_list: false,
-            max_length: None,
-        }
-    }
-
-    pub fn list_of<T: Into<String>>(name: T) -> Self {
-        Self {
-            name: name.into(),
-            is_list: true,
-            max_length: None,
-        }
-    }
-
-    pub fn scalar_of_size<T: Into<String>>(name: T, max_length: u64) -> Self {
-        Self {
-            name: name.into(),
-            is_list: false,
-            max_length: Some(max_length),
-        }
     }
 }
 
