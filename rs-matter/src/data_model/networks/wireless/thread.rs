@@ -66,6 +66,9 @@ impl Thread {
 
     /// Get the Extended PAN ID from the operational dataset
     pub fn ext_pan_id(&self) -> &[u8] {
+        // This unwrap! should never fail because the Thread TLV dataset
+        // is checked - upon creation of the `Thread` instance - to be valid,
+        // i.e. to contain an Extended PAN ID TLV.
         unwrap!(Self::dataset_ext_pan_id(&self.dataset.vec))
     }
 }
