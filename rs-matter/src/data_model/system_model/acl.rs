@@ -109,6 +109,8 @@ impl AclHandler {
                 // Now add everything
                 fabric_mgr.acl_remove_all(fab_idx)?;
                 for entry in list {
+                    // unwrap! calls below can't fail because we already checked that the entry is well-formed
+                    // and the length of the list is within the limit
                     let entry = unwrap!(entry);
                     unwrap!(fabric_mgr.acl_add_init(fab_idx, AclEntry::init_with(fab_idx, &entry)));
                 }
