@@ -37,8 +37,8 @@ use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::data_model::device_types::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::data_model::networks::unix::UnixNetifs;
 use rs_matter::data_model::objects::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, InvokeContext,
-    Node, ReadContext,
+    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    InvokeContext, Node, ReadContext,
 };
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::sdm::net_comm::NetworkType;
@@ -152,13 +152,11 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                 matter.rand(),
                 EmptyHandler
                     .chain(
-                        1,
-                        desc::DescHandler::CLUSTER.id,
+                        EpClMatcher::new(1, desc::DescHandler::CLUSTER.id),
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        1,
-                        SpeakerHandler::CLUSTER.id,
+                        EpClMatcher::new(1, SpeakerHandler::CLUSTER.id),
                         SpeakerHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     ),
             ),

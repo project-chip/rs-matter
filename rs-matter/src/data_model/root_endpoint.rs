@@ -20,7 +20,7 @@ use crate::utils::rand::Rand;
 
 use super::basic_info::{self, BasicInfoHandler, ClusterHandler as _};
 use super::networks::eth::{EthNetCtl, EthNetwork};
-use super::objects::{Async, ChainedHandler, Dataver, Endpoint, EndptId};
+use super::objects::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
 use super::sdm::adm_comm::{self, AdminCommHandler, ClusterHandler as _};
 use super::sdm::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
 use super::sdm::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
@@ -69,21 +69,21 @@ pub type ThreadHandler<'a, T, H> = NetHandler<
 >;
 
 pub type NetHandler<'a, NETCOMM, NETDIAG, H> = handler_chain_type!(
-    NETCOMM,
-    NETDIAG,
-    Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>
+    EpClMatcher => NETCOMM,
+    EpClMatcher => NETDIAG,
+    EpClMatcher => Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>
     | H
 );
 
 /// A type alias for the handler chain returned by `with_sys()`.
 pub type SysHandler<'a, H> = handler_chain_type!(
-    Async<desc::HandlerAdaptor<DescHandler<'a>>>,
-    Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
-    Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
-    Async<adm_comm::HandlerAdaptor<AdminCommHandler>>,
-    Async<noc::HandlerAdaptor<NocHandler>>,
-    Async<acl::HandlerAdaptor<acl::AclHandler>>,
-    Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>
+    EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>,
+    EpClMatcher => Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
+    EpClMatcher => Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
+    EpClMatcher => Async<adm_comm::HandlerAdaptor<AdminCommHandler>>,
+    EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
+    EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
+    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>
     | H
 );
 
@@ -113,19 +113,16 @@ pub fn with_eth<'a, H>(
     const NETWORK: EthNetwork<'static> = EthNetwork::new("eth");
 
     ChainedHandler::new(
-        ROOT_ENDPOINT_ID,
-        GenDiagHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, GenDiagHandler::CLUSTER.id),
         Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
         handler,
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        EthDiagHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, EthDiagHandler::CLUSTER.id),
         Async(EthDiagHandler::new(Dataver::new_rand(rand)).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        NetCommHandler::<EthNetCtl>::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, NetCommHandler::<EthNetCtl>::CLUSTER.id),
         NetCommHandler::new(Dataver::new_rand(rand), &NETWORK, EthNetCtl).adapt(),
     )
 }
@@ -156,19 +153,16 @@ where
     T: NetCtl + NetCtlStatus + WifiDiag,
 {
     ChainedHandler::new(
-        ROOT_ENDPOINT_ID,
-        GenDiagHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, GenDiagHandler::CLUSTER.id),
         Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
         handler,
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        WifiDiagHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, WifiDiagHandler::CLUSTER.id),
         Async(WifiDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        NetCommHandler::<T>::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, NetCommHandler::<T>::CLUSTER.id),
         NetCommHandler::new(Dataver::new_rand(rand), networks, net_ctl).adapt(),
     )
 }
@@ -198,19 +192,16 @@ where
     T: NetCtl + NetCtlStatus + ThreadDiag,
 {
     ChainedHandler::new(
-        ROOT_ENDPOINT_ID,
-        GenDiagHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, GenDiagHandler::CLUSTER.id),
         Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
         handler,
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        ThreadDiagHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, ThreadDiagHandler::CLUSTER.id),
         Async(ThreadDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        NetCommHandler::<T>::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, NetCommHandler::<T>::CLUSTER.id),
         NetCommHandler::new(Dataver::new_rand(rand), networks, net_ctl).adapt(),
     )
 }
@@ -232,39 +223,32 @@ pub fn with_sys<'a, H>(
     handler: H,
 ) -> SysHandler<'a, H> {
     ChainedHandler::new(
-        ROOT_ENDPOINT_ID,
-        GrpKeyMgmtHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, GrpKeyMgmtHandler::CLUSTER.id),
         Async(GrpKeyMgmtHandler::new(Dataver::new_rand(rand)).adapt()),
         handler,
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        AclHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, AclHandler::CLUSTER.id),
         Async(AclHandler::new(Dataver::new_rand(rand)).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        NocHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, NocHandler::CLUSTER.id),
         Async(NocHandler::new(Dataver::new_rand(rand)).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        AdminCommHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, AdminCommHandler::CLUSTER.id),
         Async(AdminCommHandler::new(Dataver::new_rand(rand)).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        GenCommHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, GenCommHandler::CLUSTER.id),
         Async(GenCommHandler::new(Dataver::new_rand(rand), comm_policy).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        BasicInfoHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, BasicInfoHandler::CLUSTER.id),
         Async(BasicInfoHandler::new(Dataver::new_rand(rand)).adapt()),
     )
     .chain(
-        ROOT_ENDPOINT_ID,
-        DescHandler::CLUSTER.id,
+        EpClMatcher::new(ROOT_ENDPOINT_ID, DescHandler::CLUSTER.id),
         Async(DescHandler::new(Dataver::new_rand(rand)).adapt()),
     )
 }

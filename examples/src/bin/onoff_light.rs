@@ -32,7 +32,7 @@ use rs_matter::data_model::core::IMBuffer;
 use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::data_model::networks::unix::UnixNetifs;
 use rs_matter::data_model::objects::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, Node,
+    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::data_model::root_endpoint;
@@ -222,13 +222,11 @@ fn dm_handler<'a>(
                 matter.rand(),
                 EmptyHandler
                     .chain(
-                        1,
-                        desc::DescHandler::CLUSTER.id,
+                        EpClMatcher::new(1, desc::DescHandler::CLUSTER.id),
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        1,
-                        on_off::OnOffHandler::CLUSTER.id,
+                        EpClMatcher::new(1, on_off::OnOffHandler::CLUSTER.id),
                         Async(on_off::HandlerAdaptor(on_off)),
                     ),
             ),
