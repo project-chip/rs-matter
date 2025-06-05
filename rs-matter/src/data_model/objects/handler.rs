@@ -266,6 +266,73 @@ where
 
 impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
 
+/// A context that is used to determine whether a handler - member of a handler-chain (`ChainedHandler`)
+/// should be invoked for a specific operation.
+pub enum MatchContext<'a> {
+    /// Context for an attribute read operation.
+    Read(&'a ReadContext<'a>),
+    /// Context for an attribute write operation.
+    Write(&'a WriteContext<'a>),
+    /// Context for a command invoke operation.
+    Invoke(&'a InvokeContext<'a>),
+}
+
+/// A trait that defines a matcher for determining whether a handler - member of a handler-chain (`ChainedHandler`)
+/// should be invoked for a specific operation.
+pub trait Matcher {
+    /// Return `true` if the corresponding handler should be invoked for the provided context.
+    fn matches(&self, ctx: &MatchContext<'_>) -> bool;
+}
+
+impl<T> Matcher for &T
+where
+    T: Matcher,
+{
+    fn matches(&self, ctx: &MatchContext<'_>) -> bool {
+        T::matches(self, ctx)
+    }
+}
+
+/// A matcher that matches a specific endpoint ID and cluster ID.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EpClMatcher {
+    endpoint_id: EndptId,
+    cluster_id: ClusterId,
+}
+
+impl EpClMatcher {
+    /// Create a new `EpClMatcher` instance.
+    ///
+    /// # Arguments:
+    /// - `endpoint_id`: The endpoint ID to match.
+    /// - `cluster_id`: The cluster ID to match.
+    pub const fn new(endpoint_id: EndptId, cluster_id: ClusterId) -> Self {
+        Self {
+            endpoint_id,
+            cluster_id,
+        }
+    }
+}
+
+impl Matcher for EpClMatcher {
+    fn matches(&self, ctx: &MatchContext<'_>) -> bool {
+        match ctx {
+            MatchContext::Read(ctx) => {
+                ctx.attr().endpoint_id == self.endpoint_id
+                    && ctx.attr().cluster_id == self.cluster_id
+            }
+            MatchContext::Write(ctx) => {
+                ctx.attr().endpoint_id == self.endpoint_id
+                    && ctx.attr().cluster_id == self.cluster_id
+            }
+            MatchContext::Invoke(ctx) => {
+                ctx.cmd().endpoint_id == self.endpoint_id && ctx.cmd().cluster_id == self.cluster_id
+            }
+        }
+    }
+}
+
 /// A handler that always fails with attribute / command not found.
 ///
 /// Useful when chaining multiple handlers together as the end of the chain.
@@ -276,18 +343,16 @@ impl EmptyHandler {
     /// fallback that errors out.
     ///
     /// The returned chained handler works as follows:
-    /// - It will call the provided `handler` instance if the endpoint and cluster
-    ///   of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    /// - It will call the provided `handler` instance if the provided matcher returns `true`
+    ///   for the `ReadContext`/`WriteContext`/`InvokeContext` of the incoming operation
     /// - Otherwise, the empty handler would be invoked, causing the operation to error out.
-    pub const fn chain<H>(
-        self,
-        handler_endpoint: u16,
-        handler_cluster: u32,
-        handler: H,
-    ) -> ChainedHandler<H, Self> {
+    ///
+    /// Arguments:
+    /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
+    /// - `handler`: The handler to be invoked if the matcher returns `true`.
+    pub const fn chain<M, H>(self, matcher: M, handler: H) -> ChainedHandler<M, H, Self> {
         ChainedHandler {
-            handler_endpoint,
-            handler_cluster,
+            matcher,
             handler,
             next: self,
         }
@@ -307,22 +372,28 @@ impl Handler for EmptyHandler {
 impl NonBlockingHandler for EmptyHandler {}
 
 /// A handler that chains two handlers together in a composite handler.
-pub struct ChainedHandler<H, T> {
-    pub handler_endpoint: u16,
-    pub handler_cluster: u32,
+pub struct ChainedHandler<M, H, T> {
+    /// The matcher that determines whether the handler should be invoked for the incoming operation.
+    pub matcher: M,
+    /// The handler to be invoked if the matcher returns `true`.
     pub handler: H,
+    /// The next handler to be invoked if the matcher returns `false`.
     pub next: T,
 }
 
-impl<H, T> ChainedHandler<H, T> {
+impl<M, H, T> ChainedHandler<M, H, T> {
     /// Construct a chained handler that works as follows:
-    /// - It will call the provided `handler` instance if the endpoint and cluster
-    ///   of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    /// - It will call the provided `handler` instance if the provided matcher returns `true`
+    ///   for the `ReadContext`/`WriteContext`/`InvokeContext` of the incoming operation
     /// - Otherwise, it will call the `next` handler
-    pub const fn new(handler_endpoint: u16, handler_cluster: u32, handler: H, next: T) -> Self {
+    ///
+    /// Arguments:
+    /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
+    /// - `handler`: The handler to be invoked if the matcher returns `true`.
+    /// - `next`: The next handler to be invoked if the matcher returns `false`.
+    pub const fn new(matcher: M, handler: H, next: T) -> Self {
         Self {
-            handler_endpoint,
-            handler_cluster,
+            matcher,
             handler,
             next,
         }
@@ -331,21 +402,21 @@ impl<H, T> ChainedHandler<H, T> {
     /// Chain itself with another handler.
     ///
     /// The returned chained handler works as follows:
-    /// - It will call the provided `handler` instance if the endpoint and cluster
-    ///   of the incoming request do match the `handler_endpoint` and `handler_cluster` provided here.
+    /// - It will call the provided `handler` instance if the provided matcher returns `true`
+    ///   for the `ReadContext`/`WriteContext`/`InvokeContext` of the incoming operation
     /// - Otherwise, it will call the `self` handler
-    pub const fn chain<H2>(
-        self,
-        handler_endpoint: u16,
-        handler_cluster: u32,
-        handler: H2,
-    ) -> ChainedHandler<H2, Self> {
-        ChainedHandler::new(handler_endpoint, handler_cluster, handler, self)
+    ///
+    /// Arguments:
+    /// - `matcher`: A matcher that determines whether the handler should be invoked for the incoming operation.
+    /// - `handler`: The handler to be invoked if the matcher returns `true`.
+    pub const fn chain<M2, H2>(self, matcher: M2, handler: H2) -> ChainedHandler<M2, H2, Self> {
+        ChainedHandler::new(matcher, handler, self)
     }
 }
 
-impl<H, T> Handler for ChainedHandler<H, T>
+impl<M, H, T> Handler for ChainedHandler<M, H, T>
 where
+    M: Matcher,
     H: Handler,
     T: Handler,
 {
@@ -354,9 +425,7 @@ where
         ctx: &ReadContext<'_>,
         encoder: AttrDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        if self.handler_endpoint == ctx.attr().endpoint_id
-            && self.handler_cluster == ctx.attr().cluster_id
-        {
+        if self.matcher.matches(&MatchContext::Read(ctx)) {
             self.handler.read(ctx, encoder)
         } else {
             self.next.read(ctx, encoder)
@@ -364,9 +433,7 @@ where
     }
 
     fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
-        if self.handler_endpoint == ctx.attr().endpoint_id
-            && self.handler_cluster == ctx.attr().cluster_id
-        {
+        if self.matcher.matches(&MatchContext::Write(ctx)) {
             self.handler.write(ctx)
         } else {
             self.next.write(ctx)
@@ -378,9 +445,7 @@ where
         ctx: &InvokeContext<'_>,
         encoder: CmdDataEncoder<'_, '_, '_>,
     ) -> Result<(), Error> {
-        if self.handler_endpoint == ctx.cmd().endpoint_id
-            && self.handler_cluster == ctx.cmd().cluster_id
-        {
+        if self.matcher.matches(&MatchContext::Invoke(ctx)) {
             self.handler.invoke(ctx, encoder)
         } else {
             self.next.invoke(ctx, encoder)
@@ -388,8 +453,9 @@ where
     }
 }
 
-impl<H, T> NonBlockingHandler for ChainedHandler<H, T>
+impl<M, H, T> NonBlockingHandler for ChainedHandler<M, H, T>
 where
+    M: Matcher,
     H: NonBlockingHandler,
     T: NonBlockingHandler,
 {
@@ -401,38 +467,37 @@ where
 /// Use with type aliases:
 /// ```ignore
 /// pub type RootEndpointHandler<'a> = handler_chain_type!(
-///     DescriptorCluster<'static>,
-///     BasicInfoCluster<'a>,
-///     GenCommCluster<'a>,
-///     NwCommCluster,
-///     AdminCommCluster<'a>,
-///     NocCluster<'a>,
-///     AccessControlCluster<'a>,
-///     GenDiagCluster,
-///     EthNwDiagCluster,
-///     GrpKeyMgmtCluster
+///     EpClMatcher => DescriptorCluster<'static>,
+///     EpClMatcher => BasicInfoCluster<'a>,
+///     EpClMatcher => GenCommCluster<'a>,
+///     EpClMatcher => NwCommCluster,
+///     EpClMatcher => AdminCommCluster<'a>,
+///     EpClMatcher => NocCluster<'a>,
+///     EpClMatcher => AccessControlCluster<'a>,
+///     EpClMatcher => GenDiagCluster,
+///     EpClMatcher => EthNwDiagCluster,
+///     EpClMatcher => GrpKeyMgmtCluster
 /// );
 /// ```
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! handler_chain_type {
-    ($h:ty) => {
-        $crate::data_model::objects::ChainedHandler<$h, $crate::data_model::objects::EmptyHandler>
+    ($m:ty => $h:ty) => {
+        $crate::data_model::objects::ChainedHandler<$m, $h, $crate::data_model::objects::EmptyHandler>
     };
-    ($h1:ty $(, $rest:ty)+) => {
-        $crate::data_model::objects::ChainedHandler<$h1, handler_chain_type!($($rest),+)>
+    ($m1:ty => $h1:ty, $($m:ty => $h:ty),+) => {
+        $crate::data_model::objects::ChainedHandler<$m1, $h1, handler_chain_type!($($m => $h),+)>
     };
-
-    ($h:ty | $f:ty) => {
-        $crate::data_model::objects::ChainedHandler<$h, $f>
+    ($m:ty => $h:ty | $f:ty) => {
+        $crate::data_model::objects::ChainedHandler<$m, $h, $f>
     };
-    ($h1:ty $(, $rest:ty)+ | $f:ty) => {
-        $crate::data_model::objects::ChainedHandler<$h1, handler_chain_type!($($rest),+ | $f)>
+    ($m1:ty => $h1:ty, $($m:ty => $h:ty),+ | $f:ty) => {
+        $crate::data_model::objects::ChainedHandler<$m1, $h1, handler_chain_type!($($m => $h),+ | $f)>
     };
 }
 
 mod asynch {
-    use crate::data_model::objects::{AttrDataEncoder, CmdDataEncoder};
+    use crate::data_model::objects::{AttrDataEncoder, CmdDataEncoder, MatchContext, Matcher};
     use crate::error::{Error, ErrorCode};
 
     use super::{
@@ -685,15 +750,14 @@ mod asynch {
         }
     }
 
-    impl<H, T> AsyncHandler for ChainedHandler<H, T>
+    impl<M, H, T> AsyncHandler for ChainedHandler<M, H, T>
     where
+        M: Matcher,
         H: AsyncHandler,
         T: AsyncHandler,
     {
         fn read_awaits(&self, ctx: &ReadContext<'_>) -> bool {
-            if self.handler_endpoint == ctx.attr().endpoint_id
-                && self.handler_cluster == ctx.attr().cluster_id
-            {
+            if self.matcher.matches(&MatchContext::Read(ctx)) {
                 self.handler.read_awaits(ctx)
             } else {
                 self.next.read_awaits(ctx)
@@ -701,9 +765,7 @@ mod asynch {
         }
 
         fn write_awaits(&self, ctx: &WriteContext<'_>) -> bool {
-            if self.handler_endpoint == ctx.attr().endpoint_id
-                && self.handler_cluster == ctx.attr().cluster_id
-            {
+            if self.matcher.matches(&MatchContext::Write(ctx)) {
                 self.handler.write_awaits(ctx)
             } else {
                 self.next.write_awaits(ctx)
@@ -711,9 +773,7 @@ mod asynch {
         }
 
         fn invoke_awaits(&self, ctx: &InvokeContext<'_>) -> bool {
-            if self.handler_endpoint == ctx.cmd().endpoint_id
-                && self.handler_cluster == ctx.cmd().cluster_id
-            {
+            if self.matcher.matches(&MatchContext::Invoke(ctx)) {
                 self.handler.invoke_awaits(ctx)
             } else {
                 self.next.invoke_awaits(ctx)
@@ -725,9 +785,7 @@ mod asynch {
             ctx: &ReadContext<'_>,
             encoder: AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
-            if self.handler_endpoint == ctx.attr().endpoint_id
-                && self.handler_cluster == ctx.attr().cluster_id
-            {
+            if self.matcher.matches(&MatchContext::Read(ctx)) {
                 self.handler.read(ctx, encoder).await
             } else {
                 self.next.read(ctx, encoder).await
@@ -735,9 +793,7 @@ mod asynch {
         }
 
         async fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
-            if self.handler_endpoint == ctx.attr().endpoint_id
-                && self.handler_cluster == ctx.attr().cluster_id
-            {
+            if self.matcher.matches(&MatchContext::Write(ctx)) {
                 self.handler.write(ctx).await
             } else {
                 self.next.write(ctx).await
@@ -749,9 +805,7 @@ mod asynch {
             ctx: &InvokeContext<'_>,
             encoder: CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), Error> {
-            if self.handler_endpoint == ctx.cmd().endpoint_id
-                && self.handler_cluster == ctx.cmd().cluster_id
-            {
+            if self.matcher.matches(&MatchContext::Invoke(ctx)) {
                 self.handler.invoke(ctx, encoder).await
             } else {
                 self.next.invoke(ctx, encoder).await

@@ -43,7 +43,7 @@ use rs_matter::data_model::networks::wireless::{
     NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,
 };
 use rs_matter::data_model::objects::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, Node,
+    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::data_model::on_off::{self, ClusterHandler as _};
 use rs_matter::data_model::root_endpoint;
@@ -228,13 +228,11 @@ where
                 matter.rand(),
                 EmptyHandler
                     .chain(
-                        1,
-                        desc::DescHandler::CLUSTER.id,
+                        EpClMatcher::new(1, desc::DescHandler::CLUSTER.id),
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        1,
-                        on_off::OnOffHandler::CLUSTER.id,
+                        EpClMatcher::new(1, on_off::OnOffHandler::CLUSTER.id),
                         Async(on_off::HandlerAdaptor(on_off)),
                     ),
             ),
