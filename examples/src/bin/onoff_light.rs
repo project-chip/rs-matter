@@ -222,11 +222,11 @@ fn dm_handler<'a>(
                 matter.rand(),
                 EmptyHandler
                     .chain(
-                        EpClMatcher::new(1, desc::DescHandler::CLUSTER.id),
+                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(1, on_off::OnOffHandler::CLUSTER.id),
+                        EpClMatcher::new(Some(1), Some(on_off::OnOffHandler::CLUSTER.id)),
                         Async(on_off::HandlerAdaptor(on_off)),
                     ),
             ),

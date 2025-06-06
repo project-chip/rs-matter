@@ -249,6 +249,8 @@ pub fn handler_adaptor(
 
     let stream = quote!(
         #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
+        #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+        #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         pub struct #handler_adaptor_name<T>(pub T);
 
         impl<T> #krate::data_model::objects::#generic_handler_name for #handler_adaptor_name<T>
@@ -1347,6 +1349,8 @@ mod tests {
             &handler_adaptor(false, cluster, &context),
             &quote!(
                 #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
+                #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 pub struct HandlerAdaptor<T>(pub T);
                 impl<T> rs_matter_crate::data_model::objects::Handler for HandlerAdaptor<T>
                 where

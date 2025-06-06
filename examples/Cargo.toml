@@ -13,6 +13,9 @@ name = "onoff_light_bt"
 [[bin]]
 name = "speaker"
 
+[[bin]]
+name = "bridge"
+
 [features]
 default = ["log"]
 zeroconf = ["rs-matter/zeroconf"]
