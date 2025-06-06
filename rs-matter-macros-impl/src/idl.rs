@@ -22352,6 +22352,8 @@ pub mod unit_testing {
         }
     }
     #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
     pub struct HandlerAdaptor<T>(pub T);
     impl<T> rs_matter_crate::data_model::objects::Handler for HandlerAdaptor<T>
     where

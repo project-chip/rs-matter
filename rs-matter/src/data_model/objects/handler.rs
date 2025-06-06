@@ -297,17 +297,17 @@ where
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EpClMatcher {
-    endpoint_id: EndptId,
-    cluster_id: ClusterId,
+    endpoint_id: Option<EndptId>,
+    cluster_id: Option<ClusterId>,
 }
 
 impl EpClMatcher {
     /// Create a new `EpClMatcher` instance.
     ///
     /// # Arguments:
-    /// - `endpoint_id`: The endpoint ID to match.
-    /// - `cluster_id`: The cluster ID to match.
-    pub const fn new(endpoint_id: EndptId, cluster_id: ClusterId) -> Self {
+    /// - `endpoint_id`: The endpoint ID to match. If `None`, matches any endpoint ID.
+    /// - `cluster_id`: The cluster ID to match. If `None`, matches any cluster ID.
+    pub const fn new(endpoint_id: Option<EndptId>, cluster_id: Option<ClusterId>) -> Self {
         Self {
             endpoint_id,
             cluster_id,
@@ -319,15 +319,31 @@ impl Matcher for EpClMatcher {
     fn matches(&self, ctx: &MatchContext<'_>) -> bool {
         match ctx {
             MatchContext::Read(ctx) => {
-                ctx.attr().endpoint_id == self.endpoint_id
-                    && ctx.attr().cluster_id == self.cluster_id
+                self.endpoint_id
+                    .map(|endpoint_id| ctx.attr().endpoint_id == endpoint_id)
+                    .unwrap_or(true)
+                    && self
+                        .cluster_id
+                        .map(|cluster_id| cluster_id == ctx.attr().cluster_id)
+                        .unwrap_or(true)
             }
             MatchContext::Write(ctx) => {
-                ctx.attr().endpoint_id == self.endpoint_id
-                    && ctx.attr().cluster_id == self.cluster_id
+                self.endpoint_id
+                    .map(|endpoint_id| ctx.attr().endpoint_id == endpoint_id)
+                    .unwrap_or(true)
+                    && self
+                        .cluster_id
+                        .map(|cluster_id| cluster_id == ctx.attr().cluster_id)
+                        .unwrap_or(true)
             }
             MatchContext::Invoke(ctx) => {
-                ctx.cmd().endpoint_id == self.endpoint_id && ctx.cmd().cluster_id == self.cluster_id
+                self.endpoint_id
+                    .map(|endpoint_id| ctx.cmd().endpoint_id == endpoint_id)
+                    .unwrap_or(true)
+                    && self
+                        .cluster_id
+                        .map(|cluster_id| cluster_id == ctx.cmd().cluster_id)
+                        .unwrap_or(true)
             }
         }
     }
@@ -336,6 +352,8 @@ impl Matcher for EpClMatcher {
 /// A handler that always fails with attribute / command not found.
 ///
 /// Useful when chaining multiple handlers together as the end of the chain.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EmptyHandler;
 
 impl EmptyHandler {
@@ -372,6 +390,8 @@ impl Handler for EmptyHandler {
 impl NonBlockingHandler for EmptyHandler {}
 
 /// A handler that chains two handlers together in a composite handler.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChainedHandler<M, H, T> {
     /// The matcher that determines whether the handler should be invoked for the incoming operation.
     pub matcher: M,
@@ -816,6 +836,8 @@ mod asynch {
     /// An adaptor that adapts a `NonBlockingHandler` trait implementation to the `AsyncHandler` trait contract.
     ///
     /// The adaptor also implements `NonBlockingHandler` so that the adapted handler can be used in any context.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Async<T>(pub T);
 
     impl<T> Handler for Async<T>

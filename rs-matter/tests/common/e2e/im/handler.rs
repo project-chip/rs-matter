@@ -73,20 +73,20 @@ impl<'a> E2eTestHandler<'a> {
         );
 
         let handler = ChainedHandler::new(
-            EpClMatcher::new(ROOT_ENDPOINT_ID, echo_cluster::ID),
+            EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(echo_cluster::ID)),
             Async(EchoHandler::new(2, Dataver::new_rand(matter.rand()))),
             handler,
         )
         .chain(
-            EpClMatcher::new(1, DescHandler::CLUSTER.id),
+            EpClMatcher::new(Some(1), Some(DescHandler::CLUSTER.id)),
             Async(DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
         )
         .chain(
-            EpClMatcher::new(1, echo_cluster::ID),
+            EpClMatcher::new(Some(1), Some(echo_cluster::ID)),
             Async(EchoHandler::new(3, Dataver::new_rand(matter.rand()))),
         )
         .chain(
-            EpClMatcher::new(1, OnOffHandler::CLUSTER.id),
+            EpClMatcher::new(Some(1), Some(OnOffHandler::CLUSTER.id)),
             Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
         );
 
