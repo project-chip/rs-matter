@@ -17,16 +17,38 @@
 
 use super::objects::DeviceType;
 
+/// A constant representing the device type for
+/// the root (ep0) endpoint in Matter.
 pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
     dtype: 0x0016,
     drev: 1,
 };
 
+/// A constant representing the device type for
+/// the root (ep0) endpoint in Matter, when the Node represents
+/// a Bridged Matter node.
+pub const DEV_TYPE_BRIDGE: DeviceType = DeviceType {
+    dtype: 0x0013,
+    drev: 1,
+};
+
+/// A constant representing the device type for
+/// the aggregator (ep1) endpoint in Matter, when the Node represents
+/// a Bridged Matter node.
+pub const DEV_TYPE_AGGREGATOR: DeviceType = DeviceType {
+    dtype: 0x000e,
+    drev: 1,
+};
+
+/// A constant representing the device type for
+/// the On/Off Light cluster in Matter.
 pub const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
     dtype: 0x0100,
     drev: 2,
 };
 
+/// A constant representing the device type for
+/// the Smart Speaker cluster in Matter.
 pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
     dtype: 0x0022,
     drev: 2,

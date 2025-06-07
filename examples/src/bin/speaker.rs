@@ -37,8 +37,8 @@ use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::data_model::device_types::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::data_model::networks::unix::UnixNetifs;
 use rs_matter::data_model::objects::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, InvokeContext,
-    Node, ReadContext,
+    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    InvokeContext, Node, ReadContext,
 };
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::sdm::net_comm::NetworkType;
@@ -53,8 +53,8 @@ use rs_matter::tlv::TLVBuilderParent;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::with;
 use rs_matter::{clusters, test_device};
+use rs_matter::{devices, with};
 
 // Import the MediaPlayback cluster from `rs-matter`.
 //
@@ -132,7 +132,7 @@ const NODE: Node<'static> = Node {
         root_endpoint::root_endpoint(NetworkType::Ethernet),
         Endpoint {
             id: 1,
-            device_types: &[DEV_TYPE_SMART_SPEAKER],
+            device_types: devices!(DEV_TYPE_SMART_SPEAKER),
             clusters: clusters!(desc::DescHandler::CLUSTER, SpeakerHandler::CLUSTER),
         },
     ],
@@ -152,13 +152,11 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                 matter.rand(),
                 EmptyHandler
                     .chain(
-                        1,
-                        desc::DescHandler::CLUSTER.id,
+                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        1,
-                        SpeakerHandler::CLUSTER.id,
+                        EpClMatcher::new(Some(1), Some(SpeakerHandler::CLUSTER.id)),
                         SpeakerHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     ),
             ),
