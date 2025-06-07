@@ -52,6 +52,8 @@ use rs_matter::{clusters, devices, test_device, with};
 
 pub use bridged_device_basic_information::HandlerAdaptor as BridgedHandlerAdaptor;
 
+use crate::bridged_device_basic_information::ClusterHandler as _;
+
 rs_matter::import!(BridgedDeviceBasicInformation);
 
 #[path = "../common/mdns.rs"]
@@ -147,7 +149,11 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 2,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, OnOffHandler::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                BridgedHandler::CLUSTER,
+                OnOffHandler::CLUSTER
+            ),
         },
         // This is the second bridged device.
         //
@@ -156,7 +162,11 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 3,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, OnOffHandler::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                BridgedHandler::CLUSTER,
+                OnOffHandler::CLUSTER
+            ),
         },
     ],
 };
@@ -206,12 +216,20 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
+                        EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
+                        Async(BridgedHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    )
+                    .chain(
                         EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(OnOffHandler::CLUSTER.id)),
                         Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),
+                        Async(BridgedHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     ),
             ),
         ),
@@ -219,17 +237,21 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
 }
 
 #[derive(Clone, Debug)]
-pub struct BridgedClusterHandler {
+pub struct BridgedHandler {
     dataver: Dataver,
 }
 
-impl BridgedClusterHandler {
+impl BridgedHandler {
     pub const fn new(dataver: Dataver) -> Self {
         Self { dataver }
     }
+
+    pub const fn adapt(self) -> bridged_device_basic_information::HandlerAdaptor<Self> {
+        bridged_device_basic_information::HandlerAdaptor(self)
+    }
 }
 
-impl bridged_device_basic_information::ClusterHandler for BridgedClusterHandler {
+impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
     const CLUSTER: Cluster<'static> = bridged_device_basic_information::FULL_CLUSTER
         .with_revision(1)
         .with_features(0)
