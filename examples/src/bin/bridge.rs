@@ -124,7 +124,7 @@ const NODE: Node<'static> = Node {
         //
         // Only difference between the root point for a Matter bridge is that it has to declare itself
         // as having a device type "bridge". In regular (non-bridge) Matter nodes, ep0 has a "root node"
-        //  the device type.
+        // the device type.
         Endpoint {
             id: 0,
             device_types: devices!(DEV_TYPE_BRIDGE),
@@ -157,7 +157,7 @@ const NODE: Node<'static> = Node {
         },
         // This is the second bridged device.
         //
-        // It could have a cvompletely different device type, yet here - for simplicity - we
+        // It could have a completely different device type, yet here - for simplicity - we
         // just declare another lamp.
         Endpoint {
             id: 3,
@@ -189,8 +189,10 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                     // The `Aggregator` descriptor cluster takes care of declaring all bridged endpoints
                     // as such.
                     //
-                    // Note also that implementing the "Actions" cluster (and declaring it in the ep1 meta-data)
-                    // would allow one to designate locations/areas to the bridged devices.
+                    // Implementing the "Actions" cluster (and declaring it in the ep1 meta-data)
+                    // would allow one to designate locations/areas to the bridged devices. However, this is
+                    // not yet supported by Google home and Apple, as per
+                    // https://www.1home.io/docs/en/server/configure-devices#manage-rooms
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
                         Async(
@@ -198,7 +200,7 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                                 .adapt(),
                         ),
                     )
-                    // The following chains are the handlers for the bridged devicea corresponding to ep 2 and ep3.
+                    // The following chains are the handlers for the bridged devices corresponding to ep 2 and ep3.
                     //
                     // In addition to the usual clusters, every bridged endpoint needs to implement the
                     // "Bridged" cluster as well.
