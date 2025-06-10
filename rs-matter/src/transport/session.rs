@@ -89,6 +89,12 @@ pub struct Session {
     mode: SessionMode,
     pub(crate) exchanges: crate::utils::storage::Vec<Option<ExchangeState>, MAX_EXCHANGES>,
     last_use: Duration,
+    /// If `true` then the session is considered "expired". Session expiration happens
+    /// for the session on behalf of which a fabric is removed.
+    ///
+    /// Expired sessions can still process their ongoing exchanges, but do not accept any new ones.
+    /// Furthermore, expired sessions are the prime candidates for eviction.
+    expired: bool,
     reserved: bool,
 }
 
@@ -117,6 +123,7 @@ impl Session {
             mode: SessionMode::PlainText,
             exchanges: crate::utils::storage::Vec::new(),
             last_use: epoch(),
+            expired: false,
         }
     }
 
@@ -144,7 +151,14 @@ impl Session {
             mode: SessionMode::PlainText,
             exchanges: crate::utils::storage::Vec::new(),
             last_use: epoch(),
+            expired: false,
         })
+    }
+
+    /// Get the internal ID of the session
+    /// This ID is guaranteed to be unique across all sessions
+    pub const fn id(&self) -> u32 {
+        self.id
     }
 
     pub fn get_local_sess_id(&self) -> u16 {
@@ -224,6 +238,11 @@ impl Session {
             && self.peer_addr == *rx_peer
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
+    }
+
+    /// Return `true` if the session is expired.
+    pub(crate) fn is_expired(&self) -> bool {
+        self.expired
     }
 
     pub fn upgrade_fabric_idx(&mut self, fabric_idx: NonZeroU8) -> Result<(), Error> {
@@ -441,7 +460,7 @@ impl fmt::Display for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "peer: {:?}, peer_nodeid: {:?}, local: {}, remote: {}, msg_ctr: {}, mode: {:?}, ts: {:?}",
+            "peer: {:?}, peer_nodeid: {:?}, local: {}, remote: {}, msg_ctr: {}, mode: {:?}, ts: {:?}, expired: {}",
             self.peer_addr,
             self.peer_nodeid,
             self.local_sess_id,
@@ -449,6 +468,7 @@ impl fmt::Display for Session {
             self.msg_ctr,
             self.mode,
             self.last_use,
+            self.expired,
         )
     }
 }
@@ -639,9 +659,18 @@ impl SessionMgr {
         let mut lru_index = None;
         let mut lru_ts = (self.epoch)();
         for (i, s) in self.sessions.iter().enumerate() {
-            if s.last_use < lru_ts && !s.reserved && s.exchanges.iter().all(Option::is_none) {
+            if (s.expired || s.last_use < lru_ts)
+                && !s.reserved
+                && s.exchanges.iter().all(Option::is_none)
+            {
                 lru_ts = s.last_use;
                 lru_index = Some(i);
+
+                if s.expired {
+                    // Expired sessons are the prime candidates for eviction,
+                    // so we can break early
+                    break;
+                }
             }
         }
 
@@ -690,18 +719,41 @@ impl SessionMgr {
     }
 
     /// This assumes that the higher layer has taken care of doing anything required
-    /// as per the spec before the sessions are removed
-    pub fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8) {
+    /// as per the spec before the sessions are removed or expired
+    pub fn remove_for_fabric(&mut self, fabric_idx: NonZeroU8, expire_sess_id: Option<u32>) {
         loop {
-            let Some(index) = self
-                .sessions
-                .iter()
-                .position(|sess| sess.get_local_fabric_idx() == fabric_idx.get())
-            else {
+            let Some(index) = self.sessions.iter().position(|sess| {
+                sess.get_local_fabric_idx() == fabric_idx.get() && Some(sess.id) != expire_sess_id
+            }) else {
                 break;
             };
 
+            info!(
+                "Dropping session with ID {} for fabric index {} immediately",
+                self.sessions[index].id, fabric_idx
+            );
             self.sessions.swap_remove(index);
+        }
+
+        if let Some(expire_sess_id) = expire_sess_id {
+            let expire_sess = self
+                .sessions
+                .iter_mut()
+                .find(|sess| sess.id == expire_sess_id);
+            if let Some(expire_sess) = expire_sess {
+                expire_sess.expired = true;
+                info!(
+                    "Marking session with ID {} as expired for fabric index {}",
+                    expire_sess_id,
+                    fabric_idx.get()
+                );
+            } else {
+                warn!(
+                    "No session with ID {} found for fabric index {} to mark as expired",
+                    expire_sess_id,
+                    fabric_idx.get()
+                );
+            }
         }
     }
 
@@ -724,7 +776,8 @@ impl SessionMgr {
         let mut session = self
             .sessions
             .iter_mut()
-            .find(|sess| sess.is_for_node(fabric_idx, peer_node_id, secure));
+            // Expired sessions are not allowed to initiate new exchanges
+            .find(|sess| !sess.expired && sess.is_for_node(fabric_idx, peer_node_id, secure));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used(self.epoch);

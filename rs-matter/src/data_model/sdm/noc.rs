@@ -534,12 +534,21 @@ impl ClusterHandler for NocHandler {
             .remove(fab_idx, &ctx.exchange().matter().transport_mgr.mdns)
             .is_ok()
         {
+            // If our own session is running on the fabric being removed,
+            // we need to expire it rather than immediately remove it, so that
+            // the response can be sent back properly
+            let expire_sess_id = ctx.exchange().with_session(|sess| {
+                Ok((sess.get_local_fabric_idx() == fab_idx.get()).then_some(sess.id()))
+            })?;
+
+            // Remove all sessions related to the fabric being removed
+            // If `expire_sess_id` is Some, the session will be expired instead of removed.
             ctx.exchange()
                 .matter()
                 .transport_mgr
                 .session_mgr
                 .borrow_mut()
-                .remove_for_fabric(fab_idx);
+                .remove_for_fabric(fab_idx, expire_sess_id);
 
             // Notify that the fabrics need to be persisted
             // We need to explicitly do this because if the fabric being removed

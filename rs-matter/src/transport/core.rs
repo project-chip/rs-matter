@@ -200,7 +200,11 @@ impl<'m> TransportMgr<'m> {
     ) -> Result<Exchange<'a>, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
-        session_mgr.get(session_id).ok_or(ErrorCode::NoSession)?;
+        session_mgr
+            .get(session_id)
+            // Expired sessions are not allowed to initiate new exchanges
+            .filter(|sess| !sess.is_expired())
+            .ok_or(ErrorCode::NoSession)?;
 
         let exch_id = session_mgr.get_next_exch_id();
 
@@ -233,7 +237,6 @@ impl<'m> TransportMgr<'m> {
                 let mut session_mgr = self.session_mgr.borrow_mut();
 
                 let session = session_mgr.get_for_rx(&packet.peer, &packet.header.plain)?;
-
                 let exch_index = session.get_exch_for_rx(&packet.header.proto)?;
 
                 let matches = {
