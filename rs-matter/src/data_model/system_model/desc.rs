@@ -40,6 +40,11 @@ impl PartsMatcher for StandardPartsMatcher {
 }
 
 /// A parts matcher suitable for the aggregator endpoints of bridged Matter devices
+///
+/// This matcher matches ALL endpoints that are not the root endpoint (0) and not the aggregator endpoint itself.
+///
+/// For more complex scenarios, where the node needs to contain multiple aggregators, or where the node
+/// might contain non-bridged endpoints, user needs to supply its own `PartsMatcher` implementation.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct AggregatorPartsMatcher;
