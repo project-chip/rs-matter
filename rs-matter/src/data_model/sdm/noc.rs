@@ -542,7 +542,7 @@ impl ClusterHandler for NocHandler {
             })?;
 
             // Remove all sessions related to the fabric being removed
-            // Mark our own session as expired, so that except the one on which the request is running
+            // If `expire_sess_id` is Some, the session will be expired instead of removed.
             ctx.exchange()
                 .matter()
                 .transport_mgr

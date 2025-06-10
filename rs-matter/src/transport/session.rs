@@ -736,12 +736,11 @@ impl SessionMgr {
         }
 
         if let Some(expire_sess_id) = expire_sess_id {
-            let our_sess = self
+            let expire_sess = self
                 .sessions
                 .iter_mut()
                 .find(|sess| sess.id == expire_sess_id);
-            if let Some(expire_sess) = our_sess {
-                // If we have a session for ourselves, then we just mark it as expired
+            if let Some(expire_sess) = expire_sess {
                 expire_sess.expired = true;
                 info!(
                     "Marking session with ID {} as expired for fabric index {}",
@@ -777,6 +776,7 @@ impl SessionMgr {
         let mut session = self
             .sessions
             .iter_mut()
+            // Expired sessions are not allowed to initiate new exchanges
             .find(|sess| !sess.expired && sess.is_for_node(fabric_idx, peer_node_id, secure));
 
         if let Some(session) = session.as_mut() {

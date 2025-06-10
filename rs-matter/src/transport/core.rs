@@ -202,6 +202,7 @@ impl<'m> TransportMgr<'m> {
 
         session_mgr
             .get(session_id)
+            // Expired sessions are not allowed to initiate new exchanges
             .filter(|sess| !sess.is_expired())
             .ok_or(ErrorCode::NoSession)?;
 
