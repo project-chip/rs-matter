@@ -17,24 +17,20 @@
 
 use super::objects::DeviceType;
 
-/// A constant representing the device type for
-/// the root (ep0) endpoint in Matter.
+/// A constant representing the device type for the root (ep0) endpoint in Matter.
 pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {
     dtype: 0x0016,
     drev: 1,
 };
 
-/// A constant representing the device type for
-/// the root (ep0) endpoint in Matter, when the Node represents
-/// a Bridged Matter node.
-pub const DEV_TYPE_BRIDGE: DeviceType = DeviceType {
+/// A constant representing the device type for a bridged device endpoint in the node.
+pub const DEV_TYPE_BRIDGED_NODE: DeviceType = DeviceType {
     dtype: 0x0013,
     drev: 1,
 };
 
-/// A constant representing the device type for
-/// the aggregator (ep1) endpoint in Matter, when the Node represents
-/// a Bridged Matter node.
+/// A constant representing the device type for an aggregator endpoint in the node
+///  when the Node contains bridged endpoints.
 pub const DEV_TYPE_AGGREGATOR: DeviceType = DeviceType {
     dtype: 0x000e,
     drev: 1,

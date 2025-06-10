@@ -28,7 +28,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::data_model::device_types::{
-    DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGE, DEV_TYPE_ON_OFF_LIGHT,
+    DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT,
 };
 use rs_matter::data_model::networks::unix::UnixNetifs;
 use rs_matter::data_model::objects::{
@@ -121,20 +121,14 @@ const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
         // The root (0) endpoint - as usual.
+        root_endpoint::root_endpoint(NetworkType::Ethernet),
+        // When the node contains one or more bridged endpoints, we need
+        // at least one endpoint that would serve as the aggregator endpoint and will thus
+        // enumerate all bridged endpoints which are bridged e.g. using the same technology.
         //
-        // Only difference between the root point for a Matter bridge is that it has to declare itself
-        // as having a device type "bridge". In regular (non-bridge) Matter nodes, ep0 has a "root node"
-        // the device type.
-        Endpoint {
-            id: 0,
-            device_types: devices!(DEV_TYPE_BRIDGE),
-            clusters: root_endpoint::root_endpoint(NetworkType::Ethernet).clusters,
-        },
-        // Endpoint 1 also has a special meaning in a Matter Bridge. It is the so called "aggregator".
-        //
-        // Optionally, it can declare and implement the `Actions` cluster
+        // Optionally, the aggregator can declare and implement the `Actions` cluster
         // (see below in the handler the meaning of this cluster).
-        // In any case, this endpoint must to be of the Aggregator device type.
+        // In any case, this endpoint must be of the Aggregator device type.
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_AGGREGATOR),
@@ -148,7 +142,7 @@ const NODE: Node<'static> = Node {
         // which references the endpoints off from a `Vec` or a `heapless::Vec`.
         Endpoint {
             id: 2,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
@@ -161,7 +155,7 @@ const NODE: Node<'static> = Node {
         // just declare another lamp.
         Endpoint {
             id: 3,
-            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
+            device_types: devices!(DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_BRIDGED_NODE),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
