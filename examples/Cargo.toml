@@ -14,6 +14,9 @@ name = "onoff_light_bt"
 name = "speaker"
 
 [[bin]]
+name = "media_player"
+
+[[bin]]
 name = "bridge"
 
 [features]

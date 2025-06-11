@@ -36,18 +36,28 @@ pub const DEV_TYPE_AGGREGATOR: DeviceType = DeviceType {
     drev: 1,
 };
 
-/// A constant representing the device type for
-/// the On/Off Light cluster in Matter.
+/// A constant representing the On/Off Light device in Matter.
 pub const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
     dtype: 0x0100,
     drev: 2,
 };
 
-/// A constant representing the device type for
-/// the Smart Speaker cluster in Matter.
+/// A constant representing the Smart Speaker device in Matter.
 pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
     dtype: 0x0022,
     drev: 2,
+};
+
+/// A constant representing the casting video player device in Matter.
+pub const DEV_TYPE_CASTING_VIDEO_PLAYER: DeviceType = DeviceType {
+    dtype: 0x0023,
+    drev: 1,
+};
+
+/// A constant representing the video player device in Matter.
+pub const DEV_TYPE_VIDEO_PLAYER: DeviceType = DeviceType {
+    dtype: 0x0028,
+    drev: 1,
 };
 
 /// A macro to generate the devices for an endpoint.
