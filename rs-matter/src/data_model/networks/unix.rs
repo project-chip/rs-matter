@@ -43,11 +43,14 @@ impl UnixNetifs {
         let mut netifs: Vec<UnixNetif> = Vec::new();
 
         for ia in nix::ifaddrs::getifaddrs().map_err(|_| ErrorCode::NoNetworkInterface)? {
+            let netif_index =
+                nix::net::if_::if_nametoindex(ia.interface_name.as_str()).unwrap_or(0);
+
             if let Some(netif) = netifs
                 .iter_mut()
                 .find(|netif| netif.name == ia.interface_name)
             {
-                netif.load(&ia)?;
+                netif.load(&ia, netif_index)?;
             } else {
                 let mut netif = UnixNetif {
                     name: String::new(),
@@ -55,9 +58,10 @@ impl UnixNetifs {
                     ipv4addrs: Vec::new(),
                     ipv6addrs: Vec::new(),
                     operational: false,
+                    netif_index: 0,
                 };
 
-                netif.load(&ia)?;
+                netif.load(&ia, netif_index)?;
 
                 netifs.push(netif);
             }
@@ -97,6 +101,8 @@ pub struct UnixNetif {
     pub ipv6addrs: Vec<Ipv6Addr>,
     /// Operational status
     pub operational: bool,
+    /// Interface index
+    pub netif_index: u32,
 }
 
 impl UnixNetif {
@@ -111,14 +117,16 @@ impl UnixNetif {
             ipv4_addrs: &self.ipv4addrs,
             ipv6_addrs: &self.ipv6addrs,
             netif_type: InterfaceTypeEnum::Unspecified, // TODO
+            netif_index: self.netif_index,
         }
     }
 
     /// Augment the information of the network interface with
     /// the provided `InterfaceAddress`.
-    fn load(&mut self, ia: &InterfaceAddress) -> Result<(), Error> {
+    fn load(&mut self, ia: &InterfaceAddress, index: u32) -> Result<(), Error> {
         self.name = ia.interface_name.clone();
         self.operational |= ia.flags.contains(InterfaceFlags::IFF_RUNNING);
+        self.netif_index = index;
 
         if let Some(address) = ia.address.as_ref() {
             if let Some(link_addr) = address.as_link_addr() {

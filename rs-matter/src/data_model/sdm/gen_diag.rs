@@ -52,6 +52,9 @@ pub struct NetifInfo<'a> {
     pub ipv6_addrs: &'a [Ipv6Addr],
     /// The type of the network interface.
     pub netif_type: InterfaceTypeEnum,
+    /// The index of the network interface.
+    /// Might not be available on all platforms.
+    pub netif_index: u32,
 }
 
 impl NetifInfo<'_> {
