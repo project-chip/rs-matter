@@ -20,11 +20,10 @@
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
-use rs_matter_data_model::{Attribute, Cluster, Command, DataType, StructType};
-
 use super::cluster::{GLOBAL_ATTR, NO_RESPONSE};
 use super::field::{field_type, field_type_builder, BuilderPolicy};
 use super::id::{ident, idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
+use super::parser::{Attribute, Cluster, Command, DataType, StructType};
 use super::IdlGenerateContext;
 
 /// Return a token stream defining the handler trait for the provided IDL cluster.

@@ -19,10 +19,9 @@
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::quote;
 
-use rs_matter_data_model::{Cluster, Struct, StructField};
-
 use super::field::field_type;
 use super::id::{ident, idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
+use super::parser::{ApiMaturity, Cluster, Struct, StructField};
 use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
@@ -233,9 +232,9 @@ fn struct_tag_field(f: &StructField) -> TokenStream {
 /// Create the token stream corresponding to the comment of a field inside a structure
 pub(crate) fn struct_field_comment(f: &StructField) -> TokenStream {
     match f.maturity {
-        rs_matter_data_model::ApiMaturity::Provisional => quote!(#[doc="provisional"]),
-        rs_matter_data_model::ApiMaturity::Internal => quote!(#[doc="internal"]),
-        rs_matter_data_model::ApiMaturity::Deprecated => quote!(#[doc="deprecated"]),
+        ApiMaturity::Provisional => quote!(#[doc="provisional"]),
+        ApiMaturity::Internal => quote!(#[doc="internal"]),
+        ApiMaturity::Deprecated => quote!(#[doc="deprecated"]),
         _ => quote!(),
     }
 }

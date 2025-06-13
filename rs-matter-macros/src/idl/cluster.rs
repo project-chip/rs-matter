@@ -22,9 +22,8 @@
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
-use rs_matter_data_model::{AccessPrivilege, Cluster, StructType};
-
 use super::id::{ident, idl_attribute_name_to_enum_variant_name};
+use super::parser::{AccessPrivilege, Cluster, StructType};
 use super::IdlGenerateContext;
 
 pub(crate) const NO_RESPONSE: &str = "DefaultSuccess";
