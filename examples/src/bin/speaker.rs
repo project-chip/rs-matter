@@ -15,8 +15,8 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements the MediaPlayback cluster over Ethernet.
-//! Demonstrates how to make use of the `rs_matter::import` macro.
+//! An example Matter device that implements a Speaker device over Ethernet.
+//! Demonstrates how to make use of the `rs_matter::import` macro for `LevelControl`.
 
 use core::cell::Cell;
 use core::pin::pin;
@@ -27,10 +27,11 @@ use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
-use media_playback::{
-    ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
-    FastForwardRequest, HandlerAsyncAdaptor, PlaybackResponseBuilder, PlaybackStateEnum,
-    RewindRequest, SeekRequest, SkipBackwardRequest, SkipForwardRequest, StatusEnum,
+
+use level_control::{
+    ClusterAsyncHandler as _, MoveRequest, MoveToClosestFrequencyRequest, MoveToLevelRequest,
+    MoveToLevelWithOnOffRequest, MoveWithOnOffRequest, OptionsBitmap, StepRequest,
+    StepWithOnOffRequest, StopRequest, StopWithOnOffRequest,
 };
 
 use rs_matter::core::{Matter, MATTER_PORT};
@@ -38,8 +39,9 @@ use rs_matter::data_model::device_types::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::data_model::networks::unix::UnixNetifs;
 use rs_matter::data_model::objects::{
     Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    InvokeContext, Node, ReadContext,
+    InvokeContext, Node, ReadContext, WriteContext,
 };
+use rs_matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
 use rs_matter::data_model::root_endpoint;
 use rs_matter::data_model::sdm::net_comm::NetworkType;
 use rs_matter::data_model::subscriptions::Subscriptions;
@@ -49,21 +51,21 @@ use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::tlv::TLVBuilderParent;
+use rs_matter::tlv::Nullable;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, test_device};
 use rs_matter::{devices, with};
 
-// Import the MediaPlayback cluster from `rs-matter`.
+// Import the LevelControl cluster from `rs-matter`.
 //
-// This will auto-generate all Rust types related to the MediaPlayback cluster
-// in a module named `media_playback`.
+// This will auto-generate all Rust types related to the LevelControl cluster
+// in a module named `level_control`.
 //
 // User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
 // so as to handle the requests from the controller.
-rs_matter::import!(MediaPlayback);
+rs_matter::import!(LevelControl);
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -133,13 +135,17 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_SMART_SPEAKER),
-            clusters: clusters!(desc::DescHandler::CLUSTER, SpeakerHandler::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                OnOffHandler::CLUSTER,
+                LevelControlHandler::CLUSTER
+            ),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
-/// The handler is the root endpoint 0 handler plus the Speaker handler and its descriptor.
+/// The handler is the root endpoint 0 handler plus the Speaker handler.
 fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
     (
         NODE,
@@ -156,37 +162,41 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(SpeakerHandler::CLUSTER.id)),
-                        SpeakerHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                        EpClMatcher::new(Some(1), Some(LevelControlHandler::CLUSTER.id)),
+                        LevelControlHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                    )
+                    .chain(
+                        EpClMatcher::new(Some(1), Some(OnOffHandler::CLUSTER.id)),
+                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     ),
             ),
         ),
     )
 }
 
-/// A sample NOOP handler for the MediaPlayback cluster.
-pub struct SpeakerHandler {
+/// A sample NOOP handler for the LevelControl cluster.
+pub struct LevelControlHandler {
     dataver: Dataver,
-    state: Cell<media_playback::PlaybackStateEnum>,
+    level: Cell<u8>,
 }
 
-impl SpeakerHandler {
+impl LevelControlHandler {
     /// Create a new instance of the handler
     pub const fn new(dataver: Dataver) -> Self {
         Self {
             dataver,
-            state: Cell::new(media_playback::PlaybackStateEnum::NotPlaying),
+            level: Cell::new(0),
         }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> level_control::HandlerAsyncAdaptor<Self> {
+        level_control::HandlerAsyncAdaptor(self)
     }
 
-    /// Update the state of the handler
-    fn set_state(&self, state: PlaybackStateEnum, ctx: &InvokeContext<'_>) {
-        let old_state = self.state.replace(state);
+    /// Update the volume level of the handler
+    fn set_level(&self, state: u8, ctx: &InvokeContext<'_>) {
+        let old_state = self.level.replace(state);
 
         if old_state != state {
             // Update the cluster data version and notify potential subscribers
@@ -196,15 +206,20 @@ impl SpeakerHandler {
     }
 }
 
-impl media_playback::ClusterAsyncHandler for SpeakerHandler {
+impl level_control::ClusterAsyncHandler for LevelControlHandler {
     /// The metadata cluster definition corresponding to the handler
-    const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
+    const CLUSTER: Cluster<'static> = level_control::FULL_CLUSTER
         .with_revision(1)
         .with_attrs(with!(required))
         .with_cmds(with!(
-            media_playback::CommandId::Play
-                | media_playback::CommandId::Pause
-                | media_playback::CommandId::Stop
+            level_control::CommandId::MoveToLevel
+                | level_control::CommandId::Move
+                | level_control::CommandId::Step
+                | level_control::CommandId::Stop
+                | level_control::CommandId::MoveToLevelWithOnOff
+                | level_control::CommandId::MoveWithOnOff
+                | level_control::CommandId::StepWithOnOff
+                | level_control::CommandId::StopWithOnOff
         ));
 
     fn dataver(&self) -> u32 {
@@ -215,146 +230,141 @@ impl media_playback::ClusterAsyncHandler for SpeakerHandler {
         self.dataver.changed();
     }
 
-    async fn current_state(
-        &self,
-        _ctx: &ReadContext<'_>,
-    ) -> Result<media_playback::PlaybackStateEnum, Error> {
-        Ok(self.state.get())
+    async fn current_level(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+        Ok(Nullable::some(self.level.get()))
     }
 
-    async fn handle_play<P: TLVBuilderParent>(
-        &self,
-        ctx: &InvokeContext<'_>,
-        response: media_playback::PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        info!("Playback started");
-
-        self.set_state(PlaybackStateEnum::Playing, ctx);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
+    async fn options(&self, _ctx: &ReadContext<'_>) -> Result<OptionsBitmap, Error> {
+        Ok(OptionsBitmap::empty())
     }
 
-    async fn handle_pause<P: TLVBuilderParent>(
+    async fn set_options(
         &self,
-        ctx: &InvokeContext<'_>,
-        response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        info!("Playback paused");
-
-        self.set_state(PlaybackStateEnum::Paused, ctx);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
-    }
-
-    async fn handle_stop<P: TLVBuilderParent>(
-        &self,
-        ctx: &InvokeContext<'_>,
-        response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        info!("Playback stopped");
-
-        self.set_state(PlaybackStateEnum::NotPlaying, ctx);
-
-        response.status(StatusEnum::Success)?.data(None)?.end()
-    }
-
-    async fn handle_start_over<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_previous<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_next<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_rewind<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _request: RewindRequest<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_fast_forward<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _request: FastForwardRequest<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_skip_forward<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _request: SkipForwardRequest<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_skip_backward<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _request: SkipBackwardRequest<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_seek<P: TLVBuilderParent>(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _request: SeekRequest<'_>,
-        _response: PlaybackResponseBuilder<P>,
-    ) -> Result<P, Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
-    }
-
-    async fn handle_activate_audio_track(
-        &self,
-        _ctx: &InvokeContext<'_>,
-        _request: ActivateAudioTrackRequest<'_>,
+        _ctx: &WriteContext<'_>,
+        _value: OptionsBitmap,
     ) -> Result<(), Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
+        Ok(())
     }
 
-    async fn handle_activate_text_track(
+    async fn on_level(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+        Ok(Nullable::none())
+    }
+
+    async fn set_on_level(
+        &self,
+        _ctx: &WriteContext<'_>,
+        _value: Nullable<u8>,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    async fn handle_move_to_level(
+        &self,
+        ctx: &InvokeContext<'_>,
+        request: MoveToLevelRequest<'_>,
+    ) -> Result<(), Error> {
+        info!("Moving to level: {}", request.level()?);
+
+        self.set_level(request.level()?, ctx);
+
+        Ok(())
+    }
+
+    async fn handle_move(
         &self,
         _ctx: &InvokeContext<'_>,
-        _request: ActivateTextTrackRequest<'_>,
+        request: MoveRequest<'_>,
     ) -> Result<(), Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
+        info!(
+            "Moving {:?} with rate: {:?}",
+            request.move_mode()?,
+            request.rate()?
+        );
+
+        Ok(())
     }
 
-    async fn handle_deactivate_text_track(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
-        // Not supported
-        Err(ErrorCode::InvalidCommand.into())
+    async fn handle_step(
+        &self,
+        _ctx: &InvokeContext<'_>,
+        request: StepRequest<'_>,
+    ) -> Result<(), Error> {
+        info!(
+            "Stepping {:?} with step size: {} and transition time: {:?}",
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()?
+        );
+
+        Ok(())
+    }
+
+    async fn handle_stop(
+        &self,
+        _ctx: &InvokeContext<'_>,
+        _request: StopRequest<'_>,
+    ) -> Result<(), Error> {
+        info!("Stopping");
+
+        Ok(())
+    }
+
+    async fn handle_move_to_level_with_on_off(
+        &self,
+        ctx: &InvokeContext<'_>,
+        request: MoveToLevelWithOnOffRequest<'_>,
+    ) -> Result<(), Error> {
+        info!("Moving to level with on/off: {}", request.level()?);
+
+        self.set_level(request.level()?, ctx);
+
+        Ok(())
+    }
+
+    async fn handle_move_with_on_off(
+        &self,
+        _ctx: &InvokeContext<'_>,
+        request: MoveWithOnOffRequest<'_>,
+    ) -> Result<(), Error> {
+        info!(
+            "Moving with on/off: {:?} with rate: {:?}",
+            request.move_mode()?,
+            request.rate()?
+        );
+
+        Ok(())
+    }
+
+    async fn handle_step_with_on_off(
+        &self,
+        _ctx: &InvokeContext<'_>,
+        request: StepWithOnOffRequest<'_>,
+    ) -> Result<(), Error> {
+        info!(
+            "Stepping with on/off: {:?} with step size: {} and transition time: {:?}",
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()?
+        );
+
+        Ok(())
+    }
+
+    async fn handle_stop_with_on_off(
+        &self,
+        _ctx: &InvokeContext<'_>,
+        _request: StopWithOnOffRequest<'_>,
+    ) -> Result<(), Error> {
+        info!("Stopping with on/off");
+
+        Ok(())
+    }
+
+    async fn handle_move_to_closest_frequency(
+        &self,
+        _ctx: &InvokeContext<'_>,
+        _request: MoveToClosestFrequencyRequest<'_>,
+    ) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
     }
 }

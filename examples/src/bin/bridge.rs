@@ -50,8 +50,6 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, test_device, with};
 
-pub use bridged_device_basic_information::HandlerAdaptor as BridgedHandlerAdaptor;
-
 use crate::bridged_device_basic_information::ClusterHandler as _;
 
 rs_matter::import!(BridgedDeviceBasicInformation);
