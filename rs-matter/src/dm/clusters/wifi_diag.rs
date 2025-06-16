@@ -17,7 +17,7 @@
 
 //! This module contains the implementation of the Wifi Network Diagnostics cluster and its handler.
 
-use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::with;

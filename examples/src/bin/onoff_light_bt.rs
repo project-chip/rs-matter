@@ -46,11 +46,11 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,
 };
-use rs_matter::dm::objects::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
-};
 use rs_matter::dm::root_endpoint;
 use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::{
+    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+};
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;

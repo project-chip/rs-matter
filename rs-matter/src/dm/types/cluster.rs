@@ -18,7 +18,7 @@
 use core::fmt::{self, Debug};
 
 use crate::acl::{AccessReq, Accessor};
-use crate::dm::objects::*;
+use crate::dm::*;
 use crate::error::{Error, ErrorCode};
 use crate::im::core::IMStatusCode;
 use crate::im::messages::GenericPath;
@@ -421,12 +421,12 @@ macro_rules! with {
         |_, _, _| true
     };
     (required) => {
-        |attr, _, _| !attr.quality.contains($crate::dm::objects::Quality::OPTIONAL)
+        |attr, _, _| !attr.quality.contains($crate::dm::Quality::OPTIONAL)
     };
     (required; $($id:path $(|)?)*) => {
         #[allow(clippy::collapsible_match)]
         |attr, _, _| {
-            if !attr.quality.contains($crate::dm::objects::Quality::OPTIONAL) {
+            if !attr.quality.contains($crate::dm::Quality::OPTIONAL) {
                 true
             } else if let Ok(l) = attr.id.try_into() {
                 #[allow(unreachable_patterns)]

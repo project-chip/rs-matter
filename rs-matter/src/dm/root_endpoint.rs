@@ -33,7 +33,7 @@ use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
 use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
 use super::networks::eth::{EthNetCtl, EthNetwork};
-use super::objects::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
+use super::types::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
 
 /// A utility function to create a root (Endpoint 0) object using the requested operational network type.
 pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {

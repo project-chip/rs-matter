@@ -19,7 +19,7 @@
 
 use rs_matter_macros::{FromTLV, ToTLV};
 
-use crate::dm::objects::{ArrayAttributeRead, Dataver, InvokeContext, ReadContext};
+use crate::dm::{ArrayAttributeRead, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent, ToTLVArrayBuilder,
@@ -376,7 +376,7 @@ impl<'a> ThreadDiagHandler<'a> {
 }
 
 impl ClusterHandler for ThreadDiagHandler<'_> {
-    const CLUSTER: crate::dm::objects::Cluster<'static> = FULL_CLUSTER
+    const CLUSTER: crate::dm::Cluster<'static> = FULL_CLUSTER
         .with_revision(1)
         .with_attrs(with!(required))
         .with_cmds(with!());

@@ -24,7 +24,7 @@ use core::num::NonZeroU8;
 use crate::cert::CertRef;
 use crate::crypto::{self, KeyPair};
 use crate::dm::clusters::dev_att;
-use crate::dm::objects::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, MAX_SUPPORTED_FABRICS};
 use crate::tlv::{

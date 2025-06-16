@@ -34,12 +34,12 @@ use rs_matter::dm::device_types::{
     DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT,
 };
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::objects::{
+use rs_matter::dm::root_endpoint;
+use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher,
     Node, ReadContext,
 };
-use rs_matter::dm::root_endpoint;
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;

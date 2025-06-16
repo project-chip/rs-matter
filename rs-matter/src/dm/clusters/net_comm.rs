@@ -20,9 +20,7 @@
 use core::fmt;
 
 use crate::dm::networks::wireless::{Thread, ThreadTLV, MAX_WIRELESS_NETWORK_ID_LEN};
-use crate::dm::objects::{
-    ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext, WriteContext,
-};
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
     Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVWrite,

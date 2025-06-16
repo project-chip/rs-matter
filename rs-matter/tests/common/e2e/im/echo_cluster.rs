@@ -24,7 +24,7 @@ use num_derive::FromPrimitive;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use rs_matter::dm::objects::{
+use rs_matter::dm::{
     Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
     CmdDataWriter, Command, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality,
     ReadContext, WriteContext,

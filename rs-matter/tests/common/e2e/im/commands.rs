@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::objects::{AsyncHandler, AsyncMetadata};
+use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::im::messages::ib::{CmdPath, CmdStatus};
 use rs_matter::tlv::{TLVTag, TLVWrite, TLVWriter};

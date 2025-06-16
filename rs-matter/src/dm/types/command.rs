@@ -107,10 +107,10 @@ impl CmdDetails<'_> {
 #[macro_export]
 macro_rules! command_enum {
     ($en:ty) => {
-        impl core::convert::TryFrom<$crate::dm::objects::CmdId> for $en {
+        impl core::convert::TryFrom<$crate::dm::CmdId> for $en {
             type Error = $crate::error::Error;
 
-            fn try_from(id: $crate::dm::objects::CmdId) -> Result<Self, Self::Error> {
+            fn try_from(id: $crate::dm::CmdId) -> Result<Self, Self::Error> {
                 <$en>::from_repr(id).ok_or_else(|| $crate::error::ErrorCode::CommandNotFound.into())
             }
         }

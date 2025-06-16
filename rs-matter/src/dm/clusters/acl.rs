@@ -20,7 +20,7 @@
 use core::num::NonZeroU8;
 
 use crate::acl::{self, AclEntry};
-use crate::dm::objects::{
+use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, ChangeNotify, Cluster, Dataver,
     ReadContext, WriteContext,
 };
@@ -215,7 +215,7 @@ mod tests {
     use crate::dm::clusters::acl::{
         AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
     };
-    use crate::dm::objects::{
+    use crate::dm::{
         ArrayAttributeRead, ArrayAttributeWrite, AttrDataEncoder, AttrDataWriter, AttrDetails,
         Node, Privilege,
     };

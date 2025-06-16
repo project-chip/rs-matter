@@ -16988,9 +16988,9 @@ pub mod unit_testing {
         FeatureMap = 65532,
         ClusterRevision = 65533,
     }
-    impl core::convert::TryFrom<rs_matter_crate::dm::objects::AttrId> for AttributeId {
+    impl core::convert::TryFrom<rs_matter_crate::dm::AttrId> for AttributeId {
         type Error = rs_matter_crate::error::Error;
-        fn try_from(id: rs_matter_crate::dm::objects::CmdId) -> Result<Self, Self::Error> {
+        fn try_from(id: rs_matter_crate::dm::CmdId) -> Result<Self, Self::Error> {
             AttributeId::from_repr(id)
                 .ok_or_else(|| rs_matter_crate::error::ErrorCode::AttributeNotFound.into())
         }
@@ -18037,9 +18037,9 @@ pub mod unit_testing {
         TestBatchHelperRequest = 22,
         TestSecondBatchHelperRequest = 23,
     }
-    impl core::convert::TryFrom<rs_matter_crate::dm::objects::CmdId> for CommandId {
+    impl core::convert::TryFrom<rs_matter_crate::dm::CmdId> for CommandId {
         type Error = rs_matter_crate::error::Error;
-        fn try_from(id: rs_matter_crate::dm::objects::CmdId) -> Result<Self, Self::Error> {
+        fn try_from(id: rs_matter_crate::dm::CmdId) -> Result<Self, Self::Error> {
             CommandId::from_repr(id)
                 .ok_or_else(|| rs_matter_crate::error::ErrorCode::CommandNotFound.into())
         }
@@ -18584,1490 +18584,1490 @@ pub mod unit_testing {
             rs_matter_crate::reexport::defmt::write!(f, "::Response")
         }
     }
-    impl core::convert::TryFrom<rs_matter_crate::dm::objects::CmdId> for CommandResponseId {
+    impl core::convert::TryFrom<rs_matter_crate::dm::CmdId> for CommandResponseId {
         type Error = rs_matter_crate::error::Error;
-        fn try_from(id: rs_matter_crate::dm::objects::CmdId) -> Result<Self, Self::Error> {
+        fn try_from(id: rs_matter_crate::dm::CmdId) -> Result<Self, Self::Error> {
             CommandResponseId::from_repr(id)
                 .ok_or_else(|| rs_matter_crate::error::ErrorCode::CommandNotFound.into())
         }
     }
     #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
-    pub const FULL_CLUSTER: rs_matter_crate::dm::objects::Cluster<'static> =
-        rs_matter_crate::dm::objects::Cluster::new(
+    pub const FULL_CLUSTER: rs_matter_crate::dm::Cluster<'static> =
+        rs_matter_crate::dm::Cluster::new(
             4294048773,
             1,
             0,
             &[
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Boolean as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Bitmap8 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Bitmap16 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Bitmap32 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Bitmap64 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int8u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int16u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int24u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int32u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int40u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int48u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int56u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int64u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int8s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int16s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int24s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int32s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int40s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int48s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int56s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Int64s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Enum8 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Enum16 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::FloatSingle as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::FloatDouble as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::OctetString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListInt8u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListOctetString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListStructOctetString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::LongOctetString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::CharString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::LongCharString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::EpochUs as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::EpochS as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::VendorId as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListNullablesAndOptionalsStruct as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::EnumAttr as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::StructAttr as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::RangeRestrictedInt8u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::RangeRestrictedInt8s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::RangeRestrictedInt16u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::RangeRestrictedInt16s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListLongOctetString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListFabricScoped as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::TimedWriteBoolean as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         )
-                        .union(rs_matter_crate::dm::objects::Access::TIMED_ONLY),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                        .union(rs_matter_crate::dm::Access::TIMED_ONLY),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::GeneralErrorBoolean as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ClusterErrorBoolean as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::Unsupported as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::O,
+                    rs_matter_crate::dm::Quality::O,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableBoolean as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableBitmap8 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableBitmap16 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableBitmap32 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableBitmap64 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt8u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt16u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt24u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt32u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt40u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt48u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt56u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt64u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt8s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt16s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt24s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt32s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt40s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt48s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt56s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableInt64s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableEnum8 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableEnum16 as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableFloatSingle as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableFloatDouble as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableOctetString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableCharString as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableEnumAttr as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableStruct as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableRangeRestrictedInt8u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableRangeRestrictedInt8s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableRangeRestrictedInt16u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::NullableRangeRestrictedInt16s as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::WriteOnlyInt8u as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::WRITE)
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
                         .union(
-                            rs_matter_crate::dm::objects::Access::NEED_OPERATE
+                            rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
-                                    rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
                                         .union(
-                                        rs_matter_crate::dm::objects::Access::NEED_ADMIN,
+                                        rs_matter_crate::dm::Access::NEED_ADMIN,
                                     ),
                                 )
-                                .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::objects::Quality::O,
+                    rs_matter_crate::dm::Quality::O,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::GeneratedCommandList as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::AcceptedCommandList as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::EventList as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::AttributeList as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::FeatureMap as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
-                rs_matter_crate::dm::objects::Attribute::new(
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::ClusterRevision as _,
-                    rs_matter_crate::dm::objects::Access::READ
-                        .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
-                    rs_matter_crate::dm::objects::Quality::NONE,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Quality::NONE,
                 ),
             ],
             &[
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::Test as _,
                     None,
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestNotHandled as _,
                     None,
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestSpecific as _,
                     Some(CommandResponseId::TestSpecificResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestUnknownCommand as _,
                     None,
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestAddArguments as _,
                     Some(CommandResponseId::TestAddArgumentsResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestSimpleArgumentRequest as _,
                     Some(CommandResponseId::TestSimpleArgumentResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestStructArrayArgumentRequest as _,
                     Some(CommandResponseId::TestStructArrayArgumentResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestStructArgumentRequest as _,
                     Some(CommandResponseId::BooleanResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestNestedStructArgumentRequest as _,
                     Some(CommandResponseId::BooleanResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestListStructArgumentRequest as _,
                     Some(CommandResponseId::BooleanResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestListInt8UArgumentRequest as _,
                     Some(CommandResponseId::BooleanResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestNestedStructListArgumentRequest as _,
                     Some(CommandResponseId::BooleanResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestListNestedStructListArgumentRequest as _,
                     Some(CommandResponseId::BooleanResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestListInt8UReverseRequest as _,
                     Some(CommandResponseId::TestListInt8UReverseResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestEnumsRequest as _,
                     Some(CommandResponseId::TestEnumsResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestNullableOptionalRequest as _,
                     Some(CommandResponseId::TestNullableOptionalResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestComplexNullableOptionalRequest as _,
                     Some(CommandResponseId::TestComplexNullableOptionalResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::SimpleStructEchoRequest as _,
                     Some(CommandResponseId::SimpleStructResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TimedInvokeRequest as _,
                     None,
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestSimpleOptionalArgumentRequest as _,
                     None,
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestEmitTestEventRequest as _,
                     Some(CommandResponseId::TestEmitTestEventResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestEmitTestFabricScopedEventRequest as _,
                     Some(CommandResponseId::TestEmitTestFabricScopedEventResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestBatchHelperRequest as _,
                     Some(CommandResponseId::TestBatchHelperResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
-                rs_matter_crate::dm::objects::Command::new(
+                rs_matter_crate::dm::Command::new(
                     CommandId::TestSecondBatchHelperRequest as _,
                     Some(CommandResponseId::TestBatchHelperResponse as _),
-                    rs_matter_crate::dm::objects::Access::WO,
+                    rs_matter_crate::dm::Access::WO,
                 ),
             ],
             |_, _, _| true,
@@ -20078,335 +20078,335 @@ pub mod unit_testing {
     #[doc = "The handler trait for the cluster."]
     pub trait ClusterHandler {
         #[doc = "The cluster-metadata corresponding to this handler trait."]
-        const CLUSTER: rs_matter_crate::dm::objects::Cluster<'static>;
+        const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
         fn dataver(&self) -> u32;
         fn dataver_changed(&self);
         fn boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error>;
         fn bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error>;
         fn bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error>;
         fn bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error>;
         fn int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error>;
         fn int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u32, rs_matter_crate::error::Error>;
         fn int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u32, rs_matter_crate::error::Error>;
         fn int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i8, rs_matter_crate::error::Error>;
         fn int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i16, rs_matter_crate::error::Error>;
         fn int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i32, rs_matter_crate::error::Error>;
         fn int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i32, rs_matter_crate::error::Error>;
         fn int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error>;
         fn enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<f32, rs_matter_crate::error::Error>;
         fn float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<f64, rs_matter_crate::error::Error>;
         fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::ToTLVArrayBuilder<P, u8>,
                 rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
             >,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestListStructOctetArrayBuilder<P>,
                 TestListStructOctetBuilder<P>,
             >,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u32, rs_matter_crate::error::Error>;
         fn vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 NullablesAndOptionalsStructArrayBuilder<P>,
                 NullablesAndOptionalsStructBuilder<P>,
             >,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<SimpleEnum, rs_matter_crate::error::Error>;
         fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: SimpleStructBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error>;
         fn range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i8, rs_matter_crate::error::Error>;
         fn range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i16, rs_matter_crate::error::Error>;
         fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestFabricScopedArrayBuilder<P>,
                 TestFabricScopedBuilder<P>,
             >,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
         fn nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
         fn nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>;
         fn nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>;
         fn nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>;
         fn nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
         fn nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>;
         fn nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>;
         fn nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
         fn nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
         fn nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>;
         fn nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>;
         fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -20414,7 +20414,7 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::Utf8StrBuilder<P>,
@@ -20422,523 +20422,523 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>;
         fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
         fn write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn set_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap8MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap16MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap32MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap64MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: f32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: f64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, u8>,
                 u8,
             >,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_struct_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
                 TestListStructOctet<'_>,
             >,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_long_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_nullables_and_optionals_struct(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
                 NullablesAndOptionalsStruct<'_>,
             >,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: SimpleEnum,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_struct_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: SimpleStruct<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_fabric_scoped(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
                 TestFabricScoped<'_>,
             >,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn set_nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_struct(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn handle_test(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_not_handled(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             response: TestSpecificResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_unknown_command(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -20946,7 +20946,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -20954,25 +20954,25 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -20980,28 +20980,28 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_timed_invoke_request(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_simple_optional_argument_request(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -21009,19 +21009,19 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -21030,7 +21030,7 @@ pub mod unit_testing {
     where
         T: ClusterHandler,
     {
-        const CLUSTER: rs_matter_crate::dm::objects::Cluster<'static> = T::CLUSTER;
+        const CLUSTER: rs_matter_crate::dm::Cluster<'static> = T::CLUSTER;
         fn dataver(&self) -> u32 {
             T::dataver(self)
         }
@@ -21039,165 +21039,165 @@ pub mod unit_testing {
         }
         fn boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::boolean(self, ctx)
         }
         fn bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_8(self, ctx)
         }
         fn bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_16(self, ctx)
         }
         fn bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_32(self, ctx)
         }
         fn bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_64(self, ctx)
         }
         fn int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::int_8_u(self, ctx)
         }
         fn int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::int_16_u(self, ctx)
         }
         fn int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             T::int_24_u(self, ctx)
         }
         fn int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             T::int_32_u(self, ctx)
         }
         fn int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_40_u(self, ctx)
         }
         fn int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_48_u(self, ctx)
         }
         fn int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_56_u(self, ctx)
         }
         fn int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_64_u(self, ctx)
         }
         fn int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i8, rs_matter_crate::error::Error> {
             T::int_8_s(self, ctx)
         }
         fn int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i16, rs_matter_crate::error::Error> {
             T::int_16_s(self, ctx)
         }
         fn int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i32, rs_matter_crate::error::Error> {
             T::int_24_s(self, ctx)
         }
         fn int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i32, rs_matter_crate::error::Error> {
             T::int_32_s(self, ctx)
         }
         fn int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_40_s(self, ctx)
         }
         fn int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_48_s(self, ctx)
         }
         fn int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_56_s(self, ctx)
         }
         fn int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_64_s(self, ctx)
         }
         fn enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::enum_8(self, ctx)
         }
         fn enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::enum_16(self, ctx)
         }
         fn float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<f32, rs_matter_crate::error::Error> {
             T::float_single(self, ctx)
         }
         fn float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<f64, rs_matter_crate::error::Error> {
             T::float_double(self, ctx)
         }
         fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::octet_string(self, ctx, builder)
         }
         fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::ToTLVArrayBuilder<P, u8>,
                 rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
             >,
@@ -21206,8 +21206,8 @@ pub mod unit_testing {
         }
         fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
@@ -21216,8 +21216,8 @@ pub mod unit_testing {
         }
         fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestListStructOctetArrayBuilder<P>,
                 TestListStructOctetBuilder<P>,
             >,
@@ -21226,47 +21226,47 @@ pub mod unit_testing {
         }
         fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::long_octet_string(self, ctx, builder)
         }
         fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::char_string(self, ctx, builder)
         }
         fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::long_char_string(self, ctx, builder)
         }
         fn epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::epoch_us(self, ctx)
         }
         fn epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             T::epoch_s(self, ctx)
         }
         fn vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::vendor_id(self, ctx)
         }
         fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 NullablesAndOptionalsStructArrayBuilder<P>,
                 NullablesAndOptionalsStructBuilder<P>,
             >,
@@ -21275,45 +21275,45 @@ pub mod unit_testing {
         }
         fn enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<SimpleEnum, rs_matter_crate::error::Error> {
             T::enum_attr(self, ctx)
         }
         fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: SimpleStructBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::struct_attr(self, ctx, builder)
         }
         fn range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::range_restricted_int_8_u(self, ctx)
         }
         fn range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i8, rs_matter_crate::error::Error> {
             T::range_restricted_int_8_s(self, ctx)
         }
         fn range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::range_restricted_int_16_u(self, ctx)
         }
         fn range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<i16, rs_matter_crate::error::Error> {
             T::range_restricted_int_16_s(self, ctx)
         }
         fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
@@ -21322,8 +21322,8 @@ pub mod unit_testing {
         }
         fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            builder: rs_matter_crate::dm::objects::ArrayAttributeRead<
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestFabricScopedArrayBuilder<P>,
                 TestFabricScopedBuilder<P>,
             >,
@@ -21332,185 +21332,185 @@ pub mod unit_testing {
         }
         fn timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::timed_write_boolean(self, ctx)
         }
         fn general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::general_error_boolean(self, ctx)
         }
         fn cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::cluster_error_boolean(self, ctx)
         }
         fn unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::unsupported(self, ctx)
         }
         fn nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error> {
             T::nullable_boolean(self, ctx)
         }
         fn nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_8(self, ctx)
         }
         fn nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_16(self, ctx)
         }
         fn nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_32(self, ctx)
         }
         fn nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_64(self, ctx)
         }
         fn nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             T::nullable_int_8_u(self, ctx)
         }
         fn nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             T::nullable_int_16_u(self, ctx)
         }
         fn nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
             T::nullable_int_24_u(self, ctx)
         }
         fn nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
             T::nullable_int_32_u(self, ctx)
         }
         fn nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_40_u(self, ctx)
         }
         fn nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_48_u(self, ctx)
         }
         fn nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_56_u(self, ctx)
         }
         fn nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_64_u(self, ctx)
         }
         fn nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
             T::nullable_int_8_s(self, ctx)
         }
         fn nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
             T::nullable_int_16_s(self, ctx)
         }
         fn nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
             T::nullable_int_24_s(self, ctx)
         }
         fn nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
             T::nullable_int_32_s(self, ctx)
         }
         fn nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_40_s(self, ctx)
         }
         fn nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_48_s(self, ctx)
         }
         fn nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_56_s(self, ctx)
         }
         fn nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_64_s(self, ctx)
         }
         fn nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             T::nullable_enum_8(self, ctx)
         }
         fn nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             T::nullable_enum_16(self, ctx)
         }
         fn nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error> {
             T::nullable_float_single(self, ctx)
         }
         fn nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error> {
             T::nullable_float_double(self, ctx)
         }
         fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -21520,7 +21520,7 @@ pub mod unit_testing {
         }
         fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::Utf8StrBuilder<P>,
@@ -21530,234 +21530,234 @@ pub mod unit_testing {
         }
         fn nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>
         {
             T::nullable_enum_attr(self, ctx)
         }
         fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
             builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::nullable_struct(self, ctx, builder)
         }
         fn nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_8_u(self, ctx)
         }
         fn nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_8_s(self, ctx)
         }
         fn nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_16_u(self, ctx)
         }
         fn nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_16_s(self, ctx)
         }
         fn write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::write_only_int_8_u(self, ctx)
         }
         fn set_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_boolean(self, ctx, value)
         }
         fn set_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap8MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_8(self, ctx, value)
         }
         fn set_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap16MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_16(self, ctx, value)
         }
         fn set_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap32MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_32(self, ctx, value)
         }
         fn set_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: Bitmap64MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_64(self, ctx, value)
         }
         fn set_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_8_u(self, ctx, value)
         }
         fn set_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_16_u(self, ctx, value)
         }
         fn set_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_24_u(self, ctx, value)
         }
         fn set_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_32_u(self, ctx, value)
         }
         fn set_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_40_u(self, ctx, value)
         }
         fn set_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_48_u(self, ctx, value)
         }
         fn set_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_56_u(self, ctx, value)
         }
         fn set_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_64_u(self, ctx, value)
         }
         fn set_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_8_s(self, ctx, value)
         }
         fn set_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_16_s(self, ctx, value)
         }
         fn set_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_24_s(self, ctx, value)
         }
         fn set_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_32_s(self, ctx, value)
         }
         fn set_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_40_s(self, ctx, value)
         }
         fn set_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_48_s(self, ctx, value)
         }
         fn set_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_56_s(self, ctx, value)
         }
         fn set_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_64_s(self, ctx, value)
         }
         fn set_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_enum_8(self, ctx, value)
         }
         fn set_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_enum_16(self, ctx, value)
         }
         fn set_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: f32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_float_single(self, ctx, value)
         }
         fn set_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: f64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_float_double(self, ctx, value)
         }
         fn set_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_octet_string(self, ctx, value)
         }
         fn set_list_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, u8>,
                 u8,
             >,
@@ -21766,8 +21766,8 @@ pub mod unit_testing {
         }
         fn set_list_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
@@ -21776,8 +21776,8 @@ pub mod unit_testing {
         }
         fn set_list_struct_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
                 TestListStructOctet<'_>,
             >,
@@ -21786,50 +21786,50 @@ pub mod unit_testing {
         }
         fn set_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_long_octet_string(self, ctx, value)
         }
         fn set_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_char_string(self, ctx, value)
         }
         fn set_long_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_long_char_string(self, ctx, value)
         }
         fn set_epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_epoch_us(self, ctx, value)
         }
         fn set_epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_epoch_s(self, ctx, value)
         }
         fn set_vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_vendor_id(self, ctx, value)
         }
         fn set_list_nullables_and_optionals_struct(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
                 NullablesAndOptionalsStruct<'_>,
             >,
@@ -21838,50 +21838,50 @@ pub mod unit_testing {
         }
         fn set_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: SimpleEnum,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_enum_attr(self, ctx, value)
         }
         fn set_struct_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: SimpleStruct<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_struct_attr(self, ctx, value)
         }
         fn set_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_8_u(self, ctx, value)
         }
         fn set_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_8_s(self, ctx, value)
         }
         fn set_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_16_u(self, ctx, value)
         }
         fn set_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_16_s(self, ctx, value)
         }
         fn set_list_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
@@ -21890,8 +21890,8 @@ pub mod unit_testing {
         }
         fn set_list_fabric_scoped(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
-            value: rs_matter_crate::dm::objects::ArrayAttributeWrite<
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
                 TestFabricScoped<'_>,
             >,
@@ -21900,298 +21900,298 @@ pub mod unit_testing {
         }
         fn set_timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_timed_write_boolean(self, ctx, value)
         }
         fn set_general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_general_error_boolean(self, ctx, value)
         }
         fn set_cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_cluster_error_boolean(self, ctx, value)
         }
         fn set_unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_unsupported(self, ctx, value)
         }
         fn set_nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_boolean(self, ctx, value)
         }
         fn set_nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_8(self, ctx, value)
         }
         fn set_nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_16(self, ctx, value)
         }
         fn set_nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_32(self, ctx, value)
         }
         fn set_nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_64(self, ctx, value)
         }
         fn set_nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_8_u(self, ctx, value)
         }
         fn set_nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_16_u(self, ctx, value)
         }
         fn set_nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_24_u(self, ctx, value)
         }
         fn set_nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_32_u(self, ctx, value)
         }
         fn set_nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_40_u(self, ctx, value)
         }
         fn set_nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_48_u(self, ctx, value)
         }
         fn set_nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_56_u(self, ctx, value)
         }
         fn set_nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_64_u(self, ctx, value)
         }
         fn set_nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_8_s(self, ctx, value)
         }
         fn set_nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_16_s(self, ctx, value)
         }
         fn set_nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_24_s(self, ctx, value)
         }
         fn set_nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_32_s(self, ctx, value)
         }
         fn set_nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_40_s(self, ctx, value)
         }
         fn set_nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_48_s(self, ctx, value)
         }
         fn set_nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_56_s(self, ctx, value)
         }
         fn set_nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_64_s(self, ctx, value)
         }
         fn set_nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_enum_8(self, ctx, value)
         }
         fn set_nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_enum_16(self, ctx, value)
         }
         fn set_nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_float_single(self, ctx, value)
         }
         fn set_nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_float_double(self, ctx, value)
         }
         fn set_nullable_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_octet_string(self, ctx, value)
         }
         fn set_nullable_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_char_string(self, ctx, value)
         }
         fn set_nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_enum_attr(self, ctx, value)
         }
         fn set_nullable_struct(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_struct(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_8_u(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_8_s(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_16_u(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_16_s(self, ctx, value)
         }
         fn set_write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_write_only_int_8_u(self, ctx, value)
         }
         fn handle_test(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test(self, ctx)
         }
         fn handle_test_not_handled(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test_not_handled(self, ctx)
         }
         fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             response: TestSpecificResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::handle_test_specific(self, ctx, response)
         }
         fn handle_test_unknown_command(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test_unknown_command(self, ctx)
         }
         fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22199,7 +22199,7 @@ pub mod unit_testing {
         }
         fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22207,7 +22207,7 @@ pub mod unit_testing {
         }
         fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22215,7 +22215,7 @@ pub mod unit_testing {
         }
         fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22223,7 +22223,7 @@ pub mod unit_testing {
         }
         fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22231,7 +22231,7 @@ pub mod unit_testing {
         }
         fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22239,7 +22239,7 @@ pub mod unit_testing {
         }
         fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22249,7 +22249,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22259,7 +22259,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22267,7 +22267,7 @@ pub mod unit_testing {
         }
         fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22275,7 +22275,7 @@ pub mod unit_testing {
         }
         fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22283,7 +22283,7 @@ pub mod unit_testing {
         }
         fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22293,7 +22293,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22301,7 +22301,7 @@ pub mod unit_testing {
         }
         fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22309,20 +22309,20 @@ pub mod unit_testing {
         }
         fn handle_timed_invoke_request(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_timed_invoke_request(self, ctx)
         }
         fn handle_test_simple_optional_argument_request(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test_simple_optional_argument_request(self, ctx, request)
         }
         fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22332,7 +22332,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22340,7 +22340,7 @@ pub mod unit_testing {
         }
         fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22348,7 +22348,7 @@ pub mod unit_testing {
         }
         fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22359,15 +22359,15 @@ pub mod unit_testing {
     #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
     #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
     pub struct HandlerAdaptor<T>(pub T);
-    impl<T> rs_matter_crate::dm::objects::Handler for HandlerAdaptor<T>
+    impl<T> rs_matter_crate::dm::Handler for HandlerAdaptor<T>
     where
         T: ClusterHandler,
     {
         #[allow(unreachable_code)]
         fn read(
             &self,
-            ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-            encoder: rs_matter_crate::dm::objects::AttrDataEncoder<'_, '_, '_>,
+            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            encoder: rs_matter_crate::dm::AttrDataEncoder<'_, '_, '_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
                 if ctx.attr().is_system() {
@@ -23004,7 +23004,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23051,7 +23051,7 @@ pub mod unit_testing {
                             );
                             let attr_read_result = self.0.list_int_8_u(
                                 ctx,
-                                rs_matter_crate::dm::objects::ArrayAttributeRead::new(
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23061,7 +23061,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23108,7 +23108,7 @@ pub mod unit_testing {
                             );
                             let attr_read_result = self.0.list_octet_string(
                                 ctx,
-                                rs_matter_crate::dm::objects::ArrayAttributeRead::new(
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23118,7 +23118,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23165,7 +23165,7 @@ pub mod unit_testing {
                             );
                             let attr_read_result = self.0.list_struct_octet_string(
                                 ctx,
-                                rs_matter_crate::dm::objects::ArrayAttributeRead::new(
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23178,7 +23178,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23234,7 +23234,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23290,7 +23290,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23346,7 +23346,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23471,7 +23471,7 @@ pub mod unit_testing {
                             );
                             let attr_read_result = self.0.list_nullables_and_optionals_struct(
                                 ctx,
-                                rs_matter_crate::dm::objects::ArrayAttributeRead::new(
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23484,7 +23484,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23570,7 +23570,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23713,7 +23713,7 @@ pub mod unit_testing {
                             );
                             let attr_read_result = self.0.list_long_octet_string(
                                 ctx,
-                                rs_matter_crate::dm::objects::ArrayAttributeRead::new(
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23726,7 +23726,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23773,7 +23773,7 @@ pub mod unit_testing {
                             );
                             let attr_read_result = self.0.list_fabric_scoped(
                                 ctx,
-                                rs_matter_crate::dm::objects::ArrayAttributeRead::new(
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23783,7 +23783,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24538,7 +24538,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24594,7 +24594,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24674,7 +24674,7 @@ pub mod unit_testing {
                                         )),
                                         writer.writer(),
                                     ),
-                                    &rs_matter_crate::dm::objects::AttrDataWriter::TAG,
+                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24867,7 +24867,7 @@ pub mod unit_testing {
         #[allow(unreachable_code)]
         fn write(
             &self,
-            ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+            ctx: &rs_matter_crate::dm::WriteContext<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             ctx.attr().check_dataver(self.0.dataver())?;
             if ctx.attr().is_system() {
@@ -25582,7 +25582,7 @@ pub mod unit_testing {
                     attr_write_result?;
                 }
                 AttributeId::ListInt8u => {
-                    let attr_data = rs_matter_crate::dm::objects::ArrayAttributeWrite::new(
+                    let attr_data = rs_matter_crate::dm::ArrayAttributeWrite::new(
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
@@ -25612,7 +25612,7 @@ pub mod unit_testing {
                     attr_write_result?;
                 }
                 AttributeId::ListOctetString => {
-                    let attr_data = rs_matter_crate::dm::objects::ArrayAttributeWrite::new(
+                    let attr_data = rs_matter_crate::dm::ArrayAttributeWrite::new(
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
@@ -25642,7 +25642,7 @@ pub mod unit_testing {
                     attr_write_result?;
                 }
                 AttributeId::ListStructOctetString => {
-                    let attr_data = rs_matter_crate::dm::objects::ArrayAttributeWrite::new(
+                    let attr_data = rs_matter_crate::dm::ArrayAttributeWrite::new(
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
@@ -25838,7 +25838,7 @@ pub mod unit_testing {
                     attr_write_result?;
                 }
                 AttributeId::ListNullablesAndOptionalsStruct => {
-                    let attr_data = rs_matter_crate::dm::objects::ArrayAttributeWrite::new(
+                    let attr_data = rs_matter_crate::dm::ArrayAttributeWrite::new(
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
@@ -26038,7 +26038,7 @@ pub mod unit_testing {
                     attr_write_result?;
                 }
                 AttributeId::ListLongOctetString => {
-                    let attr_data = rs_matter_crate::dm::objects::ArrayAttributeWrite::new(
+                    let attr_data = rs_matter_crate::dm::ArrayAttributeWrite::new(
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
@@ -26069,7 +26069,7 @@ pub mod unit_testing {
                     attr_write_result?;
                 }
                 AttributeId::ListFabricScoped => {
-                    let attr_data = rs_matter_crate::dm::objects::ArrayAttributeWrite::new(
+                    let attr_data = rs_matter_crate::dm::ArrayAttributeWrite::new(
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
@@ -27186,8 +27186,8 @@ pub mod unit_testing {
         #[allow(unreachable_code)]
         fn invoke(
             &self,
-            ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
-            encoder: rs_matter_crate::dm::objects::CmdDataEncoder<'_, '_, '_>,
+            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            encoder: rs_matter_crate::dm::CmdDataEncoder<'_, '_, '_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             match CommandId::try_from(ctx.cmd().cmd_id)? {
                 CommandId::Test => {
@@ -27269,7 +27269,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27354,7 +27354,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27415,7 +27415,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27476,7 +27476,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27537,7 +27537,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27598,7 +27598,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27659,7 +27659,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27720,7 +27720,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27781,7 +27781,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27845,7 +27845,7 @@ pub mod unit_testing {
                                     )),
                                     writer.writer(),
                                 ),
-                                &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                                &rs_matter_crate::dm::CmdDataWriter::TAG,
                             )?,
                         );
                     #[cfg(feature = "defmt")]
@@ -27906,7 +27906,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27967,7 +27967,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28028,7 +28028,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28089,7 +28089,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28150,7 +28150,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28265,7 +28265,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28329,7 +28329,7 @@ pub mod unit_testing {
                                     )),
                                     writer.writer(),
                                 ),
-                                &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                                &rs_matter_crate::dm::CmdDataWriter::TAG,
                             )?,
                         );
                     #[cfg(feature = "defmt")]
@@ -28390,7 +28390,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28451,7 +28451,7 @@ pub mod unit_testing {
                                 )),
                                 writer.writer(),
                             ),
-                            &rs_matter_crate::dm::objects::CmdDataWriter::TAG,
+                            &rs_matter_crate::dm::CmdDataWriter::TAG,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28521,7 +28521,7 @@ pub mod unit_testing {
             )
         }
     }
-    impl<T> rs_matter_crate::dm::objects::NonBlockingHandler for HandlerAdaptor<T> where
+    impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where
         T: ClusterHandler
     {
     }

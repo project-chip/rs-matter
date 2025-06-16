@@ -33,12 +33,12 @@ use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::dm::device_types::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::objects::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
-};
 use rs_matter::dm::root_endpoint;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
+use rs_matter::dm::{
+    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+};
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;

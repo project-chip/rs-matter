@@ -24,7 +24,7 @@ use num_derive::FromPrimitive;
 use crate::dm::clusters::acl::{
     AccessControlEntryAuthModeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
-use crate::dm::objects::{Access, ClusterId, EndptId, Privilege};
+use crate::dm::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::im::messages::GenericPath;
@@ -594,7 +594,7 @@ pub(crate) mod tests {
 
     use crate::acl::{gen_noc_cat, AccessorSubjects};
     use crate::crypto::KeyPair;
-    use crate::dm::objects::{Access, Privilege};
+    use crate::dm::{Access, Privilege};
     use crate::fabric::FabricMgr;
     use crate::im::messages::GenericPath;
     use crate::utils::cell::RefCell;

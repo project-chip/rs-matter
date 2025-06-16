@@ -19,7 +19,7 @@
 
 use core::str::FromStr;
 
-use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;

@@ -24,7 +24,7 @@ use heapless::String;
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{self, hkdf_sha256, HmacSha256, KeyPair};
-use crate::dm::objects::Privilege;
+use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
 use crate::mdns::{Mdns, ServiceMode};

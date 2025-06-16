@@ -120,24 +120,24 @@ pub const CLUSTER_REVISION: Attribute = Attribute::new(
 macro_rules! attributes {
     () => {
         &[
-            $crate::dm::objects::GENERATED_COMMAND_LIST,
-            $crate::dm::objects::ACCEPTED_COMMAND_LIST,
-            $crate::dm::objects::EVENT_LIST,
-            $crate::dm::objects::ATTRIBUTE_LIST,
-            $crate::dm::objects::FEATURE_MAP,
-            $crate::dm::objects::CLUSTER_REVISION,
+            $crate::dm::GENERATED_COMMAND_LIST,
+            $crate::dm::ACCEPTED_COMMAND_LIST,
+            $crate::dm::EVENT_LIST,
+            $crate::dm::ATTRIBUTE_LIST,
+            $crate::dm::FEATURE_MAP,
+            $crate::dm::CLUSTER_REVISION,
         ]
     };
     ($attr0:expr $(, $attr:expr)* $(,)?) => {
         &[
             $attr0,
             $($attr,)*
-            $crate::dm::objects::GENERATED_COMMAND_LIST,
-            $crate::dm::objects::ACCEPTED_COMMAND_LIST,
-            $crate::dm::objects::EVENT_LIST,
-            $crate::dm::objects::ATTRIBUTE_LIST,
-            $crate::dm::objects::FEATURE_MAP,
-            $crate::dm::objects::CLUSTER_REVISION,
+            $crate::dm::GENERATED_COMMAND_LIST,
+            $crate::dm::ACCEPTED_COMMAND_LIST,
+            $crate::dm::EVENT_LIST,
+            $crate::dm::ATTRIBUTE_LIST,
+            $crate::dm::FEATURE_MAP,
+            $crate::dm::CLUSTER_REVISION,
         ]
     }
 }
@@ -146,10 +146,10 @@ macro_rules! attributes {
 #[macro_export]
 macro_rules! attribute_enum {
     ($en:ty) => {
-        impl core::convert::TryFrom<$crate::dm::objects::AttrId> for $en {
+        impl core::convert::TryFrom<$crate::dm::AttrId> for $en {
             type Error = $crate::error::Error;
 
-            fn try_from(id: $crate::dm::objects::AttrId) -> Result<Self, Self::Error> {
+            fn try_from(id: $crate::dm::AttrId) -> Result<Self, Self::Error> {
                 <$en>::from_repr(id)
                     .ok_or_else(|| $crate::error::ErrorCode::AttributeNotFound.into())
             }
@@ -330,7 +330,7 @@ impl AttrDetails<'_> {
 #[allow(clippy::bool_assert_comparison)]
 mod tests {
     use super::Access;
-    use crate::dm::objects::Privilege;
+    use crate::dm::Privilege;
 
     #[test]
     fn test_read() {
