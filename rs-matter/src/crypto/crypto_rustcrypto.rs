@@ -42,7 +42,7 @@ use x509_cert::{
 
 use crate::{
     error::{Error, ErrorCode},
-    secure_channel::crypto_rustcrypto::RandRngCore,
+    sc::crypto_rustcrypto::RandRngCore,
     utils::{init::InitMaybeUninit, rand::Rand},
 };
 

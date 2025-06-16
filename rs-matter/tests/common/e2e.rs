@@ -26,11 +26,11 @@ use embassy_sync::{
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::KeyPair;
-use rs_matter::data_model::basic_info::BasicInfoConfig;
-use rs_matter::data_model::core::{DataModel, IMBuffer};
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata, Privilege};
-use rs_matter::data_model::sdm::dev_att::{DataType, DevAttDataFetcher};
-use rs_matter::data_model::subscriptions::Subscriptions;
+use rs_matter::dm::basic_info::BasicInfoConfig;
+use rs_matter::dm::core::{DataModel, IMBuffer};
+use rs_matter::dm::objects::{AsyncHandler, AsyncMetadata, Privilege};
+use rs_matter::dm::sdm::dev_att::{DataType, DevAttDataFetcher};
+use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::respond::Responder;

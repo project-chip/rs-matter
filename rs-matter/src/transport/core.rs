@@ -23,12 +23,12 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
-use crate::data_model::basic_info::BasicInfoConfig;
+use crate::dm::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::mdns::{MdnsImpl, MdnsService};
-use crate::secure_channel::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
-use crate::secure_channel::status_report::StatusReport;
+use crate::sc::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
+use crate::sc::status_report::StatusReport;
 use crate::tlv::TLVElement;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;

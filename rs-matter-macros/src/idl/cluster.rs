@@ -76,10 +76,10 @@ pub fn attribute_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStr
             #(#attributes),*
         }
 
-        impl core::convert::TryFrom<#krate::data_model::objects::AttrId> for AttributeId {
+        impl core::convert::TryFrom<#krate::dm::objects::AttrId> for AttributeId {
             type Error = #krate::error::Error;
 
-            fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+            fn try_from(id: #krate::dm::objects::CmdId) -> Result<Self, Self::Error> {
                 AttributeId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::AttributeNotFound.into())
             }
         }
@@ -163,20 +163,20 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
 
     let try_from = if !commands.is_empty() {
         quote!(
-            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandId {
+            impl core::convert::TryFrom<#krate::dm::objects::CmdId> for CommandId {
                 type Error = #krate::error::Error;
 
-                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                fn try_from(id: #krate::dm::objects::CmdId) -> Result<Self, Self::Error> {
                     CommandId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::CommandNotFound.into())
                 }
             }
         )
     } else {
         quote!(
-            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandId {
+            impl core::convert::TryFrom<#krate::dm::objects::CmdId> for CommandId {
                 type Error = #krate::error::Error;
 
-                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                fn try_from(id: #krate::dm::objects::CmdId) -> Result<Self, Self::Error> {
                     Err(#krate::error::ErrorCode::CommandNotFound.into())
                 }
             }
@@ -276,20 +276,20 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
 
     let try_from = if !command_responses.is_empty() {
         quote!(
-            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandResponseId {
+            impl core::convert::TryFrom<#krate::dm::objects::CmdId> for CommandResponseId {
                 type Error = #krate::error::Error;
 
-                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                fn try_from(id: #krate::dm::objects::CmdId) -> Result<Self, Self::Error> {
                     CommandResponseId::from_repr(id).ok_or_else(|| #krate::error::ErrorCode::CommandNotFound.into())
                 }
             }
         )
     } else {
         quote!(
-            impl core::convert::TryFrom<#krate::data_model::objects::CmdId> for CommandResponseId {
+            impl core::convert::TryFrom<#krate::dm::objects::CmdId> for CommandResponseId {
                 type Error = #krate::error::Error;
 
-                fn try_from(id: #krate::data_model::objects::CmdId) -> Result<Self, Self::Error> {
+                fn try_from(id: #krate::dm::objects::CmdId) -> Result<Self, Self::Error> {
                     Err(#krate::error::ErrorCode::CommandNotFound.into())
                 }
             }
@@ -349,9 +349,9 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
             &idl_attribute_name_to_enum_variant_name(&attr.field.field.id),
         );
 
-        let mut rw = quote!(#krate::data_model::objects::Access::READ);
+        let mut rw = quote!(#krate::dm::objects::Access::READ);
         if !attr.is_read_only {
-            rw = quote!(#rw.union(#krate::data_model::objects::Access::WRITE));
+            rw = quote!(#rw.union(#krate::dm::objects::Access::WRITE));
         }
 
         let (acl, needs_view) = if !attr.is_read_only {
@@ -366,36 +366,36 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
         };
 
         let mut acl = match acl {
-            AccessPrivilege::View => quote!(#krate::data_model::objects::Access::NEED_VIEW),
-            AccessPrivilege::Operate => quote!(#krate::data_model::objects::Access::NEED_OPERATE.union(#krate::data_model::objects::Access::NEED_MANAGE.union(#krate::data_model::objects::Access::NEED_ADMIN))),
-            AccessPrivilege::Manage => quote!(#krate::data_model::objects::Access::NEED_MANAGE.union(#krate::data_model::objects::Access::NEED_ADMIN)),
-            AccessPrivilege::Administer => quote!(#krate::data_model::objects::Access::NEED_ADMIN),
+            AccessPrivilege::View => quote!(#krate::dm::objects::Access::NEED_VIEW),
+            AccessPrivilege::Operate => quote!(#krate::dm::objects::Access::NEED_OPERATE.union(#krate::dm::objects::Access::NEED_MANAGE.union(#krate::dm::objects::Access::NEED_ADMIN))),
+            AccessPrivilege::Manage => quote!(#krate::dm::objects::Access::NEED_MANAGE.union(#krate::dm::objects::Access::NEED_ADMIN)),
+            AccessPrivilege::Administer => quote!(#krate::dm::objects::Access::NEED_ADMIN),
         };
 
         if needs_view {
-            acl = quote!(#acl.union(#krate::data_model::objects::Access::NEED_VIEW));
+            acl = quote!(#acl.union(#krate::dm::objects::Access::NEED_VIEW));
         }
 
         let mut access = quote!(#rw.union(#acl));
 
         if attr.is_timed_write {
-            access = quote!(#access.union(#krate::data_model::objects::Access::TIMED_ONLY));
+            access = quote!(#access.union(#krate::dm::objects::Access::TIMED_ONLY));
         }
 
         if attr.field.is_fabric_sensitive {
-            access = quote!(#access.union(#krate::data_model::objects::Access::FAB_SENSITIVE));
+            access = quote!(#access.union(#krate::dm::objects::Access::FAB_SENSITIVE));
         }
 
         let quality = if attr.field.is_optional {
-            quote!(#krate::data_model::objects::Quality::O)
+            quote!(#krate::dm::objects::Quality::O)
         } else {
-            quote!(#krate::data_model::objects::Quality::NONE)
+            quote!(#krate::dm::objects::Quality::NONE)
         };
 
         // TODO: Fabric Scoped seems to be on the struct level
 
         quote!(
-            #krate::data_model::objects::Attribute::new(
+            #krate::dm::objects::Attribute::new(
                 AttributeId::#attr_name as _,
                 #access,
                 #quality
@@ -408,9 +408,9 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 
         let access = match cmd.access {
             AccessPrivilege::View => panic!("Unsupported command access: {:?}", cmd.access),
-            AccessPrivilege::Operate => quote!(#krate::data_model::objects::Access::WO),
-            AccessPrivilege::Manage => quote!(#krate::data_model::objects::Access::WM),
-            AccessPrivilege::Administer => quote!(#krate::data_model::objects::Access::WA),
+            AccessPrivilege::Operate => quote!(#krate::dm::objects::Access::WO),
+            AccessPrivilege::Manage => quote!(#krate::dm::objects::Access::WM),
+            AccessPrivilege::Administer => quote!(#krate::dm::objects::Access::WA),
         };
 
         let resp_id = if cmd.output != NO_RESPONSE {
@@ -422,7 +422,7 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
         };
 
         quote!(
-            #krate::data_model::objects::Command::new(
+            #krate::dm::objects::Command::new(
                 CommandId::#cmd_name as _,
                 #resp_id,
                 #access,
@@ -435,7 +435,7 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 
     quote!(
         #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
-        pub const FULL_CLUSTER: #krate::data_model::objects::Cluster<'static> = #krate::data_model::objects::Cluster::new(
+        pub const FULL_CLUSTER: #krate::dm::objects::Cluster<'static> = #krate::dm::objects::Cluster::new(
             #cluster_id,
             #cluster_revision,
             0,
@@ -548,132 +548,132 @@ mod tests {
             &cluster(cluster_meta, &context),
             &quote!(
                 #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
-                pub const FULL_CLUSTER: rs_matter_crate::data_model::objects::Cluster<'static> =
-                    rs_matter_crate::data_model::objects::Cluster::new(
+                pub const FULL_CLUSTER: rs_matter_crate::dm::objects::Cluster<'static> =
+                    rs_matter_crate::dm::objects::Cluster::new(
                         6,
                         6,
                         0,
                         &[
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::OnOff as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::GlobalSceneControl as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::O,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::O,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::OnTime as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::WRITE)
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::WRITE)
                                     .union(
-                                        rs_matter_crate::data_model::objects::Access::NEED_OPERATE
+                                        rs_matter_crate::dm::objects::Access::NEED_OPERATE
                                             .union(
-                                                rs_matter_crate::data_model::objects::Access::NEED_MANAGE.union(
-                                                    rs_matter_crate::data_model::objects::Access::NEED_ADMIN,
+                                                rs_matter_crate::dm::objects::Access::NEED_MANAGE.union(
+                                                    rs_matter_crate::dm::objects::Access::NEED_ADMIN,
                                                 ),
                                             )
-                                            .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
+                                            .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
                                     ),
-                                rs_matter_crate::data_model::objects::Quality::O,
+                                rs_matter_crate::dm::objects::Quality::O,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::OffWaitTime as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::WRITE)
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::WRITE)
                                     .union(
-                                        rs_matter_crate::data_model::objects::Access::NEED_OPERATE
+                                        rs_matter_crate::dm::objects::Access::NEED_OPERATE
                                             .union(
-                                                rs_matter_crate::data_model::objects::Access::NEED_MANAGE.union(
-                                                    rs_matter_crate::data_model::objects::Access::NEED_ADMIN,
+                                                rs_matter_crate::dm::objects::Access::NEED_MANAGE.union(
+                                                    rs_matter_crate::dm::objects::Access::NEED_ADMIN,
                                                 ),
                                             )
-                                            .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
+                                            .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
                                     ),
-                                rs_matter_crate::data_model::objects::Quality::O,
+                                rs_matter_crate::dm::objects::Quality::O,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::StartUpOnOff as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::WRITE)
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::WRITE)
                                     .union(
-                                        rs_matter_crate::data_model::objects::Access::NEED_MANAGE
-                                            .union(rs_matter_crate::data_model::objects::Access::NEED_ADMIN)
-                                            .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
+                                        rs_matter_crate::dm::objects::Access::NEED_MANAGE
+                                            .union(rs_matter_crate::dm::objects::Access::NEED_ADMIN)
+                                            .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
                                     ),
-                                rs_matter_crate::data_model::objects::Quality::O,
+                                rs_matter_crate::dm::objects::Quality::O,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::GeneratedCommandList as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::AcceptedCommandList as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::EventList as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::AttributeList as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::FeatureMap as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
-                            rs_matter_crate::data_model::objects::Attribute::new(
+                            rs_matter_crate::dm::objects::Attribute::new(
                                 AttributeId::ClusterRevision as _,
-                                rs_matter_crate::data_model::objects::Access::READ
-                                    .union(rs_matter_crate::data_model::objects::Access::NEED_VIEW),
-                                rs_matter_crate::data_model::objects::Quality::NONE,
+                                rs_matter_crate::dm::objects::Access::READ
+                                    .union(rs_matter_crate::dm::objects::Access::NEED_VIEW),
+                                rs_matter_crate::dm::objects::Quality::NONE,
                             ),
                         ],
                         &[
-                            rs_matter_crate::data_model::objects::Command::new(
+                            rs_matter_crate::dm::objects::Command::new(
                                 CommandId::Off as _,
                                 None,
-                                rs_matter_crate::data_model::objects::Access::WO,
+                                rs_matter_crate::dm::objects::Access::WO,
                             ),
-                            rs_matter_crate::data_model::objects::Command::new(
+                            rs_matter_crate::dm::objects::Command::new(
                                 CommandId::On as _,
                                 None,
-                                rs_matter_crate::data_model::objects::Access::WO,
+                                rs_matter_crate::dm::objects::Access::WO,
                             ),
-                            rs_matter_crate::data_model::objects::Command::new(
+                            rs_matter_crate::dm::objects::Command::new(
                                 CommandId::Toggle as _,
                                 None,
-                                rs_matter_crate::data_model::objects::Access::WO,
+                                rs_matter_crate::dm::objects::Access::WO,
                             ),
-                            rs_matter_crate::data_model::objects::Command::new(
+                            rs_matter_crate::dm::objects::Command::new(
                                 CommandId::OffWithEffect as _,
                                 None,
-                                rs_matter_crate::data_model::objects::Access::WO,
+                                rs_matter_crate::dm::objects::Access::WO,
                             ),
-                            rs_matter_crate::data_model::objects::Command::new(
+                            rs_matter_crate::dm::objects::Command::new(
                                 CommandId::OnWithRecallGlobalScene as _,
                                 None,
-                                rs_matter_crate::data_model::objects::Access::WO,
+                                rs_matter_crate::dm::objects::Access::WO,
                             ),
-                            rs_matter_crate::data_model::objects::Command::new(
+                            rs_matter_crate::dm::objects::Command::new(
                                 CommandId::OnWithTimedOff as _,
                                 None,
-                                rs_matter_crate::data_model::objects::Access::WO,
+                                rs_matter_crate::dm::objects::Access::WO,
                             ),
                         ],
                         |_, _, _| true,

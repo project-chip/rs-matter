@@ -21,13 +21,13 @@ use core::{fmt::Display, num::NonZeroU8};
 
 use num_derive::FromPrimitive;
 
-use crate::data_model::objects::{Access, ClusterId, EndptId, Privilege};
-use crate::data_model::system_model::acl::{
+use crate::dm::objects::{Access, ClusterId, EndptId, Privilege};
+use crate::dm::system_model::acl::{
     AccessControlEntryAuthModeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
-use crate::interaction_model::messages::GenericPath;
+use crate::im::messages::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
 use crate::utils::cell::RefCell;
@@ -594,9 +594,9 @@ pub(crate) mod tests {
 
     use crate::acl::{gen_noc_cat, AccessorSubjects};
     use crate::crypto::KeyPair;
-    use crate::data_model::objects::{Access, Privilege};
+    use crate::dm::objects::{Access, Privilege};
     use crate::fabric::FabricMgr;
-    use crate::interaction_model::messages::GenericPath;
+    use crate::im::messages::GenericPath;
     use crate::utils::cell::RefCell;
     use crate::utils::rand::dummy_rand;
 

@@ -27,19 +27,19 @@ use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use rs_matter::core::{Matter, MATTER_PORT};
-use rs_matter::data_model::device_types::{
+use rs_matter::dm::device_types::{
     DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT,
 };
-use rs_matter::data_model::networks::unix::UnixNetifs;
-use rs_matter::data_model::objects::{
+use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::objects::{
     Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher,
     Node, ReadContext,
 };
-use rs_matter::data_model::on_off::{ClusterHandler as _, OnOffHandler};
-use rs_matter::data_model::root_endpoint;
-use rs_matter::data_model::sdm::net_comm::NetworkType;
-use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::data_model::system_model::desc::{self, ClusterHandler as _};
+use rs_matter::dm::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::root_endpoint;
+use rs_matter::dm::sdm::net_comm::NetworkType;
+use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::system_model::desc::{self, ClusterHandler as _};
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;

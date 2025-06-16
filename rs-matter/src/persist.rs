@@ -28,7 +28,7 @@ pub mod fileio {
     use embassy_futures::select::{select, Either};
     use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
-    use crate::data_model::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
+    use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
     use crate::error::{Error, ErrorCode};
     use crate::utils::init::{init, Init};
     use crate::Matter;

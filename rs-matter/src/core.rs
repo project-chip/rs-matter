@@ -17,14 +17,14 @@
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use crate::data_model::basic_info::{BasicInfoConfig, BasicInfoSettings};
-use crate::data_model::sdm::dev_att::DevAttDataFetcher;
+use crate::dm::basic_info::{BasicInfoConfig, BasicInfoSettings};
+use crate::dm::sdm::dev_att::DevAttDataFetcher;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::failsafe::FailSafe;
 use crate::mdns::MdnsService;
 use crate::pairing::{print_pairing_code_and_qr, DiscoveryCapabilities};
-use crate::secure_channel::pake::PaseMgr;
+use crate::sc::pake::PaseMgr;
 use crate::transport::core::{PacketBufferExternalAccess, TransportMgr};
 use crate::transport::network::{NetworkReceive, NetworkSend};
 use crate::utils::cell::RefCell;

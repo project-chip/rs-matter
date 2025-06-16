@@ -28,17 +28,17 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::core::{Matter, MATTER_PORT};
-use rs_matter::data_model::core::IMBuffer;
-use rs_matter::data_model::device_types::DEV_TYPE_ON_OFF_LIGHT;
-use rs_matter::data_model::networks::unix::UnixNetifs;
-use rs_matter::data_model::objects::{
+use rs_matter::dm::core::IMBuffer;
+use rs_matter::dm::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::networks::unix::UnixNetifs;
+use rs_matter::dm::objects::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
-use rs_matter::data_model::on_off::{self, ClusterHandler as _};
-use rs_matter::data_model::root_endpoint;
-use rs_matter::data_model::sdm::net_comm::NetworkType;
-use rs_matter::data_model::subscriptions::Subscriptions;
-use rs_matter::data_model::system_model::desc::{self, ClusterHandler as _};
+use rs_matter::dm::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::root_endpoint;
+use rs_matter::dm::sdm::net_comm::NetworkType;
+use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::system_model::desc::{self, ClusterHandler as _};
 use rs_matter::error::Error;
 use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
