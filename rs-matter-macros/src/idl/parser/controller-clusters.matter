@@ -4833,7 +4833,7 @@ cluster DoorLock = 257 {
 
   enum DlLockType : enum8 {
     kDeadBolt = 0;
-    kMagc = 1;
+    kMagnetic = 1;
     kOther = 2;
     kMortise = 3;
     kRim = 4;

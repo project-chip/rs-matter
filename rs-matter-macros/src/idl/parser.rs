@@ -40,7 +40,7 @@ use endpoint_composition::{
     DeviceType, Endpoint,
 };
 
-pub use ast::*; // TODO
+pub use ast::*;
 
 mod ast;
 mod endpoint_composition;

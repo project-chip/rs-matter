@@ -35,7 +35,4 @@ tracing-subscriber = { version = "0.3", features = ["regex", "json"] }
 
 [dev-dependencies]
 assert-tokenstreams-eq = "0.1.0"
-criterion = { version = "0.5.1", features = ["html_reports"] }
-divan = "0.1.4"
 rstest = "0.18.2"
-clap = { version = "4", features = ["derive"] }

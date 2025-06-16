@@ -24,7 +24,7 @@ use quote::quote;
 
 use crate::idl::{cluster, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL};
 
-use syn::{parse::Parse, parse_macro_input, DeriveInput};
+use syn::{parse::Parse, parse_macro_input, DeriveInput, Token};
 
 mod idl;
 mod tlv;
@@ -53,8 +53,36 @@ pub fn derive_totlv(item: TokenStream) -> TokenStream {
 pub fn import(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as MatterImportArgs);
 
+    let time = std::time::SystemTime::now();
+
     let idl = crate::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
+
+    let elapsed = time
+        .elapsed()
+        .unwrap_or(core::time::Duration::from_millis(0));
+
+    if input.print_timings {
+        eprintln!("Elapsed time to parse IDL: {}ms", elapsed.as_millis());
+    }
+
+    if let Some(cap_parse) = input.cap_parse {
+        if elapsed > cap_parse {
+            panic!(
+                "Parsing the IDL took too long, exceeding the cap of {}ms.",
+                cap_parse.as_millis()
+            );
+        }
+    }
+
+    let time = std::time::SystemTime::now();
+
     let context = IdlGenerateContext::new(input.rs_matter_crate);
+
+    for cluster in input.clusters.iter() {
+        if !idl.clusters.iter().any(|c| &c.id == cluster) {
+            panic!("Cluster {cluster} not found in the IDL");
+        }
+    }
 
     let clusters = idl
         .clusters
@@ -62,39 +90,109 @@ pub fn import(item: TokenStream) -> TokenStream {
         .filter(|c| input.clusters.is_empty() || input.clusters.contains(&c.id))
         .map(|c| cluster(c, &context));
 
-    quote!(
+    let result = quote!(
         // IDL-generated code:
         #(#clusters)*
     )
-    .into()
+    .into();
+
+    let elapsed = time
+        .elapsed()
+        .unwrap_or(core::time::Duration::from_millis(0));
+
+    if input.print_timings {
+        eprintln!("Elapsed time to generate code: {}ms", elapsed.as_millis());
+    }
+
+    if let Some(cap_codegen) = input.cap_codegen {
+        if elapsed > cap_codegen {
+            panic!(
+                "Code generation took too long, exceeding the cap of {}ms.",
+                cap_codegen.as_millis()
+            );
+        }
+    }
+
+    result
 }
 
 #[derive(Debug)]
 struct MatterImportArgs {
-    // Crate name to refer to for `rs-matter`
+    /// Crate name to refer to for `rs-matter`
     rs_matter_crate: String,
 
-    // What clusters to import. If the set is empty, all clusters will be imported
+    /// What clusters to import. If the set is empty, all clusters will be imported
     clusters: HashSet<String>,
+
+    /// Whether to print timings for the macro execution
+    print_timings: bool,
+
+    /// Optional time limit for parsing
+    cap_parse: Option<core::time::Duration>,
+
+    /// Optional time limit for code generation
+    cap_codegen: Option<core::time::Duration>,
 }
 
 impl Parse for MatterImportArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut clusters = HashSet::new();
 
-        // Argument is "[Cluster1[, Cluster2, ...]]"
+        let mut print_timings = false;
+        let mut cap_parse = None;
+        let mut cap_codegen = None;
+
+        let mut parse_timings = false;
+
+        // Argument is "[Cluster1[[,] Cluster2[,] ...][; [print_timings][[,] cap_parse=XXX][[,] cap_codegen=YYY]]"
         while !input.is_empty() {
-            let cluster: Ident = input.parse()?;
+            if input.peek(Token![,]) {
+                input.parse::<Punct>()?;
+            } else if input.peek(Token![;]) {
+                input.parse::<Punct>()?;
+                parse_timings = true;
+                break;
+            } else {
+                let cluster: Ident = input.parse()?;
 
-            clusters.insert(cluster.to_string());
+                clusters.insert(cluster.to_string());
+            }
+        }
 
-            if !input.is_empty() {
-                let punct = input.parse::<Punct>()?;
-                if punct.as_char() != ',' {
-                    return Err(syn::Error::new(
-                        punct.span(),
-                        "Expected a comma between cluster names",
-                    ));
+        if parse_timings {
+            while !input.is_empty() {
+                if input.peek(Token![,]) {
+                    input.parse::<Punct>()?;
+                } else {
+                    let param: Ident = input.parse()?;
+
+                    match param.to_string().as_str() {
+                        "print_timings" => {
+                            print_timings = true;
+                        }
+                        "cap_parse" => {
+                            input.parse::<Token![=]>()?;
+
+                            let value = input.parse::<syn::LitInt>()?;
+                            cap_parse = Some(core::time::Duration::from_millis(
+                                str::parse::<u64>(value.base10_digits()).unwrap(),
+                            ));
+                        }
+                        "cap_codegen" => {
+                            input.parse::<Token![=]>()?;
+
+                            let value = input.parse::<syn::LitInt>()?;
+                            cap_codegen = Some(core::time::Duration::from_millis(
+                                str::parse::<u64>(value.base10_digits()).unwrap(),
+                            ));
+                        }
+                        _ => {
+                            return Err(syn::Error::new(
+                                param.span(),
+                                "Unknown parameter, expected 'print_timings', 'cap_parse', or 'cap_codegen'",
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -102,6 +200,9 @@ impl Parse for MatterImportArgs {
         Ok(MatterImportArgs {
             rs_matter_crate: get_crate_name(),
             clusters,
+            print_timings,
+            cap_parse,
+            cap_codegen,
         })
     }
 }
