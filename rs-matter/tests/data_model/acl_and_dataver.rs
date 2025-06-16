@@ -20,9 +20,9 @@ use core::num::NonZeroU8;
 use rs_matter::acl::{gen_noc_cat, AclEntry, AuthMode, Target};
 use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
 use rs_matter::dm::Privilege;
-use rs_matter::im::core::IMStatusCode;
-use rs_matter::im::messages::ib::{AttrPath, AttrStatus, ClusterPath, DataVersionFilter};
-use rs_matter::im::messages::GenericPath;
+use rs_matter::im::GenericPath;
+use rs_matter::im::IMStatusCode;
+use rs_matter::im::{AttrPath, AttrStatus, ClusterPath, DataVersionFilter};
 
 use crate::common::e2e::im::attributes::{TestAttrData, TestAttrResp};
 use crate::common::e2e::im::echo_cluster::ATTR_WRITE_DEFAULT_VALUE;

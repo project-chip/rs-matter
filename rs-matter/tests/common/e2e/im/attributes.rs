@@ -17,8 +17,8 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::messages::ib::{AttrPath, AttrStatus};
-use rs_matter::im::messages::GenericPath;
+use rs_matter::im::GenericPath;
+use rs_matter::im::{AttrPath, AttrStatus};
 use rs_matter::tlv::{TLVTag, TLVWrite, TLVWriter};
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
@@ -29,7 +29,7 @@ use crate::common::e2e::E2eRunner;
 macro_rules! attr_status {
     ($path:expr, $status:expr) => {
         $crate::common::e2e::im::attributes::TestAttrResp::AttrStatus(
-            rs_matter::im::messages::ib::AttrStatus::new($path, $status, 0),
+            rs_matter::im::AttrStatus::new($path, $status, 0),
         )
     };
 }
@@ -42,7 +42,7 @@ macro_rules! attr_data_path {
         $crate::common::e2e::im::attributes::TestAttrResp::AttrData(
             $crate::common::e2e::im::attributes::TestAttrData {
                 data_ver: None,
-                path: rs_matter::im::messages::ib::AttrPath::new(&$path),
+                path: rs_matter::im::AttrPath::new(&$path),
                 data: $data,
             },
         )
@@ -58,7 +58,7 @@ macro_rules! attr_data_path {
 macro_rules! attr_data {
     ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
         $crate::attr_data_path!(
-            rs_matter::im::messages::GenericPath::new(
+            rs_matter::im::GenericPath::new(
                 Some($endpoint as u16),
                 Some($cluster as u32),
                 Some($attr as u32)

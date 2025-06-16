@@ -25,7 +25,7 @@ use crate::dm::DataModelHandler;
 use crate::dm::{DataModel, IMBuffer};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
-use crate::im::core::PROTO_ID_INTERACTION_MODEL;
+use crate::im::PROTO_ID_INTERACTION_MODEL;
 use crate::sc::busy::BusySecureChannel;
 use crate::sc::core::SecureChannel;
 use crate::transport::exchange::Exchange;

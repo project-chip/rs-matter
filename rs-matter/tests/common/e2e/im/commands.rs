@@ -17,7 +17,7 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::messages::ib::{CmdPath, CmdStatus};
+use rs_matter::im::{CmdPath, CmdStatus};
 use rs_matter::tlv::{TLVTag, TLVWrite, TLVWriter};
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
@@ -35,7 +35,7 @@ macro_rules! cmd_data {
 macro_rules! echo_req {
     ($endpoint:literal, $data:literal) => {
         $crate::common::e2e::im::commands::TestCmdData::new(
-            rs_matter::im::messages::ib::CmdPath::new(
+            rs_matter::im::CmdPath::new(
                 Some($endpoint),
                 Some($crate::common::e2e::im::echo_cluster::ID),
                 Some($crate::common::e2e::im::echo_cluster::Commands::EchoReq as u32),
@@ -50,7 +50,7 @@ macro_rules! echo_resp {
     ($endpoint:literal, $data:literal) => {
         $crate::common::e2e::im::commands::TestCmdResp::Cmd(
             $crate::common::e2e::im::commands::TestCmdData::new(
-                rs_matter::im::messages::ib::CmdPath::new(
+                rs_matter::im::CmdPath::new(
                     Some($endpoint),
                     Some($crate::common::e2e::im::echo_cluster::ID),
                     Some($crate::common::e2e::im::echo_cluster::RespCommands::EchoResp as u32),

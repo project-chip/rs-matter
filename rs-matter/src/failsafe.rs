@@ -22,7 +22,7 @@ use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
-use crate::im::core::IMStatusCode;
+use crate::im::IMStatusCode;
 use crate::mdns::Mdns;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;

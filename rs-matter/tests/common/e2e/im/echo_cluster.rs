@@ -30,7 +30,7 @@ use rs_matter::dm::{
     ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::messages::ib::{attr_list_write, ListOperation};
+use rs_matter::im::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::{attribute_enum, attributes, command_enum, commands, with};
 

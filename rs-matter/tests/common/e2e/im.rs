@@ -18,11 +18,9 @@
 use bitflags::bitflags;
 
 use rs_matter::error::Error;
-use rs_matter::im::core::{OpCode, PROTO_ID_INTERACTION_MODEL};
-use rs_matter::im::messages::ib::{
-    AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath,
-};
-use rs_matter::im::messages::msg::{ReportDataMsg, WriteReqTag};
+use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath};
+use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
+use rs_matter::im::{ReportDataMsg, WriteReqTag};
 use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, TLVWriter, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;

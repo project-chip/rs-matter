@@ -17,9 +17,9 @@
 
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::dm::GlobalElements;
-use rs_matter::im::core::IMStatusCode;
-use rs_matter::im::messages::ib::{AttrPath, AttrStatus};
-use rs_matter::im::messages::GenericPath;
+use rs_matter::im::GenericPath;
+use rs_matter::im::IMStatusCode;
+use rs_matter::im::{AttrPath, AttrStatus};
 
 use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
 use crate::common::e2e::ImEngine;
