@@ -24,7 +24,6 @@ use crate::error::ErrorCode;
 use crate::tlv::{EitherIter, TLVTag, TLV};
 use crate::utils::storage::WriteBuf;
 
-use super::vendor_identifiers::{is_vendor_id_valid_operationally, VendorId};
 use super::*;
 
 // See section 5.1.2. QR Code in the Matter specification
