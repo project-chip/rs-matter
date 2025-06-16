@@ -16,7 +16,7 @@
  */
 
 use crate::{
-    dm::objects::{ClusterId, EndptId},
+    dm::{ClusterId, EndptId},
     error::{Error, ErrorCode},
     tlv::{FromTLV, ToTLV},
 };
@@ -497,7 +497,7 @@ pub mod ib {
     use core::fmt::Debug;
 
     use crate::{
-        dm::objects::{AttrDetails, AttrId, ClusterId, CmdId, EndptId},
+        dm::{AttrDetails, AttrId, ClusterId, CmdId, EndptId},
         error::{Error, ErrorCode},
         im::core::IMStatusCode,
         tlv::{FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV, TLV},

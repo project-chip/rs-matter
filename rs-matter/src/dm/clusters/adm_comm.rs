@@ -19,7 +19,7 @@
 
 use core::num::NonZeroU8;
 
-use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
 use crate::sc::pake::PaseSessionType;
 use crate::tlv::Nullable;

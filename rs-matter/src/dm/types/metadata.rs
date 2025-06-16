@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::dm::objects::Node;
+use crate::dm::Node;
 
 pub use asynch::*;
 
@@ -131,7 +131,7 @@ where
 }
 
 mod asynch {
-    use crate::dm::objects::{Async, Node};
+    use crate::dm::{Async, Node};
 
     use super::{Metadata, MetadataGuard};
 

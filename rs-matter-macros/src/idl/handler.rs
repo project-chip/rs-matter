@@ -81,7 +81,7 @@ pub fn handler(
             where
                 T: #handler_name
             {
-                const CLUSTER: #krate::dm::objects::Cluster<'static> = T::CLUSTER;
+                const CLUSTER: #krate::dm::Cluster<'static> = T::CLUSTER;
 
                 fn dataver(&self) -> u32 { T::dataver(self) }
                 fn dataver_changed(&self) { T::dataver_changed(self) }
@@ -98,7 +98,7 @@ pub fn handler(
             #[doc = "The handler trait for the cluster."]
             pub trait #handler_name {
                 #[doc = "The cluster-metadata corresponding to this handler trait."]
-                const CLUSTER: #krate::dm::objects::Cluster<'static>;
+                const CLUSTER: #krate::dm::Cluster<'static>;
 
                 fn dataver(&self) -> u32;
 
@@ -252,15 +252,15 @@ pub fn handler_adaptor(
         #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         pub struct #handler_adaptor_name<T>(pub T);
 
-        impl<T> #krate::dm::objects::#generic_handler_name for #handler_adaptor_name<T>
+        impl<T> #krate::dm::#generic_handler_name for #handler_adaptor_name<T>
         where
             T: #handler_name,
         {
             #[allow(unreachable_code)]
             #pasync fn read(
                 &self,
-                ctx: &#krate::dm::objects::ReadContext<'_>,
-                encoder: #krate::dm::objects::AttrDataEncoder<'_, '_, '_>,
+                ctx: &#krate::dm::ReadContext<'_>,
+                encoder: #krate::dm::AttrDataEncoder<'_, '_, '_>,
             ) -> Result<(), #krate::error::Error> {
                 if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
                     if ctx.attr().is_system() {
@@ -276,7 +276,7 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn write(
                 &self,
-                ctx: &#krate::dm::objects::WriteContext<'_>,
+                ctx: &#krate::dm::WriteContext<'_>,
             ) -> Result<(), #krate::error::Error> {
                 ctx.attr().check_dataver(self.0.dataver())?;
 
@@ -294,8 +294,8 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn invoke(
                 &self,
-                ctx: &#krate::dm::objects::InvokeContext<'_>,
-                encoder: #krate::dm::objects::CmdDataEncoder<'_, '_, '_>,
+                ctx: &#krate::dm::InvokeContext<'_>,
+                encoder: #krate::dm::CmdDataEncoder<'_, '_, '_>,
             ) -> Result<(), #krate::error::Error> {
                 #invoke_stream
 
@@ -335,7 +335,7 @@ pub fn handler_adaptor(
         quote!(
             #stream
 
-            impl<T> #krate::dm::objects::NonBlockingHandler for #handler_adaptor_name<T>
+            impl<T> #krate::dm::NonBlockingHandler for #handler_adaptor_name<T>
             where
                 T: #handler_name,
             {}
@@ -394,19 +394,18 @@ fn handler_attribute(
                 krate,
             );
 
-            attr_type =
-                quote!(#krate::dm::objects::ArrayAttributeRead<#attr_type, #attr_element_type>);
+            attr_type = quote!(#krate::dm::ArrayAttributeRead<#attr_type, #attr_element_type>);
         }
 
         if !delegate && attr.field.is_optional {
             quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::dm::objects::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::dm::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
                     Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
         } else {
             let stream = quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::dm::objects::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error>
+                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::dm::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error>
             );
 
             if delegate {
@@ -417,13 +416,13 @@ fn handler_attribute(
         }
     } else if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::objects::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error> {
+            #pasync fn #attr_name(&self, ctx: &#krate::dm::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::objects::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error>
+            #pasync fn #attr_name(&self, ctx: &#krate::dm::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error>
         );
 
         if delegate {
@@ -482,19 +481,18 @@ fn handler_attribute_write(
             krate,
         );
 
-        attr_type =
-            quote!(#krate::dm::objects::ArrayAttributeWrite<#attr_type, #attr_element_type>);
+        attr_type = quote!(#krate::dm::ArrayAttributeWrite<#attr_type, #attr_element_type>);
     }
 
     if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::objects::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
+            #pasync fn #attr_name(&self, ctx: &#krate::dm::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::objects::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error>
+            #pasync fn #attr_name(&self, ctx: &#krate::dm::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error>
         );
 
         if delegate {
@@ -567,7 +565,7 @@ fn handler_command(
                 let stream = quote!(
                     #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                         &self,
-                        ctx: &#krate::dm::objects::InvokeContext<'_>,
+                        ctx: &#krate::dm::InvokeContext<'_>,
                         request: #field_req,
                         response: #field_resp,
                     ) -> Result<P, #krate::error::Error>
@@ -582,7 +580,7 @@ fn handler_command(
                 let stream = quote!(
                     #pasync fn #cmd_name(
                         &self,
-                        ctx: &#krate::dm::objects::InvokeContext<'_>,
+                        ctx: &#krate::dm::InvokeContext<'_>,
                         request: #field_req,
                     ) -> Result<#field_resp, #krate::error::Error>
                 );
@@ -597,7 +595,7 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
-                    ctx: &#krate::dm::objects::InvokeContext<'_>,
+                    ctx: &#krate::dm::InvokeContext<'_>,
                     request: #field_req,
                 ) -> Result<(), #krate::error::Error>
             );
@@ -613,7 +611,7 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                     &self,
-                    ctx: &#krate::dm::objects::InvokeContext<'_>,
+                    ctx: &#krate::dm::InvokeContext<'_>,
                     response: #field_resp,
                 ) -> Result<P, #krate::error::Error>
             );
@@ -627,7 +625,7 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
-                    ctx: &#krate::dm::objects::InvokeContext<'_>,
+                    ctx: &#krate::dm::InvokeContext<'_>,
                 ) -> Result<#field_resp, #krate::error::Error>
             );
 
@@ -641,7 +639,7 @@ fn handler_command(
         let stream = quote!(
             #pasync fn #cmd_name(
                 &self,
-                ctx: &#krate::dm::objects::InvokeContext<'_>,
+                ctx: &#krate::dm::InvokeContext<'_>,
             ) -> Result<(), #krate::error::Error>
         );
 
@@ -716,10 +714,10 @@ fn handler_adaptor_attribute_match(
 
                     let attr_read_result = self.0.#attr_method_name(
                         ctx,
-                        #krate::dm::objects::ArrayAttributeRead::new(
+                        #krate::dm::ArrayAttributeRead::new(
                             ctx.attr().list_index.clone(),
                             #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
-                            &#krate::dm::objects::AttrDataWriter::TAG,
+                            &#krate::dm::AttrDataWriter::TAG,
                         )?,
                     )#sawait;
 
@@ -737,7 +735,7 @@ fn handler_adaptor_attribute_match(
 
                     let attr_read_result = self.0.#attr_method_name(ctx, #krate::tlv::TLVBuilder::new(
                         #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
-                        &#krate::dm::objects::AttrDataWriter::TAG,
+                        &#krate::dm::AttrDataWriter::TAG,
                     )?)#sawait;
 
                     #attr_read_debug_build_end
@@ -804,7 +802,7 @@ fn handler_adaptor_attribute_write_match(
     if attr.field.field.data_type.is_list {
         quote!(
             AttributeId::#attr_name => {
-                let attr_data = #krate::dm::objects::ArrayAttributeWrite::new(ctx.attr().list_index.clone(), ctx.data())?;
+                let attr_data = #krate::dm::ArrayAttributeWrite::new(ctx.attr().list_index.clone(), ctx.data())?;
 
                 let attr_write_result = self.0.#attr_method_name(ctx, attr_data.clone())#sawait;
 
@@ -951,7 +949,7 @@ fn handler_adaptor_command_match(
                             cmd_data,
                             #krate::tlv::TLVBuilder::new(
                                 #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
-                                &#krate::dm::objects::CmdDataWriter::TAG,
+                                &#krate::dm::CmdDataWriter::TAG,
                             )?
                         )#sawait;
 
@@ -1002,7 +1000,7 @@ fn handler_adaptor_command_match(
                         ctx,
                         #krate::tlv::TLVBuilder::new(
                             #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
-                            &#krate::dm::objects::CmdDataWriter::TAG,
+                            &#krate::dm::CmdDataWriter::TAG,
                         )?,
                     )#sawait;
 
@@ -1138,34 +1136,34 @@ mod tests {
                 #[doc = "The handler trait for the cluster."]
                 pub trait ClusterHandler {
                     #[doc = "The cluster-metadata corresponding to this handler trait."]
-                    const CLUSTER: rs_matter_crate::dm::objects::Cluster<'static>;
+                    const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
                     fn dataver(&self) -> u32;
                     fn dataver_changed(&self);
                     fn on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<bool, rs_matter_crate::error::Error>;
                     fn global_scene_control(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<
                         rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                         rs_matter_crate::error::Error,
@@ -1174,49 +1172,49 @@ mod tests {
                     }
                     fn set_on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn set_off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn set_start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn handle_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_on(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_toggle(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_off_with_effect(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                         request: OffWithEffectRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_on_with_recall_global_scene(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_on_with_timed_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                         request: OnWithTimedOffRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                 }
@@ -1232,7 +1230,7 @@ mod tests {
                 where
                     T: ClusterHandler,
                 {
-                    const CLUSTER: rs_matter_crate::dm::objects::Cluster<'static> = T::CLUSTER;
+                    const CLUSTER: rs_matter_crate::dm::Cluster<'static> = T::CLUSTER;
                     fn dataver(&self) -> u32 {
                         T::dataver(self)
                     }
@@ -1241,31 +1239,31 @@ mod tests {
                     }
                     fn on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         T::on_off(self, ctx)
                     }
                     fn global_scene_control(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         T::global_scene_control(self, ctx)
                     }
                     fn on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         T::on_time(self, ctx)
                     }
                     fn off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         T::off_wait_time(self, ctx)
                     }
                     fn start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
                     ) -> Result<
                         rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                         rs_matter_crate::error::Error,
@@ -1274,59 +1272,59 @@ mod tests {
                     }
                     fn set_on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::set_on_time(self, ctx, value)
                     }
                     fn set_off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::set_off_wait_time(self, ctx, value)
                     }
                     fn set_start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::set_start_up_on_off(self, ctx, value)
                     }
                     fn handle_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_off(self, ctx)
                     }
                     fn handle_on(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_on(self, ctx)
                     }
                     fn handle_toggle(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_toggle(self, ctx)
                     }
                     fn handle_off_with_effect(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                         request: OffWithEffectRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_off_with_effect(self, ctx, request)
                     }
                     fn handle_on_with_recall_global_scene(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_on_with_recall_global_scene(self, ctx)
                     }
                     fn handle_on_with_timed_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
                         request: OnWithTimedOffRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_on_with_timed_off(self, ctx, request)
@@ -1352,15 +1350,15 @@ mod tests {
                 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 pub struct HandlerAdaptor<T>(pub T);
-                impl<T> rs_matter_crate::dm::objects::Handler for HandlerAdaptor<T>
+                impl<T> rs_matter_crate::dm::Handler for HandlerAdaptor<T>
                 where
                     T: ClusterHandler,
                 {
                     #[allow(unreachable_code)]
                     fn read(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::ReadContext<'_>,
-                        encoder: rs_matter_crate::dm::objects::AttrDataEncoder<'_, '_, '_>,
+                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        encoder: rs_matter_crate::dm::AttrDataEncoder<'_, '_, '_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
                             if ctx.attr().is_system() {
@@ -1517,7 +1515,7 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn write(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::WriteContext<'_>,
+                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         ctx.attr().check_dataver(self.0.dataver())?;
                         if ctx.attr().is_system() {
@@ -1632,8 +1630,8 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn invoke(
                         &self,
-                        ctx: &rs_matter_crate::dm::objects::InvokeContext<'_>,
-                        encoder: rs_matter_crate::dm::objects::CmdDataEncoder<'_, '_, '_>,
+                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        encoder: rs_matter_crate::dm::CmdDataEncoder<'_, '_, '_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         match CommandId::try_from(ctx.cmd().cmd_id)? {
                             CommandId::Off => {
@@ -1843,10 +1841,7 @@ mod tests {
                         )
                     }
                 }
-                impl<T> rs_matter_crate::dm::objects::NonBlockingHandler for HandlerAdaptor<T> where
-                    T: ClusterHandler
-                {
-                }
+                impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where T: ClusterHandler {}
             )
         );
     }

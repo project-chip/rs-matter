@@ -20,7 +20,7 @@ use embassy_futures::select::select;
 
 use embassy_time::{Duration, Timer};
 
-use rs_matter::dm::objects::{AsyncHandler, AsyncMetadata};
+use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
 use rs_matter::utils::select::Coalesce;

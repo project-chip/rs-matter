@@ -20,8 +20,8 @@ use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
 
-use crate::dm::objects::DataModelHandler;
 use crate::dm::subscriptions::Subscriptions;
+use crate::dm::DataModelHandler;
 use crate::dm::{DataModel, IMBuffer};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;

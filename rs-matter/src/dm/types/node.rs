@@ -18,7 +18,7 @@
 use core::fmt;
 
 use crate::acl::Accessor;
-use crate::dm::objects::Endpoint;
+use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::core::{IMStatusCode, ReportDataReq};
 use crate::im::messages::ib::{
@@ -625,7 +625,7 @@ fn dataver(
 #[cfg(test)]
 mod test {
     use crate::acl::{Accessor, AccessorSubjects, AuthMode};
-    use crate::dm::objects::{
+    use crate::dm::{
         Access, Attribute, Cluster, ClusterId, Command, DeviceType, Endpoint, EndptId, Quality,
     };
     use crate::error::{Error, ErrorCode};

@@ -17,7 +17,7 @@
 
 //! This module contains the implementation of the Ethernet Network Diagnostics cluster and its handler.
 
-use crate::dm::objects::{Cluster, Dataver, InvokeContext};
+use crate::dm::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::with;
 

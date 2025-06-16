@@ -19,7 +19,7 @@
 
 use core::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::dm::objects::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
 use crate::with;

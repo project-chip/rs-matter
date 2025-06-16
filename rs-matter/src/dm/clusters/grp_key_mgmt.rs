@@ -18,7 +18,7 @@
 //! This module contains the implementation of the Group Key Management cluster and its handler.
 //! Note that the implementation is currently stubbed out, as `rs-matter` does not support Groups yet.
 
-use crate::dm::objects::{
+use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
 };
 use crate::error::{Error, ErrorCode};
@@ -93,7 +93,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn set_group_key_map(
         &self,
-        _ctx: &crate::dm::objects::WriteContext<'_>,
+        _ctx: &crate::dm::WriteContext<'_>,
         _value: ArrayAttributeWrite<
             crate::tlv::TLVArray<'_, GroupKeyMapStruct<'_>>,
             GroupKeyMapStruct<'_>,

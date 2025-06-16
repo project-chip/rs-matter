@@ -19,7 +19,7 @@
 
 use core::fmt::Debug;
 
-use crate::dm::objects::{ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, ReadContext};
+use crate::dm::{ArrayAttributeRead, Cluster, Dataver, Endpoint, EndptId, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::with;

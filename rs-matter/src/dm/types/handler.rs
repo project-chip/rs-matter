@@ -503,21 +503,21 @@ where
 #[macro_export]
 macro_rules! handler_chain_type {
     ($m:ty => $h:ty) => {
-        $crate::dm::objects::ChainedHandler<$m, $h, $crate::dm::objects::EmptyHandler>
+        $crate::dm::ChainedHandler<$m, $h, $crate::dm::EmptyHandler>
     };
     ($m1:ty => $h1:ty, $($m:ty => $h:ty),+) => {
-        $crate::dm::objects::ChainedHandler<$m1, $h1, handler_chain_type!($($m => $h),+)>
+        $crate::dm::ChainedHandler<$m1, $h1, handler_chain_type!($($m => $h),+)>
     };
     ($m:ty => $h:ty | $f:ty) => {
-        $crate::dm::objects::ChainedHandler<$m, $h, $f>
+        $crate::dm::ChainedHandler<$m, $h, $f>
     };
     ($m1:ty => $h1:ty, $($m:ty => $h:ty),+ | $f:ty) => {
-        $crate::dm::objects::ChainedHandler<$m1, $h1, handler_chain_type!($($m => $h),+ | $f)>
+        $crate::dm::ChainedHandler<$m1, $h1, handler_chain_type!($($m => $h),+ | $f)>
     };
 }
 
 mod asynch {
-    use crate::dm::objects::{AttrDataEncoder, CmdDataEncoder, MatchContext, Matcher};
+    use crate::dm::{AttrDataEncoder, CmdDataEncoder, MatchContext, Matcher};
     use crate::error::{Error, ErrorCode};
 
     use super::{

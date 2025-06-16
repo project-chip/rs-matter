@@ -16,7 +16,7 @@
  */
 
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
-use rs_matter::dm::objects::GlobalElements;
+use rs_matter::dm::GlobalElements;
 use rs_matter::im::core::IMStatusCode;
 use rs_matter::im::messages::ib::{AttrPath, AttrStatus};
 use rs_matter::im::messages::GenericPath;

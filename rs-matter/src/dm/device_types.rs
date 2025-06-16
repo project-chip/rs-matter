@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use super::objects::DeviceType;
+use super::types::DeviceType;
 
 /// A constant representing the device type for the root (ep0) endpoint in Matter.
 pub const DEV_TYPE_ROOT_NODE: DeviceType = DeviceType {

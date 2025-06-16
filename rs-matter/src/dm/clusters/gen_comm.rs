@@ -17,7 +17,7 @@
 
 //! This module contains the implementation of the General Commissioning cluster and its handler.
 
-use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 
