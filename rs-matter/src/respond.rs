@@ -27,7 +27,7 @@ use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
 use crate::im::PROTO_ID_INTERACTION_MODEL;
 use crate::sc::busy::BusySecureChannel;
-use crate::sc::core::SecureChannel;
+use crate::sc::SecureChannel;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;

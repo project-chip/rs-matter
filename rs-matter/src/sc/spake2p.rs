@@ -22,7 +22,7 @@ use crate::error::{Error, ErrorCode};
 use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 
-use super::{common::SCStatusCodes, crypto::CryptoSpake2};
+use super::{crypto::CryptoSpake2, SCStatusCodes};
 
 // This file handles Spake2+ specific instructions. In itself, this file is
 // independent from the BigNum and EC operations that are typically required

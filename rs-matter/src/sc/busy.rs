@@ -19,7 +19,7 @@ use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::transport::exchange::Exchange;
 
-use super::common::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
+use super::{sc_write, OpCode, SCStatusCodes, PROTO_ID_SECURE_CHANNEL};
 
 /// A Secure Channel implementation that is only capable of sending Busy status codes
 ///

@@ -24,7 +24,7 @@ use embassy_time::{Duration, Instant, Timer};
 use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
-use crate::sc::{self, common::PROTO_ID_SECURE_CHANNEL};
+use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
 use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
@@ -507,7 +507,7 @@ impl MessageMeta {
     pub(crate) fn is_tlv(&self) -> bool {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => self
-                .opcode::<sc::common::OpCode>()
+                .opcode::<sc::OpCode>()
                 .ok()
                 .map(|op| op.is_tlv())
                 .unwrap_or(false),
@@ -523,20 +523,20 @@ impl MessageMeta {
     /// Utility method to check if the protocol is Secure Channel, and the opcode is a standalone ACK (`MrpStandaloneAck`).
     pub(crate) fn is_standalone_ack(&self) -> bool {
         self.proto_id == PROTO_ID_SECURE_CHANNEL
-            && self.proto_opcode == sc::common::OpCode::MRPStandAloneAck as u8
+            && self.proto_opcode == sc::OpCode::MRPStandAloneAck as u8
     }
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is Status.
     pub(crate) fn is_sc_status(&self) -> bool {
         self.proto_id == PROTO_ID_SECURE_CHANNEL
-            && self.proto_opcode == sc::common::OpCode::StatusReport as u8
+            && self.proto_opcode == sc::OpCode::StatusReport as u8
     }
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is a new session request.
     pub(crate) fn is_new_session(&self) -> bool {
         self.proto_id == PROTO_ID_SECURE_CHANNEL
-            && (self.proto_opcode == sc::common::OpCode::PBKDFParamRequest as u8
-                || self.proto_opcode == sc::common::OpCode::CASESigma1 as u8)
+            && (self.proto_opcode == sc::OpCode::PBKDFParamRequest as u8
+                || self.proto_opcode == sc::OpCode::CASESigma1 as u8)
     }
 
     /// Utility method to check if the meta-data indicates a new exchange
@@ -550,7 +550,7 @@ impl Display for MessageMeta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => {
-                if let Ok(opcode) = self.opcode::<sc::common::OpCode>() {
+                if let Ok(opcode) = self.opcode::<sc::OpCode>() {
                     write!(f, "SC::{:?}", opcode)
                 } else {
                     write!(f, "SC::{:02x}", self.proto_opcode)
@@ -1094,7 +1094,7 @@ impl<'a> Exchange<'a> {
             self.send_with(|exchange, _| {
                 Ok(exchange
                     .pending_ack()?
-                    .then_some(sc::common::OpCode::MRPStandAloneAck.into()))
+                    .then_some(sc::OpCode::MRPStandAloneAck.into()))
             })
             .await?;
         }
