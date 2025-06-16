@@ -20,9 +20,9 @@ use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
 
-use crate::dm::core::{DataModel, IMBuffer};
 use crate::dm::objects::DataModelHandler;
 use crate::dm::subscriptions::Subscriptions;
+use crate::dm::{DataModel, IMBuffer};
 use crate::error::Error;
 use crate::im::busy::BusyInteractionModel;
 use crate::im::core::PROTO_ID_INTERACTION_MODEL;
