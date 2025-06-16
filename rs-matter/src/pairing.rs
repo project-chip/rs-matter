@@ -29,7 +29,6 @@ use self::qr::{compute_qr_code_text, print_qr_code};
 
 pub mod code;
 pub mod qr;
-pub mod vendor_identifiers;
 
 bitflags! {
     #[repr(transparent)]
@@ -69,4 +68,15 @@ pub fn print_pairing_code_and_qr(
     print_qr_code(qr_code, remaining_buf)?;
 
     Ok(())
+}
+
+#[repr(u16)]
+pub enum VendorId {
+    CommonOrUnspecified = 0x0000,
+    TestVendor4 = 0xFFF4,
+}
+
+pub fn is_vendor_id_valid_operationally(vendor_id: u16) -> bool {
+    (vendor_id != VendorId::CommonOrUnspecified as u16)
+        && (vendor_id <= VendorId::TestVendor4 as u16)
 }
