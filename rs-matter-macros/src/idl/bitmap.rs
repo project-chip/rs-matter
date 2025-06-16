@@ -20,9 +20,8 @@ use proc_macro2::{Literal, TokenStream};
 
 use quote::quote;
 
-use rs_matter_data_model::{Bitmap, Cluster};
-
 use super::id::{ident, idl_id_to_constant_name};
+use super::parser::{Bitmap, Cluster};
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all bitmap definitions in the provided IDL cluster.
