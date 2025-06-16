@@ -27,7 +27,7 @@ use crate::dm::clusters::acl::{
 use crate::dm::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
-use crate::im::messages::GenericPath;
+use crate::im::GenericPath;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::transport::session::{Session, SessionMode, MAX_CAT_IDS_PER_NOC};
 use crate::utils::cell::RefCell;
@@ -596,7 +596,7 @@ pub(crate) mod tests {
     use crate::crypto::KeyPair;
     use crate::dm::{Access, Privilege};
     use crate::fabric::FabricMgr;
-    use crate::im::messages::GenericPath;
+    use crate::im::GenericPath;
     use crate::utils::cell::RefCell;
     use crate::utils::rand::dummy_rand;
 

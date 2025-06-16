@@ -19,10 +19,7 @@ use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::transport::exchange::Exchange;
 
-use super::{
-    core::{IMStatusCode, OpCode, PROTO_ID_INTERACTION_MODEL},
-    messages::msg::StatusResp,
-};
+use super::{IMStatusCode, OpCode, StatusResp, PROTO_ID_INTERACTION_MODEL};
 
 /// A Interaction Model implementation that is only capable of sending Busy status codes
 ///

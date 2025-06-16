@@ -15,59 +15,9 @@
  *    limitations under the License.
  */
 
-use crate::{
-    dm::{ClusterId, EndptId},
-    error::{Error, ErrorCode},
-    tlv::{FromTLV, ToTLV},
-};
-
-// A generic path with endpoint, clusters, and a leaf
-// The leaf could be command, attribute, event
-#[derive(Default, Clone, Debug, PartialEq, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(datatype = "list")]
-pub struct GenericPath {
-    pub endpoint: Option<EndptId>,
-    pub cluster: Option<ClusterId>,
-    pub leaf: Option<u32>,
-}
-
-impl GenericPath {
-    pub const fn new(
-        endpoint: Option<EndptId>,
-        cluster: Option<ClusterId>,
-        leaf: Option<u32>,
-    ) -> Self {
-        Self {
-            endpoint,
-            cluster,
-            leaf,
-        }
-    }
-
-    /// Returns Ok, if the path is non wildcard, otherwise returns an error
-    pub fn not_wildcard(&self) -> Result<(EndptId, ClusterId, u32), Error> {
-        match *self {
-            GenericPath {
-                endpoint: Some(e),
-                cluster: Some(c),
-                leaf: Some(l),
-            } => Ok((e, c, l)),
-            _ => Err(ErrorCode::Invalid.into()),
-        }
-    }
-    /// Returns true, if the path is wildcard
-    pub fn is_wildcard(&self) -> bool {
-        !matches!(
-            *self,
-            GenericPath {
-                endpoint: Some(_),
-                cluster: Some(_),
-                leaf: Some(_),
-            }
-        )
-    }
-}
+use crate::dm::{ClusterId, EndptId};
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, ToTLV};
 
 pub mod msg {
 
@@ -75,7 +25,7 @@ pub mod msg {
 
     use crate::{
         error::Error,
-        im::core::IMStatusCode,
+        im::IMStatusCode,
         tlv::{FromTLV, TLVArray, TLVElement, ToTLV},
     };
 
@@ -499,7 +449,7 @@ pub mod ib {
     use crate::{
         dm::{AttrDetails, AttrId, ClusterId, CmdId, EndptId},
         error::{Error, ErrorCode},
-        im::core::IMStatusCode,
+        im::IMStatusCode,
         tlv::{FromTLV, Nullable, TLVElement, TLVTag, TLVWrite, ToTLV, TLV},
     };
 
@@ -758,7 +708,7 @@ pub mod ib {
     #[macro_export]
     macro_rules! cmd_path_ib {
         ($endpoint:literal,$cluster:ident,$command:expr) => {{
-            use $crate::im::messages::{ib::CmdPath, GenericPath};
+            use $crate::im::{ib::CmdPath, GenericPath};
             CmdPath {
                 path: GenericPath {
                     endpoint: Some($endpoint),

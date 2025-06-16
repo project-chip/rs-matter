@@ -22,9 +22,7 @@ use strum::FromRepr;
 
 use crate::attribute_enum;
 use crate::error::{Error, ErrorCode};
-use crate::im::core::IMStatusCode;
-use crate::im::messages::ib::{AttrPath, AttrStatus};
-use crate::im::messages::GenericPath;
+use crate::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
 use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
 use crate::utils::maybe::Maybe;
 

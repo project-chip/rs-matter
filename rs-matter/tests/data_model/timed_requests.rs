@@ -15,10 +15,10 @@
  *    limitations under the License.
  */
 
-use rs_matter::im::core::{IMStatusCode, OpCode, PROTO_ID_INTERACTION_MODEL};
-use rs_matter::im::messages::ib::{AttrPath, AttrStatus};
-use rs_matter::im::messages::msg::{StatusResp, TimedReq};
-use rs_matter::im::messages::GenericPath;
+use rs_matter::im::GenericPath;
+use rs_matter::im::{AttrPath, AttrStatus};
+use rs_matter::im::{IMStatusCode, OpCode, PROTO_ID_INTERACTION_MODEL};
+use rs_matter::im::{StatusResp, TimedReq};
 use rs_matter::transport::exchange::MessageMeta;
 
 use crate::common::e2e::im::attributes::TestAttrData;

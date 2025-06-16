@@ -16,8 +16,8 @@
  */
 
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
-use rs_matter::im::core::IMStatusCode;
-use rs_matter::im::messages::ib::{CmdPath, CmdStatus};
+use rs_matter::im::IMStatusCode;
+use rs_matter::im::{CmdPath, CmdStatus};
 
 use crate::common::e2e::im::commands::TestCmdResp;
 use crate::common::e2e::im::echo_cluster;

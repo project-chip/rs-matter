@@ -23,7 +23,7 @@ use embassy_time::{Duration, Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
-use crate::im::{self, core::PROTO_ID_INTERACTION_MODEL};
+use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, common::PROTO_ID_SECURE_CHANNEL};
 use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
@@ -512,7 +512,7 @@ impl MessageMeta {
                 .map(|op| op.is_tlv())
                 .unwrap_or(false),
             PROTO_ID_INTERACTION_MODEL => self
-                .opcode::<im::core::OpCode>()
+                .opcode::<im::OpCode>()
                 .ok()
                 .map(|op| op.is_tlv())
                 .unwrap_or(false),
@@ -557,7 +557,7 @@ impl Display for MessageMeta {
                 }
             }
             PROTO_ID_INTERACTION_MODEL => {
-                if let Ok(opcode) = self.opcode::<im::core::OpCode>() {
+                if let Ok(opcode) = self.opcode::<im::OpCode>() {
                     write!(f, "IM::{:?}", opcode)
                 } else {
                     write!(f, "IM::{:02x}", self.proto_opcode)
@@ -580,7 +580,7 @@ impl defmt::Format for MessageMeta {
                 }
             }
             PROTO_ID_INTERACTION_MODEL => {
-                if let Ok(opcode) = self.opcode::<im::core::OpCode>() {
+                if let Ok(opcode) = self.opcode::<im::OpCode>() {
                     defmt::write!(f, "IM::{:?}", opcode)
                 } else {
                     defmt::write!(f, "IM::{:02x}", self.proto_opcode)

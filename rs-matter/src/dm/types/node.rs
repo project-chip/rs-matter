@@ -20,12 +20,10 @@ use core::fmt;
 use crate::acl::Accessor;
 use crate::dm::Endpoint;
 use crate::error::Error;
-use crate::im::core::{IMStatusCode, ReportDataReq};
-use crate::im::messages::ib::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter,
+use crate::im::{
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, GenericPath,
+    IMStatusCode, InvReqRef, ReportDataReq, WriteReqRef,
 };
-use crate::im::messages::msg::{InvReqRef, WriteReqRef};
-use crate::im::messages::GenericPath;
 use crate::tlv::{TLVArray, TLVElement};
 
 use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
@@ -630,8 +628,8 @@ mod test {
     };
     use crate::error::{Error, ErrorCode};
     use crate::fabric::FabricMgr;
-    use crate::im::core::IMStatusCode;
-    use crate::im::messages::GenericPath;
+    use crate::im::GenericPath;
+    use crate::im::IMStatusCode;
     use crate::utils::cell::RefCell;
 
     use super::{Node, Operation, PathExpander, PathExpansionItem};

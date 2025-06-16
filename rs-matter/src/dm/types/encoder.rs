@@ -19,17 +19,14 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use crate::im::core::IMStatusCode;
-use crate::im::messages::ib::{
-    AttrPath, AttrResp, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus,
+use crate::error::{Error, ErrorCode};
+use crate::im::{
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
+    CmdRespTag, CmdStatus, IMStatusCode,
 };
 use crate::tlv::TLVTag;
+use crate::tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
-use crate::{
-    error::{Error, ErrorCode},
-    im::messages::ib::{AttrDataTag, AttrRespTag},
-    tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV},
-};
 
 use super::{
     AttrDetails, ChangeNotify, CmdDetails, DataModelHandler, InvokeContext, ReadContext,

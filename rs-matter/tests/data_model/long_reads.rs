@@ -19,10 +19,10 @@ use rs_matter::dm::clusters::{
     acl, adm_comm, basic_info, desc, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc, on_off,
 };
 use rs_matter::dm::GlobalElements;
-use rs_matter::im::core::IMStatusCode;
-use rs_matter::im::messages::ib::AttrPath;
-use rs_matter::im::messages::msg::{StatusResp, SubscribeResp};
-use rs_matter::im::messages::GenericPath;
+use rs_matter::im::AttrPath;
+use rs_matter::im::GenericPath;
+use rs_matter::im::IMStatusCode;
+use rs_matter::im::{StatusResp, SubscribeResp};
 
 use crate::attr_data;
 use crate::common::e2e::im::attributes::TestAttrResp;

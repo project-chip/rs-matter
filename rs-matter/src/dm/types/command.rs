@@ -1,7 +1,6 @@
 use core::fmt;
 
-use crate::im::core::IMStatusCode;
-use crate::im::messages::ib::{CmdPath, CmdStatus};
+use crate::im::{CmdPath, CmdStatus, IMStatusCode};
 
 use super::{Access, ClusterId, CmdDataTracker, CmdId, EndptId, Node};
 
