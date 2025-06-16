@@ -14,37 +14,30 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
+
 use crate::tlv::ToTLV;
 
-mod attribute;
 pub use attribute::*;
-
-mod command;
-pub use command::*;
-
-mod cluster;
 pub use cluster::*;
-
-mod endpoint;
+pub use command::*;
+pub use dataver::*;
+pub use encoder::*;
 pub use endpoint::*;
-
-mod node;
+pub use handler::*;
+pub use metadata::*;
 pub use node::*;
-
-mod privilege;
 pub use privilege::*;
 
-mod encoder;
-pub use encoder::*;
-
-mod handler;
-pub use handler::*;
-
+mod attribute;
+mod cluster;
+mod command;
 mod dataver;
-pub use dataver::*;
-
+mod encoder;
+mod endpoint;
+mod handler;
 mod metadata;
-pub use metadata::*;
+mod node;
+mod privilege;
 
 pub type EndptId = u16;
 pub type ClusterId = u32;
