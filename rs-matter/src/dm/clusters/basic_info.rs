@@ -19,6 +19,7 @@
 
 use core::str::FromStr;
 
+use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
@@ -27,9 +28,7 @@ use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
 use crate::with;
 
-use super::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
-
-pub use crate::dm::clusters::basic_information::*;
+pub use crate::dm::clusters::decl::basic_information::*;
 
 const SUPPORTED_MATTER_SPEC_VERSION: u32 = 0x01000000;
 

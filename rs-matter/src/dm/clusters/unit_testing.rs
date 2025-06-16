@@ -1,5 +1,6 @@
 use crate::dm::objects::{
-    ArrayAttributeRead, ArrayAttributeWrite, Cluster, InvokeContext, ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
@@ -11,9 +12,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
-use super::objects::Dataver;
-
-pub use crate::dm::clusters::unit_testing::*;
+pub use crate::dm::clusters::decl::unit_testing::*;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

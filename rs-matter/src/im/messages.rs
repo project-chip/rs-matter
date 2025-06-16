@@ -758,7 +758,7 @@ pub mod ib {
     #[macro_export]
     macro_rules! cmd_path_ib {
         ($endpoint:literal,$cluster:ident,$command:expr) => {{
-            use $crate::interaction_model::messages::{ib::CmdPath, GenericPath};
+            use $crate::im::messages::{ib::CmdPath, GenericPath};
             CmdPath {
                 path: GenericPath {
                     endpoint: Some($endpoint),

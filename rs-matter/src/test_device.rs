@@ -18,8 +18,8 @@
 //! A set of constants for an uncertified (test) device.
 //! Used in the examples and tests and can be re-used by user code as well.
 
-use crate::dm::basic_info::BasicInfoConfig;
-use crate::dm::sdm::dev_att::{DataType, DevAttDataFetcher};
+use crate::dm::clusters::basic_info::BasicInfoConfig;
+use crate::dm::clusters::dev_att::{DataType, DevAttDataFetcher};
 use crate::error::{Error, ErrorCode};
 use crate::BasicCommData;
 

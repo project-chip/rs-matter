@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::dm::system_model::acl::AccessControlEntryPrivilegeEnum;
+use crate::dm::clusters::acl::AccessControlEntryPrivilegeEnum;
 use crate::error::Error;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::bitflags::bitflags;

@@ -24,7 +24,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, Octets, TLVBuilder, TLVBuilderParent};
 use crate::with;
 
-pub use crate::dm::clusters::general_diagnostics::*;
+pub use crate::dm::clusters::decl::general_diagnostics::*;
 
 /// A structure describing the network interface info as returned by the `GenDiag` trait.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

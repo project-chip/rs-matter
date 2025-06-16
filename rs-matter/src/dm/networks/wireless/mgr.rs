@@ -20,12 +20,9 @@
 
 use embassy_time::{Duration, Timer};
 
-use crate::dm::sdm::net_comm::{self, NetCtlError};
+use crate::dm::clusters::net_comm::{self, NetCtlError, WirelessCreds};
+use crate::dm::clusters::wifi_diag::{self, WirelessDiag};
 use crate::error::{Error, ErrorCode};
-
-use crate::dm::sdm::net_comm::WirelessCreds;
-use crate::dm::sdm::wifi_diag;
-use crate::dm::sdm::wifi_diag::WirelessDiag;
 
 use super::thread::Thread;
 use super::{NetChangeNotif, OwnedWirelessNetworkId};

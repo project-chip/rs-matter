@@ -21,19 +21,38 @@
 //! - OnOff - for demoing purposes
 //! - UnitTesting - for testing purposes
 
-crate::import!(
-    AdministratorCommissioning,
-    AccessControl,
-    BasicInformation,
-    Descriptor,
-    EthernetNetworkDiagnostics,
-    GeneralDiagnostics,
-    GeneralCommissioning,
-    GroupKeyManagement,
-    NetworkCommissioning,
-    OnOff,
-    OperationalCredentials,
-    ThreadNetworkDiagnostics,
-    UnitTesting,
-    WiFiNetworkDiagnostics,
-);
+pub mod acl;
+pub mod adm_comm;
+pub mod basic_info;
+pub mod desc;
+pub mod dev_att;
+pub mod eth_diag;
+pub mod gen_comm;
+pub mod gen_diag;
+pub mod grp_key_mgmt;
+pub mod net_comm;
+pub mod noc;
+pub mod on_off;
+pub mod thread_diag;
+pub mod unit_testing;
+pub mod wifi_diag;
+
+/// This module imports all system clusters that are used by the `rs-matter` itself.
+pub mod decl {
+    crate::import!(
+        AdministratorCommissioning,
+        AccessControl,
+        BasicInformation,
+        Descriptor,
+        EthernetNetworkDiagnostics,
+        GeneralDiagnostics,
+        GeneralCommissioning,
+        GroupKeyManagement,
+        NetworkCommissioning,
+        OnOff,
+        OperationalCredentials,
+        ThreadNetworkDiagnostics,
+        UnitTesting,
+        WiFiNetworkDiagnostics,
+    );
+}

@@ -29,7 +29,7 @@ use crate::fabric::FabricMgr;
 use crate::tlv::{TLVArray, TLVBuilderParent};
 use crate::with;
 
-pub use crate::dm::clusters::access_control::*;
+pub use crate::dm::clusters::decl::access_control::*;
 
 /// The system implementation of a handler for the Access Control Matter cluster.
 #[derive(Debug, Clone)]
@@ -212,12 +212,12 @@ mod tests {
 
     use crate::acl::{AclEntry, AuthMode};
     use crate::crypto::KeyPair;
+    use crate::dm::clusters::acl::{
+        AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
+    };
     use crate::dm::objects::{
         ArrayAttributeRead, ArrayAttributeWrite, AttrDataEncoder, AttrDataWriter, AttrDetails,
         Node, Privilege,
-    };
-    use crate::dm::system_model::acl::{
-        AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
     };
     use crate::fabric::FabricMgr;
     use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, TLVWriter, ToTLV};

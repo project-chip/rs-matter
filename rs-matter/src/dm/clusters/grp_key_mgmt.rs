@@ -25,7 +25,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 use crate::with;
 
-pub use crate::dm::clusters::group_key_management::*;
+pub use crate::dm::clusters::decl::group_key_management::*;
 
 /// The system implementation of a handler for the Group Key Management Matter cluster.
 /// This is a stub implementation, as `rs-matter` does not support Groups yet.

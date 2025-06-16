@@ -27,7 +27,7 @@ use crate::tlv::{
 };
 use crate::with;
 
-pub use crate::dm::clusters::thread_network_diagnostics::*;
+pub use crate::dm::clusters::decl::thread_network_diagnostics::*;
 
 use super::wifi_diag::WirelessDiag;
 

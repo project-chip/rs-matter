@@ -17,8 +17,8 @@
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use crate::dm::basic_info::{BasicInfoConfig, BasicInfoSettings};
-use crate::dm::sdm::dev_att::DevAttDataFetcher;
+use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
+use crate::dm::clusters::dev_att::DevAttDataFetcher;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::failsafe::FailSafe;

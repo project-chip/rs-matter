@@ -22,11 +22,11 @@ use core::fmt::{Debug, Display};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use crate::dm::sdm::net_comm::{
+use crate::dm::clusters::net_comm::{
     self, NetCtlError, NetworkCommissioningStatusEnum, NetworkType, NetworksError,
     ThreadCapabilitiesBitmap, WirelessCreds,
 };
-use crate::dm::sdm::{thread_diag, wifi_diag};
+use crate::dm::clusters::{thread_diag, wifi_diag};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};

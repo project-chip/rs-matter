@@ -22,7 +22,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{Nullable, NullableBuilder, Octets, OctetsBuilder, TLVBuilderParent};
 use crate::with;
 
-pub use crate::dm::clusters::wi_fi_network_diagnostics::*;
+pub use crate::dm::clusters::decl::wi_fi_network_diagnostics::*;
 
 /// A trait required by `WifiDiag` and `ThreadDiag` that provides information whether the
 /// devicde is connected to a wireless network

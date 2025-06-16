@@ -21,7 +21,7 @@ use crate::dm::objects::{Cluster, Dataver, InvokeContext};
 use crate::error::{Error, ErrorCode};
 use crate::with;
 
-pub use crate::dm::clusters::ethernet_network_diagnostics::*;
+pub use crate::dm::clusters::decl::ethernet_network_diagnostics::*;
 
 /// The system implementation of a handler for the Ethernet Network Diagnostics Matter cluster.
 #[derive(Debug, Clone)]
