@@ -15,9 +15,9 @@
  *    limitations under the License.
  */
 
-use rs_matter::interaction_model::core::IMStatusCode;
-use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
-use rs_matter::interaction_model::messages::GenericPath;
+use rs_matter::im::core::IMStatusCode;
+use rs_matter::im::messages::ib::{AttrPath, AttrStatus};
+use rs_matter::im::messages::GenericPath;
 use rs_matter::tlv::{Nullable, TLVValue};
 
 use crate::common::e2e::im::attributes::TestAttrData;

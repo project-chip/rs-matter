@@ -20,14 +20,14 @@ use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
 
-use crate::data_model::core::{DataModel, IMBuffer};
-use crate::data_model::objects::DataModelHandler;
-use crate::data_model::subscriptions::Subscriptions;
+use crate::dm::core::{DataModel, IMBuffer};
+use crate::dm::objects::DataModelHandler;
+use crate::dm::subscriptions::Subscriptions;
 use crate::error::Error;
-use crate::interaction_model::busy::BusyInteractionModel;
-use crate::interaction_model::core::PROTO_ID_INTERACTION_MODEL;
-use crate::secure_channel::busy::BusySecureChannel;
-use crate::secure_channel::core::SecureChannel;
+use crate::im::busy::BusyInteractionModel;
+use crate::im::core::PROTO_ID_INTERACTION_MODEL;
+use crate::sc::busy::BusySecureChannel;
+use crate::sc::core::SecureChannel;
 use crate::transport::exchange::Exchange;
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;

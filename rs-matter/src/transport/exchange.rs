@@ -23,8 +23,8 @@ use embassy_time::{Duration, Instant, Timer};
 
 use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
-use crate::interaction_model::{self, core::PROTO_ID_INTERACTION_MODEL};
-use crate::secure_channel::{self, common::PROTO_ID_SECURE_CHANNEL};
+use crate::im::{self, core::PROTO_ID_INTERACTION_MODEL};
+use crate::sc::{self, common::PROTO_ID_SECURE_CHANNEL};
 use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
@@ -507,12 +507,12 @@ impl MessageMeta {
     pub(crate) fn is_tlv(&self) -> bool {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => self
-                .opcode::<secure_channel::common::OpCode>()
+                .opcode::<sc::common::OpCode>()
                 .ok()
                 .map(|op| op.is_tlv())
                 .unwrap_or(false),
             PROTO_ID_INTERACTION_MODEL => self
-                .opcode::<interaction_model::core::OpCode>()
+                .opcode::<im::core::OpCode>()
                 .ok()
                 .map(|op| op.is_tlv())
                 .unwrap_or(false),
@@ -523,20 +523,20 @@ impl MessageMeta {
     /// Utility method to check if the protocol is Secure Channel, and the opcode is a standalone ACK (`MrpStandaloneAck`).
     pub(crate) fn is_standalone_ack(&self) -> bool {
         self.proto_id == PROTO_ID_SECURE_CHANNEL
-            && self.proto_opcode == secure_channel::common::OpCode::MRPStandAloneAck as u8
+            && self.proto_opcode == sc::common::OpCode::MRPStandAloneAck as u8
     }
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is Status.
     pub(crate) fn is_sc_status(&self) -> bool {
         self.proto_id == PROTO_ID_SECURE_CHANNEL
-            && self.proto_opcode == secure_channel::common::OpCode::StatusReport as u8
+            && self.proto_opcode == sc::common::OpCode::StatusReport as u8
     }
 
     /// Utility method to check if the protocol is Secure Channel, and the opcode is a new session request.
     pub(crate) fn is_new_session(&self) -> bool {
         self.proto_id == PROTO_ID_SECURE_CHANNEL
-            && (self.proto_opcode == secure_channel::common::OpCode::PBKDFParamRequest as u8
-                || self.proto_opcode == secure_channel::common::OpCode::CASESigma1 as u8)
+            && (self.proto_opcode == sc::common::OpCode::PBKDFParamRequest as u8
+                || self.proto_opcode == sc::common::OpCode::CASESigma1 as u8)
     }
 
     /// Utility method to check if the meta-data indicates a new exchange
@@ -550,14 +550,14 @@ impl Display for MessageMeta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => {
-                if let Ok(opcode) = self.opcode::<secure_channel::common::OpCode>() {
+                if let Ok(opcode) = self.opcode::<sc::common::OpCode>() {
                     write!(f, "SC::{:?}", opcode)
                 } else {
                     write!(f, "SC::{:02x}", self.proto_opcode)
                 }
             }
             PROTO_ID_INTERACTION_MODEL => {
-                if let Ok(opcode) = self.opcode::<interaction_model::core::OpCode>() {
+                if let Ok(opcode) = self.opcode::<im::core::OpCode>() {
                     write!(f, "IM::{:?}", opcode)
                 } else {
                     write!(f, "IM::{:02x}", self.proto_opcode)
@@ -573,14 +573,14 @@ impl defmt::Format for MessageMeta {
     fn format(&self, f: defmt::Formatter<'_>) {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => {
-                if let Ok(opcode) = self.opcode::<secure_channel::common::OpCode>() {
+                if let Ok(opcode) = self.opcode::<sc::common::OpCode>() {
                     defmt::write!(f, "SC::{:?}", opcode)
                 } else {
                     defmt::write!(f, "SC::{:02x}", self.proto_opcode)
                 }
             }
             PROTO_ID_INTERACTION_MODEL => {
-                if let Ok(opcode) = self.opcode::<interaction_model::core::OpCode>() {
+                if let Ok(opcode) = self.opcode::<im::core::OpCode>() {
                     defmt::write!(f, "IM::{:?}", opcode)
                 } else {
                     defmt::write!(f, "IM::{:02x}", self.proto_opcode)
@@ -1094,7 +1094,7 @@ impl<'a> Exchange<'a> {
             self.send_with(|exchange, _| {
                 Ok(exchange
                     .pending_ack()?
-                    .then_some(secure_channel::common::OpCode::MRPStandAloneAck.into()))
+                    .then_some(sc::common::OpCode::MRPStandAloneAck.into()))
             })
             .await?;
         }

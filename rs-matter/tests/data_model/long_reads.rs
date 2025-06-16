@@ -15,14 +15,14 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::objects::GlobalElements;
-use rs_matter::data_model::sdm::{adm_comm, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc};
-use rs_matter::data_model::system_model::{acl, desc};
-use rs_matter::data_model::{basic_info, on_off};
-use rs_matter::interaction_model::core::IMStatusCode;
-use rs_matter::interaction_model::messages::ib::AttrPath;
-use rs_matter::interaction_model::messages::msg::{StatusResp, SubscribeResp};
-use rs_matter::interaction_model::messages::GenericPath;
+use rs_matter::dm::objects::GlobalElements;
+use rs_matter::dm::sdm::{adm_comm, gen_comm, gen_diag, grp_key_mgmt, net_comm, noc};
+use rs_matter::dm::system_model::{acl, desc};
+use rs_matter::dm::{basic_info, on_off};
+use rs_matter::im::core::IMStatusCode;
+use rs_matter::im::messages::ib::AttrPath;
+use rs_matter::im::messages::msg::{StatusResp, SubscribeResp};
+use rs_matter::im::messages::GenericPath;
 
 use crate::attr_data;
 use crate::common::e2e::im::attributes::TestAttrResp;

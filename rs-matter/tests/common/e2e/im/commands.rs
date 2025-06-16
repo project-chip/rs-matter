@@ -15,9 +15,9 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::objects::{AsyncHandler, AsyncMetadata};
+use rs_matter::dm::objects::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::interaction_model::messages::ib::{CmdPath, CmdStatus};
+use rs_matter::im::messages::ib::{CmdPath, CmdStatus};
 use rs_matter::tlv::{TLVTag, TLVWrite, TLVWriter};
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};

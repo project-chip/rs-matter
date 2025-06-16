@@ -6,7 +6,7 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
-use crate::data_model::basic_info::BasicInfoConfig;
+use crate::dm::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::transport::network::{
     Address, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,

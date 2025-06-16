@@ -18,13 +18,11 @@
 use core::num::NonZeroU8;
 
 use rs_matter::acl::{gen_noc_cat, AclEntry, AuthMode, Target};
-use rs_matter::data_model::objects::Privilege;
-use rs_matter::data_model::system_model::acl::{self, ClusterHandler as _};
-use rs_matter::interaction_model::core::IMStatusCode;
-use rs_matter::interaction_model::messages::ib::{
-    AttrPath, AttrStatus, ClusterPath, DataVersionFilter,
-};
-use rs_matter::interaction_model::messages::GenericPath;
+use rs_matter::dm::objects::Privilege;
+use rs_matter::dm::system_model::acl::{self, ClusterHandler as _};
+use rs_matter::im::core::IMStatusCode;
+use rs_matter::im::messages::ib::{AttrPath, AttrStatus, ClusterPath, DataVersionFilter};
+use rs_matter::im::messages::GenericPath;
 
 use crate::common::e2e::im::attributes::{TestAttrData, TestAttrResp};
 use crate::common::e2e::im::echo_cluster::ATTR_WRITE_DEFAULT_VALUE;

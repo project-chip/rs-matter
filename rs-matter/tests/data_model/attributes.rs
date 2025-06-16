@@ -15,11 +15,11 @@
  *    limitations under the License.
  */
 
-use rs_matter::data_model::objects::GlobalElements;
-use rs_matter::data_model::on_off::{self, ClusterHandler as _};
-use rs_matter::interaction_model::core::IMStatusCode;
-use rs_matter::interaction_model::messages::ib::{AttrPath, AttrStatus};
-use rs_matter::interaction_model::messages::GenericPath;
+use rs_matter::dm::objects::GlobalElements;
+use rs_matter::dm::on_off::{self, ClusterHandler as _};
+use rs_matter::im::core::IMStatusCode;
+use rs_matter::im::messages::ib::{AttrPath, AttrStatus};
+use rs_matter::im::messages::GenericPath;
 
 use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
 use crate::common::e2e::ImEngine;

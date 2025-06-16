@@ -24,13 +24,13 @@ use num_derive::FromPrimitive;
 
 use strum::{EnumDiscriminants, FromRepr};
 
-use rs_matter::data_model::objects::{
+use rs_matter::dm::objects::{
     Access, AttrDataEncoder, AttrDataWriter, AttrType, Attribute, Cluster, CmdDataEncoder,
     CmdDataWriter, Command, Dataver, Handler, InvokeContext, NonBlockingHandler, Quality,
     ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::interaction_model::messages::ib::{attr_list_write, ListOperation};
+use rs_matter::im::messages::ib::{attr_list_write, ListOperation};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::{attribute_enum, attributes, command_enum, commands, with};
 
