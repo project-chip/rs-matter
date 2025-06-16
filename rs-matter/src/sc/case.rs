@@ -23,7 +23,7 @@ use crate::{
     crypto::{self, KeyPair, Sha256},
     error::{Error, ErrorCode},
     fabric::Fabric,
-    sc::common::{complete_with_status, sc_write, OpCode, SCStatusCodes},
+    sc::{complete_with_status, sc_write, OpCode, SCStatusCodes},
     tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite},
     transport::{
         exchange::Exchange,

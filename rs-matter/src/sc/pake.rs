@@ -20,7 +20,7 @@ use core::{fmt::Write, time::Duration};
 use crate::crypto;
 use crate::error::{Error, ErrorCode};
 use crate::mdns::{Mdns, ServiceMode};
-use crate::sc::common::{complete_with_status, OpCode};
+use crate::sc::{complete_with_status, OpCode};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::session::{ReservedSession, SessionMode};
@@ -29,8 +29,8 @@ use crate::utils::init::{init, try_init, Init};
 use crate::utils::maybe::Maybe;
 use crate::utils::rand::Rand;
 
-use super::common::SCStatusCodes;
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
+use super::SCStatusCodes;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

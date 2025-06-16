@@ -15,8 +15,21 @@
  *    limitations under the License.
  */
 
-pub mod case;
-pub mod common;
+use core::mem::MaybeUninit;
+
+use num_derive::FromPrimitive;
+
+use crate::error::*;
+use crate::respond::ExchangeHandler;
+use crate::transport::exchange::{Exchange, MessageMeta};
+use crate::utils::init::InitMaybeUninit;
+use crate::utils::storage::WriteBuf;
+
+use case::{Case, CaseSession};
+use pake::Pake;
+use spake2p::Spake2P;
+use status_report::{GeneralCode, StatusReport};
+
 #[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
 mod crypto_dummy;
 #[cfg(all(feature = "mbedtls", target_os = "espidf"))]
@@ -29,9 +42,164 @@ pub mod crypto_openssl;
 pub mod crypto_rustcrypto;
 
 pub mod busy;
-pub mod core;
+pub mod case;
 pub mod crypto;
 pub mod pake;
 pub mod spake2p;
 pub mod spake2p_test_vectors;
 pub mod status_report;
+
+/* Interaction Model ID as per the Matter Spec */
+pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
+
+#[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OpCode {
+    MsgCounterSyncReq = 0x00,
+    MsgCounterSyncResp = 0x01,
+    MRPStandAloneAck = 0x10,
+    PBKDFParamRequest = 0x20,
+    PBKDFParamResponse = 0x21,
+    PASEPake1 = 0x22,
+    PASEPake2 = 0x23,
+    PASEPake3 = 0x24,
+    CASESigma1 = 0x30,
+    CASESigma2 = 0x31,
+    CASESigma3 = 0x32,
+    CASESigma2Resume = 0x33,
+    StatusReport = 0x40,
+}
+
+impl OpCode {
+    pub fn meta(&self) -> MessageMeta {
+        MessageMeta {
+            proto_id: PROTO_ID_SECURE_CHANNEL,
+            proto_opcode: *self as u8,
+            reliable: !matches!(self, Self::MRPStandAloneAck),
+        }
+    }
+
+    pub fn is_tlv(&self) -> bool {
+        !matches!(
+            self,
+            Self::MRPStandAloneAck
+                | Self::StatusReport
+                | Self::MsgCounterSyncReq
+                | Self::MsgCounterSyncResp
+        )
+    }
+}
+
+impl From<OpCode> for MessageMeta {
+    fn from(op: OpCode) -> Self {
+        op.meta()
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SCStatusCodes {
+    SessionEstablishmentSuccess = 0,
+    NoSharedTrustRoots = 1,
+    InvalidParameter = 2,
+    CloseSession = 3,
+    Busy = 4,
+    SessionNotFound = 5,
+}
+
+impl SCStatusCodes {
+    pub fn reliable(&self) -> bool {
+        // CloseSession and Busy are sent without the R flag raised
+        !matches!(self, SCStatusCodes::CloseSession | SCStatusCodes::Busy)
+    }
+
+    pub fn as_report<'a>(&self, payload: &'a [u8]) -> StatusReport<'a> {
+        let general_code = match self {
+            SCStatusCodes::SessionEstablishmentSuccess => GeneralCode::Success,
+            SCStatusCodes::CloseSession => GeneralCode::Success,
+            SCStatusCodes::Busy => GeneralCode::Busy,
+            SCStatusCodes::InvalidParameter
+            | SCStatusCodes::NoSharedTrustRoots
+            | SCStatusCodes::SessionNotFound => GeneralCode::Failure,
+        };
+
+        StatusReport {
+            general_code,
+            proto_id: PROTO_ID_SECURE_CHANNEL as u32,
+            proto_code: *self as u16,
+            proto_data: payload,
+        }
+    }
+}
+
+pub async fn complete_with_status(
+    exchange: &mut Exchange<'_>,
+    status_code: SCStatusCodes,
+    payload: &[u8],
+) -> Result<(), Error> {
+    exchange
+        .send_with(|_, wb| sc_write(wb, status_code, payload))
+        .await
+}
+
+pub fn sc_write(
+    wb: &mut WriteBuf,
+    status_code: SCStatusCodes,
+    payload: &[u8],
+) -> Result<Option<MessageMeta>, Error> {
+    status_code.as_report(payload).write(wb)?;
+
+    Ok(Some(
+        OpCode::StatusReport.meta().reliable(status_code.reliable()),
+    ))
+}
+
+/// Handle messages related to the Secure Channel
+pub struct SecureChannel(());
+
+impl SecureChannel {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self(())
+    }
+
+    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+        if exchange.rx().is_err() {
+            exchange.recv_fetch().await?;
+        }
+
+        let meta = exchange.rx()?.meta();
+        if meta.proto_id != PROTO_ID_SECURE_CHANNEL {
+            Err(ErrorCode::InvalidProto)?;
+        }
+
+        match meta.opcode()? {
+            OpCode::PBKDFParamRequest => {
+                let mut spake2p = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                let spake2p = spake2p.init_with(Spake2P::init());
+                Pake::new().handle(exchange, spake2p).await
+            }
+            OpCode::CASESigma1 => {
+                let mut case_session = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                let case_session = case_session.init_with(CaseSession::init());
+                Case::new().handle(exchange, case_session).await
+            }
+            opcode => {
+                error!("Invalid opcode: {:?}", opcode);
+                Err(ErrorCode::InvalidOpcode.into())
+            }
+        }
+    }
+}
+
+impl Default for SecureChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExchangeHandler for SecureChannel {
+    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+        SecureChannel::handle(self, exchange).await
+    }
+}
