@@ -18,8 +18,8 @@
 use core::num::NonZeroU8;
 
 use rs_matter::acl::{gen_noc_cat, AclEntry, AuthMode, Target};
+use rs_matter::dm::clusters::acl::{self, ClusterHandler as _};
 use rs_matter::dm::objects::Privilege;
-use rs_matter::dm::system_model::acl::{self, ClusterHandler as _};
 use rs_matter::im::core::IMStatusCode;
 use rs_matter::im::messages::ib::{AttrPath, AttrStatus, ClusterPath, DataVersionFilter};
 use rs_matter::im::messages::GenericPath;

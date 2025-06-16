@@ -24,7 +24,7 @@ use crate::error::Error;
 use crate::sc::pake::PaseSessionType;
 use crate::tlv::Nullable;
 
-pub use crate::dm::clusters::administrator_commissioning::*;
+pub use crate::dm::clusters::decl::administrator_commissioning::*;
 use crate::transport::session::SessionMode;
 
 /// The system implementation of a handler for the Administrative Commissioning Matter cluster.

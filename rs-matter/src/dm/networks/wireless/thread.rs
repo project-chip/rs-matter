@@ -19,12 +19,11 @@
 
 use core::fmt::{Debug, Display};
 
+use crate::dm::clusters::net_comm::WirelessCreds;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, OctetsOwned, ToTLV};
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
-
-use crate::dm::sdm::net_comm::WirelessCreds;
 
 use super::{WirelessNetwork, WirelessNetworks};
 

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::im::core::IMStatusCode;
 use rs_matter::im::messages::ib::{CmdPath, CmdStatus};
 

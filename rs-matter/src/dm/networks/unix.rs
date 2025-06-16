@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use nix::ifaddrs::InterfaceAddress;
 use nix::net::if_::InterfaceFlags;
 
-use crate::dm::sdm::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
+use crate::dm::clusters::gen_diag::{InterfaceTypeEnum, NetifDiag, NetifInfo};
 use crate::error::{Error, ErrorCode};
 
 use super::NetChangeNotif;

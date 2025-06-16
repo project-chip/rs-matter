@@ -23,7 +23,7 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
-use crate::dm::basic_info::BasicInfoConfig;
+use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::mdns::{MdnsImpl, MdnsService};

@@ -28,7 +28,7 @@ use context::LockError;
 
 use session::{BTP_ACK_TIMEOUT_SECS, BTP_CONN_IDLE_TIMEOUT_SECS};
 
-use crate::dm::basic_info::BasicInfoConfig;
+use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::transport::network::{Address, BtAddr, NetworkReceive, NetworkSend};

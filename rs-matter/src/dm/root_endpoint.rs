@@ -18,22 +18,22 @@
 use crate::utils::rand::Rand;
 use crate::{devices, handler_chain_type};
 
-use super::basic_info::{self, BasicInfoHandler, ClusterHandler as _};
-use super::networks::eth::{EthNetCtl, EthNetwork};
-use super::objects::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
-use super::sdm::adm_comm::{self, AdminCommHandler, ClusterHandler as _};
-use super::sdm::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
-use super::sdm::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
-use super::sdm::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
-use super::sdm::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
-use super::sdm::net_comm::{
+use super::clusters::acl::{self, AclHandler, ClusterHandler as _};
+use super::clusters::adm_comm::{self, AdminCommHandler, ClusterHandler as _};
+use super::clusters::basic_info::{self, BasicInfoHandler, ClusterHandler as _};
+use super::clusters::desc::{self, ClusterHandler as _, DescHandler};
+use super::clusters::eth_diag::{self, ClusterHandler as _, EthDiagHandler};
+use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHandler};
+use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
+use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
+use super::clusters::net_comm::{
     self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
 };
-use super::sdm::noc::{self, ClusterHandler as _, NocHandler};
-use super::sdm::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
-use super::sdm::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
-use super::system_model::acl::{self, AclHandler, ClusterHandler as _};
-use super::system_model::desc::{self, ClusterHandler as _, DescHandler};
+use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
+use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
+use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
+use super::networks::eth::{EthNetCtl, EthNetwork};
+use super::objects::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
 
 /// A utility function to create a root (Endpoint 0) object using the requested operational network type.
 pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {

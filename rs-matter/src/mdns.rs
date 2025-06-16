@@ -17,7 +17,7 @@
 
 use core::fmt::Write;
 
-use crate::dm::basic_info::BasicInfoConfig;
+use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::Error;
 use crate::utils::init::{init, Init};
 

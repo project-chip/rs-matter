@@ -21,10 +21,10 @@ use core::{fmt::Display, num::NonZeroU8};
 
 use num_derive::FromPrimitive;
 
-use crate::dm::objects::{Access, ClusterId, EndptId, Privilege};
-use crate::dm::system_model::acl::{
+use crate::dm::clusters::acl::{
     AccessControlEntryAuthModeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
 };
+use crate::dm::objects::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::im::messages::GenericPath;

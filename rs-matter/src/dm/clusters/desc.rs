@@ -24,7 +24,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::{TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder};
 use crate::with;
 
-pub use crate::dm::clusters::descriptor::*;
+pub use crate::dm::clusters::decl::descriptor::*;
 
 /// A parts matcher suitable for regular Matter devices
 #[derive(Debug)]

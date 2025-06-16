@@ -17,13 +17,11 @@
 
 //! This module contains the `Networks` trait implementation and the `NetCtl` trait implementation for Ethernet.
 
-use crate::dm::sdm::net_comm::{
+use crate::dm::clusters::net_comm::{
     self, NetCtl, NetCtlError, NetCtlStatus, NetworkCommissioningStatusEnum, NetworkScanInfo,
-    NetworkType, NetworksError,
+    NetworkType, NetworksError, WirelessCreds,
 };
 use crate::error::{Error, ErrorCode};
-
-use crate::dm::sdm::net_comm::WirelessCreds;
 
 /// A fixed `Networks` trait implementation for Ethernet.
 ///

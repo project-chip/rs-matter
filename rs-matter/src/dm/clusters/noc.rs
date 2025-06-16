@@ -23,8 +23,8 @@ use core::num::NonZeroU8;
 
 use crate::cert::CertRef;
 use crate::crypto::{self, KeyPair};
+use crate::dm::clusters::dev_att;
 use crate::dm::objects::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
-use crate::dm::sdm::dev_att;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::{Fabric, MAX_SUPPORTED_FABRICS};
 use crate::tlv::{
@@ -37,7 +37,7 @@ use crate::utils::storage::WriteBuf;
 
 use super::dev_att::{DataType, DevAttDataFetcher};
 
-pub use crate::dm::clusters::operational_credentials::*;
+pub use crate::dm::clusters::decl::operational_credentials::*;
 
 impl NodeOperationalCertStatusEnum {
     fn map(result: Result<(), Error>) -> Result<Self, Error> {

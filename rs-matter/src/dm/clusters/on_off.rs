@@ -22,12 +22,11 @@
 
 use core::cell::Cell;
 
+use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
 use crate::with;
 
-use super::objects::{Cluster, Dataver, InvokeContext, ReadContext};
-
-pub use crate::dm::clusters::on_off::*;
+pub use crate::dm::clusters::decl::on_off::*;
 
 /// A sample implementation of a handler for the On/Off Matter cluster.
 #[derive(Clone, Debug)]

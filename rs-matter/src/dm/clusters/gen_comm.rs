@@ -21,7 +21,7 @@ use crate::dm::objects::{Cluster, Dataver, InvokeContext, ReadContext, WriteCont
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
 
-pub use crate::dm::clusters::general_commissioning::*;
+pub use crate::dm::clusters::decl::general_commissioning::*;
 use crate::with;
 
 impl CommissioningErrorEnum {

@@ -30,7 +30,7 @@ use crate::tlv::{
 };
 use crate::{clusters, with};
 
-pub use crate::dm::clusters::network_commissioning::*;
+pub use crate::dm::clusters::decl::network_commissioning::*;
 
 /// Network type supported by the `NetCtl` implementations
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
