@@ -66,8 +66,7 @@ use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, with};
-use rs_matter::{Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
 
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
 //
