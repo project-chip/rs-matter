@@ -18,7 +18,7 @@
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _, OnOffHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
-use rs_matter::dm::root_endpoint::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
+use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, AttrDataEncoder, ChainedHandler, CmdDataEncoder, Dataver,
     EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext, WriteContext,

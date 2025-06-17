@@ -43,8 +43,8 @@ pub use types::*;
 
 pub mod clusters;
 pub mod devices;
+pub mod endpoints;
 pub mod networks;
-pub mod root_endpoint;
 pub mod subscriptions;
 
 mod types;

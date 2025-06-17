@@ -31,8 +31,8 @@ use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
+use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::root_endpoint;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher,
@@ -43,7 +43,7 @@ use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, with};
@@ -118,7 +118,7 @@ const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
         // The root (0) endpoint - as usual.
-        root_endpoint::root_endpoint(NetworkType::Ethernet),
+        endpoints::root_endpoint(NetworkType::Ethernet),
         // When the node contains one or more bridged endpoints, we need
         // at least one endpoint that would serve as the aggregator endpoint and will thus
         // enumerate all bridged endpoints which are bridged e.g. using the same technology.
@@ -166,11 +166,11 @@ const NODE: Node<'static> = Node {
 fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
     (
         NODE,
-        root_endpoint::with_eth(
+        endpoints::with_eth(
             &(),
             &UnixNetifs,
             matter.rand(),
-            root_endpoint::with_sys(
+            endpoints::with_sys(
                 &false,
                 matter.rand(),
                 EmptyHandler
