@@ -573,7 +573,7 @@ impl defmt::Format for MessageMeta {
     fn format(&self, f: defmt::Formatter<'_>) {
         match self.proto_id {
             PROTO_ID_SECURE_CHANNEL => {
-                if let Ok(opcode) = self.opcode::<sc::common::OpCode>() {
+                if let Ok(opcode) = self.opcode::<sc::OpCode>() {
                     defmt::write!(f, "SC::{:?}", opcode)
                 } else {
                     defmt::write!(f, "SC::{:02x}", self.proto_opcode)
