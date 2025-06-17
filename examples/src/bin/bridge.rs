@@ -26,7 +26,6 @@ use std::net::UdpSocket;
 use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
@@ -49,6 +48,7 @@ use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, test_device, with};
+use rs_matter::{Matter, MATTER_PORT};
 
 use crate::bridged_device_basic_information::ClusterHandler as _;
 

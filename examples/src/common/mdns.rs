@@ -17,8 +17,8 @@
 
 //! A module containing the mDNS code used in the examples
 
-use rs_matter::core::Matter;
 use rs_matter::error::Error;
+use rs_matter::Matter;
 
 #[cfg(any(target_os = "macos", all(feature = "zeroconf", target_os = "linux")))]
 #[allow(unused)]
