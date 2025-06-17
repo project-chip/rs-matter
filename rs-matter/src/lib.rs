@@ -28,7 +28,7 @@
 //! use rs_matter::{Matter, CommissioningData};
 //! use rs_matter::dm::device_types::device_type_add_on_off_light;
 //! use rs_matter::dm::cluster_basic_information::BasicInfoConfig;
-//! use rs_matter::secure_channel::spake2p::VerifierData;
+//! use rs_matter::sc::spake2p::VerifierData;
 //!
 //! # use rs_matter::dm::sdm::dev_att::{DataType, DevAttDataFetcher};
 //! # use rs_matter::error::Error;

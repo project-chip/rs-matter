@@ -31,6 +31,7 @@ use p256::{
     ecdsa::{Signature, SigningKey, VerifyingKey},
     AffinePoint, EncodedPoint, PublicKey, SecretKey,
 };
+use rand_core::{CryptoRng, RngCore};
 use sha2::Digest;
 use x509_cert::{
     attr::AttributeType,
@@ -42,7 +43,6 @@ use x509_cert::{
 
 use crate::{
     error::{Error, ErrorCode},
-    sc::crypto_rustcrypto::RandRngCore,
     utils::{init::InitMaybeUninit, rand::Rand},
 };
 
@@ -50,6 +50,35 @@ type HmacSha256I = hmac::Hmac<sha2::Sha256>;
 type AesCcm = Ccm<Aes128, U16, U13>;
 
 extern crate alloc;
+
+pub struct RandRngCore(pub Rand);
+
+impl RngCore for RandRngCore {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0; 4];
+        self.fill_bytes(&mut buf);
+
+        u32::from_be_bytes(buf)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0; 8];
+        self.fill_bytes(&mut buf);
+
+        u64::from_be_bytes(buf)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        (self.0)(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for RandRngCore {}
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
