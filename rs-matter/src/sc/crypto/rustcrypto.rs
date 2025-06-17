@@ -22,10 +22,9 @@ use elliptic_curve::ops::*;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use elliptic_curve::Field;
 use elliptic_curve::PrimeField;
-use rand_core::CryptoRng;
-use rand_core::RngCore;
 use sha2::Digest;
 
+use crate::crypto::RandRngCore;
 use crate::error::Error;
 use crate::utils::rand::Rand;
 
@@ -310,42 +309,13 @@ impl CryptoSpake2 {
     }
 }
 
-pub struct RandRngCore(pub Rand);
-
-impl RngCore for RandRngCore {
-    fn next_u32(&mut self) -> u32 {
-        let mut buf = [0; 4];
-        self.fill_bytes(&mut buf);
-
-        u32::from_be_bytes(buf)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut buf = [0; 8];
-        self.fill_bytes(&mut buf);
-
-        u64::from_be_bytes(buf)
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        (self.0)(dest);
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-
-impl CryptoRng for RandRngCore {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use elliptic_curve::sec1::FromEncodedPoint;
 
-    use crate::sc::spake2p_test_vectors::test_vectors::*;
+    use crate::sc::spake2p::test_vectors::*;
 
     #[test]
     #[allow(non_snake_case)]

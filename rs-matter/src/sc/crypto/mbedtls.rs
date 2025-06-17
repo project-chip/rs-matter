@@ -306,9 +306,8 @@ impl CryptoSpake2 {
 
 #[cfg(test)]
 mod tests {
-
     use super::CryptoSpake2;
-    use crate::secure_channel::spake2p_test_vectors::test_vectors::*;
+    use crate::sc::spake2p::test_vectors::*;
     use mbedtls::bignum::Mpi;
     use mbedtls::ecp::EcPoint;
 

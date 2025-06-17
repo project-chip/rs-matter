@@ -16,12 +16,23 @@
  */
 
 #[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
-pub use super::crypto_dummy::CryptoSpake2;
+pub use self::dummy::CryptoSpake2;
 #[cfg(all(feature = "mbedtls", target_os = "espidf"))]
-pub use super::crypto_esp_mbedtls::CryptoSpake2;
+pub use self::esp_mbedtls::CryptoSpake2;
 #[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
-pub use super::crypto_mbedtls::CryptoSpake2;
+pub use self::mbedtls::CryptoSpake2;
 #[cfg(feature = "openssl")]
-pub use super::crypto_openssl::CryptoSpake2;
+pub use self::openssl::CryptoSpake2;
 #[cfg(feature = "rustcrypto")]
-pub use super::crypto_rustcrypto::CryptoSpake2;
+pub use self::rustcrypto::CryptoSpake2;
+
+#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+mod dummy;
+#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
+mod esp_mbedtls;
+#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
+mod mbedtls;
+#[cfg(feature = "openssl")]
+mod openssl;
+#[cfg(feature = "rustcrypto")]
+mod rustcrypto;

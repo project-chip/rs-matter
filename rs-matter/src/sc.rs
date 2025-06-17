@@ -30,23 +30,11 @@ use pake::Pake;
 use spake2p::Spake2P;
 use status_report::{GeneralCode, StatusReport};
 
-#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
-mod crypto_dummy;
-#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
-mod crypto_esp_mbedtls;
-#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
-mod crypto_mbedtls;
-#[cfg(feature = "openssl")]
-pub mod crypto_openssl;
-#[cfg(feature = "rustcrypto")]
-pub mod crypto_rustcrypto;
-
 pub mod busy;
 pub mod case;
 pub mod crypto;
 pub mod pake;
 pub mod spake2p;
-pub mod spake2p_test_vectors;
 pub mod status_report;
 
 /* Interaction Model ID as per the Matter Spec */
