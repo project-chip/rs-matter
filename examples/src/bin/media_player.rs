@@ -48,6 +48,7 @@ use media_playback::{
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::root_endpoint;
@@ -65,8 +66,7 @@ use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, test_device};
-use rs_matter::{devices, with};
+use rs_matter::{clusters, devices, with};
 use rs_matter::{Matter, MATTER_PORT};
 
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
@@ -88,9 +88,9 @@ fn main() -> Result<(), Error> {
 
     // Create the Matter object
     let matter = Matter::new_default(
-        &test_device::TEST_DEV_DET,
-        test_device::TEST_DEV_COMM,
-        &test_device::TEST_DEV_ATT,
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
         MdnsService::Builtin,
         MATTER_PORT,
     );

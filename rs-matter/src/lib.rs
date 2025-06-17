@@ -117,7 +117,6 @@ pub mod pairing;
 pub mod persist;
 pub mod respond;
 pub mod sc;
-pub mod test_device;
 pub mod tlv;
 pub mod transport;
 pub mod utils;

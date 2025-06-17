@@ -29,6 +29,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::root_endpoint;
@@ -45,7 +46,7 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, test_device, with};
+use rs_matter::{clusters, devices, with};
 use rs_matter::{Matter, MATTER_PORT};
 
 use crate::bridged_device_basic_information::ClusterHandler as _;
@@ -62,9 +63,9 @@ fn main() -> Result<(), Error> {
 
     // Create the Matter object
     let matter = Matter::new_default(
-        &test_device::TEST_DEV_DET,
-        test_device::TEST_DEV_COMM,
-        &test_device::TEST_DEV_ATT,
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
         MdnsService::Builtin,
         MATTER_PORT,
     );
