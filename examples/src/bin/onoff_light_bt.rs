@@ -36,7 +36,6 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use log::info;
 
-use rs_matter::core::Matter;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
@@ -61,6 +60,7 @@ use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::StdRawMutex;
+use rs_matter::Matter;
 use rs_matter::{clusters, test_device};
 use rs_matter::{devices, MATTER_PORT};
 

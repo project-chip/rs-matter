@@ -45,7 +45,6 @@ use media_playback::{
     SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
 
-use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _, OnOffHandler};
@@ -68,6 +67,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, test_device};
 use rs_matter::{devices, with};
+use rs_matter::{Matter, MATTER_PORT};
 
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
 //

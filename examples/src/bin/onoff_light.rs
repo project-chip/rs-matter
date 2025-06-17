@@ -27,7 +27,6 @@ use embassy_time::{Duration, Timer};
 
 use log::info;
 
-use rs_matter::core::{Matter, MATTER_PORT};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
@@ -49,6 +48,7 @@ use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, test_device};
+use rs_matter::{Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
