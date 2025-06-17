@@ -19,9 +19,9 @@ use core::iter::Empty;
 
 use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 
-use crate::codec::base38;
 use crate::error::ErrorCode;
 use crate::tlv::{EitherIter, TLVTag, TLV};
+use crate::utils::codec::base38;
 use crate::utils::storage::WriteBuf;
 
 use super::*;
