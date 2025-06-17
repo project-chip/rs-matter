@@ -29,9 +29,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
-use rs_matter::dm::device_types::{
-    DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT,
-};
+use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::root_endpoint;
 use rs_matter::dm::subscriptions::Subscriptions;

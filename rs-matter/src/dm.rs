@@ -42,7 +42,7 @@ use subscriptions::Subscriptions;
 pub use types::*;
 
 pub mod clusters;
-pub mod device_types;
+pub mod devices;
 pub mod networks;
 pub mod root_endpoint;
 pub mod subscriptions;
