@@ -30,6 +30,7 @@ use log::info;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::root_endpoint;
@@ -47,8 +48,7 @@ use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, test_device};
-use rs_matter::{Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -102,9 +102,9 @@ fn run() -> Result<(), Error> {
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
-        &test_device::TEST_DEV_DET,
-        test_device::TEST_DEV_COMM,
-        &test_device::TEST_DEV_ATT,
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
         MdnsService::Builtin,
         rs_matter::utils::epoch::sys_epoch,
         rs_matter::utils::rand::sys_rand,

@@ -40,6 +40,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{
@@ -61,8 +62,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::StdRawMutex;
 use rs_matter::Matter;
-use rs_matter::{clusters, test_device};
-use rs_matter::{devices, MATTER_PORT};
+use rs_matter::{clusters, devices, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -77,9 +77,9 @@ fn main() -> Result<(), Error> {
 
     // Create the Matter object
     let matter = Matter::new_default(
-        &test_device::TEST_DEV_DET,
-        test_device::TEST_DEV_COMM,
-        &test_device::TEST_DEV_ATT,
+        &TEST_DEV_DET,
+        TEST_DEV_COMM,
+        &TEST_DEV_ATT,
         MdnsService::Builtin,
         MATTER_PORT,
     );
@@ -147,11 +147,7 @@ fn main() -> Result<(), Error> {
 
         // The BTP transport impl
         let btp = Btp::new_builtin(&BTP_CONTEXT);
-        let mut bluetooth = pin!(btp.run(
-            "MT",
-            &test_device::TEST_DEV_DET,
-            test_device::TEST_DEV_COMM.discriminator
-        ));
+        let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
         let mut transport = pin!(matter.run(&btp, &btp, DiscoveryCapabilities::BLE));
         let mut wifi_prov_task = pin!(async {
