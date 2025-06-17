@@ -15,10 +15,14 @@
  *    limitations under the License.
  */
 
-//! A module that re-exports the standard `bitflags!` macro if `defmt` is not enabled, or `defmt::bitflags!` if `defmt` is enabled.
-
-#[cfg(not(feature = "defmt"))]
-pub use bitflags::bitflags;
-
-#[cfg(feature = "defmt")]
-pub use defmt::bitflags;
+pub mod bitflags;
+pub mod cell;
+pub mod codec;
+pub mod epoch;
+pub mod init;
+pub mod iter;
+pub mod maybe;
+pub mod rand;
+pub mod select;
+pub mod storage;
+pub mod sync;

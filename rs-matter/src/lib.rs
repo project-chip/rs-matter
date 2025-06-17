@@ -105,7 +105,6 @@ pub(crate) mod fmt;
 
 pub mod acl;
 pub mod cert;
-pub mod codec;
 pub mod crypto;
 pub mod dm;
 pub mod error;
