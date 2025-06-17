@@ -32,8 +32,8 @@ use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::root_endpoint;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
@@ -44,7 +44,7 @@ use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
+use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -196,7 +196,7 @@ fn run() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint::root_endpoint(NetworkType::Ethernet),
+        endpoints::root_endpoint(NetworkType::Ethernet),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -213,11 +213,11 @@ fn dm_handler<'a>(
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
-        root_endpoint::with_eth(
+        endpoints::with_eth(
             &(),
             &UnixNetifs,
             matter.rand(),
-            root_endpoint::with_sys(
+            endpoints::with_sys(
                 &false,
                 matter.rand(),
                 EmptyHandler

@@ -42,11 +42,11 @@ use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,
 };
-use rs_matter::dm::root_endpoint;
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
@@ -56,8 +56,8 @@ use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::transport::core::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
+use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::StdRawMutex;
@@ -191,7 +191,7 @@ fn main() -> Result<(), Error> {
 const NODE: Node<'static> = Node {
     id: 0,
     endpoints: &[
-        root_endpoint::root_endpoint(NetworkType::Wifi),
+        endpoints::root_endpoint(NetworkType::Wifi),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
@@ -213,13 +213,13 @@ where
 {
     (
         NODE,
-        root_endpoint::with_wifi(
+        endpoints::with_wifi(
             &(),
             &UnixNetifs,
             net_ctl,
             networks,
             matter.rand(),
-            root_endpoint::with_sys(
+            endpoints::with_sys(
                 &false,
                 matter.rand(),
                 EmptyHandler

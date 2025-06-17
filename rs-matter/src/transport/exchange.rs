@@ -29,13 +29,13 @@ use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
 
-use super::core::{Packet, PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 use super::mrp::{ReliableMessage, RetransEntry};
 use super::network;
 use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
 use super::session::Session;
+use super::{Packet, PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 // TODO: Revisit with large packets
