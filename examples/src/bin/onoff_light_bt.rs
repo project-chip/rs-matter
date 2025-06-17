@@ -40,7 +40,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
 use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
-use rs_matter::dm::device_types::DEV_TYPE_ON_OFF_LIGHT;
+use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{
     NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,

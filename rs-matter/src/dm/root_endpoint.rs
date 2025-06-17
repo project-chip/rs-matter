@@ -39,7 +39,7 @@ use super::types::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatche
 pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {
     Endpoint {
         id: ROOT_ENDPOINT_ID,
-        device_types: devices!(super::device_types::DEV_TYPE_ROOT_NODE),
+        device_types: devices!(super::devices::DEV_TYPE_ROOT_NODE),
         clusters: net_type.root_clusters(),
     }
 }
