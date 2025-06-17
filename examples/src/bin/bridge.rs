@@ -46,8 +46,7 @@ use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, with};
-use rs_matter::{Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
 
 use crate::bridged_device_basic_information::ClusterHandler as _;
 

@@ -61,8 +61,7 @@ use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::StdRawMutex;
-use rs_matter::Matter;
-use rs_matter::{clusters, devices, MATTER_PORT};
+use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
