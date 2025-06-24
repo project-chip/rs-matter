@@ -12,26 +12,26 @@
 Scales from bare-metal MCUs with 1MB flash and 256KB RAM to ARM embedded Linux and bigger iron!
 
 Rather than a shrink-wrapped solution, it is first and formeost - a **toolkit**.
-Users are free to consume all of the API, including the provided system clusters, or only pick up bits and pieces. As in
+Users are free to consume all of the APIs, including the provided system clusters, or only pick up bits and pieces. As in:
 * ... re-using the transport layer and Secure Channel, but implementing their own Data Model;
 * ... custom Exchange responders;
 * ... custom mDNS provider;
 * ... custom IP network implementation and BLE GATT device implementation;
 * ... flexible polling of the `rs-matter` futures as e.g. separate tasks in their async executor of choice;
-* ... or just using the shrink-wrapped [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) and its down-tream crates arrangement;
+* ... or just using the shrink-wrapped [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) arrangement and its down-stream crates;
 * ... and so on.
 
 ## I just want to run Matter on my MCU!
 
-* To run `rs-matter` on baremetal MCUs with [Embassy](https://github.com/embassy-rs/embassy), look at [`rs-matter-embassy`](https://github.com/ivmarkov/rs-matter-stack). Currently supported MCUs:
-  *  Espressif Esp32XX
-  *  Nordic NRF 52840
-  *  RP Zero and RP Zero W
+* To run `rs-matter` on baremetal MCUs with [Embassy](https://github.com/embassy-rs/embassy), look at [`rs-matter-embassy`](https://github.com/ivmarkov/rs-matter-embassy). Currently supported MCUs:
+  *  Espressif ESP32XX
+  *  Nordic NRF52840
+  *  RP2040 Pico and RP2040 Pico W
 * To run `rs-matter` on top of the [ESP-IDF](https://github.com/esp-rs/esp-idf-svc) with Espressif MCUs, look at [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter)
 
 ## Documentation
 
-We'll have an `rs-matter` Rust Book in future, but in the meantime - look at the [examples](https://github.com/project-chip/rs-matter/tree/examples), as well as the code documentation.
+We'll have an `rs-matter` Rust Book in future, but in the meantime - look at the [examples](examples), as well as the code documentation.
 Use the [discussions](https://github.com/project-chip/rs-matter/discussions) to ask questions.
 
 ## Status Quo
@@ -56,9 +56,9 @@ Also look at all [open issues](https://github.com/project-chip/rs-matter/issues)
 
 ## How does it look like?
 
-See the [examples](https://github.com/project-chip/rs-matter/tree/examples).
+See the [examples](examples).
 
-Note that using the "Matter Stack" metaphor of [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) / [`rs-matter-embassy`](https://github.com/ivmarkov/rs-matter-stack) / [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) results in less bootstrapping boilerplate.
+Note that using the "Matter Stack" metaphor of [`rs-matter-stack`](https://github.com/ivmarkov/rs-matter-stack) / [`rs-matter-embassy`](https://github.com/ivmarkov/rs-matter-embassy) / [`esp-idf-matter`](https://github.com/ivmarkov/esp-idf-matter) results in less bootstrapping boilerplate.
 
 ```rust
 /*
@@ -434,31 +434,19 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
 ## Build
 
-### Building the library
+### Building the library and all examples
 
-```
+```sh
 $ cargo build
 ```
 
-### Building and running the On-Off Light example (Linux, MacOS X)
-
-```
-$ cargo run --example onoff_light
-```
-
-### Building all examples (Linux, MacOS X)
-
-```
-$ cargo build --examples
-```
-
-NOTE: If you are on Linux and are running the Avahi daemon, you might want to build with:
-```
-$ cargo build --examples --features zeroconf
+**NOTE**: If you are on Linux **and** are running the Avahi daemon, you might want to build with:
+```sh
+$ cargo build --features zeroconf
 ```
 
 ### Unit Tests
-```
+```sh
 $ cargo test -- --test-threads 1
 ```
 
@@ -466,19 +454,19 @@ $ cargo test -- --test-threads 1
 
 With the [`chip-tool` (the current tool for testing Matter)](https://github.com/project-chip/connectedhomeip/blob/master/examples/chip-tool/README.md) use the Ethernet commissioning mechanism:
 
-```
+```sh
 $ chip-tool pairing code 12344321 <Pairing-Code>
 ```
 
 Or alternatively:
 
-```
+```sh
 $ chip-tool pairing ethernet 12344321 123456 0 <IP-Address> 5540
 ```
 
 Interact with the device
 
-```
+```sh
 # Read server-list
 $ chip-tool descriptor read server-list 12344321 0
 
