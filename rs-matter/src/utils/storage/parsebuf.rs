@@ -15,18 +15,24 @@
  *    limitations under the License.
  */
 
+use core::borrow::{Borrow, BorrowMut};
+
 use crate::error::*;
 use byteorder::{ByteOrder, LittleEndian};
 
-pub struct ParseBuf<'a> {
-    buf: &'a mut [u8],
+/// A buffer for reading data from a byte slice.
+pub struct ReadBuf<T> {
+    buf: T,
     read_off: usize,
     left: usize,
 }
 
-impl<'a> ParseBuf<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        let left = buf.len();
+impl<T> ReadBuf<T>
+where
+    T: Borrow<[u8]>,
+{
+    pub fn new(buf: T) -> Self {
+        let left = buf.borrow().len();
 
         Self {
             buf,
@@ -37,15 +43,20 @@ impl<'a> ParseBuf<'a> {
 
     pub fn reset(&mut self) {
         self.read_off = 0;
-        self.left = self.buf.len();
+        self.left = self.buf.borrow().len();
     }
 
-    pub fn load(&mut self, pb: &ParseBuf) -> Result<(), Error> {
-        if self.buf.len() < pb.read_off + pb.left {
+    pub fn load<Q>(&mut self, pb: &ReadBuf<Q>) -> Result<(), Error>
+    where
+        T: BorrowMut<[u8]>,
+        Q: Borrow<[u8]>,
+    {
+        if self.buf.borrow().len() < pb.read_off + pb.left {
             Err(ErrorCode::NoSpace)?;
         }
 
-        self.buf[0..pb.read_off + pb.left].copy_from_slice(&pb.buf[..pb.read_off + pb.left]);
+        self.buf.borrow_mut()[0..pb.read_off + pb.left]
+            .copy_from_slice(&pb.buf.borrow()[..pb.read_off + pb.left]);
         self.read_off = pb.read_off;
         self.left = pb.left;
 
@@ -62,22 +73,25 @@ impl<'a> ParseBuf<'a> {
 
     // Return the data that is valid as a slice
     pub fn as_slice(&self) -> &[u8] {
-        &self.buf[self.read_off..(self.read_off + self.left)]
+        &self.buf.borrow()[self.read_off..(self.read_off + self.left)]
     }
 
     // Return the data that is valid as a slice
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf[self.read_off..(self.read_off + self.left)]
+    pub fn as_mut_slice(&mut self) -> &mut [u8]
+    where
+        T: BorrowMut<[u8]>,
+    {
+        &mut self.buf.borrow_mut()[self.read_off..(self.read_off + self.left)]
     }
 
     pub fn parsed_as_slice(&self) -> &[u8] {
-        &self.buf[0..self.read_off]
+        &self.buf.borrow()[0..self.read_off]
     }
 
     pub fn tail(&mut self, size: usize) -> Result<&[u8], Error> {
         if size <= self.left {
             let end_offset = self.read_off + self.left;
-            let tail = &self.buf[(end_offset - size)..end_offset];
+            let tail = &self.buf.borrow()[(end_offset - size)..end_offset];
             self.left -= size;
             return Ok(tail);
         }
@@ -89,12 +103,12 @@ impl<'a> ParseBuf<'a> {
         self.left -= len;
     }
 
-    pub fn parse_head_with<F, T>(&mut self, size: usize, f: F) -> Result<T, Error>
+    pub fn parse_head_with<F, R>(&mut self, size: usize, f: F) -> Result<R, Error>
     where
-        F: FnOnce(&mut Self) -> T,
+        F: FnOnce(&mut Self) -> R,
     {
         if self.left >= size {
-            let data: T = f(self);
+            let data = f(self);
             self.advance(size);
             return Ok(data);
         }
@@ -102,21 +116,23 @@ impl<'a> ParseBuf<'a> {
     }
 
     pub fn le_u8(&mut self) -> Result<u8, Error> {
-        self.parse_head_with(1, |x| x.buf[x.read_off])
+        self.parse_head_with(1, |x| x.buf.borrow()[x.read_off])
     }
 
     pub fn le_u16(&mut self) -> Result<u16, Error> {
-        self.parse_head_with(2, |x| LittleEndian::read_u16(&x.buf[x.read_off..]))
+        self.parse_head_with(2, |x| LittleEndian::read_u16(&x.buf.borrow()[x.read_off..]))
     }
 
     pub fn le_u32(&mut self) -> Result<u32, Error> {
-        self.parse_head_with(4, |x| LittleEndian::read_u32(&x.buf[x.read_off..]))
+        self.parse_head_with(4, |x| LittleEndian::read_u32(&x.buf.borrow()[x.read_off..]))
     }
 
     pub fn le_u64(&mut self) -> Result<u64, Error> {
-        self.parse_head_with(8, |x| LittleEndian::read_u64(&x.buf[x.read_off..]))
+        self.parse_head_with(8, |x| LittleEndian::read_u64(&x.buf.borrow()[x.read_off..]))
     }
 }
+
+pub type ParseBuf<'a> = ReadBuf<&'a mut [u8]>;
 
 #[cfg(test)]
 mod tests {
@@ -167,7 +183,7 @@ mod tests {
         assert_eq!(buf.le_u32().unwrap(), 0xcafebabe);
 
         assert_eq!(buf.tail(2).unwrap(), [0xc, 0xd]);
-        assert_eq!(buf.as_mut_slice(), [0xa, 0xb]);
+        assert_eq!(buf.as_slice(), [0xa, 0xb]);
 
         assert_eq!(buf.tail(2).unwrap(), [0xa, 0xb]);
         assert_eq!(buf.as_slice(), [] as [u8; 0]);

@@ -23,7 +23,7 @@ use crate::{
     crypto::{self, KeyPair, Sha256},
     error::{Error, ErrorCode},
     fabric::Fabric,
-    sc::{complete_with_status, sc_write, OpCode, SCStatusCodes},
+    sc::{check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes},
     tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite},
     transport::{
         exchange::Exchange,
@@ -115,7 +115,7 @@ impl Case {
         case_session: &mut CaseSession,
         mut session: ReservedSession<'_>,
     ) -> Result<(), Error> {
-        exchange.rx()?.meta().check_opcode(OpCode::CASESigma3)?;
+        check_opcode(exchange, OpCode::CASESigma3)?;
 
         let status = {
             let fabric_mgr = exchange.matter().fabric_mgr.borrow();
@@ -221,7 +221,7 @@ impl Case {
         exchange: &mut Exchange<'_>,
         case_session: &mut CaseSession,
     ) -> Result<(), Error> {
-        exchange.rx()?.meta().check_opcode(OpCode::CASESigma1)?;
+        check_opcode(exchange, OpCode::CASESigma1)?;
 
         let root = get_root_node_struct(exchange.rx()?.payload())?;
         let r = Sigma1Req::from_tlv(&root)?;
@@ -288,16 +288,11 @@ impl Case {
                     return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
                 };
 
-                tw.start_struct(&TLVTag::Anonymous)?;
-                tw.str(&TLVTag::Context(1), &*our_random)?;
-                tw.u16(&TLVTag::Context(2), local_sessid)?;
-                tw.str(&TLVTag::Context(3), &case_session.our_pub_key)?;
-
-                // Use the remainder of the TX buffer as scratch space for performing signature
-                let sign_buf = tw.empty_as_mut_slice();
-
                 let mut signature = MaybeUninit::<[u8; crypto::EC_SIGNATURE_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
                 let signature = signature.init_zeroed();
+
+                // Use the remainder of the TX buffer as scratch space for computing the signature
+                let sign_buf = tw.empty_as_mut_slice();
 
                 let sign_len = Case::get_sigma2_sign(
                     fabric,
@@ -308,6 +303,11 @@ impl Case {
                 )?;
 
                 let signature = &signature[..sign_len];
+
+                tw.start_struct(&TLVTag::Anonymous)?;
+                tw.str(&TLVTag::Context(1), &*our_random)?;
+                tw.u16(&TLVTag::Context(2), local_sessid)?;
+                tw.str(&TLVTag::Context(3), &case_session.our_pub_key)?;
 
                 tw.str_cb(&TLVTag::Context(4), |buf| {
                     Case::get_sigma2_encryption(

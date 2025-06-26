@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::borrow::Borrow;
 use core::mem::MaybeUninit;
 
 use num_derive::FromPrimitive;
@@ -23,7 +24,7 @@ use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::utils::init::InitMaybeUninit;
-use crate::utils::storage::{ParseBuf, WriteBuf};
+use crate::utils::storage::{ReadBuf, WriteBuf};
 
 use case::{Case, CaseSession};
 use pake::Pake;
@@ -174,7 +175,10 @@ pub struct StatusReport<'a> {
 }
 
 impl<'a> StatusReport<'a> {
-    pub fn read(pb: &'a mut ParseBuf) -> Result<Self, Error> {
+    pub fn read<T>(pb: &'a mut ReadBuf<T>) -> Result<Self, Error>
+    where
+        T: Borrow<[u8]>,
+    {
         Ok(Self {
             general_code: num::FromPrimitive::from_u16(pb.le_u16()?)
                 .ok_or(ErrorCode::InvalidOpcode)?,
@@ -241,5 +245,31 @@ impl Default for SecureChannel {
 impl ExchangeHandler for SecureChannel {
     async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         SecureChannel::handle(self, exchange).await
+    }
+}
+
+/// Check that the opcode of the received message matches the expected one.
+/// Logs an error if that's not the case, and if the opcode is `StatusReport`,
+/// it also logs the details of the status report.
+fn check_opcode(exchange: &Exchange<'_>, opcode: OpCode) -> Result<(), Error> {
+    let meta = exchange.rx()?.meta();
+    let their_opcode = meta.opcode::<OpCode>()?;
+
+    if their_opcode == opcode {
+        Ok(())
+    } else {
+        error!("Invalid opcode: {:?}, expected: {:?}", their_opcode, opcode);
+
+        if matches!(their_opcode, OpCode::StatusReport) {
+            let mut rb = ReadBuf::new(exchange.rx()?.payload());
+
+            // Show the status code details in the log
+            match StatusReport::read(&mut rb) {
+                Ok(status_report) => error!("Status Report: {:?}", status_report),
+                Err(e) => error!("Failed to parse Status Report: {:?}", e),
+            }
+        }
+
+        Err(ErrorCode::Invalid.into())
     }
 }
