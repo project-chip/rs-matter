@@ -24,7 +24,7 @@ use crate::{
     error::{Error, ErrorCode},
     fabric::Fabric,
     sc::{check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes},
-    tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite},
+    tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV},
     transport::{
         exchange::Exchange,
         session::{NocCatIds, ReservedSession, SessionMode},
@@ -577,6 +577,29 @@ struct Sigma1Req<'a> {
     initiator_sessid: u16,
     dest_id: OctetStr<'a>,
     peer_pub_key: OctetStr<'a>,
+    session_parameters: Option<SessionParameters>,
+    resumption_id: Option<OctetStr<'a>>,
+    initiator_resume_mic: Option<OctetStr<'a>>,
+}
+
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(start = 1)]
+struct SessionParameters {
+    /// Session Idle Interval
+    sii: Option<u32>,
+    /// Session Active Interval
+    sai: Option<u32>,
+    /// Session Active Threshold
+    sat: Option<u16>,
+    /// Data Model Revision
+    dm_revision: Option<u16>,
+    /// Interaction Model Revision
+    im_revision: Option<u16>,
+    /// Specification Version
+    spec_version: Option<u32>,
+    /// Maximum number of paths per invoke
+    max_paths_per_invoke: Option<u16>,
 }
 
 #[derive(FromTLV, Debug)]
