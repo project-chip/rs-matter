@@ -226,11 +226,7 @@ where
 /// - `comm_policy`: The commissioning policy to be used for the `GenCommHandler`.
 /// - `rand`: A random number generator.
 /// - `handler`: The handler to be decorated.
-pub fn with_sys<'a, H>(
-    comm_policy: &'a dyn CommPolicy,
-    rand: Rand,
-    handler: H,
-) -> SysHandler<'a, H> {
+pub fn with_sys<H>(comm_policy: &dyn CommPolicy, rand: Rand, handler: H) -> SysHandler<'_, H> {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
         Async(GrpKeyMgmtHandler::new(Dataver::new_rand(rand)).adapt()),

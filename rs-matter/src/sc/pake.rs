@@ -20,7 +20,7 @@ use core::{fmt::Write, time::Duration};
 use crate::crypto;
 use crate::error::{Error, ErrorCode};
 use crate::mdns::{Mdns, ServiceMode};
-use crate::sc::{complete_with_status, OpCode};
+use crate::sc::{check_opcode, complete_with_status, OpCode};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::session::{ReservedSession, SessionMode};
@@ -254,7 +254,7 @@ impl Pake {
         mut session: ReservedSession<'_>,
         spake2p: &mut Spake2P,
     ) -> Result<(), Error> {
-        exchange.rx()?.meta().check_opcode(OpCode::PASEPake3)?;
+        check_opcode(exchange, OpCode::PASEPake3)?;
 
         let cA = extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
         let (status, ke) = spake2p.handle_cA(cA);
@@ -314,7 +314,7 @@ impl Pake {
         exchange: &mut Exchange<'_>,
         spake2p: &mut Spake2P,
     ) -> Result<(), Error> {
-        exchange.rx()?.meta().check_opcode(OpCode::PASEPake1)?;
+        check_opcode(exchange, OpCode::PASEPake1)?;
 
         let pA = extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
         let mut pB: [u8; 65] = [0; 65];
@@ -346,8 +346,9 @@ impl Pake {
         exchange: &mut Exchange<'_>,
         spake2p: &mut Spake2P,
     ) -> Result<(), Error> {
+        check_opcode(exchange, OpCode::PBKDFParamRequest)?;
+
         let rx = exchange.rx()?;
-        rx.meta().check_opcode(OpCode::PBKDFParamRequest)?;
 
         let mut our_random = [0; 32];
         let mut initiator_random = [0; 32];

@@ -258,7 +258,7 @@ impl ProtoHdr {
             self.ack_msg_ctr = parsebuf.le_u32()?;
         }
         trace!("[decode] {}", self);
-        trace!("[rx payload]: {}", Bytes(parsebuf.as_mut_slice()));
+        trace!("[rx payload]: {}", Bytes(parsebuf.as_slice()));
         Ok(())
     }
 
