@@ -31,7 +31,6 @@ use crate::{
     },
     utils::{
         init::{init, zeroed, Init, InitMaybeUninit},
-        rand::Rand,
         storage::WriteBuf,
     },
 };
@@ -276,6 +275,10 @@ impl Case {
         let our_random = our_random.init_zeroed();
         (exchange.matter().rand())(our_random);
 
+        let mut resumption_id = MaybeUninit::<[u8; 16]>::uninit(); // TODO MEDIUM BUFFER
+        let resumption_id = resumption_id.init_zeroed();
+        (exchange.matter().rand())(resumption_id);
+
         let mut hash_updated = false;
         exchange
             .send_with(|exchange, tw| {
@@ -312,10 +315,10 @@ impl Case {
                 tw.str_cb(&TLVTag::Context(4), |buf| {
                     Case::get_sigma2_encryption(
                         fabric,
-                        exchange.matter().rand(),
                         &*our_random,
                         case_session,
                         signature,
+                        resumption_id,
                         buf,
                     )
                 })?;
@@ -491,15 +494,12 @@ impl Case {
 
     fn get_sigma2_encryption(
         fabric: &Fabric,
-        rand: Rand,
         our_random: &[u8],
         case_session: &CaseSession,
         signature: &[u8],
+        resumption_id: &[u8],
         out: &mut [u8],
     ) -> Result<usize, Error> {
-        let mut resumption_id: [u8; 16] = [0; 16];
-        rand(&mut resumption_id);
-
         let mut sigma2_key = [0_u8; crypto::SYMM_KEY_LEN_BYTES];
         Case::get_sigma2_key(
             fabric.ipk().op_key(),
@@ -517,7 +517,7 @@ impl Case {
         };
 
         tw.str(&TLVTag::Context(3), signature)?;
-        tw.str(&TLVTag::Context(4), &resumption_id)?;
+        tw.str(&TLVTag::Context(4), resumption_id)?;
         tw.end_container()?;
         //println!("TBE is {:x?}", write_buf.as_borrow_slice());
         let nonce: [u8; crypto::AEAD_NONCE_LEN_BYTES] = [
