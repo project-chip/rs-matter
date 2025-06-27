@@ -275,6 +275,12 @@ impl Case {
         let resumption_id = resumption_id.init_zeroed();
         (exchange.matter().rand())(resumption_id);
 
+        let mut tt_hash = MaybeUninit::<[u8; crypto::SHA256_HASH_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+        let tt_hash = tt_hash.init_zeroed();
+        unwrap!(case_session.tt_hash.as_ref())
+            .clone()
+            .finish(tt_hash)?;
+
         let mut hash_updated = false;
         exchange
             .send_with(|exchange, tw| {
@@ -312,7 +318,9 @@ impl Case {
                     Case::get_sigma2_encryption(
                         fabric,
                         &*our_random,
-                        case_session,
+                        &case_session.our_pub_key,
+                        tt_hash,
+                        &case_session.shared_secret,
                         signature,
                         resumption_id,
                         buf,
@@ -462,7 +470,9 @@ impl Case {
     fn get_sigma2_key(
         ipk: &[u8],
         our_random: &[u8],
-        case_session: &CaseSession,
+        our_pub_key: &[u8],
+        our_hash: &[u8],
+        shared_secret: &[u8],
         key: &mut [u8],
     ) -> Result<(), Error> {
         const S2K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x32];
@@ -472,26 +482,23 @@ impl Case {
         let mut salt = heapless::Vec::<u8, 256>::new();
         unwrap!(salt.extend_from_slice(ipk));
         unwrap!(salt.extend_from_slice(our_random));
-        unwrap!(salt.extend_from_slice(&case_session.our_pub_key));
+        unwrap!(salt.extend_from_slice(our_pub_key));
+        unwrap!(salt.extend_from_slice(our_hash));
 
-        let tt = unwrap!(case_session.tt_hash.as_ref()).clone();
-
-        let mut tt_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
-        tt.finish(&mut tt_hash)?;
-        unwrap!(salt.extend_from_slice(&tt_hash));
-        //        println!("Sigma2Key: salt: {:x?}, len: {}", salt, salt.len());
-
-        crypto::hkdf_sha256(salt.as_slice(), &case_session.shared_secret, &S2K_INFO, key)
+        crypto::hkdf_sha256(salt.as_slice(), shared_secret, &S2K_INFO, key)
             .map_err(|_x| ErrorCode::NoSpace)?;
         //        println!("Sigma2Key: key: {:x?}", key);
 
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn get_sigma2_encryption(
         fabric: &Fabric,
         our_random: &[u8],
-        case_session: &CaseSession,
+        our_pub_key: &[u8],
+        our_hash: &[u8],
+        shared_secret: &[u8],
         signature: &[u8],
         resumption_id: &[u8],
         out: &mut [u8],
@@ -500,7 +507,9 @@ impl Case {
         Case::get_sigma2_key(
             fabric.ipk().op_key(),
             our_random,
-            case_session,
+            our_pub_key,
+            our_hash,
+            shared_secret,
             &mut sigma2_key,
         )?;
 
