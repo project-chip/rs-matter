@@ -20,7 +20,7 @@ use core::{fmt::Write, time::Duration};
 use crate::crypto;
 use crate::error::{Error, ErrorCode};
 use crate::mdns::{Mdns, ServiceMode};
-use crate::sc::{check_opcode, complete_with_status, OpCode};
+use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::session::{ReservedSession, SessionMode};
@@ -529,4 +529,5 @@ struct PBKDFParamReq<'a> {
     initiator_ssid: u16,
     passcode_id: u16,
     has_params: bool,
+    session_parameters: Option<SessionParameters>,
 }

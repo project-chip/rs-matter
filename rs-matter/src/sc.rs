@@ -22,6 +22,7 @@ use num_derive::FromPrimitive;
 
 use crate::error::*;
 use crate::respond::ExchangeHandler;
+use crate::tlv::{FromTLV, ToTLV};
 use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
@@ -162,6 +163,28 @@ pub enum GeneralCode {
     AlreadyExists = 14,
     PermissionDenied = 15,
     DataLoss = 16,
+}
+
+/// Represents the session parameters
+/// that might present in a "PBKDFParamRequest" or "CASE-Sigma1" message
+#[derive(FromTLV, ToTLV, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(start = 1)]
+struct SessionParameters {
+    /// Session Idle Interval
+    sii: Option<u32>,
+    /// Session Active Interval
+    sai: Option<u32>,
+    /// Session Active Threshold
+    sat: Option<u16>,
+    /// Data Model Revision
+    dm_revision: Option<u16>,
+    /// Interaction Model Revision
+    im_revision: Option<u16>,
+    /// Specification Version
+    spec_version: Option<u32>,
+    /// Maximum number of paths per invoke
+    max_paths_per_invoke: Option<u16>,
 }
 
 /// Represents a Status Report message, as per "Appendix D: Status Report Messages" of the Matter Spec.
