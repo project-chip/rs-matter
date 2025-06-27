@@ -72,7 +72,7 @@ fn main() {
 
     if m.is_present("cert") {
         let cert = cert::CertRef::new(tlv);
-        println!("{}", cert);
+        println!("{cert}");
     } else if m.is_present("as-asn1") {
         let mut asn1_cert = [0_u8; 1024];
         let cert = cert::CertRef::new(tlv);

@@ -17,23 +17,19 @@
 
 use core::{mem::MaybeUninit, num::NonZeroU8};
 
-use crate::{
-    alloc,
-    cert::CertRef,
-    crypto::{self, KeyPair, Sha256},
-    error::{Error, ErrorCode},
-    fabric::Fabric,
-    sc::{check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes},
-    tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite, ToTLV},
-    transport::{
-        exchange::Exchange,
-        session::{NocCatIds, ReservedSession, SessionMode},
-    },
-    utils::{
-        init::{init, zeroed, Init, InitMaybeUninit},
-        storage::WriteBuf,
-    },
+use crate::alloc;
+use crate::cert::CertRef;
+use crate::crypto::{self, KeyPair, Sha256};
+use crate::error::{Error, ErrorCode};
+use crate::fabric::Fabric;
+use crate::sc::{
+    check_opcode, complete_with_status, sc_write, OpCode, SCStatusCodes, SessionParameters,
 };
+use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TLVTag, TLVWrite};
+use crate::transport::exchange::Exchange;
+use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
+use crate::utils::init::{init, zeroed, Init, InitMaybeUninit};
+use crate::utils::storage::WriteBuf;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -580,26 +576,6 @@ struct Sigma1Req<'a> {
     session_parameters: Option<SessionParameters>,
     resumption_id: Option<OctetStr<'a>>,
     initiator_resume_mic: Option<OctetStr<'a>>,
-}
-
-#[derive(FromTLV, ToTLV, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(start = 1)]
-struct SessionParameters {
-    /// Session Idle Interval
-    sii: Option<u32>,
-    /// Session Active Interval
-    sai: Option<u32>,
-    /// Session Active Threshold
-    sat: Option<u16>,
-    /// Data Model Revision
-    dm_revision: Option<u16>,
-    /// Interaction Model Revision
-    im_revision: Option<u16>,
-    /// Specification Version
-    spec_version: Option<u32>,
-    /// Maximum number of paths per invoke
-    max_paths_per_invoke: Option<u16>,
 }
 
 #[derive(FromTLV, Debug)]
