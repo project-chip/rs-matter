@@ -1091,12 +1091,11 @@ impl<'a> Exchange<'a> {
     #[inline(always)]
     pub async fn acknowledge(&mut self) -> Result<(), Error> {
         if self.pending_ack()? {
-            self.send_with(|exchange, _| {
-                Ok(exchange
-                    .pending_ack()?
-                    .then_some(sc::OpCode::MRPStandAloneAck.into()))
-            })
-            .await?;
+            let tx = self.id.init_send(self.matter).await?;
+
+            if self.pending_ack()? {
+                tx.complete::<MessageMeta>(0, 0, sc::OpCode::MRPStandAloneAck.into())?;
+            }
         }
 
         Ok(())
