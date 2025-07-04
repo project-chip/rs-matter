@@ -1094,6 +1094,10 @@ impl<'a> Exchange<'a> {
             let tx = self.id.init_send(self.matter).await?;
 
             if self.pending_ack()? {
+                // Check whether we still need to send an ACK.
+                // Necessary because we `.await` above, and while we are awaiting, the transport
+                // might automatically send an ACK for us.
+                // (That is, if the global RX transport buffer happens to be already empty and if the other peer re-sends the message.)
                 tx.complete::<MessageMeta>(0, 0, sc::OpCode::MRPStandAloneAck.into())?;
             }
         }
