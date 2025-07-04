@@ -1091,12 +1091,15 @@ impl<'a> Exchange<'a> {
     #[inline(always)]
     pub async fn acknowledge(&mut self) -> Result<(), Error> {
         if self.pending_ack()? {
-            self.send_with(|exchange, _| {
-                Ok(exchange
-                    .pending_ack()?
-                    .then_some(sc::OpCode::MRPStandAloneAck.into()))
-            })
-            .await?;
+            let tx = self.id.init_send(self.matter).await?;
+
+            if self.pending_ack()? {
+                // Check whether we still need to send an ACK.
+                // Necessary because we `.await` above, and while we are awaiting, the transport
+                // might automatically send an ACK for us.
+                // (That is, if the global RX transport buffer happens to be already empty and if the other peer re-sends the message.)
+                tx.complete::<MessageMeta>(0, 0, sc::OpCode::MRPStandAloneAck.into())?;
+            }
         }
 
         Ok(())
