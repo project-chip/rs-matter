@@ -55,10 +55,14 @@ impl OnOffHandler {
     }
 
     /// Set the On/Off attribute to the given value and notify potential subscribers.
-    pub fn set(&self, on: bool) {
+    /// Returns `true` if the value was changed, `false` otherwise.
+    pub fn set(&self, on: bool) -> bool {
         if self.on.get() != on {
             self.on.set(on);
             self.dataver.changed();
+            true
+        } else {
+            false
         }
     }
 }
@@ -81,18 +85,27 @@ impl ClusterHandler for OnOffHandler {
         Ok(self.on.get())
     }
 
-    fn handle_off(&self, _ctx: &InvokeContext) -> Result<(), Error> {
-        self.set(false);
+    fn handle_off(&self, ctx: &InvokeContext) -> Result<(), Error> {
+        if self.set(false) {
+            ctx.notify_changed();
+        }
+
         Ok(())
     }
 
-    fn handle_on(&self, _ctx: &InvokeContext) -> Result<(), Error> {
-        self.set(true);
+    fn handle_on(&self, ctx: &InvokeContext) -> Result<(), Error> {
+        if self.set(true) {
+            ctx.notify_changed();
+        }
+
         Ok(())
     }
 
-    fn handle_toggle(&self, _ctx: &InvokeContext) -> Result<(), Error> {
-        self.set(!self.on.get());
+    fn handle_toggle(&self, ctx: &InvokeContext) -> Result<(), Error> {
+        if self.set(!self.on.get()) {
+            ctx.notify_changed();
+        }
+
         Ok(())
     }
 
