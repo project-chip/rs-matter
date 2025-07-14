@@ -1,3 +1,25 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! The built-in mDNS implementation of `rs-matter`.
+//!
+//! Can be used on any OS / platform, as long as the platform-specific mDNS implementation
+//! (if there is one) is stopped and not running on the mDNS port 5353.
+
 use core::net::IpAddr;
 use core::pin::pin;
 
@@ -25,7 +47,6 @@ use self::proto::Services;
 
 pub use proto::Host;
 
-#[path = "proto.rs"]
 mod proto;
 
 pub const MDNS_SOCKET_BIND_ADDR: SocketAddr =
