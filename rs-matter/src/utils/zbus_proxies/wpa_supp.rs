@@ -15,18 +15,17 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! zbus proxies for wpa-supplicant.
+//!
+//! All proxy traits are manually implemented based on the wpa-supplicant D-Bus interface definitions
+//! as documented here: https://w1.fi/wpa_supplicant/devel/dbus.html circa 2025-07-15
+
+pub mod bss;
+pub mod group;
+pub mod interface;
+pub mod network;
+pub mod p2pdevice;
+pub mod peer;
+pub mod persistent_group;
+pub mod wpa_supplicant;
+pub mod wps;

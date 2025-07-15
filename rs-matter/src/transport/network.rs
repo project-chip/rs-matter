@@ -15,10 +15,8 @@
  *    limitations under the License.
  */
 
-use core::{
-    fmt::{self, Debug, Display},
-    pin::pin,
-};
+use core::fmt::{self, Debug, Display};
+use core::pin::pin;
 
 pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
@@ -28,6 +26,7 @@ use crate::error::{Error, ErrorCode};
 
 pub mod btp;
 pub mod udp;
+pub mod wifi;
 
 // Maximum UDP RX packet size per Matter spec
 pub const MAX_RX_PACKET_SIZE: usize = 1583;
