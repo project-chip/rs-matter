@@ -15,8 +15,27 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.HealthManager1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use std::collections::HashMap;
+
+use zbus::{
+    proxy,
+    zvariant::{ObjectPath, OwnedObjectPath, Value},
+};
+
+#[proxy(
+    interface = "org.bluez.HealthManager1",
+    default_service = "org.bluez",
+    default_path = "/org/bluez"
+)]
+pub trait HealthManager {
+    /// CreateApplication method
+    fn create_application(
+        &self,
+        config: HashMap<&str, &Value<'_>>,
+    ) -> zbus::Result<OwnedObjectPath>;
+
+    /// DestroyApplication method
+    fn destroy_application(&self, application: &ObjectPath<'_>) -> zbus::Result<()>;
+}

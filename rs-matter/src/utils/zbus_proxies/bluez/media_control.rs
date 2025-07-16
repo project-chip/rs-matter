@@ -15,8 +15,17 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.MediaControl1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::{proxy, zvariant::OwnedObjectPath};
+
+#[proxy(interface = "org.bluez.MediaControl1", assume_defaults = true)]
+pub trait MediaControl {
+    /// Connected property
+    #[zbus(property)]
+    fn connected(&self) -> zbus::Result<bool>;
+
+    /// Player property
+    #[zbus(property)]
+    fn player(&self) -> zbus::Result<OwnedObjectPath>;
+}

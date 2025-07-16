@@ -15,8 +15,14 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.ThermometerWatcher1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use std::collections::HashMap;
+
+use zbus::{proxy, zvariant::Value};
+
+#[proxy(interface = "org.bluez.ThermometerWatcher1", assume_defaults = true)]
+pub trait ThermometerWatcher {
+    /// MeasurementReceived method
+    fn measurement_received(&self, measurement: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+}

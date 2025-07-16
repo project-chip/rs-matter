@@ -15,8 +15,12 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.SimAccess1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(interface = "org.bluez.SimAccess1", assume_defaults = true)]
+pub trait SimAccess {
+    /// Disconnect method
+    fn disconnect(&self) -> zbus::Result<()>;
+}

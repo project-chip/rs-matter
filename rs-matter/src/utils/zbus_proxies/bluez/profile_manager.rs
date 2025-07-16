@@ -15,8 +15,29 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.ProfileManager1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use std::collections::HashMap;
+
+use zbus::{
+    proxy,
+    zvariant::{ObjectPath, Value},
+};
+
+#[proxy(
+    interface = "org.bluez.ProfileManager1",
+    default_service = "org.bluez",
+    default_path = "/org/bluez"
+)]
+pub trait ProfileManager {
+    /// RegisterProfile method
+    fn register_profile(
+        &self,
+        profile: &ObjectPath<'_>,
+        uuid: &str,
+        options: HashMap<&str, &Value<'_>>,
+    ) -> zbus::Result<()>;
+
+    /// UnregisterProfile method
+    fn unregister_profile(&self, profile: &ObjectPath<'_>) -> zbus::Result<()>;
+}

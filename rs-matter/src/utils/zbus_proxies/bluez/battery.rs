@@ -15,8 +15,13 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.Battery1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(interface = "org.bluez.Battery1", assume_defaults = true)]
+pub trait Battery {
+    /// Percentage property
+    #[zbus(property)]
+    fn percentage(&self) -> zbus::Result<u8>;
+}

@@ -15,8 +15,27 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.Network1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(interface = "org.bluez.Network1", assume_defaults = true)]
+pub trait Network {
+    /// Connect method
+    fn connect(&self, uuid: &str) -> zbus::Result<String>;
+
+    /// Disconnect method
+    fn disconnect(&self) -> zbus::Result<()>;
+
+    /// Connected property
+    #[zbus(property)]
+    fn connected(&self) -> zbus::Result<bool>;
+
+    /// Interface property
+    #[zbus(property)]
+    fn interface(&self) -> zbus::Result<String>;
+
+    /// UUID property
+    #[zbus(property, name = "UUID")]
+    fn uuid(&self) -> zbus::Result<String>;
+}

@@ -15,8 +15,18 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.BatteryProviderManager1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::{proxy, zvariant::ObjectPath};
+
+#[proxy(
+    interface = "org.bluez.BatteryProviderManager1",
+    default_service = "org.bluez"
+)]
+pub trait BatteryProviderManager {
+    /// RegisterBatteryProvider method
+    fn register_battery_provider(&self, provider: &ObjectPath<'_>) -> zbus::Result<()>;
+
+    /// UnregisterBatteryProvider method
+    fn unregister_battery_provider(&self, provider: &ObjectPath<'_>) -> zbus::Result<()>;
+}

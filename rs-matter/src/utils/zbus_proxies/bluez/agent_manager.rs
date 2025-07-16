@@ -15,8 +15,22 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.AgentManager1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::{proxy, zvariant::ObjectPath};
+
+#[proxy(
+    interface = "org.bluez.AgentManager1",
+    default_service = "org.bluez",
+    default_path = "/org/bluez"
+)]
+pub trait AgentManager {
+    /// RegisterAgent method
+    fn register_agent(&self, agent: &ObjectPath<'_>, capability: &str) -> zbus::Result<()>;
+
+    /// RequestDefaultAgent method
+    fn request_default_agent(&self, agent: &ObjectPath<'_>) -> zbus::Result<()>;
+
+    /// UnregisterAgent method
+    fn unregister_agent(&self, agent: &ObjectPath<'_>) -> zbus::Result<()>;
+}

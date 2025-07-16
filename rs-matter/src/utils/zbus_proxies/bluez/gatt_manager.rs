@@ -15,8 +15,24 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.GattManager1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use std::collections::HashMap;
+
+use zbus::{
+    proxy,
+    zvariant::{ObjectPath, Value},
+};
+
+#[proxy(interface = "org.bluez.GattManager1", default_service = "org.bluez")]
+pub trait GattManager {
+    /// RegisterApplication method
+    fn register_application(
+        &self,
+        application: &ObjectPath<'_>,
+        options: HashMap<&str, &Value<'_>>,
+    ) -> zbus::Result<()>;
+
+    /// UnregisterApplication method
+    fn unregister_application(&self, application: &ObjectPath<'_>) -> zbus::Result<()>;
+}

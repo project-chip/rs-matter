@@ -15,8 +15,25 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.GattService1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::{proxy, zvariant::OwnedObjectPath};
+
+#[proxy(interface = "org.bluez.GattService1", assume_defaults = true)]
+pub trait GattService {
+    /// Device property
+    #[zbus(property)]
+    fn device(&self) -> zbus::Result<OwnedObjectPath>;
+
+    /// Includes property
+    #[zbus(property)]
+    fn includes(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+
+    /// Primary property
+    #[zbus(property)]
+    fn primary(&self) -> zbus::Result<bool>;
+
+    /// UUID property
+    #[zbus(property, name = "UUID")]
+    fn uuid(&self) -> zbus::Result<String>;
+}

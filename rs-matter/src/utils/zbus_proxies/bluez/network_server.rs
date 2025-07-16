@@ -15,8 +15,15 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.bluez.NetworkServer1`
 
-pub mod bluez;
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(interface = "org.bluez.NetworkServer1", default_service = "org.bluez")]
+pub trait NetworkServer {
+    /// Register method
+    fn register(&self, uuid: &str, bridge: &str) -> zbus::Result<()>;
+
+    /// Unregister method
+    fn unregister(&self, uuid: &str) -> zbus::Result<()>;
+}
