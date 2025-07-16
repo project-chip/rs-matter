@@ -15,9 +15,9 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! zbus proxies for `org.freedesktop.resolve1`.
+//!
+//! All proxy traits are generated using introspection (i.e. `zbus-xmlgen system org.freedesktop.resolve1 /org/freedesktop/resolve1`).
+//! Also look here: https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.resolve1.html
 
-pub mod bluez;
-pub mod nm;
-pub mod resolve;
-pub mod wpa_supp;
+pub mod manager;
