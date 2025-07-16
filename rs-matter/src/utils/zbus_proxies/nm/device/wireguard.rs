@@ -15,7 +15,24 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.WireGuard`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.WireGuard",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait WireGuard {
+    /// PublicKey property
+    #[zbus(property)]
+    fn public_key(&self) -> zbus::Result<Vec<u8>>;
+
+    /// ListenPort property
+    #[zbus(property)]
+    fn listen_port(&self) -> zbus::Result<u16>;
+
+    /// FwMark property
+    #[zbus(property)]
+    fn fw_mark(&self) -> zbus::Result<u32>;
+}

@@ -15,7 +15,25 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.OlpcMesh`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+use zbus::zvariant::OwnedObjectPath;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.OlpcMesh",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait OlpcMesh {
+    /// HwAddress property
+    #[zbus(property)]
+    fn hw_address(&self) -> zbus::Result<String>;
+
+    /// Companion property
+    #[zbus(property)]
+    fn companion(&self) -> zbus::Result<OwnedObjectPath>;
+
+    /// ActiveChannel property
+    #[zbus(property)]
+    fn active_channel(&self) -> zbus::Result<u32>;
+}

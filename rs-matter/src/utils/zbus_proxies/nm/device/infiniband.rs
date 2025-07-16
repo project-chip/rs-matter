@@ -15,7 +15,20 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Infiniband`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Infiniband",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Infiniband {
+    /// HwAddress property
+    #[zbus(property)]
+    fn hw_address(&self) -> zbus::Result<String>;
+
+    /// Carrier property
+    #[zbus(property)]
+    fn carrier(&self) -> zbus::Result<bool>;
+}

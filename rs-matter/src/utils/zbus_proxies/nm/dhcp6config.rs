@@ -15,7 +15,19 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.DHCP6Config`
 
-pub mod nm;
-pub mod wpa_supp;
+use std::collections::HashMap;
+
+use zbus::proxy;
+use zbus::zvariant::OwnedValue;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.DHCP6Config",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait DHCP6Config {
+    /// Options property
+    #[zbus(property)]
+    fn options(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+}

@@ -15,7 +15,16 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Vrf`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Vrf",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Vrf {
+    /// Table property
+    #[zbus(property)]
+    fn table(&self) -> zbus::Result<u32>;
+}

@@ -15,7 +15,17 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.OvsPort`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+use zbus::zvariant::OwnedObjectPath;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.OvsPort",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait OvsPort {
+    /// Slaves property
+    #[zbus(property)]
+    fn slaves(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+}

@@ -15,7 +15,25 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Checkpoint`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+use zbus::zvariant::OwnedObjectPath;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Checkpoint",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Checkpoint {
+    /// Devices property
+    #[zbus(property)]
+    fn devices(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+
+    /// Created property
+    #[zbus(property)]
+    fn created(&self) -> zbus::Result<i64>;
+
+    /// RollbackTimeout property
+    #[zbus(property)]
+    fn rollback_timeout(&self) -> zbus::Result<u32>;
+}

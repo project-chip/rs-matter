@@ -15,7 +15,24 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Bridge`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Bluetooth",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Bluetooth {
+    /// Name property
+    #[zbus(property)]
+    fn name(&self) -> zbus::Result<String>;
+
+    /// HwAddress property
+    #[zbus(property)]
+    fn hw_address(&self) -> zbus::Result<String>;
+
+    /// BtCapabilities property
+    #[zbus(property)]
+    fn bt_capabilities(&self) -> zbus::Result<u32>;
+}

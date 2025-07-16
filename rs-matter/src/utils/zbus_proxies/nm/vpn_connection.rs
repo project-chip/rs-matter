@@ -15,7 +15,24 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.VPN.Connection`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.VPN.Connection",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait VPNConnection {
+    /// VpnStateChanged signal
+    #[zbus(signal)]
+    fn vpn_state_changed_signal(&self, state: u32, reason: u32) -> zbus::Result;
+
+    /// VpnState property
+    #[zbus(property)]
+    fn vpn_state(&self) -> zbus::Result<u32>;
+
+    /// Banner property
+    #[zbus(property)]
+    fn banner(&self) -> zbus::Result<String>;
+}

@@ -15,7 +15,12 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.OvsInterface`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.OvsInterface",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait OvsInterface {}

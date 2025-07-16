@@ -15,7 +15,22 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.AgentManager`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.AgentManager",
+    default_service = "org.freedesktop.NetworkManager",
+    default_path = "/org/freedesktop/NetworkManager/AgentManager"
+)]
+pub trait AgentManager {
+    /// Register method
+    fn register(&self, identifier: &str) -> zbus::Result<()>;
+
+    /// RegisterWithCapabilities method
+    fn register_with_capabilities(&self, identifier: &str, capabilities: u32) -> zbus::Result<()>;
+
+    /// Unregister method
+    fn unregister(&self) -> zbus::Result<()>;
+}

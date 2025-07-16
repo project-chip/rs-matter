@@ -15,7 +15,25 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Bridge`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+use zbus::zvariant::OwnedObjectPath;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Bond",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Bond {
+    /// Carrier property
+    #[zbus(property)]
+    fn carrier(&self) -> zbus::Result<bool>;
+
+    /// HwAddress property
+    #[zbus(property)]
+    fn hw_address(&self) -> zbus::Result<String>;
+
+    /// Slaves property
+    #[zbus(property)]
+    fn slaves(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+}

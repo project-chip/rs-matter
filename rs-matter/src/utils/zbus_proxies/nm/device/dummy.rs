@@ -15,7 +15,16 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Dummy`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Dummy",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Dummy {
+    /// HwAddress property
+    #[zbus(property)]
+    fn hw_address(&self) -> zbus::Result<String>;
+}

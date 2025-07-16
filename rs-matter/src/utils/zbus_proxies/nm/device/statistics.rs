@@ -15,7 +15,26 @@
  *    limitations under the License.
  */
 
-//! A set of zbus proxies for various Linux services.
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Statistics`
 
-pub mod nm;
-pub mod wpa_supp;
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Statistics",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Statistics {
+    /// RefreshRateMs property
+    #[zbus(property)]
+    fn refresh_rate_ms(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn set_refresh_rate_ms(&self, value: u32) -> zbus::Result<()>;
+
+    /// RxBytes property
+    #[zbus(property)]
+    fn rx_bytes(&self) -> zbus::Result<u64>;
+
+    /// TxBytes property
+    #[zbus(property)]
+    fn tx_bytes(&self) -> zbus::Result<u64>;
+}
