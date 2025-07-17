@@ -20,16 +20,46 @@
 use rs_matter::error::Error;
 use rs_matter::Matter;
 
-#[cfg(any(target_os = "macos", all(feature = "zeroconf", target_os = "linux")))]
-#[allow(unused)]
-pub async fn run_mdns(_matter: &Matter<'_>) -> Result<(), Error> {
-    // Nothing to run
-    core::future::pending().await
+pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
+    #[cfg(feature = "astro-dnssd")]
+    rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
+        .run()
+        .await?;
+
+    #[cfg(all(feature = "zeroconf", not(feature = "astro-dnssd")))]
+    rs_matter::transport::network::mdns::zeroconf::ZeroconfMdnsResponder::new(matter)
+        .run()
+        .await?;
+
+    #[cfg(all(
+        feature = "resolve",
+        not(any(feature = "zeroconf", feature = "astro-dnssd"))
+    ))]
+    rs_matter::transport::network::mdns::resolve::ResolveMdnsResponder::new(matter)
+        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
+        .await?;
+
+    #[cfg(all(
+        feature = "avahi",
+        not(any(feature = "resolve", feature = "zeroconf", feature = "astro-dnssd"))
+    ))]
+    rs_matter::transport::network::mdns::avahi::AvahiMdnsResponder::new(matter)
+        .run(&rs_matter::utils::zbus::Connection::system().await.unwrap())
+        .await?;
+
+    #[cfg(not(any(
+        feature = "avahi",
+        feature = "resolve",
+        feature = "zeroconf",
+        feature = "astro-dnssd"
+    )))]
+    run_builtin_mdns(matter).await?;
+
+    Ok(())
 }
 
-#[cfg(not(any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))))]
 #[allow(unused)]
-pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
+async fn run_builtin_mdns(matter: &Matter<'_>) -> Result<(), Error> {
     use std::net::UdpSocket;
 
     use log::info;
@@ -84,14 +114,15 @@ pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
 
     let (ipv4_addr, ipv6_addr, interface) = initialize_network()?;
 
-    use rs_matter::mdns::{
-        Host, MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_BIND_ADDR,
+    use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
+    use rs_matter::transport::network::mdns::{
+        MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_SOCKET_DEFAULT_BIND_ADDR,
     };
 
     // NOTE:
     // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind + multicast join for your custom UDP stack
     // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
-    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_BIND_ADDR)?;
+    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_DEFAULT_BIND_ADDR)?;
     socket
         .get_ref()
         .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)?;
@@ -99,8 +130,8 @@ pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
         .get_ref()
         .join_multicast_v4(&MDNS_IPV4_BROADCAST_ADDR, &ipv4_addr)?;
 
-    matter
-        .run_builtin_mdns(
+    BuiltinMdnsResponder::new(matter)
+        .run(
             &socket,
             &socket,
             &Host {

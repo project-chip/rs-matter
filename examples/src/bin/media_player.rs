@@ -58,7 +58,6 @@ use rs_matter::dm::{
     Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
@@ -86,13 +85,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Matter object
-    let matter = Matter::new_default(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        MdnsService::Builtin,
-        MATTER_PORT,
-    );
+    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;

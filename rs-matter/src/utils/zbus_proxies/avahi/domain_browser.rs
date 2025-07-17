@@ -21,7 +21,7 @@ use zbus::proxy;
 
 #[proxy(
     interface = "org.freedesktop.Avahi.DomainBrowser",
-    assume_defaults = true
+    default_service = "org.freedesktop.Avahi"
 )]
 pub trait DomainBrowser {
     /// Free method

@@ -15,5 +15,5 @@
  *    limitations under the License.
  */
 
-#[cfg(feature = "std")]
+#[cfg(feature = "zbus")]
 pub mod wpa_supp;

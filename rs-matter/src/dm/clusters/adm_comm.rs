@@ -114,7 +114,7 @@ impl ClusterHandler for AdminCommHandler {
             request.iterations()?,
             request.discriminator()?,
             request.commissioning_timeout()?,
-            &matter.transport_mgr.mdns,
+            &mut || matter.notify_mdns(),
         )
     }
 
@@ -129,7 +129,7 @@ impl ClusterHandler for AdminCommHandler {
             matter.dev_comm().password,
             matter.dev_comm().discriminator,
             request.commissioning_timeout()?,
-            &matter.transport_mgr.mdns,
+            &mut || matter.notify_mdns(),
         )
     }
 
@@ -139,7 +139,7 @@ impl ClusterHandler for AdminCommHandler {
         matter
             .pase_mgr
             .borrow_mut()
-            .disable_pase_session(&matter.transport_mgr.mdns)?;
+            .disable_pase_session(&mut || matter.notify_mdns())?;
 
         // TODO: Send status code if no commissioning window is open?
 

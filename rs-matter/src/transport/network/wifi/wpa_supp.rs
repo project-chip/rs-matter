@@ -373,12 +373,6 @@ impl SSIDInfo {
     }
 }
 
-impl From<zbus::Error> for Error {
-    fn from(_: zbus::Error) -> Self {
-        ErrorCode::NoNetworkInterface.into()
-    }
-}
-
 impl From<zbus::Error> for NetCtlError {
     fn from(value: zbus::Error) -> Self {
         NetCtlError::Other(value.into())

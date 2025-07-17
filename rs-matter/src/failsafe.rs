@@ -23,7 +23,6 @@ use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::im::IMStatusCode;
-use crate::mdns::Mdns;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
 use crate::utils::bitflags::bitflags;
@@ -239,7 +238,7 @@ impl FailSafe {
         noc: &[u8],
         ipk: &[u8],
         buf: &mut [u8],
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         self.update_state_timeout();
 
@@ -268,7 +267,7 @@ impl FailSafe {
             icac.unwrap_or(&[]),
             ipk,
             vendor_id,
-            mdns,
+            mdns_notif,
         )?;
 
         self.add_flags(NocFlags::ADD_NOC_RECVD);
@@ -287,7 +286,7 @@ impl FailSafe {
         ipk: &[u8],
         case_admin_subject: u64,
         buf: &mut [u8],
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<NonZeroU8, Error> {
         self.update_state_timeout();
 
@@ -316,7 +315,7 @@ impl FailSafe {
                 ipk,
                 vendor_id,
                 case_admin_subject,
-                mdns,
+                mdns_notif,
             )
             .map_err(|e| {
                 if e.code() == ErrorCode::NoSpace {

@@ -82,7 +82,6 @@ use crate::dm::clusters::dev_att::DevAttDataFetcher;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::failsafe::FailSafe;
-use crate::mdns::MdnsService;
 use crate::pairing::{print_pairing_code_and_qr, DiscoveryCapabilities};
 use crate::sc::pake::PaseMgr;
 use crate::transport::network::{NetworkReceive, NetworkSend};
@@ -92,6 +91,7 @@ use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
 use crate::utils::rand::Rand;
 use crate::utils::storage::pooled::BufferAccess;
+use crate::utils::storage::WriteBuf;
 use crate::utils::sync::Notification;
 
 /// Re-export the `rs_matter_macros::import` proc-macro
@@ -112,7 +112,6 @@ pub mod fabric;
 pub mod failsafe;
 pub mod group_keys;
 pub mod im;
-pub mod mdns;
 pub mod pairing;
 pub mod persist;
 pub mod respond;
@@ -149,8 +148,85 @@ macro_rules! alloc {
     };
 }
 
-/* The Matter Port */
+/// The Matter UDP port
 pub const MATTER_PORT: u16 = 5540;
+
+/// The maximum length of a Matter mDNS service name
+pub const MATTER_SERVICE_MAX_NAME_LEN: usize = 33;
+
+/// A type capturing all the information necessary to publish a commissioned
+/// Matter fabric or a non-commissioned Matter instance over mDNS.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MatterMdnsService {
+    /// A commissioned Matter service for a particular fabric
+    ///
+    /// The published name is in the form `<compressed-fabric-id-hex>-<node-id-hex>`.
+    Commissioned {
+        compressed_fabric_id: u64,
+        node_id: u64,
+    },
+    /// A non-commissioned Matter service
+    ///
+    /// The published name is in the form `<id-hex>`. The discriminator should be used as an mDNS TXT entry
+    Commissionable {
+        id: u64,
+        /// The discriminator to be communicated over mDNS
+        discriminator: u16,
+    },
+}
+
+impl MatterMdnsService {
+    /// Return the name of the mDNS service in a buffer
+    ///
+    /// NOTE: The buffer needs to be at least `MATTER_SERVICE_MAX_NAME_LEN` bytes long
+    /// or else this method will panic.
+    pub fn name<'a>(&self, buf: &'a mut [u8]) -> &'a str {
+        use core::fmt::Write;
+
+        match self {
+            Self::Commissioned {
+                compressed_fabric_id,
+                node_id,
+            } => {
+                if buf.len() < MATTER_SERVICE_MAX_NAME_LEN {
+                    panic!("Buffer too small for mDNS service name");
+                }
+
+                let mut wb = WriteBuf::new(buf);
+
+                write_unwrap!(&mut wb, "{:016X}", compressed_fabric_id);
+
+                unwrap!(wb.append(b"-"));
+
+                write_unwrap!(&mut wb, "{:016X}", node_id);
+
+                let len = wb.get_tail();
+
+                unwrap!(
+                    core::str::from_utf8(&buf[..len]),
+                    "Invalid UTF-8 in mDNS service name"
+                )
+            }
+            Self::Commissionable { id, .. } => {
+                if buf.len() < 16 {
+                    panic!("Buffer too small for mDNS service name");
+                }
+
+                let mut wb = WriteBuf::new(buf);
+
+                write_unwrap!(&mut wb, "{:016X}", id);
+
+                let len = wb.get_tail();
+
+                unwrap!(
+                    core::str::from_utf8(&buf[..len]),
+                    "Invalid UTF-8 in mDNS service name"
+                )
+            }
+        }
+    }
+}
 
 /// Device basic commissioning data
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -169,8 +245,9 @@ pub struct Matter<'a> {
     pub(crate) pase_mgr: RefCell<PaseMgr>,
     pub(crate) failsafe: RefCell<FailSafe>,
     pub(crate) basic_info_settings: RefCell<BasicInfoSettings>,
-    pub transport_mgr: TransportMgr<'a>, // Public for tests
+    pub transport_mgr: TransportMgr, // Public for tests
     persist_notification: Notification<NoopRawMutex>,
+    mdns_notification: Notification<NoopRawMutex>,
     epoch: Epoch,
     rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
@@ -189,8 +266,6 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
-    ///   responses and queries related to the operation of the Matter stack.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[cfg(feature = "std")]
     #[inline(always)]
@@ -198,13 +273,12 @@ impl<'a> Matter<'a> {
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsService<'a>,
         port: u16,
     ) -> Self {
         use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
 
-        Self::new(dev_det, dev_comm, dev_att, mdns, sys_epoch, sys_rand, port)
+        Self::new(dev_det, dev_comm, dev_att, sys_epoch, sys_rand, port)
     }
 
     /// Create a new Matter object
@@ -216,8 +290,6 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
-    ///   responses and queries related to the operation of the Matter stack.
     /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
     ///   "unix" time in milliseconds
     /// * rand: A function of type [Rand]. This function is responsible for generating random data.
@@ -227,7 +299,6 @@ impl<'a> Matter<'a> {
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsService<'a>,
         epoch: Epoch,
         rand: Rand,
         port: u16,
@@ -236,9 +307,10 @@ impl<'a> Matter<'a> {
             fabric_mgr: RefCell::new(FabricMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
             failsafe: RefCell::new(FailSafe::new(epoch, rand)),
-            transport_mgr: TransportMgr::new(mdns, dev_det, port, epoch, rand),
+            transport_mgr: TransportMgr::new(dev_det, epoch, rand),
             basic_info_settings: RefCell::new(BasicInfoSettings::new()),
             persist_notification: Notification::new(),
+            mdns_notification: Notification::new(),
             epoch,
             rand,
             dev_det,
@@ -258,21 +330,18 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
-    ///   responses and queries related to the operation of the Matter stack.
     /// * port: The port number on which the Matter stack will listen for incoming connections.
     #[cfg(feature = "std")]
     pub fn init_default(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsService<'a>,
         port: u16,
     ) -> impl Init<Self> {
         use crate::utils::epoch::sys_epoch;
         use crate::utils::rand::sys_rand;
 
-        Self::init(dev_det, dev_comm, dev_att, mdns, sys_epoch, sys_rand, port)
+        Self::init(dev_det, dev_comm, dev_att, sys_epoch, sys_rand, port)
     }
 
     /// Create an in-place initializer for a Matter object
@@ -284,8 +353,6 @@ impl<'a> Matter<'a> {
     /// * dev_att: An object that implements the trait [DevAttDataFetcher]. Any Matter device
     ///   requires a set of device attestation certificates and keys. It is the responsibility of
     ///   this object to return the device attestation details when queried upon.
-    /// * mdns: An object of type [MdnsService]. This object is responsible for handling mDNS
-    ///   responses and queries related to the operation of the Matter stack.
     /// * epoch: A function of type [Epoch]. This function is responsible for providing the current
     ///   "unix" time in milliseconds
     /// * rand: A function of type [Rand]. This function is responsible for generating random data.
@@ -294,7 +361,6 @@ impl<'a> Matter<'a> {
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
         dev_att: &'a dyn DevAttDataFetcher,
-        mdns: MdnsService<'a>,
         epoch: Epoch,
         rand: Rand,
         port: u16,
@@ -304,9 +370,10 @@ impl<'a> Matter<'a> {
                 fabric_mgr <- RefCell::init(FabricMgr::init()),
                 pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
                 failsafe: RefCell::new(FailSafe::new(epoch, rand)),
-                transport_mgr <- TransportMgr::init(mdns, dev_det, port, epoch, rand),
+                transport_mgr <- TransportMgr::init(dev_det, epoch, rand),
                 basic_info_settings <- RefCell::init(BasicInfoSettings::init()),
                 persist_notification: Notification::new(),
+                mdns_notification: Notification::new(),
                 epoch,
                 rand,
                 dev_det,
@@ -353,54 +420,9 @@ impl<'a> Matter<'a> {
         self.transport_mgr.tx_buffer()
     }
 
-    /// A utility method to replace the initial mDNS implementation with another one.
-    ///
-    /// Useful in particular with `MdnsService::Provided`, where the user would still like
-    /// to create the `Matter` instance in a const-context, as in e.g.:
-    /// `const MATTER: Matter<'static> = Matter::new(...);`
-    ///
-    /// The above const-creation is incompatible with `MdnsService::Provided` which carries a
-    /// `&dyn Mdns` pointer, which cannot be initialized from within a const context with anything
-    /// else than a `const`. (At least not yet - there is an unstable nightly Rust feature for that).
-    ///
-    /// The solution is to const-construct the `Matter` object with `MdnsService::Disabled`, and
-    /// after that - while/if we still have exclusive, mutable access to the `Matter` object -
-    /// replace the `MdnsService::Disabled` initial impl with another, like `MdnsService::Provided`.
-    pub fn replace_mdns(&mut self, mdns: MdnsService<'a>) {
-        self.transport_mgr.replace_mdns(mdns);
-    }
-
     /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
-    ///
-    /// Reasoning and use-cases explained in the documentation of `replace_mdns`.
     pub fn replace_dev_att(&mut self, dev_att: &'a dyn DevAttDataFetcher) {
         self.dev_att = dev_att;
-    }
-
-    pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
-        self.fabric_mgr
-            .borrow_mut()
-            .load(data, &self.transport_mgr.mdns)
-    }
-
-    pub fn store_fabrics<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
-        self.fabric_mgr.borrow_mut().store(buf)
-    }
-
-    pub fn fabrics_changed(&self) -> bool {
-        self.fabric_mgr.borrow().is_changed()
-    }
-
-    pub fn load_basic_info(&self, data: &[u8]) -> Result<(), Error> {
-        self.basic_info_settings.borrow_mut().load(data)
-    }
-
-    pub fn store_basic_info<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
-        self.basic_info_settings.borrow_mut().store(buf)
-    }
-
-    pub fn basic_info_changed(&self) -> bool {
-        self.basic_info_settings.borrow().changed
     }
 
     /// Return `true` if there is at least one commissioned fabric
@@ -438,7 +460,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.password,
             self.dev_comm.discriminator,
             timeout_secs,
-            &self.transport_mgr.mdns,
+            &mut || self.notify_mdns(),
         )?;
 
         print_pairing_code_and_qr(
@@ -457,7 +479,7 @@ impl<'a> Matter<'a> {
     pub fn disable_commissioning(&self) -> Result<bool, Error> {
         self.pase_mgr
             .borrow_mut()
-            .disable_pase_session(&self.transport_mgr.mdns)
+            .disable_pase_session(&mut || self.notify_mdns())
     }
 
     /// Run the transport layer
@@ -500,27 +522,6 @@ impl<'a> Matter<'a> {
         self.transport_mgr.run(send, recv).await
     }
 
-    #[cfg(not(all(
-        feature = "std",
-        any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-    )))]
-    pub async fn run_builtin_mdns<S, R>(
-        &self,
-        send: S,
-        recv: R,
-        host: &crate::mdns::Host<'_>,
-        ipv4_interface: Option<core::net::Ipv4Addr>,
-        ipv6_interface: Option<u32>,
-    ) -> Result<(), Error>
-    where
-        S: NetworkSend,
-        R: NetworkReceive,
-    {
-        self.transport_mgr
-            .run_builtin_mdns(send, recv, host, ipv4_interface, ipv6_interface)
-            .await
-    }
-
     /// Notify that the ACLs, Fabrics or Basic Info _might_ have changed
     /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs, Fabrics or Basic Info.
     ///
@@ -533,12 +534,72 @@ impl<'a> Matter<'a> {
         }
     }
 
+    pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
+        self.fabric_mgr
+            .borrow_mut()
+            .load(data, &mut || self.notify_mdns())
+    }
+
+    pub fn store_fabrics<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        self.fabric_mgr.borrow_mut().store(buf)
+    }
+
+    pub fn fabrics_changed(&self) -> bool {
+        self.fabric_mgr.borrow().is_changed()
+    }
+
+    pub fn load_basic_info(&self, data: &[u8]) -> Result<(), Error> {
+        self.basic_info_settings.borrow_mut().load(data)
+    }
+
+    pub fn store_basic_info<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+        self.basic_info_settings.borrow_mut().store(buf)
+    }
+
+    pub fn basic_info_changed(&self) -> bool {
+        self.basic_info_settings.borrow().changed
+    }
+
     /// A hook for user persistence code to wait for potential changes in ACLs, Fabrics or basic info.
+    ///
     /// Once this future resolves, user code is supposed to inspect ACLs, Fabrics and basic info for changes, and
     /// if there are changes, persist them.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub async fn wait_persist(&self) {
         self.persist_notification.wait().await
+    }
+
+    pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
+    where
+        F: FnMut(MatterMdnsService) -> Result<(), Error>,
+    {
+        let pase_mgr = self.pase_mgr.borrow();
+        let fabric_mgr = self.fabric_mgr.borrow();
+
+        if let Some(service) = pase_mgr.mdns_service() {
+            f(service)?;
+        }
+
+        for fabric in fabric_mgr.iter() {
+            if let Some(service) = fabric.mdns_service() {
+                f(service)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Notify that the Matter mDNS services _might_ have changed.
+    pub(crate) fn notify_mdns(&self) {
+        self.mdns_notification.notify();
+    }
+
+    /// A hook for user code to wait for notification that the Matter mDNS services might have changed.
+    ///
+    /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
+    /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
+    pub async fn wait_mdns(&self) {
+        self.mdns_notification.wait().await
     }
 }
