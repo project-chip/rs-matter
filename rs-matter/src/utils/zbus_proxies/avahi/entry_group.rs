@@ -19,7 +19,10 @@
 
 use zbus::proxy;
 
-#[proxy(interface = "org.freedesktop.Avahi.EntryGroup", assume_defaults = true)]
+#[proxy(
+    interface = "org.freedesktop.Avahi.EntryGroup",
+    default_service = "org.freedesktop.Avahi"
+)]
 pub trait EntryGroup {
     /// AddAddress method
     fn add_address(

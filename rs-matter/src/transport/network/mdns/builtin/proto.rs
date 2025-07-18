@@ -765,7 +765,7 @@ mod tests {
     use domain::rdata::AllRecordData;
 
     use crate::error::Error;
-    use crate::mdns::Service;
+    use crate::transport::network::mdns::Service;
 
     use super::{Buf, Host, Services};
 
@@ -826,6 +826,7 @@ mod tests {
                 name: "bar",
                 service: "_matterc",
                 protocol: "_udp",
+                service_protocol: "_matterc._udp",
                 port: 1234,
                 service_subtypes: &["L", "R"],
                 txt_kvs: &[("a", "b"), ("c", "d")],
@@ -834,6 +835,7 @@ mod tests {
                 name: "ddd",
                 service: "_matter",
                 protocol: "_tcp",
+                service_protocol: "_matter._tcp",
                 port: 1235,
                 service_subtypes: &[],
                 txt_kvs: &[],

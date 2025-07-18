@@ -26,7 +26,6 @@ use embassy_time::Timer;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
-use crate::mdns::{MdnsImpl, MdnsService};
 use crate::sc::{sc_write, OpCode, SCStatusCodes, StatusReport, PROTO_ID_SECURE_CHANNEL};
 use crate::tlv::TLVElement;
 use crate::utils::cell::RefCell;
@@ -76,63 +75,48 @@ pub(crate) const MAX_TX_BUF_SIZE: usize = network::MAX_TX_PACKET_SIZE;
 /// Each `Matter` instance has exactly one `TransportMgr` instance.
 ///
 /// To the outside world, the transport layer is only visible and usable via the notion of `Exchange`.
-pub struct TransportMgr<'m> {
+pub struct TransportMgr {
     pub(crate) rx: IfMutex<NoopRawMutex, Packet<MAX_RX_BUF_SIZE>>,
     pub(crate) tx: IfMutex<NoopRawMutex, Packet<MAX_TX_BUF_SIZE>>,
     pub(crate) dropped: Notification<NoopRawMutex>,
     pub(crate) session_removed: Notification<NoopRawMutex>,
     pub session_mgr: RefCell<SessionMgr>, // For testing
-    pub(crate) mdns: MdnsImpl<'m>,
     #[allow(dead_code)]
     rand: Rand,
     device_sai: Option<u16>,
     device_sii: Option<u16>,
 }
 
-impl<'m> TransportMgr<'m> {
+impl TransportMgr {
     #[inline(always)]
-    pub(crate) const fn new(
-        service: MdnsService<'m>,
-        dev_det: &'m BasicInfoConfig<'m>,
-        matter_port: u16,
-        epoch: Epoch,
-        rand: Rand,
-    ) -> Self {
+    pub(crate) const fn new(dev_det: &BasicInfoConfig<'_>, epoch: Epoch, rand: Rand) -> Self {
         Self {
             rx: IfMutex::new(Packet::new()),
             tx: IfMutex::new(Packet::new()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
             session_mgr: RefCell::new(SessionMgr::new(epoch, rand)),
-            mdns: MdnsImpl::new(service, dev_det, matter_port),
             rand,
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         }
     }
 
-    pub(crate) fn init(
-        service: MdnsService<'m>,
+    pub(crate) fn init<'m>(
         dev_det: &'m BasicInfoConfig<'m>,
-        matter_port: u16,
         epoch: Epoch,
         rand: Rand,
-    ) -> impl Init<Self> {
+    ) -> impl Init<Self> + 'm {
         init!(Self {
             rx <- IfMutex::init(Packet::init()),
             tx <- IfMutex::init(Packet::init()),
             dropped: Notification::new(),
             session_removed: Notification::new(),
             session_mgr <- RefCell::init(SessionMgr::init(epoch, rand)),
-            mdns <- MdnsImpl::init(service, dev_det, matter_port),
             rand,
             device_sai: dev_det.sai,
             device_sii: dev_det.sii,
         })
-    }
-
-    pub(crate) fn replace_mdns(&mut self, mdns: MdnsService<'m>) {
-        self.mdns.update(mdns);
     }
 
     // TODO
@@ -292,41 +276,6 @@ impl<'m> TransportMgr<'m> {
         let mut orphaned = pin!(self.process_orphaned());
 
         select3(&mut rx, &mut tx, &mut orphaned).coalesce().await
-    }
-
-    #[cfg(not(all(
-        feature = "std",
-        any(target_os = "macos", all(feature = "zeroconf", target_os = "linux"))
-    )))]
-    pub async fn run_builtin_mdns<S, R>(
-        &self,
-        send: S,
-        recv: R,
-        host: &crate::mdns::Host<'_>,
-        ipv4_interface: Option<core::net::Ipv4Addr>,
-        ipv6_interface: Option<u32>,
-    ) -> Result<(), Error>
-    where
-        S: NetworkSend,
-        R: NetworkReceive,
-    {
-        info!("Running Matter built-in mDNS service");
-
-        if let Some(mdns) = self.mdns.builtin() {
-            mdns.run(
-                send,
-                recv,
-                &PacketBufferExternalAccess(&self.tx),
-                &PacketBufferExternalAccess(&self.rx),
-                host,
-                ipv4_interface,
-                ipv6_interface,
-                self.rand,
-            )
-            .await
-        } else {
-            Err(ErrorCode::MdnsError.into())
-        }
     }
 
     /// Return a reference to the transport RX buffer.

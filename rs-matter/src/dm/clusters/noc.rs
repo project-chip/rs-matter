@@ -428,7 +428,7 @@ impl ClusterHandler for NocHandler {
                 request.ipk_value()?.0,
                 request.case_admin_subject()?,
                 buf,
-                &ctx.exchange().matter().transport_mgr.mdns,
+                &mut || ctx.exchange().matter().notify_mdns(),
             )?;
 
             let succeeded = Cell::new(false);
@@ -443,7 +443,7 @@ impl ClusterHandler for NocHandler {
                         .matter()
                         .fabric_mgr
                         .borrow_mut()
-                        .remove(fab_idx, &ctx.exchange().matter().transport_mgr.mdns));
+                        .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns()));
                 }
             });
 
@@ -529,7 +529,7 @@ impl ClusterHandler for NocHandler {
             .matter()
             .fabric_mgr
             .borrow_mut()
-            .remove(fab_idx, &ctx.exchange().matter().transport_mgr.mdns)
+            .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns())
             .is_ok()
         {
             // If our own session is running on the fabric being removed,

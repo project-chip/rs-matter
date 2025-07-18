@@ -54,6 +54,7 @@ pub enum ErrorCode {
     NoFabricId,
     NoHandler,
     NoNetworkInterface,
+    DBusError,
     NoNodeId,
     NoMemory,
     NoSession,

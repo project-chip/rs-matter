@@ -222,6 +222,14 @@ impl<'a> WriteBuf<'a> {
     }
 }
 
+impl core::fmt::Write for WriteBuf<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.append(s.as_bytes()).map_err(|_| core::fmt::Error)?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::storage::WriteBuf;

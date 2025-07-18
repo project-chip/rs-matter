@@ -21,7 +21,11 @@
 
 use zbus::{proxy, zvariant::OwnedObjectPath};
 
-#[proxy(interface = "org.freedesktop.Avahi.Server2", assume_defaults = true)]
+#[proxy(
+    interface = "org.freedesktop.Avahi.Server2",
+    default_service = "org.freedesktop.Avahi",
+    default_path = "/"
+)]
 pub trait Server2 {
     /// AddressResolverPrepare method
     fn address_resolver_prepare(

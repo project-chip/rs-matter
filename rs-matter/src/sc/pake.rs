@@ -15,11 +15,9 @@
  *    limitations under the License.
  */
 
-use core::{fmt::Write, time::Duration};
+use core::time::Duration;
 
-use crate::crypto;
 use crate::error::{Error, ErrorCode};
-use crate::mdns::{Mdns, ServiceMode};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
@@ -28,6 +26,7 @@ use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, try_init, Init};
 use crate::utils::maybe::Maybe;
 use crate::utils::rand::Rand;
+use crate::{crypto, MatterMdnsService};
 
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 use super::SCStatusCodes;
@@ -40,21 +39,30 @@ pub enum PaseSessionType {
 }
 
 struct PaseSession {
-    mdns_service_name: heapless::String<16>,
+    mdns_id: u64,
+    discriminator: u16,
     verifier: VerifierData,
 }
 
 impl PaseSession {
-    fn init_with_pw(password: u32, rand: Rand) -> impl Init<Self> {
+    fn init_with_pw(password: u32, discriminator: u16, rand: Rand) -> impl Init<Self> {
         init!(Self {
-            mdns_service_name: heapless::String::new(),
+            mdns_id: Self::mdns_id(rand),
+            discriminator,
             verifier <- VerifierData::init_with_pw(password, rand),
         })
     }
 
-    fn init<'a>(verifier: &'a [u8], salt: &'a [u8], count: u32) -> impl Init<Self, Error> + 'a {
+    fn init<'a>(
+        verifier: &'a [u8],
+        salt: &'a [u8],
+        count: u32,
+        discriminator: u16,
+        rand: Rand,
+    ) -> impl Init<Self, Error> + 'a {
         try_init!(Self {
-            mdns_service_name: heapless::String::new(),
+            mdns_id: Self::mdns_id(rand),
+            discriminator,
             verifier <- VerifierData::init(verifier, salt, count),
         }? Error)
     }
@@ -67,20 +75,17 @@ impl PaseSession {
         }
     }
 
-    fn add_mdns(&mut self, discriminator: u16, rand: Rand, mdns: &dyn Mdns) -> Result<(), Error> {
+    fn mdns_service(&self) -> MatterMdnsService {
+        MatterMdnsService::Commissionable {
+            id: self.mdns_id,
+            discriminator: self.discriminator,
+        }
+    }
+
+    fn mdns_id(rand: Rand) -> u64 {
         let mut buf = [0; 8];
         (rand)(&mut buf);
-        let num = u64::from_be_bytes(buf);
-
-        self.mdns_service_name.clear();
-        write_unwrap!(&mut self.mdns_service_name, "{:016X}", num);
-
-        mdns.add(
-            &self.mdns_service_name,
-            ServiceMode::Commissionable(discriminator),
-        )?;
-
-        Ok(())
+        u64::from_ne_bytes(buf)
     }
 }
 
@@ -117,12 +122,18 @@ impl PaseMgr {
             .map(|session| session.session_type())
     }
 
+    pub fn mdns_service(&self) -> Option<MatterMdnsService> {
+        self.session
+            .as_opt_ref()
+            .map(|session| session.mdns_service())
+    }
+
     pub fn enable_basic_pase_session(
         &mut self,
         password: u32,
         discriminator: u16,
         _timeout_secs: u16,
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         if self.session.is_some() {
             Err(ErrorCode::Invalid)?;
@@ -130,13 +141,14 @@ impl PaseMgr {
 
         self.session
             .reinit(Maybe::init_some(PaseSession::init_with_pw(
-                password, self.rand,
+                password,
+                discriminator,
+                self.rand,
             )));
 
-        // Can't fail as we just initialized the session
-        let session = unwrap!(self.session.as_opt_mut());
+        mdns_notif();
 
-        session.add_mdns(discriminator, self.rand, mdns)
+        Ok(())
     }
 
     pub fn enable_pase_session(
@@ -146,33 +158,34 @@ impl PaseMgr {
         count: u32,
         discriminator: u16,
         _timeout_secs: u16,
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         if self.session.is_some() {
             Err(ErrorCode::Invalid)?;
         }
 
-        self.session
-            .try_reinit(Maybe::init_some(PaseSession::init(verifier, salt, count)))?;
+        self.session.try_reinit(Maybe::init_some(PaseSession::init(
+            verifier,
+            salt,
+            count,
+            discriminator,
+            self.rand,
+        )))?;
 
-        // Can't fail as we just initialized the session
-        let session = unwrap!(self.session.as_opt_mut());
+        mdns_notif();
 
-        session.add_mdns(discriminator, self.rand, mdns)
+        Ok(())
     }
 
-    pub fn disable_pase_session(&mut self, mdns: &dyn Mdns) -> Result<bool, Error> {
-        let disabled = if let Some(session) = self.session.as_opt_ref() {
-            mdns.remove(&session.mdns_service_name)?;
+    pub fn disable_pase_session(&mut self, mdns_notif: &mut dyn FnMut()) -> Result<bool, Error> {
+        if self.session.is_some() {
+            self.session.clear();
+            mdns_notif();
 
-            true
+            Ok(true)
         } else {
-            false
-        };
-
-        self.session.clear();
-
-        Ok(disabled)
+            Ok(false)
+        }
     }
 }
 

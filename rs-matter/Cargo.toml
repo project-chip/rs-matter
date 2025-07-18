@@ -14,7 +14,10 @@ rust-version = "1.83"
 [features]
 default = ["os", "rustcrypto", "log"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
-os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std", "zbus", "futures-lite"]
+astro-dnssd = ["os", "dep:astro-dnssd"]
+zeroconf = ["os", "dep:zeroconf"]
+zbus = ["futures-lite", "dep:zbus", "os"]
+os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
 alloc = ["defmt?/alloc"]
@@ -75,18 +78,18 @@ x509-cert = { version = "0.2", default-features = false, features = ["pem"], opt
 rand = { version = "0.8", optional = true, default-features = false, features = ["std", "std_rng"] }
 async-io = { version = "2", optional = true, default-features = false }
 async-compat = { version = "0.2", optional = true, default-features = false }
+
+# OS
 zbus = { version = "5.8", optional = true }
 futures-lite = { version = "2", optional = true }
+astro-dnssd = { version = "0.3", optional = true }
+zeroconf = { version = "0.15", optional = true }
 
 [target.'cfg(all(unix, not(target_os = "espidf")))'.dependencies]
 bitflags = "2"
 nix = { version = "0.27", features = ["net"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-astro-dnssd = { version = "0.3" }
-
 [target.'cfg(target_os = "linux")'.dependencies]
-zeroconf = { version = "0.12", optional = true }
 bluer = { version = "0.17", features = ["bluetoothd"] }
 tokio = { version = "1" }
 tokio-stream = { version = "0.1" }

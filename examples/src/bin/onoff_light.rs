@@ -40,7 +40,6 @@ use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
-use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
@@ -72,7 +71,7 @@ fn main() -> Result<(), Error> {
         // e.g., an opt-level of "0" will require a several times' larger stack.
         //
         // Optimizing/lowering `rs-matter` memory consumption is an ongoing topic.
-        .stack_size(55 * 1024)
+        .stack_size(550 * 1024)
         .spawn(run)
         .unwrap();
 
@@ -105,7 +104,6 @@ fn run() -> Result<(), Error> {
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
-        MdnsService::Builtin,
         rs_matter::utils::epoch::sys_epoch,
         rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
