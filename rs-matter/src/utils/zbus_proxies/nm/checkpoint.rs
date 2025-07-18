@@ -15,18 +15,25 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Checkpoint`
+
+use zbus::proxy;
+use zbus::zvariant::OwnedObjectPath;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Checkpoint",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Checkpoint {
+    /// Devices property
+    #[zbus(property)]
+    fn devices(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+
+    /// Created property
+    #[zbus(property)]
+    fn created(&self) -> zbus::Result<i64>;
+
+    /// RollbackTimeout property
+    #[zbus(property)]
+    fn rollback_timeout(&self) -> zbus::Result<u32>;
+}

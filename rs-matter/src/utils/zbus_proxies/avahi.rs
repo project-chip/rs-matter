@@ -15,18 +15,19 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! zbus proxies for `org.freedesktop.resolve1`.
+//!
+//! All proxy traits are generated using introspection (i.e. `zbus-xmlgen file ...`),
+//! with introspection (.xml) files as available here (circa 2025-07-15):
+//! https://github.com/avahi/avahi/tree/master/avahi-daemon
+
+pub mod address_resolver;
+pub mod domain_browser;
+pub mod entry_group;
+pub mod host_name_resolver;
+pub mod record_browser;
+pub mod server;
+pub mod server2;
+pub mod service_browser;
+pub mod service_resolver;
+pub mod service_type_browser;

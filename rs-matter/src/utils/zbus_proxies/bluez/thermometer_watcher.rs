@@ -15,18 +15,14 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.bluez.ThermometerWatcher1`
+
+use std::collections::HashMap;
+
+use zbus::{proxy, zvariant::Value};
+
+#[proxy(interface = "org.bluez.ThermometerWatcher1", assume_defaults = true)]
+pub trait ThermometerWatcher {
+    /// MeasurementReceived method
+    fn measurement_received(&self, measurement: HashMap<&str, &Value<'_>>) -> zbus::Result<()>;
+}

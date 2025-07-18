@@ -15,18 +15,21 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.Lowpan`
+
+use zbus::proxy;
+use zbus::zvariant::OwnedObjectPath;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.Lowpan",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Lowpan {
+    /// HwAddress property
+    #[zbus(property)]
+    fn hw_address(&self) -> zbus::Result<String>;
+
+    /// Parent property
+    #[zbus(property)]
+    fn parent(&self) -> zbus::Result<OwnedObjectPath>;
+}

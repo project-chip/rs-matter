@@ -15,18 +15,22 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.bluez.AgentManager1`
+
+use zbus::{proxy, zvariant::ObjectPath};
+
+#[proxy(
+    interface = "org.bluez.AgentManager1",
+    default_service = "org.bluez",
+    default_path = "/org/bluez"
+)]
+pub trait AgentManager {
+    /// RegisterAgent method
+    fn register_agent(&self, agent: &ObjectPath<'_>, capability: &str) -> zbus::Result<()>;
+
+    /// RequestDefaultAgent method
+    fn request_default_agent(&self, agent: &ObjectPath<'_>) -> zbus::Result<()>;
+
+    /// UnregisterAgent method
+    fn unregister_agent(&self, agent: &ObjectPath<'_>) -> zbus::Result<()>;
+}

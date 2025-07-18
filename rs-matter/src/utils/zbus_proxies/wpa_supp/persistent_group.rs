@@ -15,18 +15,23 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `fi.w1.wpa_supplicant1.Interface.PersistentGroup`
+
+use std::collections::HashMap;
+
+use zbus::proxy;
+use zbus::zvariant::{OwnedValue, Value};
+
+#[proxy(
+    interface = "fi.w1.wpa_supplicant1.Interface.PersistentGroup",
+    assume_defaults = true
+)]
+pub trait PersistentGroup {
+    /// PropertiesChanged signal
+    #[zbus(signal)]
+    fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
+
+    /// Properties property
+    #[zbus(property, name = "Properties")]
+    fn props(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+}

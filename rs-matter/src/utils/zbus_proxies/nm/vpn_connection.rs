@@ -15,18 +15,24 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.VPN.Connection`
+
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.VPN.Connection",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait VPNConnection {
+    /// VpnStateChanged signal
+    #[zbus(signal)]
+    fn vpn_state_changed_signal(&self, state: u32, reason: u32) -> zbus::Result;
+
+    /// VpnState property
+    #[zbus(property)]
+    fn vpn_state(&self) -> zbus::Result<u32>;
+
+    /// Banner property
+    #[zbus(property)]
+    fn banner(&self) -> zbus::Result<String>;
+}

@@ -15,18 +15,12 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.bluez.LEAdvertisement1`
+
+use zbus::proxy;
+
+#[proxy(interface = "org.bluez.LEAdvertisement1", assume_defaults = true)]
+pub trait LEAdvertisement {
+    /// Release method
+    fn release(&self) -> zbus::Result<()>;
+}

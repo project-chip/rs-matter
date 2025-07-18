@@ -15,18 +15,25 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.bluez.GattService1`
+
+use zbus::{proxy, zvariant::OwnedObjectPath};
+
+#[proxy(interface = "org.bluez.GattService1", assume_defaults = true)]
+pub trait GattService {
+    /// Device property
+    #[zbus(property)]
+    fn device(&self) -> zbus::Result<OwnedObjectPath>;
+
+    /// Includes property
+    #[zbus(property)]
+    fn includes(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+
+    /// Primary property
+    #[zbus(property)]
+    fn primary(&self) -> zbus::Result<bool>;
+
+    /// UUID property
+    #[zbus(property, name = "UUID")]
+    fn uuid(&self) -> zbus::Result<String>;
+}

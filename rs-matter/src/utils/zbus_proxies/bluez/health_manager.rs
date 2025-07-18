@@ -15,18 +15,27 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.bluez.HealthManager1`
+
+use std::collections::HashMap;
+
+use zbus::{
+    proxy,
+    zvariant::{ObjectPath, OwnedObjectPath, Value},
+};
+
+#[proxy(
+    interface = "org.bluez.HealthManager1",
+    default_service = "org.bluez",
+    default_path = "/org/bluez"
+)]
+pub trait HealthManager {
+    /// CreateApplication method
+    fn create_application(
+        &self,
+        config: HashMap<&str, &Value<'_>>,
+    ) -> zbus::Result<OwnedObjectPath>;
+
+    /// DestroyApplication method
+    fn destroy_application(&self, application: &ObjectPath<'_>) -> zbus::Result<()>;
+}

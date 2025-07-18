@@ -15,18 +15,9 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! zbus proxies for `org.freedesktop.resolve1`.
+//!
+//! All proxy traits are generated using introspection (i.e. `zbus-xmlgen system org.freedesktop.resolve1 /org/freedesktop/resolve1`).
+//! Also look here: https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.resolve1.html
+
+pub mod manager;

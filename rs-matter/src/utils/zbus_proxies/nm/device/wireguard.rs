@@ -15,18 +15,24 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.freedesktop.NetworkManager.Device.WireGuard`
+
+use zbus::proxy;
+
+#[proxy(
+    interface = "org.freedesktop.NetworkManager.Device.WireGuard",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait WireGuard {
+    /// PublicKey property
+    #[zbus(property)]
+    fn public_key(&self) -> zbus::Result<Vec<u8>>;
+
+    /// ListenPort property
+    #[zbus(property)]
+    fn listen_port(&self) -> zbus::Result<u16>;
+
+    /// FwMark property
+    #[zbus(property)]
+    fn fw_mark(&self) -> zbus::Result<u32>;
+}

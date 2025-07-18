@@ -15,18 +15,29 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "std")]
-pub mod zbus;
-#[cfg(feature = "std")]
-pub mod zbus_proxies;
+//! # D-Bus interface proxy for: `org.bluez.ProfileManager1`
+
+use std::collections::HashMap;
+
+use zbus::{
+    proxy,
+    zvariant::{ObjectPath, Value},
+};
+
+#[proxy(
+    interface = "org.bluez.ProfileManager1",
+    default_service = "org.bluez",
+    default_path = "/org/bluez"
+)]
+pub trait ProfileManager {
+    /// RegisterProfile method
+    fn register_profile(
+        &self,
+        profile: &ObjectPath<'_>,
+        uuid: &str,
+        options: HashMap<&str, &Value<'_>>,
+    ) -> zbus::Result<()>;
+
+    /// UnregisterProfile method
+    fn unregister_profile(&self, profile: &ObjectPath<'_>) -> zbus::Result<()>;
+}
