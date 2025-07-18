@@ -174,55 +174,15 @@ impl Service<'_> {
         matter_port: u16,
         f: F,
     ) -> Result<R, Error> {
-        let mut name_buf = [0; MATTER_SERVICE_MAX_NAME_LEN];
-
-        match matter_service {
-            MatterMdnsService::Commissioned { .. } => f(&Service {
-                name: matter_service.name(&mut name_buf),
-                service: "_matter",
-                protocol: "_tcp",
-                service_protocol: "_matter._tcp",
-                port: matter_port,
-                service_subtypes: &[],
-                // Some mDNS responders do not accept empty TXT records
-                txt_kvs: &[("dummy", "dummy")],
-            }),
-            MatterMdnsService::Commissionable { discriminator, .. } => {
-                let discriminator_str = Self::get_discriminator_str(*discriminator);
-                let vp = Self::get_vp(dev_det.vid, dev_det.pid);
-
-                let mut sai_str = heapless::String::<5>::new();
-                write_unwrap!(sai_str, "{}", dev_det.sai.unwrap_or(300));
-
-                let mut sii_str = heapless::String::<5>::new();
-                write_unwrap!(sii_str, "{}", dev_det.sii.unwrap_or(5000));
-
-                let txt_kvs = &[
-                    ("D", discriminator_str.as_str()),
-                    ("CM", "1"),
-                    ("DN", dev_det.device_name),
-                    ("VP", &vp),
-                    ("SAI", sai_str.as_str()), // Session Active Interval
-                    ("SII", sii_str.as_str()), // Session Idle Interval
-                    ("PH", "33"),              // Pairing Hint
-                    ("PI", ""),                // Pairing Instruction
-                ];
-
-                f(&Service {
-                    name: matter_service.name(&mut name_buf),
-                    service: "_matterc",
-                    protocol: "_udp",
-                    service_protocol: "_matterc._udp",
-                    port: matter_port,
-                    service_subtypes: &[
-                        &Self::get_long_service_subtype(*discriminator),
-                        &Self::get_short_service_type(*discriminator),
-                        "_CM",
-                    ],
-                    txt_kvs,
-                })
-            }
-        }
+        // Not the most elegant solution to cut down on code duplication,
+        // but works fine because we _know_ the future will resolve immediately,
+        // because the `f` closure does not block and resolves immediately as well.
+        embassy_futures::block_on(Self::async_call_with(
+            matter_service,
+            dev_det,
+            matter_port,
+            async |service| f(service),
+        ))
     }
 
     fn get_long_service_subtype(discriminator: u16) -> heapless::String<32> {
