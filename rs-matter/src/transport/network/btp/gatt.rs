@@ -21,14 +21,15 @@ use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::Error;
 use crate::transport::network::BtAddr;
 
-#[cfg(all(feature = "std", target_os = "linux"))]
-pub use builtin::BluerGattPeripheral as BuiltinGattPeripheral;
-
 use super::{GATT_HEADER_SIZE, MAX_BTP_SEGMENT_SIZE};
 
 #[cfg(all(feature = "std", target_os = "linux"))]
-#[path = "gatt/bluer.rs"]
-mod builtin;
+pub mod bluer;
+// `unix` necessary because BlueZ requires Unix Domain sockets.
+// Note that BlueZ is anyway Linux-only, even though this module - thanks to zbus itself being cross-platform - builds
+// on any Unix-like platform supporting Unix domain sockets.
+#[cfg(all(feature = "zbus", unix))]
+pub mod bluez;
 
 // The 16-bit, registered Matter Service UUID, as per the Matter Core spec.
 pub const MATTER_BLE_SERVICE_UUID16: u16 = 0xFFF6;

@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements the On/Off Light cluster with provisioning over Bluetooth (Linux only)
+//! An example Matter device that implements the On/Off Light cluster with provisioning over Bluetooth (Unix only)
 //!
 //! Note that - in the absence of capabilities in the `rs-matter` core to setup and control
 //! Wifi networks - this example implements a _fake_ NwCommCluster which only pretends to manage
@@ -55,11 +55,13 @@ use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::utils::sync::blocking::raw::StdRawMutex;
+use rs_matter::utils::zbus::Connection;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
@@ -137,8 +139,10 @@ fn main() -> Result<(), Error> {
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
 
+        let connection = futures_lite::future::block_on(Connection::system()).unwrap();
+
         // The BTP transport impl
-        let btp = Btp::new_builtin(&BTP_CONTEXT);
+        let btp = Btp::new(BluezGattPeripheral::new(None, &connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
         let mut transport = pin!(matter.run(&btp, &btp, DiscoveryCapabilities::BLE));
@@ -156,7 +160,7 @@ fn main() -> Result<(), Error> {
         );
 
         // Run with a simple `block_on`. Any local executor would do.
-        futures_lite::future::block_on(async_compat::Compat::new(all.coalesce()))?;
+        futures_lite::future::block_on(all.coalesce())?;
 
         matter.reset_transport()?;
     }
@@ -176,7 +180,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Run with a simple `block_on`. Any local executor would do.
-    futures_lite::future::block_on(async_compat::Compat::new(all.coalesce()))
+    futures_lite::future::block_on(all.coalesce())
 }
 
 /// The Node meta-data describing our Matter device.

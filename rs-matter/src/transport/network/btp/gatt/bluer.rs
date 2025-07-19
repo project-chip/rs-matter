@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+//! A `GattPeripheral` implementation using the BlueZ GATT stack via the `bluer` crate.
+
 use core::iter::once;
 use core::ptr::addr_of_mut;
 

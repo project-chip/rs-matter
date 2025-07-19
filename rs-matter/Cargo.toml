@@ -12,11 +12,11 @@ license = "Apache-2.0"
 rust-version = "1.83"
 
 [features]
-default = ["os", "rustcrypto", "log"]
+default = ["os", "rustcrypto", "log", "zbus"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
-zbus = ["futures-lite", "dep:zbus", "os"]
+zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-io"]
 os = ["std", "backtrace", "critical-section/std", "embassy-sync/std", "embassy-time/std"]
 std = ["alloc", "rand"]
 backtrace = []
@@ -81,6 +81,8 @@ async-compat = { version = "0.2", optional = true, default-features = false }
 
 # OS
 zbus = { version = "5.8", optional = true }
+uuid = { version = "1", optional = true, features = ["v4"] }
+libc = { version = "0.2", optional = true }
 futures-lite = { version = "2", optional = true }
 astro-dnssd = { version = "0.3", optional = true }
 zeroconf = { version = "0.15", optional = true }

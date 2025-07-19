@@ -9,6 +9,7 @@ name = "onoff_light"
 
 [[bin]]
 name = "onoff_light_bt"
+required-features = ["zbus"]
 
 [[bin]]
 name = "speaker"
@@ -22,6 +23,7 @@ name = "bridge"
 [features]
 default = ["log"]
 log = []
+zbus = ["rs-matter/zbus"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]
 avahi = ["rs-matter/zbus"]
@@ -37,6 +39,5 @@ embassy-time-queue-utils = { version = "0.1", features = ["generic-queue-64"] }
 static_cell = "1"
 nix = { version = "0.27", features = ["net"] }
 async-io = "2"
-async-compat = "0.2"
 futures-lite = "2"
-rs-matter = { path = "../rs-matter", features = ["async-io", "async-compat"] }
+rs-matter = { path = "../rs-matter", features = ["async-io"] }

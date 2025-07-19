@@ -71,22 +71,6 @@ pub struct Btp<C, M, T> {
     _mutex: PhantomData<M>,
 }
 
-#[cfg(all(feature = "std", target_os = "linux"))]
-impl<C, M> Btp<C, M, BuiltinGattPeripheral>
-where
-    C: Borrow<BtpContext<M>> + Clone + Send + Sync + 'static,
-    M: RawMutex + Send + Sync,
-{
-    #[inline(always)]
-    pub fn new_builtin(context: C) -> Self {
-        Self::new(BuiltinGattPeripheral::new(None), context)
-    }
-
-    pub fn init_builtin<I: Init<C>>(context: C) -> impl Init<Self> {
-        Self::init(BuiltinGattPeripheral::new(None), context)
-    }
-}
-
 impl<C, M, T> Btp<C, M, T>
 where
     C: Borrow<BtpContext<M>> + Clone + Send + Sync + 'static,
