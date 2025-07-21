@@ -21,7 +21,7 @@ use zbus::proxy;
 
 #[proxy(
     interface = "org.freedesktop.Avahi.ServiceResolver",
-    assume_defaults = true
+    default_service = "org.freedesktop.Avahi"
 )]
 pub trait ServiceResolver {
     /// Free method

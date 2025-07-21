@@ -17,8 +17,16 @@
 
 //! A set of zbus proxies for various Linux services.
 
+use crate::error::{Error, ErrorCode};
+
 pub mod avahi;
 pub mod bluez;
 pub mod nm;
 pub mod resolve;
 pub mod wpa_supp;
+
+impl From<zbus::Error> for Error {
+    fn from(e: zbus::Error) -> Self {
+        Self::new_with_details(ErrorCode::DBusError, Box::new(e))
+    }
+}

@@ -26,7 +26,7 @@ pub mod rand;
 pub mod select;
 pub mod storage;
 pub mod sync;
-#[cfg(feature = "std")]
+#[cfg(feature = "zbus")]
 pub mod zbus;
-#[cfg(feature = "std")]
+#[cfg(feature = "zbus")]
 pub mod zbus_proxies;

@@ -26,13 +26,11 @@ use embassy_sync::{
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::KeyPair;
-use rs_matter::dm::clusters::basic_info::BasicInfoConfig;
-use rs_matter::dm::clusters::dev_att::{DataType, DevAttDataFetcher};
+use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::dm::{DataModel, IMBuffer};
 use rs_matter::error::Error;
-use rs_matter::mdns::MdnsService;
 use rs_matter::respond::Responder;
 use rs_matter::transport::exchange::Exchange;
 use rs_matter::transport::network::{
@@ -41,7 +39,7 @@ use rs_matter::transport::network::{
 use rs_matter::transport::session::{NocCatIds, ReservedSession, SessionMode};
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{BasicCommData, Matter, MATTER_PORT};
+use rs_matter::{Matter, MATTER_PORT};
 
 pub mod im;
 pub mod test;
@@ -72,26 +70,6 @@ pub struct E2eRunner {
 
 impl E2eRunner {
     const ADDR: Address = Address::Udp(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)));
-
-    const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
-        vid: 1,
-        pid: 1,
-        hw_ver: 1,
-        hw_ver_str: "1",
-        sw_ver: 1,
-        sw_ver_str: "1",
-        serial_no: "E2E",
-        device_name: "E2E",
-        product_name: "E2E",
-        vendor_name: "E2E",
-        sai: None,
-        sii: None,
-    };
-
-    const BASIC_COMM: BasicCommData = BasicCommData {
-        password: 0,
-        discriminator: 0,
-    };
 
     /// The ID of the local Matter instance
     pub const PEER_ID: u64 = 445566;
@@ -220,10 +198,9 @@ impl E2eRunner {
         use rs_matter::utils::rand::dummy_rand as rand;
 
         let matter = Matter::new(
-            &Self::BASIC_INFO,
-            Self::BASIC_COMM,
-            &E2eDummyDevAtt,
-            MdnsService::Disabled,
+            &TEST_DEV_DET,
+            TEST_DEV_COMM,
+            &TEST_DEV_ATT,
             epoch,
             rand,
             MATTER_PORT,
@@ -268,15 +245,6 @@ impl E2eRunner {
         session.complete();
 
         Ok(())
-    }
-}
-
-/// A dummy device attribute data fetcher that always returns the same hard-coded test data.
-struct E2eDummyDevAtt;
-
-impl DevAttDataFetcher for E2eDummyDevAtt {
-    fn get_devatt_data(&self, _data_type: DataType, _data: &mut [u8]) -> Result<usize, Error> {
-        Ok(2)
     }
 }
 

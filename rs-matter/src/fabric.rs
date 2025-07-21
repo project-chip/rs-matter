@@ -15,7 +15,6 @@
  *    limitations under the License.
  */
 
-use core::fmt::Write;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
@@ -27,10 +26,10 @@ use crate::crypto::{self, hkdf_sha256, HmacSha256, KeyPair};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
-use crate::mdns::{Mdns, ServiceMode};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
+use crate::MatterMdnsService;
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
@@ -46,6 +45,8 @@ pub struct Fabric {
     fabric_id: u64,
     /// Vendor ID
     vendor_id: u16,
+    /// Compressed ID
+    compressed_fabric_id: u64,
     /// Fabric key pair
     key_pair: KeyPair,
     /// Root CA certificate to be used when verifying the node's certificate
@@ -65,8 +66,6 @@ pub struct Fabric {
     ipk: KeySet,
     /// Fabric label; unique accross all fabrics on the device
     label: String<32>,
-    /// Fabric mDNS service name
-    mdns_service_name: String<33>,
     /// Access Control List
     acl: Vec<AclEntry, { acl::ENTRIES_PER_FABRIC }>,
 }
@@ -86,13 +85,13 @@ impl Fabric {
             node_id: 0,
             fabric_id: 0,
             vendor_id: 0,
+            compressed_fabric_id: 0,
             key_pair,
             root_ca <- Vec::init(),
             icac <- Vec::init(),
             noc <- Vec::init(),
             ipk <- KeySet::init(),
             label: String::new(),
-            mdns_service_name: String::new(),
             acl <- Vec::init(),
         })
     }
@@ -110,12 +109,8 @@ impl Fabric {
         ipk: &[u8],
         vendor_id: u16,
         case_admin_subject: Option<u64>,
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
-        if !self.mdns_service_name.is_empty() {
-            mdns.remove(&self.mdns_service_name)?;
-        }
-
         self.root_ca
             .extend_from_slice(root_ca)
             .map_err(|_| ErrorCode::NoSpace)?;
@@ -134,27 +129,9 @@ impl Fabric {
 
         let root_ca_p = CertRef::new(TLVElement::new(root_ca));
 
-        let mut compressed_id = [0_u8; COMPRESSED_FABRIC_ID_LEN];
-        Fabric::compute_compressed_id(root_ca_p.pubkey()?, self.fabric_id, &mut compressed_id)?;
-
-        self.ipk = KeySet::new(ipk, &compressed_id)?;
-
-        self.mdns_service_name.clear();
-        for c in compressed_id {
-            let mut hex = heapless::String::<4>::new();
-            write_unwrap!(&mut hex, "{:02X}", c);
-            unwrap!(self.mdns_service_name.push_str(&hex));
-        }
-        unwrap!(self.mdns_service_name.push('-'));
-        for c in self.node_id.to_be_bytes() {
-            let mut hex = heapless::String::<4>::new();
-            write_unwrap!(&mut hex, "{:02X}", c);
-            unwrap!(self.mdns_service_name.push_str(&hex));
-        }
-
-        info!("mDNS Service name: {}", self.mdns_service_name);
-
-        mdns.add(&self.mdns_service_name, ServiceMode::Commissioned)?;
+        self.compressed_fabric_id =
+            Self::compute_compressed_fabric_id(root_ca_p.pubkey()?, self.fabric_id);
+        self.ipk = KeySet::new(ipk, &self.compressed_fabric_id.to_be_bytes())?;
 
         if let Some(case_admin_subject) = case_admin_subject {
             self.acl.clear();
@@ -169,7 +146,20 @@ impl Fabric {
             )?;
         }
 
+        mdns_notif();
+
         Ok(())
+    }
+
+    pub fn mdns_service(&self) -> Option<MatterMdnsService> {
+        self.mdns_service_for(self.node_id)
+    }
+
+    pub fn mdns_service_for(&self, node_id: u64) -> Option<MatterMdnsService> {
+        (!self.noc.is_empty()).then_some(MatterMdnsService::Commissioned {
+            compressed_fabric_id: self.compressed_fabric_id,
+            node_id,
+        })
     }
 
     /// Is the fabric matching the privided destination ID
@@ -215,6 +205,11 @@ impl Fabric {
     /// Return the fabric's local index
     pub fn fab_idx(&self) -> NonZeroU8 {
         self.fab_idx
+    }
+
+    /// Return the fabric's compressed fabric ID
+    pub fn compressed_fabric_id(&self) -> u64 {
+        self.compressed_fabric_id
     }
 
     /// Return the fabric's Vendor ID
@@ -371,23 +366,22 @@ impl Fabric {
     }
 
     /// Compute the compressed fabric ID
-    fn compute_compressed_id(
-        root_pubkey: &[u8],
-        fabric_id: u64,
-        out: &mut [u8],
-    ) -> Result<(), Error> {
+    fn compute_compressed_fabric_id(root_pubkey: &[u8], fabric_id: u64) -> u64 {
         let root_pubkey = &root_pubkey[1..];
         const COMPRESSED_FABRIC_ID_INFO: [u8; 16] = [
             0x43, 0x6f, 0x6d, 0x70, 0x72, 0x65, 0x73, 0x73, 0x65, 0x64, 0x46, 0x61, 0x62, 0x72,
             0x69, 0x63,
         ];
-        hkdf_sha256(
+
+        let mut compressed_fabric_id = [0; COMPRESSED_FABRIC_ID_LEN];
+        unwrap!(hkdf_sha256(
             &fabric_id.to_be_bytes(),
             root_pubkey,
             &COMPRESSED_FABRIC_ID_INFO,
-            out,
-        )
-        .map_err(|_| Error::from(ErrorCode::NoSpace))
+            &mut compressed_fabric_id,
+        ));
+
+        u64::from_be_bytes(compressed_fabric_id)
     }
 }
 
@@ -432,12 +426,10 @@ impl FabricMgr {
     }
 
     /// Load the fabrics from the provided TLV data
-    pub fn load(&mut self, data: &[u8], mdns: &dyn Mdns) -> Result<(), Error> {
-        for fabric in self.iter() {
-            mdns.remove(&fabric.mdns_service_name)?;
-        }
-
+    pub fn load(&mut self, data: &[u8], mdns_notif: &mut dyn FnMut()) -> Result<(), Error> {
         self.fabrics.clear();
+
+        mdns_notif();
 
         for entry in TLVElement::new(data).array()?.iter() {
             let entry = entry?;
@@ -446,10 +438,7 @@ impl FabricMgr {
                 .push_init(Fabric::init_from_tlv(entry), || ErrorCode::NoSpace.into())?;
         }
 
-        for fabric in &self.fabrics {
-            mdns.add(&fabric.mdns_service_name, ServiceMode::Commissioned)?;
-        }
-
+        mdns_notif();
         self.changed = false;
 
         Ok(())
@@ -546,7 +535,7 @@ impl FabricMgr {
         ipk: &[u8],
         vendor_id: u16,
         case_admin_subject: u64,
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
         self.add_with_post_init(key_pair, |fabric| {
             fabric.update(
@@ -556,7 +545,7 @@ impl FabricMgr {
                 ipk,
                 vendor_id,
                 Some(case_admin_subject),
-                mdns,
+                mdns_notif,
             )
         })
     }
@@ -576,7 +565,7 @@ impl FabricMgr {
         icac: &[u8],
         ipk: &[u8],
         vendor_id: u16,
-        mdns: &dyn Mdns,
+        mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
         let Some(fabric) = self
             .fabrics
@@ -588,7 +577,7 @@ impl FabricMgr {
 
         fabric.key_pair = key_pair;
 
-        fabric.update(root_ca, noc, icac, ipk, vendor_id, None, mdns)?;
+        fabric.update(root_ca, noc, icac, ipk, vendor_id, None, mdns_notif)?;
 
         self.changed = true;
 
@@ -615,15 +604,18 @@ impl FabricMgr {
     }
 
     /// Remove a fabric from the manager
-    pub fn remove(&mut self, fab_idx: NonZeroU8, mdns: &dyn Mdns) -> Result<(), Error> {
-        let Some(fabric) = self.get(fab_idx) else {
+    pub fn remove(
+        &mut self,
+        fab_idx: NonZeroU8,
+        mdns_notif: &mut dyn FnMut(),
+    ) -> Result<(), Error> {
+        if self.get(fab_idx).is_none() {
             return Ok(());
-        };
-
-        mdns.remove(&fabric.mdns_service_name)?;
+        }
 
         self.fabrics.retain(|fabric| fabric.fab_idx != fab_idx);
 
+        mdns_notif();
         self.changed = true;
 
         Ok(())

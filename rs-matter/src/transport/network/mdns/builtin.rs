@@ -28,154 +28,81 @@ use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 
-use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
-use crate::transport::network::{
-    Address, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4,
-    SocketAddrV6,
+use crate::transport::network::mdns::{
+    MDNS_IPV4_BROADCAST_ADDR, MDNS_IPV6_BROADCAST_ADDR, MDNS_PORT,
 };
-use crate::utils::cell::RefCell;
-use crate::utils::init::{init, Init};
-use crate::utils::rand::Rand;
+use crate::transport::network::{
+    Address, Ipv4Addr, NetworkReceive, NetworkSend, SocketAddr, SocketAddrV4, SocketAddrV6,
+};
 use crate::utils::select::Coalesce;
 use crate::utils::storage::pooled::BufferAccess;
-use crate::utils::sync::Notification;
-
-use super::{Service, ServiceMode};
+use crate::Matter;
 
 use self::proto::Services;
+use super::Service;
 
 pub use proto::Host;
 
 mod proto;
 
-pub const MDNS_SOCKET_BIND_ADDR: SocketAddr =
-    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, MDNS_PORT, 0, 0));
-
-pub const MDNS_IPV6_BROADCAST_ADDR: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
-pub const MDNS_IPV4_BROADCAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
-
-pub const MDNS_PORT: u16 = 5353;
-
-pub struct MdnsImpl<'a> {
-    dev_det: &'a BasicInfoConfig<'a>,
-    matter_port: u16,
-    services: RefCell<crate::utils::storage::Vec<(heapless::String<40>, ServiceMode), 4>>,
-    notification: Notification<NoopRawMutex>,
+/// A built-in mDNS responder for Matter, utilizing a custom mDNS protocol implementation.
+///
+/// `no_std` and `no-alloc` and thus suitable for MCUs as well when there is no running mDNS service as part of the OS,
+pub struct BuiltinMdnsResponder<'a> {
+    matter: &'a Matter<'a>,
 }
 
-impl<'a> MdnsImpl<'a> {
-    #[inline(always)]
-    pub const fn new(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> Self {
-        Self {
-            dev_det,
-            matter_port,
-            services: RefCell::new(crate::utils::storage::Vec::new()),
-            notification: Notification::new(),
-        }
+impl<'a> BuiltinMdnsResponder<'a> {
+    /// Create a new instance of the built-in mDNS responder.
+    ///
+    /// # Arguments
+    /// * `matter` - A reference to the Matter instance that this responder will use.
+    pub const fn new(matter: &'a Matter<'a>) -> Self {
+        Self { matter }
     }
 
-    pub fn init(dev_det: &'a BasicInfoConfig<'a>, matter_port: u16) -> impl Init<Self> {
-        init!(Self {
-            dev_det,
-            matter_port,
-            services <- RefCell::init(crate::utils::storage::Vec::init()),
-            notification: Notification::new(),
-        })
-    }
-
-    pub fn reset(&self) {
-        self.services.borrow_mut().clear();
-    }
-
-    pub fn add(&self, service: &str, mode: ServiceMode) -> Result<(), Error> {
-        let mut services = self.services.borrow_mut();
-
-        services.retain(|(name, _)| name != service);
-        services
-            .push((unwrap!(service.try_into()), mode))
-            .map_err(|_| ErrorCode::NoSpace)?;
-
-        self.notification.notify();
-
-        Ok(())
-    }
-
-    pub fn remove(&self, service: &str) -> Result<(), Error> {
-        let mut services = self.services.borrow_mut();
-
-        services.retain(|(name, _)| name != service);
-
-        self.notification.notify();
-
-        Ok(())
-    }
-
-    pub fn for_each<F>(&self, mut callback: F) -> Result<(), Error>
-    where
-        F: FnMut(&Service) -> Result<(), Error>,
-    {
-        let services = self.services.borrow();
-
-        for (service, mode) in &*services {
-            mode.service(self.dev_det, self.matter_port, service, |service| {
-                callback(service)
-            })?;
-        }
-
-        Ok(())
-    }
-
+    /// Run the mDNS responder.
+    ///
+    /// # Arguments
+    /// * `send` - An object implementing the `NetworkSend` trait for sending mDNS packets.
+    /// * `recv` - An object implementing the `NetworkReceive` trait for receiving mDNS packets.
+    /// * `host` - A reference to the `Host` instance that provides basic mDNS host information.
+    /// * `ipv4_interface` - An optional IPv4 address for the interface to use for mDNS broadcasts.
+    /// * `ipv6_interface` - An optional IPv6 interface index for the interface to use for mDNS broadcasts.
     #[allow(clippy::too_many_arguments)]
-    pub async fn run<S, R, SB, RB>(
+    pub async fn run<S, R>(
         &self,
         send: S,
         recv: R,
-        tx_buf: SB,
-        rx_buf: RB,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
-        rand: Rand,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
-        SB: BufferAccess<[u8]>,
-        RB: BufferAccess<[u8]>,
     {
         let send = Mutex::<NoopRawMutex, _>::new(send);
 
-        let mut broadcast =
-            pin!(self.broadcast(&send, &tx_buf, host, ipv4_interface, ipv6_interface));
-        let mut respond = pin!(self.respond(
-            &send,
-            recv,
-            &tx_buf,
-            &rx_buf,
-            host,
-            ipv4_interface,
-            ipv6_interface,
-            rand
-        ));
+        let mut broadcast = pin!(self.broadcast(&send, host, ipv4_interface, ipv6_interface));
+        let mut respond = pin!(self.respond(&send, recv, host, ipv4_interface, ipv6_interface));
 
         select(&mut broadcast, &mut respond).coalesce().await
     }
 
-    async fn broadcast<S, B>(
+    async fn broadcast<S>(
         &self,
         send: &Mutex<impl RawMutex, S>,
-        buffer: B,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
-        B: BufferAccess<[u8]>,
     {
         loop {
-            let mut notification = pin!(self.notification.wait());
+            let mut notification = pin!(self.matter.wait_mdns());
             let mut timeout = pin!(Timer::after(Duration::from_secs(30)));
 
             select(&mut notification, &mut timeout).await;
@@ -195,6 +122,8 @@ impl<'a> MdnsImpl<'a> {
                     })
                     .into_iter(),
             ) {
+                let buffer = self.matter.transport_tx_buffer();
+
                 let mut buf = buffer.get().await.ok_or(ErrorCode::NoSpace)?;
                 let mut send = send.lock().await;
 
@@ -212,27 +141,25 @@ impl<'a> MdnsImpl<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn respond<S, R, SB, RB>(
+    async fn respond<S, R>(
         &self,
         send: &Mutex<impl RawMutex, S>,
         mut recv: R,
-        tx_buf: SB,
-        rx_buf: RB,
         host: &Host<'_>,
         ipv4_interface: Option<Ipv4Addr>,
         ipv6_interface: Option<u32>,
-        rand: Rand,
     ) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
-        SB: BufferAccess<[u8]>,
-        RB: BufferAccess<[u8]>,
     {
         loop {
             recv.wait_available().await?;
 
             {
+                let tx_buf = self.matter.transport_tx_buffer();
+                let rx_buf = self.matter.transport_rx_buffer();
+
                 let mut rx = rx_buf.get().await.ok_or(ErrorCode::NoSpace)?;
                 let (len, addr) = recv.recv_from(&mut rx).await?;
 
@@ -271,7 +198,7 @@ impl<'a> MdnsImpl<'a> {
                     if let Some(reply_addr) = reply_addr {
                         if delay {
                             let mut b = [0];
-                            rand(&mut b);
+                            self.matter.rand()(&mut b);
 
                             // Generate a delay between 20 and 120 ms, as per spec
                             let delay_ms = 20 + (b[0] as u32 * 100 / 256);
@@ -295,11 +222,18 @@ impl<'a> MdnsImpl<'a> {
     }
 }
 
-impl Services for MdnsImpl<'_> {
-    fn for_each<F>(&self, callback: F) -> Result<(), Error>
+impl Services for BuiltinMdnsResponder<'_> {
+    fn for_each<F>(&self, mut callback: F) -> Result<(), Error>
     where
         F: FnMut(&Service) -> Result<(), Error>,
     {
-        MdnsImpl::for_each(self, callback)
+        self.matter.mdns_services(|service| {
+            Service::call_with(
+                &service,
+                self.matter.dev_det(),
+                self.matter.port(),
+                &mut callback,
+            )
+        })
     }
 }

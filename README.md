@@ -110,7 +110,6 @@ use rs_matter::dm::{
     InvokeContext, Node, ReadContext, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::mdns::MdnsService;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
@@ -138,13 +137,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Create the Matter object
-    let matter = Matter::new_default(
-        &TEST_DEV_DET,
-        TEST_DEV_COMM,
-        &TEST_DEV_ATT,
-        MdnsService::Builtin,
-        MATTER_PORT,
-    );
+    let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
     // Need to call this once
     matter.initialize_transport_buffers()?;
@@ -437,13 +430,21 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 ### Building the library and all examples
 
 ```sh
-$ cargo build
-```
-
-**NOTE**: If you are on Linux **and** are running the Avahi daemon, you might want to build with:
-```sh
 $ cargo build --features zeroconf
 ```
+
+#### **NOTE**: mDNS issues (e.g. "running the example fails with strange error messages mentioning mDNS").
+
+These days mDNS is still a PITA especially on Linux, but not only.
+
+`rs-matter` currently offers no less than 5 (five!) mDNS implementations (three well-supported ones - `avahi`, `resolve` and `builtin` -
+for production use-cases on embedded MCUs and embedded Linux, as well as two legacy ones - `zeroconf` and `astro-dnssd` - which are kept around
+for compatibility with Windows and MacOSX; look inside `rs-matter/rs-matter/src/transport/network/mdns` for more details on those).
+
+The TL;DR is, rather than building with `--features zeroconf` everywhere, you can try:
+- On Linux, all of the above, but `--features avahi` and `--features zeroconf` are your best bet;
+- On MacOSX, `--features astro-dnssd` is known to work fine;
+- On Windows, try `--features astro-dnssd` or `--features zeroconf`.
 
 ### Unit Tests
 ```sh
