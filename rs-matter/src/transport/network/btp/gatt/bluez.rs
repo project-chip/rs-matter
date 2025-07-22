@@ -489,6 +489,11 @@ impl AdObj {
         true
     }
 
+    #[zbus(property, name = "ServiceUUIDs")]
+    pub fn service_uuids(&self) -> Vec<String> {
+        vec![BLUEZ_MATTER_BLE_SERVICE_UUID.to_string()]
+    }
+
     #[zbus(property)]
     pub fn service_data(&self) -> HashMap<String, OwnedValue> {
         once((
