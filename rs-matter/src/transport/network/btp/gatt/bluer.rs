@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+//! A `GattPeripheral` implementation using the BlueZ GATT stack via the `bluer` crate.
+
 use core::iter::once;
 use core::ptr::addr_of_mut;
 
@@ -144,6 +146,7 @@ impl BluerGattPeripheral {
         let le_advertisement = Advertisement {
             discoverable: Some(true),
             local_name: Some(service_name.into()),
+            service_uuids: once(Uuid::from_u128(MATTER_BLE_SERVICE_UUID)).collect(),
             service_data: once((
                 Uuid::from_u128(MATTER_BLE_SERVICE_UUID),
                 service_adv_data.service_payload_iter().collect(),
