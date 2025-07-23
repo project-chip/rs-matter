@@ -22,7 +22,10 @@ use std::collections::HashMap;
 use zbus::proxy;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
-#[proxy(interface = "fi.w1.wpa_supplicant1.Interface", assume_defaults = true)]
+#[proxy(
+    interface = "fi.w1.wpa_supplicant1.Interface",
+    default_service = "fi.w1.wpa_supplicant1"
+)]
 pub trait Interface {
     /// AddBlob method
     fn add_blob(&self, name: &str, data: &[u8]) -> zbus::Result<()>;

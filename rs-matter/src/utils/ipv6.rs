@@ -15,19 +15,21 @@
  *    limitations under the License.
  */
 
-pub mod bitflags;
-pub mod cell;
-pub mod codec;
-pub mod epoch;
-pub mod init;
-pub mod ipv6;
-pub mod iter;
-pub mod maybe;
-pub mod rand;
-pub mod select;
-pub mod storage;
-pub mod sync;
-#[cfg(feature = "zbus")]
-pub mod zbus;
-#[cfg(feature = "zbus")]
-pub mod zbus_proxies;
+use core::net::Ipv6Addr;
+
+/// Create a link-local IPv6 address from a MAC address.
+///
+/// Note that this function does not perform any SLAAC-related operations
+/// like checking whether the generated address is already in use.
+pub fn create_link_local_ipv6(mac: &[u8; 6]) -> Ipv6Addr {
+    Ipv6Addr::new(
+        0xfe80,
+        0,
+        0,
+        0,
+        u16::from_be_bytes([mac[0] ^ 0x02, mac[1]]),
+        u16::from_be_bytes([mac[2], 0xff]),
+        u16::from_be_bytes([0xfe, mac[3]]),
+        u16::from_be_bytes([mac[4], mac[5]]),
+    )
+}

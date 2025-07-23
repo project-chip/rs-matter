@@ -24,7 +24,7 @@ use zbus::zvariant::{OwnedValue, Value};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.Interface.WPS",
-    assume_defaults = true
+    default_service = "fi.w1.wpa_supplicant1"
 )]
 pub trait WPS {
     /// Start method

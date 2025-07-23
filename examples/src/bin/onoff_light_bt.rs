@@ -15,16 +15,20 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements the On/Off Light cluster with provisioning over Bluetooth (Unix only)
+//! An example Matter device that implements the On/Off Light cluster over Wifi with commissioning over Bluetooth (Linux only).
 //!
-//! Note that - in the absence of capabilities in the `rs-matter` core to setup and control
-//! Wifi networks - this example implements a _fake_ NwCommCluster which only pretends to manage
-//! Wifi networks, but in reality expects a pre-existing connection over Ethernet and/or Wifi on
-//! the host machine where the example would run.
+//! Some Linux systems might require the user running the app have elevated permissions, so run with `sudo`!
 //!
-//! In real-world scenarios, the user is expected to provide an actual NwCommCluster implementation
-//! that can manage Wifi networks on the device by using the device-specific APIs.
-//! (For (embedded) Linux, this could be done using `nmcli` or `wpa_supplicant`.)
+//! NOTE NOTE NOTE: Set the `IF_NAME` environment variable to the name of your Wifi interface,
+//! e.g. `wlan0`, `wlx80afca061a16`, etc. prior to running this example!
+//!
+//! The example uses the BlueZ BLE stack and the `wpa_supplicant` daemon to connect to BT and to manage Wifi networks.
+//! Therefore, it is likely to run only on Linux-based systems (e.g., Ubuntu, Debian, etc.), because BlueZ is Linux-specific.
+//!
+//! Utilizing `wpa_supplicant` and `dhclient` to manage Wifi networks is useful primarily in embedded Linux scenarios,
+//! where - moreover - the Linux stack does not have NetworkManager installed. For regular Linux systems, or for embedded
+//! Linux systems having NetworkManager, look at the forthcoming `onoff_light_bt_nm` example instead, as it would be much
+//! more straightfoward to run in that it would not need elevated permissions, nor the presence of the `dhclient` command.
 
 use core::pin::pin;
 
@@ -34,7 +38,7 @@ use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use log::info;
+use log::{info, warn};
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
@@ -44,9 +48,7 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::networks::wireless::{
-    NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,
-};
+use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
@@ -57,6 +59,8 @@ use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
+use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
+use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -93,11 +97,27 @@ fn main() -> Result<(), Error> {
     // A storage for the Wifi networks
     let networks = WifiNetworks::<3, NoopRawMutex>::new();
 
-    // The network controller
-    // We would be using a "fake" network controller that does not actually manage any Wifi networks
+    let connection = futures_lite::future::block_on(Connection::system()).unwrap();
+
+    let if_name = if let Ok(if_name) = std::env::var("IF_NAME") {
+        info!("Using Wifi network interface: {if_name}");
+        if_name
+    } else {
+        let if_name = "wlan0".to_string();
+
+        warn!(
+            "Environment variable `IF_NAME` is not set, using {if_name} as the Wifi interface name"
+        );
+
+        if_name
+    };
+
+    // The network controller based on `wpa_supplicant` and `dhclient`.
     let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
-    let net_ctl =
-        NetCtlWithStatusImpl::new(&net_ctl_state, NoopWirelessNetCtl::new(NetworkType::Wifi));
+    let net_ctl = NetCtlWithStatusImpl::new(
+        &net_ctl_state,
+        WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
+    );
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
     let dm_handler = dm_handler(&matter, &on_off, &net_ctl, &networks);
@@ -138,8 +158,6 @@ fn main() -> Result<(), Error> {
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
-
-        let connection = futures_lite::future::block_on(Connection::system()).unwrap();
 
         // The BTP transport impl
         let btp = Btp::new(BluezGattPeripheral::new(None, &connection), &BTP_CONTEXT);
@@ -216,7 +234,7 @@ where
             networks,
             matter.rand(),
             endpoints::with_sys(
-                &false,
+                &true,
                 matter.rand(),
                 EmptyHandler
                     .chain(

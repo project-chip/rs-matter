@@ -777,16 +777,20 @@ impl NetCtlState {
     ) -> Result<R, NetCtlError> {
         self.network_id.clear();
 
-        if let Some(network_id) = network_id {
-            unwrap!(self.network_id.extend_from_slice(network_id));
-        }
+        if result.is_ok() {
+            if let Some(network_id) = network_id {
+                unwrap!(self.network_id.extend_from_slice(network_id));
+            }
 
-        if let Some((status, err_code)) = NetworkCommissioningStatusEnum::map_ctl_status(&result) {
-            self.networking_status = Some(status);
-            self.connect_error_value = err_code;
-        } else {
-            self.networking_status = None;
-            self.connect_error_value = None;
+            if let Some((status, err_code)) =
+                NetworkCommissioningStatusEnum::map_ctl_status(&result)
+            {
+                self.networking_status = Some(status);
+                self.connect_error_value = err_code;
+            } else {
+                self.networking_status = None;
+                self.connect_error_value = None;
+            }
         }
 
         result
@@ -896,7 +900,7 @@ where
     where
         F: FnMut(&net_comm::NetworkScanInfo) -> Result<(), Error>,
     {
-        NetCtlState::update_with_mutex(self.state, network, self.net_ctl.scan(network, f).await)
+        self.net_ctl.scan(network, f).await
     }
 
     async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
