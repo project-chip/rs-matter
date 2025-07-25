@@ -270,6 +270,7 @@ where
     {
         const SCAN_RETRIES: usize = 3;
         const SCAN_RETRIES_SLEEP_SEC: u64 = 5;
+        const SCAN_DONE_TIMEOUT_SEC: u64 = 20;
 
         let _guard = self.network.lock().await;
 
@@ -296,9 +297,22 @@ where
                 // Scan started successfully
 
                 // Wait for the scan to complete
-                while scan_done.next().await.is_none() {}
+                // This is only a best effort because wpa_supplicant might be restarted and this signal might never come
+                // Note that we might be extra paranoid here, but doesn't hurt
 
-                break;
+                let scan_done = async {
+                    loop {
+                        if scan_done.next().await.is_some() {
+                            break;
+                        }
+                    }
+                };
+
+                let timeout = Timer::after(Duration::from_secs(SCAN_DONE_TIMEOUT_SEC));
+
+                if let Either::First(_) = select(scan_done, timeout).await {
+                    break;
+                }
             }
 
             Timer::after(Duration::from_secs(SCAN_RETRIES_SLEEP_SEC)).await;
