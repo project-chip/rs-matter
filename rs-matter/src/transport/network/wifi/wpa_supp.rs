@@ -335,10 +335,15 @@ where
 
         let mut args = HashMap::new();
 
-        let arg_ssid = core::str::from_utf8(ssid).unwrap().into();
+        // For some reason, `wpa_supplicant` really wants the SSID and PSK to be
+        // strings, even if in theory they can be any byte array.
+
+        let utf8_err = |_| NetCtlError::Other(ErrorCode::Invalid.into());
+
+        let arg_ssid = core::str::from_utf8(ssid).map_err(utf8_err)?.into();
         args.insert("ssid", &arg_ssid);
 
-        let arg_pass = core::str::from_utf8(pass).unwrap().into();
+        let arg_pass = core::str::from_utf8(pass).map_err(utf8_err)?.into();
         if !pass.is_empty() {
             args.insert("psk", &arg_pass);
         }
@@ -357,7 +362,12 @@ where
         match select(connected, timeout).await {
             Either::First(_) => (),
             Either::Second(_) => {
-                self.remove_network(&mut network).await?;
+                if let Err(e2) = self.remove_network(&mut network).await {
+                    warn!(
+                        "Failed to remove network after connection timeout: {:?}",
+                        e2
+                    );
+                }
                 return Err(NetCtlError::AuthFailure);
             }
         }
@@ -368,7 +378,12 @@ where
             Ok(()) => Ok(()),
             Err(e) => {
                 // If the IP stack connection failed, remove the network
-                self.remove_network(&mut network).await?;
+                if let Err(e2) = self.remove_network(&mut network).await {
+                    warn!(
+                        "Failed to remove network after IP stack connection failure: {:?}",
+                        e2
+                    );
+                }
                 Err(e)
             }
         }

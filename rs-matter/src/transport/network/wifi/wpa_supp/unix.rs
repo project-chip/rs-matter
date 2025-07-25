@@ -126,7 +126,7 @@ impl IpStackCtl for DhClientCtl {
         if self.self_assign_link_local_ipv6 {
             let ipv6 = create_link_local_ipv6(&unwrap!(netif.hw_addr[..6].try_into()));
 
-            if let Err(e) = Command::new("ip")
+            let status = Command::new("ip")
                 .arg("-6")
                 .arg("addr")
                 .arg("add")
@@ -134,26 +134,34 @@ impl IpStackCtl for DhClientCtl {
                 .arg("dev")
                 .arg(&self.ifname)
                 .status()
-            {
-                warn!(
-                    "Assigning link-local IPv6 address {} on interface {} failed: {:?}",
-                    ipv6, self.ifname, e
+                .map_err(|_| NetCtlError::IpBindFailed)?;
+
+            if !status.success() {
+                error!(
+                    "Assigning link-local IPv6 address {} on interface {} failed with status: {}",
+                    ipv6, self.ifname, status
                 );
+
+                return Err(NetCtlError::IpBindFailed);
             }
         }
 
         // 2) invoke `dhclient` on the interface. This will:
         // - Get a DHCP lease for an Ipv4 address
         // - Use SLAAC to configure an ipv6 address
-        Command::new("dhclient")
+        let status = Command::new("dhclient")
             .arg("-nw")
             .arg(&self.ifname)
             .status()
-            .map_err(|e| {
-                error!("Error running `dhclient`: {:?}", e);
+            .map_err(|_| NetCtlError::IpBindFailed)?;
 
-                NetCtlError::Other(ErrorCode::NoNetworkInterface.into())
-            })?;
+        if !status.success() {
+            error!(
+                "Running `dhclient` on interface {} failed with status: {}",
+                self.ifname, status
+            );
+            return Err(NetCtlError::IpBindFailed);
+        }
 
         let timeout = Timer::after(Duration::from_secs(CONNECT_TIMEOUT_SECS));
         let connected = self.wait(true);
