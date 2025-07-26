@@ -21,7 +21,7 @@ name = "media_player"
 name = "bridge"
 
 [features]
-default = ["log", "zbus"]
+default = ["log"]
 log = []
 zbus = ["rs-matter/zbus"]
 astro-dnssd = ["rs-matter/astro-dnssd"]
