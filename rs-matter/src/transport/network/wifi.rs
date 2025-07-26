@@ -16,4 +16,6 @@
  */
 
 #[cfg(feature = "zbus")]
+pub mod nm;
+#[cfg(feature = "zbus")]
 pub mod wpa_supp;
