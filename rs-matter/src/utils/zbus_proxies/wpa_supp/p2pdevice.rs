@@ -24,7 +24,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 
 #[proxy(
     interface = "fi.w1.wpa_supplicant1.Interface.P2PDevice",
-    assume_defaults = true
+    default_service = "fi.w1.wpa_supplicant1"
 )]
 pub trait P2PDevice {
     /// AddPersistentGroup method

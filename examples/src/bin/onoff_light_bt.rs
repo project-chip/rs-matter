@@ -15,16 +15,20 @@
  *    limitations under the License.
  */
 
-//! An example Matter device that implements the On/Off Light cluster with provisioning over Bluetooth (Unix only)
+//! An example Matter device that implements the On/Off Light cluster over Wifi with commissioning over Bluetooth (Linux only).
 //!
-//! Note that - in the absence of capabilities in the `rs-matter` core to setup and control
-//! Wifi networks - this example implements a _fake_ NwCommCluster which only pretends to manage
-//! Wifi networks, but in reality expects a pre-existing connection over Ethernet and/or Wifi on
-//! the host machine where the example would run.
+//! The example uses the BlueZ BLE stack and either the `NetworkManager` or directly the `wpa_supplicant` daemon
+//! to connect to BT and to manage Wifi networks.
+//! Therefore, it is likely to run only on Linux-based systems (e.g., Ubuntu, Debian, etc.), because BlueZ is Linux-specific.
 //!
-//! In real-world scenarios, the user is expected to provide an actual NwCommCluster implementation
-//! that can manage Wifi networks on the device by using the device-specific APIs.
-//! (For (embedded) Linux, this could be done using `nmcli` or `wpa_supplicant`.)
+//! Do note that running the app with the `wpa_supplicant` daemon, some Linux systems might require the user running the app to have
+//! elevated permissions, so run with `sudo`!
+//! E.g. `sudo ./onoff_light_bt <your-wlan-interface-name>`
+//!
+//! Utilizing `wpa_supplicant` and `dhclient` to manage Wifi networks is useful primarily in embedded Linux scenarios,
+//! where - moreover - the Linux stack does not have NetworkManager installed. For regular Linux systems, or for embedded
+//! Linux systems having NetworkManager, using the NetworkManager code-path is recommended, as it is much
+//! more straightfoward to run it, in that it does not need elevated permissions, nor the presence of the `dhclient` and `ip` commands.
 
 use core::pin::pin;
 
@@ -34,7 +38,7 @@ use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
-use log::info;
+use log::{info, warn};
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
@@ -44,9 +48,7 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::networks::wireless::{
-    NetCtlState, NetCtlWithStatusImpl, NoopWirelessNetCtl, WifiNetworks,
-};
+use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
@@ -57,6 +59,9 @@ use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
+use rs_matter::transport::network::wifi::nm::NetMgrCtl;
+use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
+use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -74,6 +79,30 @@ fn main() -> Result<(), Error> {
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
+
+    let args = std::env::args().into_iter().skip(1).collect::<Vec<_>>();
+    if args.len() > 2 {
+        eprintln!("Usage: onoff_light_bt [-w] [if_name]");
+        eprintln!(
+            "  -w      - use wpa_supplicant to manage Wifi networks (default is NetworkManager)"
+        );
+        eprintln!("  if_name - the name of the Wifi interface to use, e.g. 'wlan0', 'wlx80afca061a16', etc.");
+        eprintln!("            If not set, defaults to 'wlan0'.");
+
+        return Ok(());
+    }
+
+    let use_wpa_supp = args.iter().any(|arg| arg == "-w");
+    if use_wpa_supp {
+        warn!("Using wpa_supplicant to manage Wifi networks, make sure you run with `sudo`!");
+    } else {
+        info!("Using NetworkManager to manage Wifi networks");
+    }
+
+    let if_name = args.into_iter().find(|arg| arg != "-w").unwrap_or_else(|| {
+        warn!("Ran without iface arg, using 'wlan0' as the Wifi interface name");
+        "wlan0".into()
+    });
 
     // Create the Matter object
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
@@ -93,22 +122,36 @@ fn main() -> Result<(), Error> {
     // A storage for the Wifi networks
     let networks = WifiNetworks::<3, NoopRawMutex>::new();
 
-    // The network controller
-    // We would be using a "fake" network controller that does not actually manage any Wifi networks
+    let connection = futures_lite::future::block_on(Connection::system()).unwrap();
+
+    // The network controller based on `wpa_supplicant` and `dhclient`.
     let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
-    let net_ctl =
-        NetCtlWithStatusImpl::new(&net_ctl_state, NoopWirelessNetCtl::new(NetworkType::Wifi));
+
+    let wpa_supp = NetCtlWithStatusImpl::new(
+        &net_ctl_state,
+        WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
+    );
+    let nm = NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = dm_handler(&matter, &on_off, &net_ctl, &networks);
+    let wpa_supp_dm_handler = dm_handler(&matter, &on_off, &wpa_supp, &networks);
+    let nm_dm_handler = dm_handler(&matter, &on_off, &nm, &networks);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+    let wpa_supp_responder =
+        DefaultResponder::new(&matter, &buffers, &subscriptions, wpa_supp_dm_handler);
+    let nm_responder = DefaultResponder::new(&matter, &buffers, &subscriptions, nm_dm_handler);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(async {
+        if use_wpa_supp {
+            wpa_supp_responder.run::<4, 4>().await
+        } else {
+            nm_responder.run::<4, 4>().await
+        }
+    });
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
@@ -138,8 +181,6 @@ fn main() -> Result<(), Error> {
 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
-
-        let connection = futures_lite::future::block_on(Connection::system()).unwrap();
 
         // The BTP transport impl
         let btp = Btp::new(BluezGattPeripheral::new(None, &connection), &BTP_CONTEXT);
@@ -216,7 +257,7 @@ where
             networks,
             matter.rand(),
             endpoints::with_sys(
-                &false,
+                &true,
                 matter.rand(),
                 EmptyHandler
                     .chain(

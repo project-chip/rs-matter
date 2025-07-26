@@ -15,19 +15,24 @@
  *    limitations under the License.
  */
 
-//! Wifi network controller implementation based on the wpa-supplicant D-Bus service.
+//! Wifi network controller implementation based on the NetworkManager D-Bus service.
+
+// TODO: It is possible to get all Ipv4 and Ipv6 netifs via NetworkManager, so we can also implement
+// the `NetifDiag` trait (with some caching, as it is non-async), thus getting rid of the `UnixNetifs` type
+// when NM is used.
 
 use core::cell::RefCell;
 
 use std::collections::HashMap;
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use embassy_time::{Duration, Timer};
 use futures_lite::StreamExt;
 
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use uuid::Uuid;
+use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 use zbus::Connection;
 
 use crate::dm::clusters::net_comm::{
@@ -39,47 +44,37 @@ use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 use crate::utils::sync::{blocking, IfMutex};
-use crate::utils::zbus_proxies::wpa_supp::bss::BSSProxy;
-use crate::utils::zbus_proxies::wpa_supp::interface::InterfaceProxy;
-use crate::utils::zbus_proxies::wpa_supp::wpa_supplicant::WPASupplicantProxy;
+use crate::utils::zbus_proxies::nm::access_point::AccessPointProxy;
+use crate::utils::zbus_proxies::nm::connection::ConnectionProxy;
+use crate::utils::zbus_proxies::nm::device::wireless::WirelessProxy;
+use crate::utils::zbus_proxies::nm::device::DeviceProxy;
+use crate::utils::zbus_proxies::nm::network_manager::NetworkManagerProxy;
+use crate::utils::zbus_proxies::nm::{NM80211ApSecurityFlags, NM80211Mode, NMDeviceState};
 
-#[cfg(unix)]
-pub mod unix;
-
-/// A `NetCtl`, `WirelessDiag`, `WifiDiag` and `NetChangeNotif` implementation based on the `wpa-supplicant` service.
+/// A `NetCtl`, `WirelessDiag`, `WifiDiag` and `NetChangeNotif` implementation based on the `NetworkManager` service.
 ///
-/// Suitable for use with embedded Linux devices that do have the `wpa-supplicant` service running over D-Bus
-/// but don't have the `NetworkManager` service available.
-pub struct WpaSuppCtl<'a, T>
-where
-    T: IpStackCtl,
-{
+/// Suitable for use with embedded Linux devices that do have the `NetworkManager` service running over D-Bus.
+pub struct NetMgrCtl<'a> {
     connection: &'a Connection,
     ifname: &'a str,
-    ip_stack_ctl: T,
-    network: IfMutex<NoopRawMutex, Option<OwnedObjectPath>>,
+    net_conn: IfMutex<NoopRawMutex, Option<OwnedObjectPath>>,
     wifi_conn_info: blocking::Mutex<NoopRawMutex, RefCell<Option<WifiConnInfo>>>,
 }
 
-impl<'a, T> WpaSuppCtl<'a, T>
-where
-    T: IpStackCtl,
-{
-    /// Create a new `WpaSuppCtl` instance.
+impl<'a> NetMgrCtl<'a> {
+    /// Create a new `NetMgrCtl` instance.
     ///
     /// # Arguments
     /// * `connection` - A reference to the D-Bus connection.
     /// * `interface_path` - The D-Bus object path of Wifi interface object.
-    /// * `ip_stack_ctl` - An instance of a type implementing the `IpStackCtl` trait, which is used to control the IP stack.
     ///
     /// # Returns
-    /// The new `WpaSuppCtl` instance.
-    pub const fn new(connection: &'a Connection, ifname: &'a str, ip_stack_ctl: T) -> Self {
+    /// The new `NetMgrCtl` instance.
+    pub const fn new(connection: &'a Connection, ifname: &'a str) -> Self {
         Self {
             connection,
             ifname,
-            ip_stack_ctl,
-            network: IfMutex::new(None),
+            net_conn: IfMutex::new(None),
             wifi_conn_info: blocking::Mutex::new(RefCell::new(None)),
         }
     }
@@ -90,30 +85,33 @@ where
     }
 
     /// Create a wpa-supplicant interface proxy for out interface name
-    async fn interface(&self) -> Result<InterfaceProxy<'a>, zbus::Error> {
-        let wpas = WPASupplicantProxy::new(self.connection).await?;
-        let interface_path = wpas.get_interface(self.ifname).await?;
+    async fn mgr(&self) -> Result<NetworkManagerProxy<'a>, zbus::Error> {
+        NetworkManagerProxy::new(self.connection).await
+    }
 
-        InterfaceProxy::builder(self.connection)
-            .path(interface_path.clone())?
-            .build()
-            .await
+    async fn device(&self) -> Result<OwnedObjectPath, zbus::Error> {
+        self.mgr().await?.get_device_by_ip_iface(self.ifname).await
     }
 
     /// Wait for the interface state as follows:
     /// - If `for_connection` is true, wait until the interface is connected to a network.
     /// - If `for_connection` is false, wait until the interface state changes (e.g., connected, disconnected or other change).
     async fn wait(&self, for_connection: bool) -> Result<(), Error> {
-        let interface = self.interface().await?;
+        let device = self.device().await?;
 
-        let mut iface_state_changed = interface.receive_state_changed().await;
+        let interface = DeviceProxy::new(self.connection, &device).await?;
+        let wifi = WirelessProxy::new(self.connection, &device).await?;
+
+        let mut iface_state_changed = interface.receive_dev_state_changed().await;
 
         loop {
-            let bss = interface.current_bss().await?;
+            let bss = wifi.active_access_point().await?;
 
             let (changed, connected) = if bss.len() > 1 {
+                let connected = interface.dev_state().await? == NMDeviceState::Activated as _;
+
                 self.network_scan_info(&bss, |info| {
-                    let info = info.map(WifiConnInfo::new);
+                    let info = info.map(|info| WifiConnInfo::new(info, connected));
 
                     Ok(self.update_wifi_conn_info(info))
                 })
@@ -126,9 +124,7 @@ where
                 break Ok(());
             }
 
-            let ip_stack_changed = self.ip_stack_ctl.wait_changed();
-
-            select(iface_state_changed.next(), ip_stack_changed).await;
+            iface_state_changed.next().await;
         }
     }
 
@@ -152,16 +148,23 @@ where
 
     /// Check if the provided WiFi connecton info represents a connected network.
     fn connected(wifi_conn_info: Option<&WifiConnInfo>) -> bool {
-        wifi_conn_info.is_some()
+        wifi_conn_info.map(|info| info.connected).unwrap_or(false)
     }
 
-    /// Remove the currently connected network, if any.
-    async fn remove_network(&self, network: &mut Option<OwnedObjectPath>) -> zbus::Result<()> {
-        let interface = self.interface().await?;
+    /// Remove our connection, if any.
+    async fn remove_net_conn(&self, net_conn: &mut Option<OwnedObjectPath>) -> zbus::Result<()> {
+        let interface = self.mgr().await?;
 
-        if let Some(network_path) = network.clone() {
-            if interface.remove_network(&network_path).await.is_ok() {
-                network.take();
+        if let Some(net_conn_path) = net_conn.clone() {
+            if interface
+                .deactivate_connection(&net_conn_path)
+                .await
+                .is_ok()
+            {
+                let net_conn_proxy = ConnectionProxy::new(self.connection, &net_conn_path).await?;
+                net_conn_proxy.delete().await?;
+
+                net_conn.take();
             }
         }
 
@@ -173,65 +176,67 @@ where
     where
         F: FnOnce(Option<&NetworkScanInfo>) -> Result<R, Error>,
     {
-        let bss_info = BSSProxy::builder(self.connection)
-            .path(bss)?
-            .build()
-            .await?;
+        let bss_info = AccessPointProxy::new(self.connection, bss).await?;
 
-        if bss_info.mode().await? == "infrastructure" {
-            let wpa = bss_info.wpa().await?;
-            let rsn = bss_info.rsn().await?;
+        if bss_info.mode().await? == NM80211Mode::Infra as _ {
+            let wpa = NM80211ApSecurityFlags::from_bits_truncate(bss_info.wpa_flags().await?);
+            let rsn = NM80211ApSecurityFlags::from_bits_truncate(bss_info.rsn_flags().await?);
 
             let security = if wpa.is_empty() && rsn.is_empty() {
                 WiFiSecurityBitmap::UNENCRYPTED
             } else {
-                let str_list_val = |key, map: &HashMap<String, OwnedValue>| {
-                    let str_list: Vec<String> = map
-                        .get(key)
-                        .cloned()
-                        .and_then(|w| w.clone().try_into().ok())
-                        .unwrap_or_default();
-
-                    str_list
-                };
-
                 let mut security = WiFiSecurityBitmap::empty();
 
-                let wpa_key_mgmt = str_list_val("KeyMgmt", &wpa);
-
-                if wpa_key_mgmt.contains(&"wpa-none".to_string()) {
+                if !wpa
+                    .union(rsn)
+                    .intersection(
+                        NM80211ApSecurityFlags::PAIR_WEP40 | NM80211ApSecurityFlags::PAIR_WEP104,
+                    )
+                    .is_empty()
+                {
                     security |= WiFiSecurityBitmap::WEP;
                 }
 
-                if wpa_key_mgmt.contains(&"wpa-psk".to_string()) {
+                if wpa.contains(NM80211ApSecurityFlags::KEY_MGMT_PSK) {
                     security |= WiFiSecurityBitmap::WPA_PERSONAL;
                 }
 
-                let rsn_key_mgmt = str_list_val("KeyMgmt", &rsn);
-
-                if rsn_key_mgmt.contains(&"wpa-psk".to_string())
-                    || rsn_key_mgmt.contains(&"wpa-ft-psk".to_string())
-                    || rsn_key_mgmt.contains(&"wpa-psk-sha256".to_string())
-                {
+                if rsn.contains(NM80211ApSecurityFlags::KEY_MGMT_PSK) {
                     security |= WiFiSecurityBitmap::WPA_2_PERSONAL;
                 }
 
-                if rsn_key_mgmt.contains(&"sae".to_string()) {
-                    security |= WiFiSecurityBitmap::WPA_3_PERSONAL
-                }
+                // TODO
+                // if rsn_key_mgmt.contains(&"sae".to_string()) {
+                //     security |= WiFiSecurityBitmap::WPA_3_PERSONAL
+                // }
 
                 security
             };
 
-            let (band, channel) = band_and_channel(bss_info.frequency().await? as u32);
+            let (band, channel) = band_and_channel(bss_info.frequency().await?);
+
+            let bssid = {
+                let bssid_str = bss_info.hw_address().await?;
+
+                let result: Result<heapless::Vec<_, 8>, _> = bssid_str
+                    .split(':')
+                    .map(|s| u8::from_str_radix(s, 16))
+                    .collect();
+
+                result.map_err(|_| Error::from(ErrorCode::Invalid))?
+            };
 
             let network_scan_info = NetworkScanInfo::Wifi {
                 security,
                 ssid: &bss_info.ssid().await?,
-                bssid: &bss_info.bssid().await?,
+                bssid: &bssid,
                 band,
                 channel,
-                rssi: bss_info.signal().await?.min(i8::MIN as _).max(i8::MAX as _) as i8,
+                rssi: bss_info
+                    .strength()
+                    .await?
+                    .min(i8::MIN as _)
+                    .max(i8::MAX as _) as i8,
             };
 
             f(Some(&network_scan_info))
@@ -242,24 +247,18 @@ where
     }
 }
 
-impl<T> Drop for WpaSuppCtl<'_, T>
-where
-    T: IpStackCtl,
-{
+impl Drop for NetMgrCtl<'_> {
     fn drop(&mut self) {
         // Remove the network on drop
         let _ = futures_lite::future::block_on(async {
-            let mut network = self.network.lock().await;
+            let mut network = self.net_conn.lock().await;
 
-            self.remove_network(&mut network).await
+            self.remove_net_conn(&mut network).await
         });
     }
 }
 
-impl<T> NetCtl for WpaSuppCtl<'_, T>
-where
-    T: IpStackCtl,
-{
+impl NetCtl for NetMgrCtl<'_> {
     fn net_type(&self) -> NetworkType {
         NetworkType::Wifi
     }
@@ -268,11 +267,9 @@ where
     where
         F: FnMut(&NetworkScanInfo) -> Result<(), Error>,
     {
-        const SCAN_RETRIES: usize = 3;
-        const SCAN_RETRIES_SLEEP_SEC: u64 = 5;
-        const SCAN_DONE_TIMEOUT_SEC: u64 = 20;
+        const SCAN_DONE_TIMEOUT_SEC: u64 = 3;
 
-        let _guard = self.network.lock().await;
+        let _guard = self.net_conn.lock().await;
 
         let mut args = HashMap::new();
 
@@ -285,40 +282,35 @@ where
             args.insert("SSIDs", ssids.as_ref().unwrap());
         }
 
-        let interface = self.interface().await?;
+        let device_path = self.device().await?;
 
-        let mut scan_done = interface.receive_scan_done().await?;
+        let wifi = WirelessProxy::new(self.connection, &device_path).await?;
 
-        for _ in 0..SCAN_RETRIES {
-            // Sometimes we do get a "Scan Rejected error"
-            // Therefore, try several times
+        let mut ap_added = wifi.receive_access_point_added().await?;
+        let mut ap_removed = wifi.receive_access_point_added().await?;
 
-            if interface.scan(args.clone()).await.is_ok() {
-                // Scan started successfully
+        wifi.request_scan(args.clone()).await?;
 
-                // Wait for the scan to complete
-                // This is only a best effort because wpa_supplicant might be restarted and this signal might never come
-                // Note that we might be extra paranoid here, but doesn't hurt
+        loop {
+            // Wait for the scan to complete
+            //
+            // NOTE: It seems NetworkManager - unlike `wpa_supplicant` - does not provide a way to
+            // to get a "Scan done" signal, so we just monitor the "access point added / removed"
+            // signals and timeout if we don't see one incoming after a few seconds
 
-                let scan_done = async {
-                    loop {
-                        if scan_done.next().await.is_some() {
-                            break;
-                        }
-                    }
-                };
+            let ap_added = ap_added.next();
+            let ap_removed = ap_removed.next();
+            let timeout = Timer::after(Duration::from_secs(SCAN_DONE_TIMEOUT_SEC));
 
-                let timeout = Timer::after(Duration::from_secs(SCAN_DONE_TIMEOUT_SEC));
-
-                if let Either::First(_) = select(scan_done, timeout).await {
-                    break;
-                }
+            if matches!(
+                select3(ap_added, ap_removed, timeout).await,
+                Either3::Third(_)
+            ) {
+                break;
             }
-
-            Timer::after(Duration::from_secs(SCAN_RETRIES_SLEEP_SEC)).await;
         }
 
-        let bsss = interface.bsss().await?;
+        let bsss = wifi.access_points().await?;
 
         for bss in bsss {
             self.network_scan_info(&bss, |info| {
@@ -337,38 +329,66 @@ where
     async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
         const CONNECT_TIMEOUT_SECS: u64 = 30;
 
-        let mut network = self.network.lock().await;
+        let mut net_conn = self.net_conn.lock().await;
 
         let WirelessCreds::Wifi { ssid, pass } = creds else {
             return Err(NetCtlError::Other(ErrorCode::InvalidAction.into()));
         };
 
-        let interface = self.interface().await?;
+        let mgr = self.mgr().await?;
 
-        self.remove_network(&mut network).await?;
-
-        let mut args = HashMap::new();
-
-        // For some reason, `wpa_supplicant` really wants the SSID and PSK to be
-        // strings, even if in theory they can be any byte array.
+        self.remove_net_conn(&mut net_conn).await?;
 
         let utf8_err = |_| NetCtlError::Other(ErrorCode::Invalid.into());
 
-        let arg_ssid = core::str::from_utf8(ssid).map_err(utf8_err)?.into();
-        args.insert("ssid", &arg_ssid);
+        let conn_uuid = Uuid::new_v4().hyphenated().to_string();
 
+        let arg_conn_uuid = conn_uuid.as_str().into();
+        let arg_conn_type = "802-11-wireless".into();
+        let arg_security = "wpa-psk".into();
+        let arg_ssid = (*ssid).into();
+        // For some reason, `NetworkManager` wants the PSK to be a string
         let arg_pass = core::str::from_utf8(pass).map_err(utf8_err)?.into();
-        if !pass.is_empty() {
-            args.insert("psk", &arg_pass);
-        }
+        let arg_ipv4_method = "auto".into();
+        let arg_ipv6_method = "auto".into();
 
-        let network_path = interface.add_network(args).await?;
+        let args: &[(_, &[_])] = &[
+            (
+                "connection",
+                &[
+                    ("id", &arg_conn_uuid),
+                    ("uuid", &arg_conn_uuid),
+                    ("type", &arg_conn_type),
+                ],
+            ),
+            ("802-11-wireless", &[("ssid", &arg_ssid)]),
+            (
+                "802-11-wireless-security",
+                if pass.is_empty() {
+                    &[]
+                } else {
+                    &[("key-mgmt", &arg_security), ("psk", &arg_pass)]
+                },
+            ),
+            ("ipv4", &[("method", &arg_ipv4_method)]),
+            ("ipv6", &[("method", &arg_ipv6_method)]),
+        ];
 
-        *network = Some(network_path.clone());
+        let args = args
+            .iter()
+            .map(|(k, v)| (*k, (*v).iter().map(|(k, v)| (*k, *v)).collect()))
+            .collect::<HashMap<&str, HashMap<&str, &Value<'_>>>>();
 
-        interface.select_network(&network_path).await?;
+        let device_path = self.device().await?;
+        let (_, net_conn_path) = mgr
+            .add_and_activate_connection(
+                args,
+                &device_path,
+                &OwnedObjectPath::try_from("/").unwrap(),
+            )
+            .await?;
 
-        // First try to connect on the Wifi level
+        *net_conn = Some(net_conn_path.clone());
 
         let connected = self.wait(true);
         let timeout = Timer::after(Duration::from_secs(CONNECT_TIMEOUT_SECS));
@@ -381,7 +401,7 @@ where
                     self.ifname
                 );
 
-                if let Err(e2) = self.remove_network(&mut network).await {
+                if let Err(e2) = self.remove_net_conn(&mut net_conn).await {
                     warn!(
                         "Failed to remove network after connection timeout: {:?}",
                         e2
@@ -391,49 +411,19 @@ where
             }
         }
 
-        // Then try to bring up the IP stack (e.g., via DHCP for IPv4 and SLAAC for IPv6)
-
-        match self.ip_stack_ctl.connect().await {
-            Ok(()) => {
-                info!("IP stack connected for network: {}", self.ifname);
-
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "Failed to connect IP stack for network {}: {:?}",
-                    self.ifname, e
-                );
-
-                // If the IP stack connection failed, remove the network
-                if let Err(e2) = self.remove_network(&mut network).await {
-                    warn!(
-                        "Failed to remove network after IP stack connection failure: {:?}",
-                        e2
-                    );
-                }
-                Err(e)
-            }
-        }
+        Ok(())
     }
 }
 
-impl<T> WirelessDiag for WpaSuppCtl<'_, T>
-where
-    T: IpStackCtl,
-{
+impl WirelessDiag for NetMgrCtl<'_> {
     fn connected(&self) -> Result<bool, Error> {
-        Ok(self.wifi_conn_info.lock(|ssid_info| {
-            Self::connected(ssid_info.borrow().as_ref())
-                && self.ip_stack_ctl.is_connected().unwrap_or(false)
-        }))
+        Ok(self
+            .wifi_conn_info
+            .lock(|ssid_info| Self::connected(ssid_info.borrow().as_ref())))
     }
 }
 
-impl<T> WifiDiag for WpaSuppCtl<'_, T>
-where
-    T: IpStackCtl,
-{
+impl WifiDiag for NetMgrCtl<'_> {
     fn bssid(&self, f: &mut dyn FnMut(Option<&[u8]>) -> Result<(), Error>) -> Result<(), Error> {
         self.wifi_conn_info.lock(|wifi_conn_info| {
             let wifi_conn_info = wifi_conn_info.borrow();
@@ -478,50 +468,9 @@ where
     }
 }
 
-impl<T> NetChangeNotif for WpaSuppCtl<'_, T>
-where
-    T: IpStackCtl,
-{
+impl NetChangeNotif for NetMgrCtl<'_> {
     async fn wait_changed(&self) {
-        let wait_wifi = self.wait(false);
-        let wait_ip = self.ip_stack_ctl.wait_changed();
-
-        select(wait_wifi, wait_ip).await;
-    }
-}
-
-/// A trait for controlling the IP stack, allowing for connection management and change notifications.
-///
-/// This trait is necessary, because `wpa-supplicant` does not control the IP stack directly.
-///
-/// One possible implementation would be to just invoke the command line `dhclient` utility on the
-/// wireless interface. Another possibility would be to use the DHCP client in the `edge-mdns` crate for Ipv4
-/// and then additionally assign a pre-computed link-local IP address to the interface for Ipv6.
-pub trait IpStackCtl {
-    /// Connect the IP stack by e.g. configuring the network interface via DHCP (for IPv4) and SLAAC (for IPv6).
-    async fn connect(&self) -> Result<(), NetCtlError>;
-
-    /// Wait for changes in the IP stack, such as connection status changes or network configuration updates.
-    async fn wait_changed(&self);
-
-    /// Check if the IP stack is currently connected.
-    fn is_connected(&self) -> Result<bool, NetCtlError>;
-}
-
-impl<T> IpStackCtl for &T
-where
-    T: IpStackCtl,
-{
-    async fn connect(&self) -> Result<(), NetCtlError> {
-        T::connect(self).await
-    }
-
-    async fn wait_changed(&self) {
-        T::wait_changed(self).await;
-    }
-
-    fn is_connected(&self) -> Result<bool, NetCtlError> {
-        T::is_connected(self)
+        let _ = self.wait(false).await;
     }
 }
 
@@ -530,6 +479,7 @@ where
 /// non-async `WifiDiag` methods.
 #[derive(Debug, Eq, PartialEq, Clone, Hash)]
 struct WifiConnInfo {
+    connected: bool,
     security: WiFiSecurityBitmap,
     ssid: Vec<u8>,
     bssid: Vec<u8>,
@@ -540,7 +490,7 @@ struct WifiConnInfo {
 
 impl WifiConnInfo {
     /// Create a new `WifiConnInfo` from the given `NetworkScanInfo::Wifi`.
-    fn new(scan_info: &NetworkScanInfo) -> Self {
+    fn new(scan_info: &NetworkScanInfo, connected: bool) -> Self {
         let NetworkScanInfo::Wifi {
             security,
             ssid,
@@ -555,6 +505,7 @@ impl WifiConnInfo {
         };
 
         Self {
+            connected,
             security: *security,
             ssid: ssid.to_vec(),
             bssid: bssid.to_vec(),
@@ -565,12 +516,7 @@ impl WifiConnInfo {
     }
 }
 
-impl From<zbus::Error> for NetCtlError {
-    fn from(value: zbus::Error) -> Self {
-        NetCtlError::Other(value.into())
-    }
-}
-
+// TODO: Unify with the same method in `wpa_supp`
 // See https://github.com/project-chip/connectedhomeip/blob/cd5fec9ba9be0c39f3c11f67d57b18b6bb2b4289/src/platform/Linux/ConnectivityManagerImpl.cpp#L1937
 fn band_and_channel(freq: u32) -> (WiFiBandEnum, u16) {
     let mut band = WiFiBandEnum::V2G4;

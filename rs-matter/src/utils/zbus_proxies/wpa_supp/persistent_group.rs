@@ -23,8 +23,8 @@ use zbus::proxy;
 use zbus::zvariant::{OwnedValue, Value};
 
 #[proxy(
-    interface = "fi.w1.wpa_supplicant1.Interface.PersistentGroup",
-    assume_defaults = true
+    interface = "fi.w1.wpa_supplicant1.PersistentGroup",
+    default_service = "fi.w1.wpa_supplicant1"
 )]
 pub trait PersistentGroup {
     /// PropertiesChanged signal

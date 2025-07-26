@@ -23,8 +23,8 @@ use zbus::proxy;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 
 #[proxy(
-    interface = "fi.w1.wpa_supplicant1.Interface.Group",
-    assume_defaults = true
+    interface = "fi.w1.wpa_supplicant1.Group",
+    default_service = "fi.w1.wpa_supplicant1"
 )]
 pub trait Group {
     /// PropertiesChanged signal
@@ -44,11 +44,11 @@ pub trait Group {
     fn role(&self) -> zbus::Result<String>;
 
     /// SSID property
-    #[zbus(property)]
+    #[zbus(property, name = "SSID")]
     fn ssid(&self) -> zbus::Result<Vec<u8>>;
 
     /// BSSID property
-    #[zbus(property)]
+    #[zbus(property, name = "BSSID")]
     fn bssid(&self) -> zbus::Result<Vec<u8>>;
 
     /// Frequency property
@@ -64,7 +64,7 @@ pub trait Group {
     fn psk(&self) -> zbus::Result<Vec<u8>>;
 
     /// WPSVendorExtensions property
-    #[zbus(property)]
+    #[zbus(property, name = "WPSVendorExtensions")]
     fn wps_vendor_extensions(&self) -> zbus::Result<Vec<Vec<u8>>>;
 
     /// PeerJoined signal
