@@ -149,18 +149,29 @@ impl IpStackCtl for DhClientCtl {
         // 2) invoke `dhclient` on the interface. This will:
         // - Get a DHCP lease for an Ipv4 address
         // - Use SLAAC to configure an ipv6 address
-        let status = Command::new("dhclient")
+        let result = Command::new("dhclient")
             .arg("-nw")
             .arg(&self.ifname)
-            .status()
-            .map_err(|_| NetCtlError::IpBindFailed)?;
+            .status();
 
-        if !status.success() {
-            error!(
-                "Running `dhclient` on interface {} failed with status: {}",
-                self.ifname, status
-            );
-            return Err(NetCtlError::IpBindFailed);
+        // Do not hard-fail if we cannot run `dhclient`
+        // It might fail if NetworkManager is around, and we just need a link-local ipv6 IP anyway
+        // Also see this:
+        // https://github.com/project-chip/connectedhomeip/blob/cd5fec9ba9be0c39f3c11f67d57b18b6bb2b4289/src/platform/Linux/ConnectivityManagerImpl.cpp#L1699
+
+        match result {
+            Ok(status) => {
+                if !status.success() {
+                    warn!(
+                        "Running `dhclient` on interface {} failed with status: {}",
+                        self.ifname, status
+                    );
+                }
+            }
+            Err(e) => warn!(
+                "Running `dhclient` on interface {} failed with error: {}",
+                self.ifname, e
+            ),
         }
 
         let timeout = Timer::after(Duration::from_secs(CONNECT_TIMEOUT_SECS));

@@ -18,9 +18,7 @@
 //! An example Matter device that implements the On/Off Light cluster over Wifi with commissioning over Bluetooth (Linux only).
 //!
 //! Some Linux systems might require the user running the app have elevated permissions, so run with `sudo`!
-//!
-//! NOTE NOTE NOTE: Set the `IF_NAME` environment variable to the name of your Wifi interface,
-//! e.g. `wlan0`, `wlx80afca061a16`, etc. prior to running this example!
+//! E.g. `sudo ./onoff_light_bt <your-wlan-interface-name>`
 //!
 //! The example uses the BlueZ BLE stack and the `wpa_supplicant` daemon to connect to BT and to manage Wifi networks.
 //! Therefore, it is likely to run only on Linux-based systems (e.g., Ubuntu, Debian, etc.), because BlueZ is Linux-specific.
@@ -79,6 +77,24 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
+    let mut args = std::env::args();
+
+    let if_name = if args.len() > 2 {
+        eprintln!("Usage: onoff_light_bt [if_name]");
+        eprintln!("  if_name - the name of the Wifi interface to use, e.g. 'wlan0', 'wlx80afca061a16', etc.");
+        eprintln!("            If not set, defaults to 'wlan0'.");
+
+        return Ok(());
+    } else if args.len() == 1 {
+        warn!("Ran without params, using 'wlan0' as the Wifi interface name");
+
+        "wlan0".to_string()
+    } else {
+        let if_name = args.nth(1).unwrap();
+        info!("Using Wifi network interface: {if_name}");
+        if_name
+    };
+
     // Create the Matter object
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
@@ -98,19 +114,6 @@ fn main() -> Result<(), Error> {
     let networks = WifiNetworks::<3, NoopRawMutex>::new();
 
     let connection = futures_lite::future::block_on(Connection::system()).unwrap();
-
-    let if_name = if let Ok(if_name) = std::env::var("IF_NAME") {
-        info!("Using Wifi network interface: {if_name}");
-        if_name
-    } else {
-        let if_name = "wlan0".to_string();
-
-        warn!(
-            "Environment variable `IF_NAME` is not set, using {if_name} as the Wifi interface name"
-        );
-
-        if_name
-    };
 
     // The network controller based on `wpa_supplicant` and `dhclient`.
     let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();

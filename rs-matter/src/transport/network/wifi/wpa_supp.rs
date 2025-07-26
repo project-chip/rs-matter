@@ -374,8 +374,13 @@ where
         let timeout = Timer::after(Duration::from_secs(CONNECT_TIMEOUT_SECS));
 
         match select(connected, timeout).await {
-            Either::First(_) => (),
+            Either::First(_) => info!("Connected to Wifi network: {}", self.ifname),
             Either::Second(_) => {
+                error!(
+                    "Connection to Wifi network timed out: {}, assuming auth failure",
+                    self.ifname
+                );
+
                 if let Err(e2) = self.remove_network(&mut network).await {
                     warn!(
                         "Failed to remove network after connection timeout: {:?}",
@@ -389,8 +394,17 @@ where
         // Then try to bring up the IP stack (e.g., via DHCP for IPv4 and SLAAC for IPv6)
 
         match self.ip_stack_ctl.connect().await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                info!("IP stack connected for network: {}", self.ifname);
+
+                Ok(())
+            }
             Err(e) => {
+                error!(
+                    "Failed to connect IP stack for network {}: {:?}",
+                    self.ifname, e
+                );
+
                 // If the IP stack connection failed, remove the network
                 if let Err(e2) = self.remove_network(&mut network).await {
                     warn!(
