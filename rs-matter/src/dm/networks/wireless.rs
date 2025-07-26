@@ -896,7 +896,7 @@ where
     where
         F: FnMut(&net_comm::NetworkScanInfo) -> Result<(), Error>,
     {
-        NetCtlState::update_with_mutex(self.state, network, self.net_ctl.scan(network, f).await)
+        self.net_ctl.scan(network, f).await
     }
 
     async fn connect(&self, creds: &WirelessCreds<'_>) -> Result<(), NetCtlError> {
