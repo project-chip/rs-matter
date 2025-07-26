@@ -39,7 +39,7 @@ pub trait NetworkManager {
     /// AddAndActivateConnection method
     fn add_and_activate_connection(
         &self,
-        connection: HashMap<&str, std::collections::HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
         device: &ObjectPath<'_>,
         specific_object: &ObjectPath<'_>,
     ) -> zbus::Result<(OwnedObjectPath, OwnedObjectPath)>;
@@ -48,7 +48,7 @@ pub trait NetworkManager {
     #[allow(clippy::too_many_arguments)]
     fn add_and_activate_connection2(
         &self,
-        connection: HashMap<&str, std::collections::HashMap<&str, &Value<'_>>>,
+        connection: HashMap<&str, HashMap<&str, &Value<'_>>>,
         device: &ObjectPath<'_>,
         specific_object: &ObjectPath<'_>,
         options: HashMap<&str, &Value<'_>>,
