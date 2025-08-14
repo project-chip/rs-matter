@@ -16,10 +16,10 @@
   env = {
     LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
     BINDGEN_EXTRA_CLANG_ARGS = [
-      "-resource-dir=${pkgs.libclang.lib}/lib/clang/19"
-      "-isystem${pkgs.libclang.lib}/lib/clang/19/include"
-      "-isystem${pkgs.glibc.dev}/include"
-      "-I${pkgs.avahi.dev}/include"
+      "-resource-dir=${pkgs.libclang.lib}/lib/clang/${lib.versions.major pkgs.libclang.version}"
+      "-isystem ${pkgs.libclang.lib}/lib/clang/${lib.versions.major pkgs.libclang.version}/include"
+      "-isystem ${pkgs.glibc.dev}/include"
+      "-I ${pkgs.avahi.dev}/include"
     ];
   };
 
