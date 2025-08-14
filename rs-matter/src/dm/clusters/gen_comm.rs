@@ -139,17 +139,17 @@ impl ClusterHandler for GenCommHandler<'_> {
         self.dataver.changed();
     }
 
-    fn breadcrumb(&self, _ctx: &ReadContext) -> Result<u64, Error> {
+    fn breadcrumb(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(0) // TODO
     }
 
-    fn set_breadcrumb(&self, _ctx: &WriteContext, _value: u64) -> Result<(), Error> {
+    fn set_breadcrumb(&self, _ctx: impl WriteContext, _value: u64) -> Result<(), Error> {
         Ok(()) // TODO
     }
 
     fn basic_commissioning_info<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext,
+        _ctx: impl ReadContext,
         builder: BasicCommissioningInfoBuilder<P>,
     ) -> Result<P, Error> {
         builder
@@ -158,21 +158,27 @@ impl ClusterHandler for GenCommHandler<'_> {
             .end()
     }
 
-    fn regulatory_config(&self, _ctx: &ReadContext) -> Result<RegulatoryLocationTypeEnum, Error> {
+    fn regulatory_config(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<RegulatoryLocationTypeEnum, Error> {
         Ok(RegulatoryLocationTypeEnum::IndoorOutdoor)
     }
 
-    fn location_capability(&self, _ctx: &ReadContext) -> Result<RegulatoryLocationTypeEnum, Error> {
+    fn location_capability(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<RegulatoryLocationTypeEnum, Error> {
         Ok(self.commissioning_policy.location_cap())
     }
 
-    fn supports_concurrent_connection(&self, _ctx: &ReadContext) -> Result<bool, Error> {
+    fn supports_concurrent_connection(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.commissioning_policy.concurrent_connection_supported())
     }
 
     fn handle_arm_fail_safe<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext,
+        ctx: impl InvokeContext,
         request: ArmFailSafeRequest,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -189,7 +195,7 @@ impl ClusterHandler for GenCommHandler<'_> {
 
     fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext,
+        _ctx: impl InvokeContext,
         _request: SetRegulatoryConfigRequest,
         response: SetRegulatoryConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -202,7 +208,7 @@ impl ClusterHandler for GenCommHandler<'_> {
 
     fn handle_commissioning_complete<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext,
+        ctx: impl InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
     ) -> Result<P, Error> {
         let status = CommissioningErrorEnum::map(ctx.exchange().with_session(|sess| {

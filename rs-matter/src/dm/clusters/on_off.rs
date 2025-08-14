@@ -81,11 +81,11 @@ impl ClusterHandler for OnOffHandler {
         self.dataver.changed();
     }
 
-    fn on_off(&self, _ctx: &ReadContext) -> Result<bool, Error> {
+    fn on_off(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.on.get())
     }
 
-    fn handle_off(&self, ctx: &InvokeContext) -> Result<(), Error> {
+    fn handle_off(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         if self.set(false) {
             ctx.notify_changed();
         }
@@ -93,7 +93,7 @@ impl ClusterHandler for OnOffHandler {
         Ok(())
     }
 
-    fn handle_on(&self, ctx: &InvokeContext) -> Result<(), Error> {
+    fn handle_on(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         if self.set(true) {
             ctx.notify_changed();
         }
@@ -101,7 +101,7 @@ impl ClusterHandler for OnOffHandler {
         Ok(())
     }
 
-    fn handle_toggle(&self, ctx: &InvokeContext) -> Result<(), Error> {
+    fn handle_toggle(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         if self.set(!self.on.get()) {
             ctx.notify_changed();
         }
@@ -111,19 +111,19 @@ impl ClusterHandler for OnOffHandler {
 
     fn handle_off_with_effect(
         &self,
-        _ctx: &InvokeContext,
+        _ctx: impl InvokeContext,
         _request: OffWithEffectRequest,
     ) -> Result<(), Error> {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    fn handle_on_with_recall_global_scene(&self, _ctx: &InvokeContext) -> Result<(), Error> {
+    fn handle_on_with_recall_global_scene(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidCommand.into())
     }
 
     fn handle_on_with_timed_off(
         &self,
-        _ctx: &InvokeContext,
+        _ctx: impl InvokeContext,
         _request: OnWithTimedOffRequest,
     ) -> Result<(), Error> {
         Err(ErrorCode::InvalidCommand.into())

@@ -60,7 +60,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn group_key_map<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
@@ -71,7 +71,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn group_table<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             GroupInfoMapStructArrayBuilder<P>,
             GroupInfoMapStructBuilder<P>,
@@ -83,17 +83,17 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         }
     }
 
-    fn max_groups_per_fabric(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(1)
     }
 
-    fn max_group_keys_per_fabric(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(1)
     }
 
     fn set_group_key_map(
         &self,
-        _ctx: &crate::dm::WriteContext<'_>,
+        _ctx: impl crate::dm::WriteContext,
         _value: ArrayAttributeWrite<
             crate::tlv::TLVArray<'_, GroupKeyMapStruct<'_>>,
             GroupKeyMapStruct<'_>,
@@ -104,7 +104,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn handle_key_set_write(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: KeySetWriteRequest<'_>,
     ) -> Result<(), Error> {
         Ok(())
@@ -112,7 +112,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn handle_key_set_read<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: KeySetReadRequest<'_>,
         _response: KeySetReadResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -121,7 +121,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn handle_key_set_remove(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: KeySetRemoveRequest<'_>,
     ) -> Result<(), Error> {
         Ok(())
@@ -129,7 +129,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
 
     fn handle_key_set_read_all_indices<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,
     ) -> Result<P, Error> {
         response.group_key_set_i_ds()?.end()?.end()

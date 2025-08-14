@@ -112,7 +112,7 @@ impl ClusterHandler for NocHandler {
 
     fn no_cs<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<NOCStructArrayBuilder<P>, NOCStructBuilder<P>>,
     ) -> Result<P, Error> {
         fn read_into<P: TLVBuilderParent>(
@@ -157,7 +157,7 @@ impl ClusterHandler for NocHandler {
 
     fn fabrics<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             FabricDescriptorStructArrayBuilder<P>,
             FabricDescriptorStructBuilder<P>,
@@ -207,17 +207,17 @@ impl ClusterHandler for NocHandler {
         }
     }
 
-    fn supported_fabrics(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    fn supported_fabrics(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(MAX_SUPPORTED_FABRICS as u8)
     }
 
-    fn commissioned_fabrics(&self, ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    fn commissioned_fabrics(&self, ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(ctx.exchange().matter().fabric_mgr.borrow().iter().count() as _)
     }
 
     fn trusted_root_certificates<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         let attr = ctx.attr();
@@ -247,14 +247,14 @@ impl ClusterHandler for NocHandler {
         }
     }
 
-    fn current_fabric_index(&self, ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    fn current_fabric_index(&self, ctx: impl ReadContext) -> Result<u8, Error> {
         let attr = ctx.attr();
         Ok(attr.fab_idx)
     }
 
     fn handle_attestation_request<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: AttestationRequestRequest<'_>,
         response: AttestationResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -311,7 +311,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_certificate_chain_request<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: CertificateChainRequestRequest<'_>,
         response: CertificateChainResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -343,7 +343,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_csr_request<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: CSRRequestRequest<'_>,
         response: CSRResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -402,7 +402,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_add_noc<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: AddNOCRequest<'_>,
         mut response: NOCResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -467,7 +467,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_update_noc<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: UpdateNOCRequest<'_>,
         _response: NOCResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -478,7 +478,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_update_fabric_label<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: UpdateFabricLabelRequest<'_>,
         response: NOCResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -516,7 +516,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_remove_fabric<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: RemoveFabricRequest<'_>,
         response: NOCResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -580,7 +580,7 @@ impl ClusterHandler for NocHandler {
 
     fn handle_add_trusted_root_certificate(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: AddTrustedRootCertificateRequest<'_>,
     ) -> Result<(), Error> {
         info!("Got Add Trusted Root Cert Request");
