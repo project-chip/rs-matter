@@ -23,8 +23,8 @@ use zbus::proxy;
 use zbus::zvariant::{OwnedValue, Value};
 
 #[proxy(
-    interface = "fi.w1.wpa_supplicant1.Interface.BSS",
-    assume_defaults = true
+    interface = "fi.w1.wpa_supplicant1.BSS",
+    default_service = "fi.w1.wpa_supplicant1"
 )]
 pub trait BSS {
     /// PropertiesChanged signal
@@ -32,27 +32,27 @@ pub trait BSS {
     fn properties_changed(&self, properties: HashMap<&str, Value<'_>>) -> zbus::Result<()>;
 
     /// BSSID property
-    #[zbus(property)]
+    #[zbus(property, name = "BSSID")]
     fn bssid(&self) -> zbus::Result<Vec<u8>>;
 
     /// SSID property
-    #[zbus(property)]
+    #[zbus(property, name = "SSID")]
     fn ssid(&self) -> zbus::Result<Vec<u8>>;
 
     /// WPA property
-    #[zbus(property)]
+    #[zbus(property, name = "WPA")]
     fn wpa(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
 
     /// RSN property
-    #[zbus(property)]
+    #[zbus(property, name = "RSN")]
     fn rsn(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
 
     /// WPS property
-    #[zbus(property)]
+    #[zbus(property, name = "WPS")]
     fn wps(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
 
     /// IEs property
-    #[zbus(property)]
+    #[zbus(property, name = "IEs")]
     fn ies(&self) -> zbus::Result<Vec<u8>>;
 
     /// Privacy property

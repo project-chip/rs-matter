@@ -23,8 +23,8 @@ use zbus::proxy;
 use zbus::zvariant::{OwnedValue, Value};
 
 #[proxy(
-    interface = "fi.w1.wpa_supplicant1.Interface.Network",
-    assume_defaults = true
+    interface = "fi.w1.wpa_supplicant1.Network",
+    default_service = "fi.w1.wpa_supplicant1"
 )]
 pub trait Network {
     /// PropertiesChanged signal
