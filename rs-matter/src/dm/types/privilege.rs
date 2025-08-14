@@ -51,7 +51,7 @@ impl ToTLV for Privilege {
         AccessControlEntryPrivilegeEnum::from(*self).to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLV::u8(tag, AccessControlEntryPrivilegeEnum::from(*self) as _).into_tlv_iter()
     }
 }
