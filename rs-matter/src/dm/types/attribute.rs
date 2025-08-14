@@ -268,7 +268,7 @@ impl AttrDetails<'_> {
         }
     }
 
-    pub fn cluster(&self) -> Result<&Cluster, Error> {
+    pub fn cluster(&self) -> Result<&Cluster<'_>, Error> {
         self.node
             .endpoint(self.endpoint_id)
             .and_then(|endpoint| endpoint.cluster(self.cluster_id))
