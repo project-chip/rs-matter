@@ -223,7 +223,10 @@ where
                 security
             };
 
-            let (band, channel) = band_and_channel(bss_info.frequency().await? as u32);
+            // If we can't determine the band and channel we prefer to still report the network
+            // even if with unknown band and channel.
+            let (band, channel) = super::band::band_and_channel(bss_info.frequency().await? as u32)
+                .unwrap_or((WiFiBandEnum::V2G4, 0));
 
             let network_scan_info = NetworkScanInfo::Wifi {
                 security,
@@ -569,60 +572,4 @@ impl From<zbus::Error> for NetCtlError {
     fn from(value: zbus::Error) -> Self {
         NetCtlError::Other(value.into())
     }
-}
-
-// See https://github.com/project-chip/connectedhomeip/blob/cd5fec9ba9be0c39f3c11f67d57b18b6bb2b4289/src/platform/Linux/ConnectivityManagerImpl.cpp#L1937
-fn band_and_channel(freq: u32) -> (WiFiBandEnum, u16) {
-    let mut band = WiFiBandEnum::V2G4;
-
-    let channel = if freq <= 931 {
-        if freq >= 916 {
-            ((freq - 916) * 2) - 1
-        } else if freq >= 902 {
-            (freq - 902) * 2
-        } else if freq >= 863 {
-            (freq - 863) * 2
-        } else {
-            1
-        }
-    } else if freq <= 2472 {
-        (freq - 2412) / 5 + 1
-    } else if freq == 2484 {
-        14
-    } else if (3600..=3700).contains(&freq) {
-        // Note: There are not many devices supports this band, and this band contains rational frequency in MHz, need to figure out
-        // the behavior of wpa_supplicant in this case.
-        band = WiFiBandEnum::V3G65;
-        0
-    } else if (5035..=5945).contains(&freq) || freq == 5960 || freq == 5980 {
-        band = WiFiBandEnum::V5G;
-        (freq - 5000) / 5
-    } else if freq >= 5955 {
-        band = WiFiBandEnum::V6G;
-        (freq - 5950) / 5
-    } else if freq >= 58000 {
-        band = WiFiBandEnum::V60G;
-
-        // Note: Some channel has the same center frequency but different bandwidth. Should figure out wpa_supplicant's behavior in
-        // this case. Also, wpa_supplicant's frequency property is uint16 infact.
-        match freq {
-            58_320 => 1,
-            60_480 => 2,
-            62_640 => 3,
-            64_800 => 4,
-            66_960 => 5,
-            69_120 => 6,
-            59_400 => 9,
-            61_560 => 10,
-            63_720 => 11,
-            65_880 => 12,
-            68_040 => 13,
-            _ => 0,
-        }
-    } else {
-        // Unknown channel
-        0
-    };
-
-    (band, channel as u16)
 }

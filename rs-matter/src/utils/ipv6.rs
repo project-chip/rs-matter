@@ -33,3 +33,23 @@ pub fn create_link_local_ipv6(mac: &[u8; 6]) -> Ipv6Addr {
         u16::from_be_bytes([mac[4], mac[5]]),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_link_local_ipv6() {
+        let mac = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
+        let ipv6 = create_link_local_ipv6(&mac);
+        assert_eq!(ipv6.to_string(), "fe80::1034:56ff:fe78:9abc");
+
+        let mac2 = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+        let ipv6_2 = create_link_local_ipv6(&mac2);
+        assert_eq!(ipv6_2.to_string(), "fe80::211:22ff:fe33:4455");
+
+        let mac3 = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+        let ipv6_3 = create_link_local_ipv6(&mac3);
+        assert_eq!(ipv6_3.to_string(), "fe80::302:3ff:fe04:506");
+    }
+}
