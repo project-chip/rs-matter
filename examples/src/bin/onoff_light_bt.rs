@@ -127,29 +127,27 @@ fn main() -> Result<(), Error> {
     // The network controller based on `wpa_supplicant` and `dhclient`.
     let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
 
-    let wpa_supp = NetCtlWithStatusImpl::new(
-        &net_ctl_state,
-        WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
-    );
-    let nm = NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
-
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let wpa_supp_dm_handler = dm_handler(&matter, &on_off, &wpa_supp, &networks);
-    let nm_dm_handler = dm_handler(&matter, &on_off, &nm, &networks);
-
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
-    let wpa_supp_responder =
-        DefaultResponder::new(&matter, &buffers, &subscriptions, wpa_supp_dm_handler);
-    let nm_responder = DefaultResponder::new(&matter, &buffers, &subscriptions, nm_dm_handler);
-
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(async {
         if use_wpa_supp {
-            wpa_supp_responder.run::<4, 4>().await
+            let wpa_supp = NetCtlWithStatusImpl::new(
+                &net_ctl_state,
+                WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
+            );
+
+            let dm_handler = dm_handler(&matter, &on_off, &wpa_supp, &networks);
+            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+
+            responder.run::<4, 4>().await
         } else {
-            nm_responder.run::<4, 4>().await
+            let nm =
+                NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
+
+            let dm_handler = dm_handler(&matter, &on_off, &nm, &networks);
+            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+
+            responder.run::<4, 4>().await
         }
     });
 
