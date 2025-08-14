@@ -38,6 +38,10 @@ pub fn create_link_local_ipv6(mac: &[u8; 6]) -> Ipv6Addr {
 mod tests {
     use super::*;
 
+    use crate::alloc::string::ToString;
+
+    extern crate alloc;
+
     #[test]
     fn test_create_link_local_ipv6() {
         let mac = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
