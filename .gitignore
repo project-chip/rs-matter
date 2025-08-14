@@ -2,3 +2,7 @@ target
 Cargo.lock
 .vscode
 .embuild
+
+.devenv/
+.devenv.flake.nix
+devenv.lock
