@@ -80,6 +80,19 @@ pub fn band_and_channel(freq: u32) -> Option<(WiFiBandEnum, u16)> {
     (channel > 0).then_some((band, channel as _))
 }
 
+/// Convert a signal strength percentage (0-100) to an RSSI value in dBm.
+///
+/// Note that the conversion is a rough approximation:
+/// - 0% corresponds to -100 dBm (no signal)
+/// - 100% corresponds to -30 dBm (excellent signal)
+pub fn signal_strength_to_rssi(strength_perc: u8) -> i8 {
+    let strength_perc = strength_perc.clamp(0, 100);
+
+    // Convert percentage to dBm
+    // 0% -> -100 dBm, 100% -> -30 dBm
+    (strength_perc / 2) as i8 - 100
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -151,5 +164,18 @@ mod tests {
         assert_eq!(Some((V60G, 5)), band_and_channel(66960));
         assert_eq!(Some((V60G, 9)), band_and_channel(59400));
         assert_eq!(Some((V60G, 10)), band_and_channel(61560));
+    }
+
+    #[test]
+    fn test_signal_strength_to_rssi() {
+        use super::signal_strength_to_rssi;
+
+        assert_eq!(signal_strength_to_rssi(0), -100);
+        assert_eq!(signal_strength_to_rssi(50), -75);
+        assert_eq!(signal_strength_to_rssi(100), -50);
+        assert_eq!(signal_strength_to_rssi(25), -88);
+        assert_eq!(signal_strength_to_rssi(75), -63);
+        assert_eq!(signal_strength_to_rssi(110), -50); // Clamped to 100%
+        assert_eq!(signal_strength_to_rssi(150), -50); // Clamped to 100%
     }
 }

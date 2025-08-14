@@ -43,7 +43,7 @@ use crate::dm::clusters::wifi_diag::{SecurityTypeEnum, WiFiVersionEnum, WifiDiag
 use crate::dm::networks::NetChangeNotif;
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
-use crate::transport::network::wifi::band::band_and_channel;
+use crate::transport::network::wifi::band::{band_and_channel, signal_strength_to_rssi};
 use crate::utils::sync::{blocking, IfMutex};
 use crate::utils::zbus_proxies::nm::access_point::AccessPointProxy;
 use crate::utils::zbus_proxies::nm::connection::ConnectionProxy;
@@ -236,11 +236,7 @@ impl<'a> NetMgrCtl<'a> {
                 bssid: &bssid,
                 band,
                 channel,
-                rssi: bss_info
-                    .strength()
-                    .await?
-                    .min(i8::MIN as _)
-                    .max(i8::MAX as _) as i8,
+                rssi: signal_strength_to_rssi(bss_info.strength().await?),
             };
 
             f(Some(&network_scan_info))
