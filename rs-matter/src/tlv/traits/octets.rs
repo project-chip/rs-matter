@@ -77,7 +77,7 @@ impl ToTLV for Octets<'_> {
         tw.str(tag, self.0)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLV::str(tag, self.0).into_tlv_iter()
     }
 }
@@ -163,7 +163,7 @@ impl<const N: usize> ToTLV for OctetsOwned<N> {
         tw.str(tag, &self.vec)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLV::str(tag, self.vec.as_slice()).into_tlv_iter()
     }
 }

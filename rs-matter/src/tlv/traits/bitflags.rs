@@ -50,7 +50,7 @@ macro_rules! bitflags_tlv {
             fn tlv_iter(
                 &self,
                 tag: $crate::tlv::TLVTag,
-            ) -> impl Iterator<Item = Result<$crate::tlv::TLV, $crate::error::Error>> {
+            ) -> impl Iterator<Item = Result<$crate::tlv::TLV<'_>, $crate::error::Error>> {
                 $crate::tlv::TLV::$type(tag, self.bits()).into_tlv_iter()
             }
         }

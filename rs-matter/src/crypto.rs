@@ -97,7 +97,7 @@ impl ToTLV for KeyPair {
         tw.end_container()
     }
 
-    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         unimplemented!("Not implemented for `KeyPair`");
 
         #[allow(unreachable_code)]

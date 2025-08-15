@@ -264,7 +264,7 @@ pub enum Whitespace<'a> {
 /// Parses whitespace (space/tab/newline and comments).
 ///
 /// returns the content of the comment
-fn whitespace_group(span: Span) -> IResult<Span, Whitespace<'_>, ParseError> {
+fn whitespace_group(span: Span<'_>) -> IResult<Span<'_>, Whitespace<'_>, ParseError<'_>> {
     // NOTE: split into cases intentional. Using an ALT pattern here
     //       seems to slow down things quite a bit (as whitespace is used a lot
     //       inside our parsing)
@@ -379,7 +379,7 @@ fn whitespace1(span: Span) -> IResult<Span, Option<DocComment>, ParseError> {
 /// Parses a name id, of the form /[a-zA-Z_][a-zA-Z0-9_]*/
 ///
 /// Returns the parsed id as a string slice
-fn parse_id(span: Span) -> IResult<Span, &str, ParseError> {
+fn parse_id(span: Span<'_>) -> IResult<Span<'_>, &str, ParseError<'_>> {
     parse_id_span(span).map(|(span, data)| (span, *data.fragment()))
 }
 

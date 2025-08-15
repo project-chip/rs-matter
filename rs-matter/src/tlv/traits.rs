@@ -68,7 +68,7 @@ pub trait ToTLV {
 
     /// Serialize the type as an iterator of `TLV` instances by potentially borrowing
     /// data from the type.
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>>;
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>>;
 }
 
 impl<T> ToTLV for &T
@@ -79,7 +79,7 @@ where
         (*self).to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         (*self).tlv_iter(tag)
     }
 }
@@ -101,7 +101,7 @@ impl ToTLV for TLVElement<'_> {
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLVElementTLVIter::Start(tag, self.clone())
     }
 }
@@ -158,7 +158,7 @@ impl ToTLV for TLVValue<'_> {
         tw.tlv(tag, self)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLV::new(tag, self.clone()).into_tlv_iter()
     }
 }

@@ -64,7 +64,7 @@ where
         self.as_slice().to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         tlv_array_iter(tag, self.iter())
     }
 }

@@ -235,7 +235,7 @@ impl<T, C> ToTLV for TLVContainer<'_, T, C> {
         self.element.to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         self.element.tlv_iter(tag)
     }
 }
@@ -341,7 +341,7 @@ where
         }
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         match self {
             Self::Array(array) => EitherIter::First(array.tlv_iter(tag)),
             Self::Slice(slice) => EitherIter::Second(slice.tlv_iter(tag)),
