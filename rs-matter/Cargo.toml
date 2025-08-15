@@ -12,7 +12,7 @@ license = "Apache-2.0"
 rust-version = "1.83"
 
 [features]
-default = ["os", "rustcrypto", "log", "zbus"]
+default = ["os", "rustcrypto", "log"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
