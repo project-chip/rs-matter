@@ -51,7 +51,7 @@ macro_rules! totlv_for {
                     tw.$t(tag, *self)
                 }
 
-                fn tlv_iter(&self, tag: $crate::tlv::TLVTag) -> impl Iterator<Item = Result<$crate::tlv::TLV, Error>> {
+                fn tlv_iter(&self, tag: $crate::tlv::TLVTag) -> impl Iterator<Item = Result<$crate::tlv::TLV<'_>, Error>> {
                     $crate::tlv::TLV::$t(tag, *self).into_tlv_iter()
                 }
             }
@@ -67,7 +67,7 @@ macro_rules! totlv_for_nonzero {
                     tw.$t(tag, self.get())
                 }
 
-                fn tlv_iter(&self, tag: $crate::tlv::TLVTag) -> impl Iterator<Item = Result<$crate::tlv::TLV, Error>> {
+                fn tlv_iter(&self, tag: $crate::tlv::TLVTag) -> impl Iterator<Item = Result<$crate::tlv::TLV<'_>, Error>> {
                     $crate::tlv::TLV::$t(tag, self.get()).into_tlv_iter()
                 }
             }

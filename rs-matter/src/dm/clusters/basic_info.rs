@@ -166,29 +166,29 @@ impl ClusterHandler for BasicInfoHandler {
         self.0.changed();
     }
 
-    fn data_model_revision(&self, _ctx: &ReadContext) -> Result<u16, Error> {
+    fn data_model_revision(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(0) // TODO
     }
 
-    fn vendor_id(&self, ctx: &ReadContext) -> Result<u16, Error> {
+    fn vendor_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).vid)
     }
 
     fn vendor_name<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(Self::config(ctx.exchange()).vendor_name)
     }
 
-    fn product_id(&self, ctx: &ReadContext) -> Result<u16, Error> {
+    fn product_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).pid)
     }
 
     fn product_name<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(Self::config(ctx.exchange()).product_name)
@@ -196,31 +196,31 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn serial_number<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(Self::config(ctx.exchange()).serial_no)
     }
 
-    fn hardware_version(&self, ctx: &ReadContext) -> Result<u16, Error> {
+    fn hardware_version(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).hw_ver)
     }
 
     fn hardware_version_string<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(Self::config(ctx.exchange()).hw_ver_str)
     }
 
-    fn software_version(&self, ctx: &ReadContext) -> Result<u32, Error> {
+    fn software_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(Self::config(ctx.exchange()).sw_ver)
     }
 
     fn software_version_string<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(Self::config(ctx.exchange()).sw_ver_str)
@@ -228,13 +228,13 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn node_label<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         out.set(Self::settings(ctx.exchange()).borrow().node_label.as_str())
     }
 
-    fn set_node_label(&self, ctx: &WriteContext, label: &str) -> Result<(), Error> {
+    fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
         if label.len() > 32 {
             return Err(ErrorCode::InvalidAction.into());
         }
@@ -255,14 +255,14 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn location<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext,
+        ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         let settings = Self::settings(ctx.exchange()).borrow();
         out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
     }
 
-    fn set_location(&self, ctx: &WriteContext, location: &str) -> Result<(), Error> {
+    fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
         if location.len() != 2 {
             return Err(ErrorCode::InvalidAction.into());
         }
@@ -283,7 +283,7 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn capability_minima<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext,
+        _ctx: impl ReadContext,
         out: CapabilityMinimaStructBuilder<P>,
     ) -> Result<P, Error> {
         // TODO: Report real values
@@ -292,15 +292,15 @@ impl ClusterHandler for BasicInfoHandler {
             .end()
     }
 
-    fn specification_version(&self, _ctx: &ReadContext) -> Result<u32, Error> {
+    fn specification_version(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(SUPPORTED_MATTER_SPEC_VERSION)
     }
 
-    fn max_paths_per_invoke(&self, _ctx: &ReadContext) -> Result<u16, Error> {
+    fn max_paths_per_invoke(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(1) // TODO: Report real value
     }
 
-    fn handle_mfg_specific_ping(&self, _ctx: &InvokeContext) -> Result<(), Error> {
+    fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 }

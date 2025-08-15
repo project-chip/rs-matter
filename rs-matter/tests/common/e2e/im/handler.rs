@@ -20,8 +20,8 @@ use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _, OnOffHandler};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, AttrDataEncoder, ChainedHandler, CmdDataEncoder, Dataver,
-    EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext, WriteContext,
+    Async, AsyncHandler, AsyncMetadata, ChainedHandler, Dataver, EmptyHandler, Endpoint,
+    EpClMatcher, InvokeContext, InvokeReply, Node, ReadContext, ReadReply, WriteContext,
 };
 use rs_matter::error::Error;
 use rs_matter::Matter;
@@ -101,36 +101,28 @@ impl<'a> E2eTestHandler<'a> {
 }
 
 impl AsyncHandler for E2eTestHandler<'_> {
-    fn read_awaits(&self, _ctx: &ReadContext<'_>) -> bool {
+    fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
         false
     }
 
-    fn write_awaits(&self, _ctx: &WriteContext<'_>) -> bool {
+    fn write_awaits(&self, _ctx: impl WriteContext) -> bool {
         false
     }
 
-    fn invoke_awaits(&self, _ctx: &InvokeContext<'_>) -> bool {
+    fn invoke_awaits(&self, _ctx: impl InvokeContext) -> bool {
         false
     }
 
-    async fn read(
-        &self,
-        ctx: &ReadContext<'_>,
-        encoder: AttrDataEncoder<'_, '_, '_>,
-    ) -> Result<(), Error> {
-        self.0.read(ctx, encoder).await
+    async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+        self.0.read(ctx, reply).await
     }
 
-    async fn write(&self, ctx: &WriteContext<'_>) -> Result<(), Error> {
+    async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
         self.0.write(ctx).await
     }
 
-    async fn invoke(
-        &self,
-        ctx: &InvokeContext<'_>,
-        encoder: CmdDataEncoder<'_, '_, '_>,
-    ) -> Result<(), Error> {
-        self.0.invoke(ctx, encoder).await
+    async fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
+        self.0.invoke(ctx, reply).await
     }
 }
 

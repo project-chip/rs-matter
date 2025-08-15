@@ -97,7 +97,7 @@ impl ToTLV for IMStatusCode {
         tw.u16(tag, *self as _)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLV::u16(tag, *self as _).into_tlv_iter()
     }
 }
@@ -586,7 +586,7 @@ impl<'a> WriteReqRef<'a> {
             .unwrap_or(Ok(false))
     }
 
-    pub fn write_requests(&self) -> Result<TLVArray<'a, AttrData>, Error> {
+    pub fn write_requests(&self) -> Result<TLVArray<'a, AttrData<'_>>, Error> {
         TLVArray::new(self.0.r#struct()?.find_ctx(2)?)
     }
 
@@ -957,7 +957,7 @@ impl ToTLV for CmdPath {
         self.path.to_tlv(tag, tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         self.path.tlv_iter(tag)
     }
 }

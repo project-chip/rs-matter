@@ -120,7 +120,7 @@ impl<'a> DescHandler<'a> {
         HandlerAdaptor(self)
     }
 
-    fn endpoint<'b>(ctx: &'b ReadContext<'_>) -> Result<&'b Endpoint<'b>, Error> {
+    fn endpoint<'b>(ctx: &'b impl ReadContext) -> Result<&'b Endpoint<'b>, Error> {
         ctx.attr()
             .node
             .endpoint(ctx.attr().endpoint_id)
@@ -144,10 +144,10 @@ impl ClusterHandler for DescHandler<'_> {
 
     fn device_type_list<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<DeviceTypeStructArrayBuilder<P>, DeviceTypeStructBuilder<P>>,
     ) -> Result<P, Error> {
-        let endpoint = Self::endpoint(ctx)?;
+        let endpoint = Self::endpoint(&ctx)?;
 
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -176,10 +176,10 @@ impl ClusterHandler for DescHandler<'_> {
 
     fn server_list<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
     ) -> Result<P, Error> {
-        let endpoint = Self::endpoint(ctx)?;
+        let endpoint = Self::endpoint(&ctx)?;
 
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -201,10 +201,10 @@ impl ClusterHandler for DescHandler<'_> {
 
     fn client_list<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
     ) -> Result<P, Error> {
-        let _endpoint = Self::endpoint(ctx)?;
+        let _endpoint = Self::endpoint(&ctx)?;
 
         // Client clusters not support yet
         match builder {
@@ -215,7 +215,7 @@ impl ClusterHandler for DescHandler<'_> {
 
     fn parts_list<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u16>, ToTLVBuilder<P, u16>>,
     ) -> Result<P, Error> {
         let mut ep_ids = ctx

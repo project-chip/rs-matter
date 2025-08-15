@@ -18606,9 +18606,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18622,9 +18620,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18638,9 +18634,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18654,9 +18648,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18670,9 +18662,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18686,9 +18676,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18702,9 +18690,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18718,9 +18704,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18734,9 +18718,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18750,9 +18732,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18766,9 +18746,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18782,9 +18760,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18798,9 +18774,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18814,9 +18788,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18830,9 +18802,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18846,9 +18816,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18862,9 +18830,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18878,9 +18844,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18894,9 +18858,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18910,9 +18872,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18926,9 +18886,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18942,9 +18900,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18958,9 +18914,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18974,9 +18928,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -18990,9 +18942,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19006,9 +18956,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19022,9 +18970,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19038,9 +18984,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19054,9 +18998,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19070,9 +19012,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19086,9 +19026,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19102,9 +19040,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19118,9 +19054,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19134,9 +19068,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19150,9 +19082,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19166,9 +19096,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19182,9 +19110,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19198,9 +19124,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19214,9 +19138,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19230,9 +19152,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19246,9 +19166,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19262,9 +19180,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19278,9 +19194,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19294,9 +19208,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19310,9 +19222,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         )
@@ -19327,9 +19237,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19343,9 +19251,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19359,9 +19265,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19375,9 +19279,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19391,9 +19293,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19407,9 +19307,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19423,9 +19321,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19439,9 +19335,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19455,9 +19349,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19471,9 +19363,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19487,9 +19377,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19503,9 +19391,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19519,9 +19405,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19535,9 +19419,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19551,9 +19433,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19567,9 +19447,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19583,9 +19461,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19599,9 +19475,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19615,9 +19489,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19631,9 +19503,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19647,9 +19517,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19663,9 +19531,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19679,9 +19545,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19695,9 +19559,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19711,9 +19573,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19727,9 +19587,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19743,9 +19601,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19759,9 +19615,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19775,9 +19629,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19791,9 +19643,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19807,9 +19657,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19823,9 +19671,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19839,9 +19685,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19855,9 +19699,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19871,9 +19713,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19887,9 +19727,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19903,9 +19741,7 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Access::NEED_OPERATE
                                 .union(
                                     rs_matter_crate::dm::Access::NEED_MANAGE
-                                        .union(
-                                        rs_matter_crate::dm::Access::NEED_ADMIN,
-                                    ),
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
@@ -19913,38 +19749,32 @@ pub mod unit_testing {
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::GeneratedCommandList as _,
-                    rs_matter_crate::dm::Access::READ
-                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                     rs_matter_crate::dm::Quality::NONE,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::AcceptedCommandList as _,
-                    rs_matter_crate::dm::Access::READ
-                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                     rs_matter_crate::dm::Quality::NONE,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::EventList as _,
-                    rs_matter_crate::dm::Access::READ
-                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                     rs_matter_crate::dm::Quality::NONE,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::AttributeList as _,
-                    rs_matter_crate::dm::Access::READ
-                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                     rs_matter_crate::dm::Quality::NONE,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::FeatureMap as _,
-                    rs_matter_crate::dm::Access::READ
-                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                     rs_matter_crate::dm::Quality::NONE,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::ClusterRevision as _,
-                    rs_matter_crate::dm::Access::READ
-                        .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                    rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
                     rs_matter_crate::dm::Quality::NONE,
                 ),
             ],
@@ -20083,112 +19913,112 @@ pub mod unit_testing {
         fn dataver_changed(&self);
         fn boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error>;
         fn bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error>;
         fn bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error>;
         fn bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error>;
         fn int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error>;
         fn int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error>;
         fn int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error>;
         fn int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i8, rs_matter_crate::error::Error>;
         fn int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i16, rs_matter_crate::error::Error>;
         fn int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i32, rs_matter_crate::error::Error>;
         fn int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i32, rs_matter_crate::error::Error>;
         fn int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error>;
         fn enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error>;
         fn enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn float_single(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<f32, rs_matter_crate::error::Error>;
         fn float_double(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<f64, rs_matter_crate::error::Error>;
         fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::ToTLVArrayBuilder<P, u8>,
                 rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
@@ -20196,7 +20026,7 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -20204,7 +20034,7 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestListStructOctetArrayBuilder<P>,
                 TestListStructOctetBuilder<P>,
@@ -20212,34 +20042,34 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error>;
         fn epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error>;
         fn vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 NullablesAndOptionalsStructArrayBuilder<P>,
                 NullablesAndOptionalsStructBuilder<P>,
@@ -20247,32 +20077,32 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<SimpleEnum, rs_matter_crate::error::Error>;
         fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: SimpleStructBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error>;
         fn range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i8, rs_matter_crate::error::Error>;
         fn range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error>;
         fn range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i16, rs_matter_crate::error::Error>;
         fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -20280,7 +20110,7 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestFabricScopedArrayBuilder<P>,
                 TestFabricScopedBuilder<P>,
@@ -20288,125 +20118,125 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error>;
         fn unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>;
         fn nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
         fn nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
         fn nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>;
         fn nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>;
         fn nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
         fn nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>;
         fn nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
         fn nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>;
         fn nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>;
         fn nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
         fn nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
         fn nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
         fn nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>;
         fn nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>;
         fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -20414,7 +20244,7 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::Utf8StrBuilder<P>,
@@ -20422,168 +20252,168 @@ pub mod unit_testing {
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>;
         fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
         fn nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
         fn write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn set_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap8MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap16MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap32MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap64MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: f32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: f64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, u8>,
                 u8,
@@ -20591,7 +20421,7 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
@@ -20599,7 +20429,7 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_struct_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
                 TestListStructOctet<'_>,
@@ -20607,37 +20437,37 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_long_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_nullables_and_optionals_struct(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
                 NullablesAndOptionalsStruct<'_>,
@@ -20645,37 +20475,37 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleEnum,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_struct_attr(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleStruct<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
@@ -20683,7 +20513,7 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_list_fabric_scoped(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
                 TestFabricScoped<'_>,
@@ -20691,254 +20521,254 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn set_nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_struct(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn set_write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
         fn handle_test(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_not_handled(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             response: TestSpecificResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_unknown_command(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -20946,7 +20776,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -20954,25 +20784,25 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -20980,28 +20810,28 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_timed_invoke_request(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_simple_optional_argument_request(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
         ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -21009,19 +20839,19 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
         fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
@@ -21039,164 +20869,164 @@ pub mod unit_testing {
         }
         fn boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::boolean(self, ctx)
         }
         fn bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_8(self, ctx)
         }
         fn bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_16(self, ctx)
         }
         fn bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_32(self, ctx)
         }
         fn bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error> {
             T::bitmap_64(self, ctx)
         }
         fn int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::int_8_u(self, ctx)
         }
         fn int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::int_16_u(self, ctx)
         }
         fn int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             T::int_24_u(self, ctx)
         }
         fn int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             T::int_32_u(self, ctx)
         }
         fn int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_40_u(self, ctx)
         }
         fn int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_48_u(self, ctx)
         }
         fn int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_56_u(self, ctx)
         }
         fn int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::int_64_u(self, ctx)
         }
         fn int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i8, rs_matter_crate::error::Error> {
             T::int_8_s(self, ctx)
         }
         fn int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i16, rs_matter_crate::error::Error> {
             T::int_16_s(self, ctx)
         }
         fn int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i32, rs_matter_crate::error::Error> {
             T::int_24_s(self, ctx)
         }
         fn int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i32, rs_matter_crate::error::Error> {
             T::int_32_s(self, ctx)
         }
         fn int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_40_s(self, ctx)
         }
         fn int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_48_s(self, ctx)
         }
         fn int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_56_s(self, ctx)
         }
         fn int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i64, rs_matter_crate::error::Error> {
             T::int_64_s(self, ctx)
         }
         fn enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::enum_8(self, ctx)
         }
         fn enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::enum_16(self, ctx)
         }
         fn float_single(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<f32, rs_matter_crate::error::Error> {
             T::float_single(self, ctx)
         }
         fn float_double(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<f64, rs_matter_crate::error::Error> {
             T::float_double(self, ctx)
         }
         fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::octet_string(self, ctx, builder)
         }
         fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::ToTLVArrayBuilder<P, u8>,
                 rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
@@ -21206,7 +21036,7 @@ pub mod unit_testing {
         }
         fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -21216,7 +21046,7 @@ pub mod unit_testing {
         }
         fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestListStructOctetArrayBuilder<P>,
                 TestListStructOctetBuilder<P>,
@@ -21226,46 +21056,46 @@ pub mod unit_testing {
         }
         fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::long_octet_string(self, ctx, builder)
         }
         fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::char_string(self, ctx, builder)
         }
         fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::long_char_string(self, ctx, builder)
         }
         fn epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u64, rs_matter_crate::error::Error> {
             T::epoch_us(self, ctx)
         }
         fn epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u32, rs_matter_crate::error::Error> {
             T::epoch_s(self, ctx)
         }
         fn vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::vendor_id(self, ctx)
         }
         fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 NullablesAndOptionalsStructArrayBuilder<P>,
                 NullablesAndOptionalsStructBuilder<P>,
@@ -21275,44 +21105,44 @@ pub mod unit_testing {
         }
         fn enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<SimpleEnum, rs_matter_crate::error::Error> {
             T::enum_attr(self, ctx)
         }
         fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: SimpleStructBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::struct_attr(self, ctx, builder)
         }
         fn range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::range_restricted_int_8_u(self, ctx)
         }
         fn range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i8, rs_matter_crate::error::Error> {
             T::range_restricted_int_8_s(self, ctx)
         }
         fn range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u16, rs_matter_crate::error::Error> {
             T::range_restricted_int_16_u(self, ctx)
         }
         fn range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<i16, rs_matter_crate::error::Error> {
             T::range_restricted_int_16_s(self, ctx)
         }
         fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -21322,7 +21152,7 @@ pub mod unit_testing {
         }
         fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestFabricScopedArrayBuilder<P>,
                 TestFabricScopedBuilder<P>,
@@ -21332,185 +21162,185 @@ pub mod unit_testing {
         }
         fn timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::timed_write_boolean(self, ctx)
         }
         fn general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::general_error_boolean(self, ctx)
         }
         fn cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::cluster_error_boolean(self, ctx)
         }
         fn unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             T::unsupported(self, ctx)
         }
         fn nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error> {
             T::nullable_boolean(self, ctx)
         }
         fn nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_8(self, ctx)
         }
         fn nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_16(self, ctx)
         }
         fn nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_32(self, ctx)
         }
         fn nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>
         {
             T::nullable_bitmap_64(self, ctx)
         }
         fn nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             T::nullable_int_8_u(self, ctx)
         }
         fn nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             T::nullable_int_16_u(self, ctx)
         }
         fn nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
             T::nullable_int_24_u(self, ctx)
         }
         fn nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
             T::nullable_int_32_u(self, ctx)
         }
         fn nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_40_u(self, ctx)
         }
         fn nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_48_u(self, ctx)
         }
         fn nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_56_u(self, ctx)
         }
         fn nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
             T::nullable_int_64_u(self, ctx)
         }
         fn nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
             T::nullable_int_8_s(self, ctx)
         }
         fn nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
             T::nullable_int_16_s(self, ctx)
         }
         fn nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
             T::nullable_int_24_s(self, ctx)
         }
         fn nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
             T::nullable_int_32_s(self, ctx)
         }
         fn nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_40_s(self, ctx)
         }
         fn nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_48_s(self, ctx)
         }
         fn nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_56_s(self, ctx)
         }
         fn nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
             T::nullable_int_64_s(self, ctx)
         }
         fn nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             T::nullable_enum_8(self, ctx)
         }
         fn nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             T::nullable_enum_16(self, ctx)
         }
         fn nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error> {
             T::nullable_float_single(self, ctx)
         }
         fn nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error> {
             T::nullable_float_double(self, ctx)
         }
         fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
@@ -21520,7 +21350,7 @@ pub mod unit_testing {
         }
         fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::Utf8StrBuilder<P>,
@@ -21530,233 +21360,233 @@ pub mod unit_testing {
         }
         fn nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>
         {
             T::nullable_enum_attr(self, ctx)
         }
         fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::nullable_struct(self, ctx, builder)
         }
         fn nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_8_u(self, ctx)
         }
         fn nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_8_s(self, ctx)
         }
         fn nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_16_u(self, ctx)
         }
         fn nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
             T::nullable_range_restricted_int_16_s(self, ctx)
         }
         fn write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::write_only_int_8_u(self, ctx)
         }
         fn set_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_boolean(self, ctx, value)
         }
         fn set_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap8MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_8(self, ctx, value)
         }
         fn set_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap16MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_16(self, ctx, value)
         }
         fn set_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap32MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_32(self, ctx, value)
         }
         fn set_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap64MaskMap,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_bitmap_64(self, ctx, value)
         }
         fn set_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_8_u(self, ctx, value)
         }
         fn set_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_16_u(self, ctx, value)
         }
         fn set_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_24_u(self, ctx, value)
         }
         fn set_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_32_u(self, ctx, value)
         }
         fn set_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_40_u(self, ctx, value)
         }
         fn set_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_48_u(self, ctx, value)
         }
         fn set_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_56_u(self, ctx, value)
         }
         fn set_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_64_u(self, ctx, value)
         }
         fn set_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_8_s(self, ctx, value)
         }
         fn set_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_16_s(self, ctx, value)
         }
         fn set_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_24_s(self, ctx, value)
         }
         fn set_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_32_s(self, ctx, value)
         }
         fn set_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_40_s(self, ctx, value)
         }
         fn set_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_48_s(self, ctx, value)
         }
         fn set_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_56_s(self, ctx, value)
         }
         fn set_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_int_64_s(self, ctx, value)
         }
         fn set_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_enum_8(self, ctx, value)
         }
         fn set_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_enum_16(self, ctx, value)
         }
         fn set_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: f32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_float_single(self, ctx, value)
         }
         fn set_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: f64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_float_double(self, ctx, value)
         }
         fn set_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_octet_string(self, ctx, value)
         }
         fn set_list_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, u8>,
                 u8,
@@ -21766,7 +21596,7 @@ pub mod unit_testing {
         }
         fn set_list_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
@@ -21776,7 +21606,7 @@ pub mod unit_testing {
         }
         fn set_list_struct_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
                 TestListStructOctet<'_>,
@@ -21786,49 +21616,49 @@ pub mod unit_testing {
         }
         fn set_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_long_octet_string(self, ctx, value)
         }
         fn set_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_char_string(self, ctx, value)
         }
         fn set_long_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_long_char_string(self, ctx, value)
         }
         fn set_epoch_us(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_epoch_us(self, ctx, value)
         }
         fn set_epoch_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_epoch_s(self, ctx, value)
         }
         fn set_vendor_id(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_vendor_id(self, ctx, value)
         }
         fn set_list_nullables_and_optionals_struct(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
                 NullablesAndOptionalsStruct<'_>,
@@ -21838,49 +21668,49 @@ pub mod unit_testing {
         }
         fn set_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleEnum,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_enum_attr(self, ctx, value)
         }
         fn set_struct_attr(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleStruct<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_struct_attr(self, ctx, value)
         }
         fn set_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_8_u(self, ctx, value)
         }
         fn set_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_8_s(self, ctx, value)
         }
         fn set_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_16_u(self, ctx, value)
         }
         fn set_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_range_restricted_int_16_s(self, ctx, value)
         }
         fn set_list_long_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
@@ -21890,7 +21720,7 @@ pub mod unit_testing {
         }
         fn set_list_fabric_scoped(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
                 TestFabricScoped<'_>,
@@ -21900,298 +21730,298 @@ pub mod unit_testing {
         }
         fn set_timed_write_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_timed_write_boolean(self, ctx, value)
         }
         fn set_general_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_general_error_boolean(self, ctx, value)
         }
         fn set_cluster_error_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_cluster_error_boolean(self, ctx, value)
         }
         fn set_unsupported(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_unsupported(self, ctx, value)
         }
         fn set_nullable_boolean(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_boolean(self, ctx, value)
         }
         fn set_nullable_bitmap_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_8(self, ctx, value)
         }
         fn set_nullable_bitmap_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_16(self, ctx, value)
         }
         fn set_nullable_bitmap_32(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_32(self, ctx, value)
         }
         fn set_nullable_bitmap_64(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_bitmap_64(self, ctx, value)
         }
         fn set_nullable_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_8_u(self, ctx, value)
         }
         fn set_nullable_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_16_u(self, ctx, value)
         }
         fn set_nullable_int_24_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_24_u(self, ctx, value)
         }
         fn set_nullable_int_32_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_32_u(self, ctx, value)
         }
         fn set_nullable_int_40_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_40_u(self, ctx, value)
         }
         fn set_nullable_int_48_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_48_u(self, ctx, value)
         }
         fn set_nullable_int_56_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_56_u(self, ctx, value)
         }
         fn set_nullable_int_64_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_64_u(self, ctx, value)
         }
         fn set_nullable_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_8_s(self, ctx, value)
         }
         fn set_nullable_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_16_s(self, ctx, value)
         }
         fn set_nullable_int_24_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_24_s(self, ctx, value)
         }
         fn set_nullable_int_32_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_32_s(self, ctx, value)
         }
         fn set_nullable_int_40_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_40_s(self, ctx, value)
         }
         fn set_nullable_int_48_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_48_s(self, ctx, value)
         }
         fn set_nullable_int_56_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_56_s(self, ctx, value)
         }
         fn set_nullable_int_64_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_int_64_s(self, ctx, value)
         }
         fn set_nullable_enum_8(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_enum_8(self, ctx, value)
         }
         fn set_nullable_enum_16(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_enum_16(self, ctx, value)
         }
         fn set_nullable_float_single(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_float_single(self, ctx, value)
         }
         fn set_nullable_float_double(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_float_double(self, ctx, value)
         }
         fn set_nullable_octet_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_octet_string(self, ctx, value)
         }
         fn set_nullable_char_string(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_char_string(self, ctx, value)
         }
         fn set_nullable_enum_attr(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_enum_attr(self, ctx, value)
         }
         fn set_nullable_struct(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_struct(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_8_u(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_8_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_8_s(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_16_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_16_u(self, ctx, value)
         }
         fn set_nullable_range_restricted_int_16_s(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_nullable_range_restricted_int_16_s(self, ctx, value)
         }
         fn set_write_only_int_8_u(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_write_only_int_8_u(self, ctx, value)
         }
         fn handle_test(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test(self, ctx)
         }
         fn handle_test_not_handled(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test_not_handled(self, ctx)
         }
         fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             response: TestSpecificResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::handle_test_specific(self, ctx, response)
         }
         fn handle_test_unknown_command(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test_unknown_command(self, ctx)
         }
         fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22199,7 +22029,7 @@ pub mod unit_testing {
         }
         fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22207,7 +22037,7 @@ pub mod unit_testing {
         }
         fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22215,7 +22045,7 @@ pub mod unit_testing {
         }
         fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22223,7 +22053,7 @@ pub mod unit_testing {
         }
         fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22231,7 +22061,7 @@ pub mod unit_testing {
         }
         fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22239,7 +22069,7 @@ pub mod unit_testing {
         }
         fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22249,7 +22079,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22259,7 +22089,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22267,7 +22097,7 @@ pub mod unit_testing {
         }
         fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22275,7 +22105,7 @@ pub mod unit_testing {
         }
         fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22283,7 +22113,7 @@ pub mod unit_testing {
         }
         fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22293,7 +22123,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22301,7 +22131,7 @@ pub mod unit_testing {
         }
         fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22309,20 +22139,20 @@ pub mod unit_testing {
         }
         fn handle_timed_invoke_request(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_timed_invoke_request(self, ctx)
         }
         fn handle_test_simple_optional_argument_request(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::handle_test_simple_optional_argument_request(self, ctx, request)
         }
         fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22332,7 +22162,7 @@ pub mod unit_testing {
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22340,7 +22170,7 @@ pub mod unit_testing {
         }
         fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22348,7 +22178,7 @@ pub mod unit_testing {
         }
         fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
@@ -22366,16 +22196,16 @@ pub mod unit_testing {
         #[allow(unreachable_code)]
         fn read(
             &self,
-            ctx: &rs_matter_crate::dm::ReadContext<'_>,
-            encoder: rs_matter_crate::dm::AttrDataEncoder<'_, '_, '_>,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            reply: impl rs_matter_crate::dm::ReadReply,
         ) -> Result<(), rs_matter_crate::error::Error> {
-            if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
+            if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                 if ctx.attr().is_system() {
                     ctx.attr().cluster()?.read(ctx.attr().attr_id, writer)
                 } else {
                     match AttributeId::try_from(ctx.attr().attr_id)? {
                         AttributeId::Boolean => {
-                            let attr_read_result = self.0.boolean(ctx);
+                            let attr_read_result = self.0.boolean(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22396,10 +22226,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap8 => {
-                            let attr_read_result = self.0.bitmap_8(ctx);
+                            let attr_read_result = self.0.bitmap_8(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22420,10 +22250,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap16 => {
-                            let attr_read_result = self.0.bitmap_16(ctx);
+                            let attr_read_result = self.0.bitmap_16(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22444,10 +22274,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap32 => {
-                            let attr_read_result = self.0.bitmap_32(ctx);
+                            let attr_read_result = self.0.bitmap_32(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22468,10 +22298,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap64 => {
-                            let attr_read_result = self.0.bitmap_64(ctx);
+                            let attr_read_result = self.0.bitmap_64(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22492,10 +22322,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int8u => {
-                            let attr_read_result = self.0.int_8_u(ctx);
+                            let attr_read_result = self.0.int_8_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22516,10 +22346,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int16u => {
-                            let attr_read_result = self.0.int_16_u(ctx);
+                            let attr_read_result = self.0.int_16_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22540,10 +22370,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int24u => {
-                            let attr_read_result = self.0.int_24_u(ctx);
+                            let attr_read_result = self.0.int_24_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22564,10 +22394,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int32u => {
-                            let attr_read_result = self.0.int_32_u(ctx);
+                            let attr_read_result = self.0.int_32_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22588,10 +22418,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int40u => {
-                            let attr_read_result = self.0.int_40_u(ctx);
+                            let attr_read_result = self.0.int_40_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22612,10 +22442,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int48u => {
-                            let attr_read_result = self.0.int_48_u(ctx);
+                            let attr_read_result = self.0.int_48_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22636,10 +22466,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int56u => {
-                            let attr_read_result = self.0.int_56_u(ctx);
+                            let attr_read_result = self.0.int_56_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22660,10 +22490,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int64u => {
-                            let attr_read_result = self.0.int_64_u(ctx);
+                            let attr_read_result = self.0.int_64_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22684,10 +22514,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int8s => {
-                            let attr_read_result = self.0.int_8_s(ctx);
+                            let attr_read_result = self.0.int_8_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22708,10 +22538,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int16s => {
-                            let attr_read_result = self.0.int_16_s(ctx);
+                            let attr_read_result = self.0.int_16_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22732,10 +22562,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int24s => {
-                            let attr_read_result = self.0.int_24_s(ctx);
+                            let attr_read_result = self.0.int_24_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22756,10 +22586,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int32s => {
-                            let attr_read_result = self.0.int_32_s(ctx);
+                            let attr_read_result = self.0.int_32_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22780,10 +22610,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int40s => {
-                            let attr_read_result = self.0.int_40_s(ctx);
+                            let attr_read_result = self.0.int_40_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22804,10 +22634,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int48s => {
-                            let attr_read_result = self.0.int_48_s(ctx);
+                            let attr_read_result = self.0.int_48_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22828,10 +22658,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int56s => {
-                            let attr_read_result = self.0.int_56_s(ctx);
+                            let attr_read_result = self.0.int_56_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22852,10 +22682,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int64s => {
-                            let attr_read_result = self.0.int_64_s(ctx);
+                            let attr_read_result = self.0.int_64_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22876,10 +22706,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Enum8 => {
-                            let attr_read_result = self.0.enum_8(ctx);
+                            let attr_read_result = self.0.enum_8(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22900,10 +22730,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Enum16 => {
-                            let attr_read_result = self.0.enum_16(ctx);
+                            let attr_read_result = self.0.enum_16(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22924,10 +22754,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::FloatSingle => {
-                            let attr_read_result = self.0.float_single(ctx);
+                            let attr_read_result = self.0.float_single(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22948,10 +22778,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::FloatDouble => {
-                            let attr_read_result = self.0.float_double(ctx);
+                            let attr_read_result = self.0.float_double(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -22972,7 +22802,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::OctetString => {
                             #[cfg(feature = "defmt")]
@@ -22993,8 +22823,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::OctetString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.octet_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23002,9 +22834,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::OctetString, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23028,7 +22860,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::ListInt8u => {
                             #[cfg(feature = "defmt")]
@@ -23049,8 +22881,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::ListInt8u, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.list_int_8_u(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
@@ -23059,9 +22893,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::ListInt8u, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23085,7 +22919,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::ListOctetString => {
                             #[cfg(feature = "defmt")]
@@ -23106,8 +22940,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::ListOctetString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.list_octet_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
@@ -23116,9 +22952,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::ListOctetString, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23142,7 +22978,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::ListStructOctetString => {
                             #[cfg(feature = "defmt")]
@@ -23163,8 +22999,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::ListStructOctetString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.list_struct_octet_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
@@ -23176,9 +23014,9 @@ pub mod unit_testing {
                                                 false,
                                             )),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23202,7 +23040,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::LongOctetString => {
                             #[cfg(feature = "defmt")]
@@ -23223,8 +23061,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::LongOctetString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.long_octet_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23232,9 +23072,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::LongOctetString, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23258,7 +23098,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::CharString => {
                             #[cfg(feature = "defmt")]
@@ -23279,8 +23119,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::CharString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.char_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23288,9 +23130,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::CharString, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23314,7 +23156,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::LongCharString => {
                             #[cfg(feature = "defmt")]
@@ -23335,8 +23177,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::LongCharString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.long_char_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23344,9 +23188,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::LongCharString, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23370,10 +23214,10 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::EpochUs => {
-                            let attr_read_result = self.0.epoch_us(ctx);
+                            let attr_read_result = self.0.epoch_us(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23394,10 +23238,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::EpochS => {
-                            let attr_read_result = self.0.epoch_s(ctx);
+                            let attr_read_result = self.0.epoch_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23418,10 +23262,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::VendorId => {
-                            let attr_read_result = self.0.vendor_id(ctx);
+                            let attr_read_result = self.0.vendor_id(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23442,7 +23286,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::ListNullablesAndOptionalsStruct => {
                             #[cfg(feature = "defmt")]
@@ -23469,8 +23313,10 @@ pub mod unit_testing {
                                     ))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.list_nullables_and_optionals_struct(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
@@ -23482,9 +23328,9 @@ pub mod unit_testing {
                                                 false,
                                             )),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23514,10 +23360,10 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::EnumAttr => {
-                            let attr_read_result = self.0.enum_attr(ctx);
+                            let attr_read_result = self.0.enum_attr(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23538,7 +23384,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::StructAttr => {
                             #[cfg(feature = "defmt")]
@@ -23559,8 +23405,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::StructAttr, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.struct_attr(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -23568,9 +23416,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::StructAttr, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23594,10 +23442,10 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::RangeRestrictedInt8u => {
-                            let attr_read_result = self.0.range_restricted_int_8_u(ctx);
+                            let attr_read_result = self.0.range_restricted_int_8_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23618,10 +23466,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::RangeRestrictedInt8s => {
-                            let attr_read_result = self.0.range_restricted_int_8_s(ctx);
+                            let attr_read_result = self.0.range_restricted_int_8_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23642,10 +23490,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::RangeRestrictedInt16u => {
-                            let attr_read_result = self.0.range_restricted_int_16_u(ctx);
+                            let attr_read_result = self.0.range_restricted_int_16_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23666,10 +23514,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::RangeRestrictedInt16s => {
-                            let attr_read_result = self.0.range_restricted_int_16_s(ctx);
+                            let attr_read_result = self.0.range_restricted_int_16_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23690,7 +23538,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::ListLongOctetString => {
                             #[cfg(feature = "defmt")]
@@ -23711,8 +23559,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::ListLongOctetString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.list_long_octet_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
@@ -23724,9 +23574,9 @@ pub mod unit_testing {
                                                 false,
                                             )),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23750,7 +23600,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::ListFabricScoped => {
                             #[cfg(feature = "defmt")]
@@ -23771,8 +23621,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::ListFabricScoped, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.list_fabric_scoped(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::dm::ArrayAttributeRead::new(
                                     ctx.attr().list_index.clone(),
                                     rs_matter_crate::tlv::TLVWriteParent::new(
@@ -23781,9 +23633,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::ListFabricScoped, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -23807,10 +23659,10 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::TimedWriteBoolean => {
-                            let attr_read_result = self.0.timed_write_boolean(ctx);
+                            let attr_read_result = self.0.timed_write_boolean(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23831,10 +23683,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::GeneralErrorBoolean => {
-                            let attr_read_result = self.0.general_error_boolean(ctx);
+                            let attr_read_result = self.0.general_error_boolean(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23855,10 +23707,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::ClusterErrorBoolean => {
-                            let attr_read_result = self.0.cluster_error_boolean(ctx);
+                            let attr_read_result = self.0.cluster_error_boolean(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23879,10 +23731,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Unsupported => {
-                            let attr_read_result = self.0.unsupported(ctx);
+                            let attr_read_result = self.0.unsupported(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23903,10 +23755,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBoolean => {
-                            let attr_read_result = self.0.nullable_boolean(ctx);
+                            let attr_read_result = self.0.nullable_boolean(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23927,10 +23779,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap8 => {
-                            let attr_read_result = self.0.nullable_bitmap_8(ctx);
+                            let attr_read_result = self.0.nullable_bitmap_8(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23951,10 +23803,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap16 => {
-                            let attr_read_result = self.0.nullable_bitmap_16(ctx);
+                            let attr_read_result = self.0.nullable_bitmap_16(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23975,10 +23827,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap32 => {
-                            let attr_read_result = self.0.nullable_bitmap_32(ctx);
+                            let attr_read_result = self.0.nullable_bitmap_32(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -23999,10 +23851,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap64 => {
-                            let attr_read_result = self.0.nullable_bitmap_64(ctx);
+                            let attr_read_result = self.0.nullable_bitmap_64(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24023,10 +23875,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt8u => {
-                            let attr_read_result = self.0.nullable_int_8_u(ctx);
+                            let attr_read_result = self.0.nullable_int_8_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24047,10 +23899,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt16u => {
-                            let attr_read_result = self.0.nullable_int_16_u(ctx);
+                            let attr_read_result = self.0.nullable_int_16_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24071,10 +23923,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt24u => {
-                            let attr_read_result = self.0.nullable_int_24_u(ctx);
+                            let attr_read_result = self.0.nullable_int_24_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24095,10 +23947,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt32u => {
-                            let attr_read_result = self.0.nullable_int_32_u(ctx);
+                            let attr_read_result = self.0.nullable_int_32_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24119,10 +23971,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt40u => {
-                            let attr_read_result = self.0.nullable_int_40_u(ctx);
+                            let attr_read_result = self.0.nullable_int_40_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24143,10 +23995,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt48u => {
-                            let attr_read_result = self.0.nullable_int_48_u(ctx);
+                            let attr_read_result = self.0.nullable_int_48_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24167,10 +24019,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt56u => {
-                            let attr_read_result = self.0.nullable_int_56_u(ctx);
+                            let attr_read_result = self.0.nullable_int_56_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24191,10 +24043,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt64u => {
-                            let attr_read_result = self.0.nullable_int_64_u(ctx);
+                            let attr_read_result = self.0.nullable_int_64_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24215,10 +24067,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt8s => {
-                            let attr_read_result = self.0.nullable_int_8_s(ctx);
+                            let attr_read_result = self.0.nullable_int_8_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24239,10 +24091,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt16s => {
-                            let attr_read_result = self.0.nullable_int_16_s(ctx);
+                            let attr_read_result = self.0.nullable_int_16_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24263,10 +24115,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt24s => {
-                            let attr_read_result = self.0.nullable_int_24_s(ctx);
+                            let attr_read_result = self.0.nullable_int_24_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24287,10 +24139,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt32s => {
-                            let attr_read_result = self.0.nullable_int_32_s(ctx);
+                            let attr_read_result = self.0.nullable_int_32_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24311,10 +24163,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt40s => {
-                            let attr_read_result = self.0.nullable_int_40_s(ctx);
+                            let attr_read_result = self.0.nullable_int_40_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24335,10 +24187,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt48s => {
-                            let attr_read_result = self.0.nullable_int_48_s(ctx);
+                            let attr_read_result = self.0.nullable_int_48_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24359,10 +24211,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt56s => {
-                            let attr_read_result = self.0.nullable_int_56_s(ctx);
+                            let attr_read_result = self.0.nullable_int_56_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24383,10 +24235,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt64s => {
-                            let attr_read_result = self.0.nullable_int_64_s(ctx);
+                            let attr_read_result = self.0.nullable_int_64_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24407,10 +24259,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableEnum8 => {
-                            let attr_read_result = self.0.nullable_enum_8(ctx);
+                            let attr_read_result = self.0.nullable_enum_8(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24431,10 +24283,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableEnum16 => {
-                            let attr_read_result = self.0.nullable_enum_16(ctx);
+                            let attr_read_result = self.0.nullable_enum_16(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24455,10 +24307,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableFloatSingle => {
-                            let attr_read_result = self.0.nullable_float_single(ctx);
+                            let attr_read_result = self.0.nullable_float_single(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24479,10 +24331,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableFloatDouble => {
-                            let attr_read_result = self.0.nullable_float_double(ctx);
+                            let attr_read_result = self.0.nullable_float_double(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24503,7 +24355,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableOctetString => {
                             #[cfg(feature = "defmt")]
@@ -24524,8 +24376,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::NullableOctetString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.nullable_octet_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -24536,9 +24390,9 @@ pub mod unit_testing {
                                                 false,
                                             )),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24562,7 +24416,7 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::NullableCharString => {
                             #[cfg(feature = "defmt")]
@@ -24583,8 +24437,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::NullableCharString, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.nullable_char_string(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -24592,9 +24448,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::NullableCharString, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24618,10 +24474,10 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::NullableEnumAttr => {
-                            let attr_read_result = self.0.nullable_enum_attr(ctx);
+                            let attr_read_result = self.0.nullable_enum_attr(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24642,7 +24498,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableStruct => {
                             #[cfg(feature = "defmt")]
@@ -24663,8 +24519,10 @@ pub mod unit_testing {
                                     MetadataDebug((AttributeId::NullableStruct, false))
                                 ))
                             );
+                            let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                            let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                             let attr_read_result = self.0.nullable_struct(
-                                ctx,
+                                &ctx,
                                 rs_matter_crate::tlv::TLVBuilder::new(
                                     rs_matter_crate::tlv::TLVWriteParent::new(
                                         MetadataDebug((
@@ -24672,9 +24530,9 @@ pub mod unit_testing {
                                             self,
                                             MetadataDebug((AttributeId::NullableStruct, false)),
                                         )),
-                                        writer.writer(),
+                                        tw,
                                     ),
-                                    &rs_matter_crate::dm::AttrDataWriter::TAG,
+                                    tag,
                                 )?,
                             );
                             #[cfg(feature = "defmt")]
@@ -24698,10 +24556,10 @@ pub mod unit_testing {
                                 attr_read_result.as_ref().map(|_| ())
                             );
                             attr_read_result?;
-                            writer.complete()
+                            rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::NullableRangeRestrictedInt8u => {
-                            let attr_read_result = self.0.nullable_range_restricted_int_8_u(ctx);
+                            let attr_read_result = self.0.nullable_range_restricted_int_8_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24728,10 +24586,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableRangeRestrictedInt8s => {
-                            let attr_read_result = self.0.nullable_range_restricted_int_8_s(ctx);
+                            let attr_read_result = self.0.nullable_range_restricted_int_8_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24758,10 +24616,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableRangeRestrictedInt16u => {
-                            let attr_read_result = self.0.nullable_range_restricted_int_16_u(ctx);
+                            let attr_read_result = self.0.nullable_range_restricted_int_16_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24788,10 +24646,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableRangeRestrictedInt16s => {
-                            let attr_read_result = self.0.nullable_range_restricted_int_16_s(ctx);
+                            let attr_read_result = self.0.nullable_range_restricted_int_16_s(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24818,10 +24676,10 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::WriteOnlyInt8u => {
-                            let attr_read_result = self.0.write_only_int_8_u(ctx);
+                            let attr_read_result = self.0.write_only_int_8_u(&ctx);
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -24842,7 +24700,7 @@ pub mod unit_testing {
                                 )),
                                 attr_read_result
                             );
-                            writer.set(attr_read_result?)
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         #[allow(unreachable_code)]
                         other => {
@@ -24867,7 +24725,7 @@ pub mod unit_testing {
         #[allow(unreachable_code)]
         fn write(
             &self,
-            ctx: &rs_matter_crate::dm::WriteContext<'_>,
+            ctx: impl rs_matter_crate::dm::WriteContext,
         ) -> Result<(), rs_matter_crate::error::Error> {
             ctx.attr().check_dataver(self.0.dataver())?;
             if ctx.attr().is_system() {
@@ -24876,7 +24734,7 @@ pub mod unit_testing {
             match AttributeId::try_from(ctx.attr().attr_id)? {
                 AttributeId::Boolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_boolean(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_boolean(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -24904,7 +24762,7 @@ pub mod unit_testing {
                 AttributeId::Bitmap8 => {
                     let attr_data: Bitmap8MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_8(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_bitmap_8(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -24932,7 +24790,7 @@ pub mod unit_testing {
                 AttributeId::Bitmap16 => {
                     let attr_data: Bitmap16MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_16(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_bitmap_16(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -24960,7 +24818,7 @@ pub mod unit_testing {
                 AttributeId::Bitmap32 => {
                     let attr_data: Bitmap32MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_32(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_bitmap_32(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -24988,7 +24846,7 @@ pub mod unit_testing {
                 AttributeId::Bitmap64 => {
                     let attr_data: Bitmap64MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_64(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_bitmap_64(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25015,7 +24873,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_8_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_8_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25042,7 +24900,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int16u => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_16_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_16_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25069,7 +24927,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int24u => {
                     let attr_data: u32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_24_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_24_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25096,7 +24954,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int32u => {
                     let attr_data: u32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_32_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_32_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25123,7 +24981,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int40u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_40_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_40_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25150,7 +25008,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int48u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_48_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_48_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25177,7 +25035,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int56u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_56_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_56_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25204,7 +25062,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int64u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_64_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_64_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25231,7 +25089,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int8s => {
                     let attr_data: i8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_8_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_8_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25258,7 +25116,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int16s => {
                     let attr_data: i16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_16_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_16_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25285,7 +25143,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int24s => {
                     let attr_data: i32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_24_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_24_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25312,7 +25170,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int32s => {
                     let attr_data: i32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_32_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_32_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25339,7 +25197,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int40s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_40_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_40_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25366,7 +25224,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int48s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_48_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_48_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25393,7 +25251,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int56s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_56_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_56_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25420,7 +25278,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Int64s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_64_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_int_64_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25447,7 +25305,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Enum8 => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_enum_8(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_enum_8(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25474,7 +25332,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Enum16 => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_enum_16(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_enum_16(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25501,7 +25359,7 @@ pub mod unit_testing {
                 }
                 AttributeId::FloatSingle => {
                     let attr_data: f32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_float_single(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_float_single(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25528,7 +25386,7 @@ pub mod unit_testing {
                 }
                 AttributeId::FloatDouble => {
                     let attr_data: f64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_float_double(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_float_double(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25556,7 +25414,7 @@ pub mod unit_testing {
                 AttributeId::OctetString => {
                     let attr_data: rs_matter_crate::tlv::OctetStr<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_octet_string(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_octet_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25586,7 +25444,7 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self.0.set_list_int_8_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_list_int_8_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25616,7 +25474,7 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self.0.set_list_octet_string(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_list_octet_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25647,7 +25505,7 @@ pub mod unit_testing {
                         ctx.data(),
                     )?;
                     let attr_write_result =
-                        self.0.set_list_struct_octet_string(ctx, attr_data.clone());
+                        self.0.set_list_struct_octet_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25675,7 +25533,7 @@ pub mod unit_testing {
                 AttributeId::LongOctetString => {
                     let attr_data: rs_matter_crate::tlv::OctetStr<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_long_octet_string(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_long_octet_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25703,7 +25561,7 @@ pub mod unit_testing {
                 AttributeId::CharString => {
                     let attr_data: rs_matter_crate::tlv::Utf8Str<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_char_string(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_char_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25731,7 +25589,7 @@ pub mod unit_testing {
                 AttributeId::LongCharString => {
                     let attr_data: rs_matter_crate::tlv::Utf8Str<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_long_char_string(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_long_char_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25758,7 +25616,7 @@ pub mod unit_testing {
                 }
                 AttributeId::EpochUs => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_epoch_us(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_epoch_us(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25785,7 +25643,7 @@ pub mod unit_testing {
                 }
                 AttributeId::EpochS => {
                     let attr_data: u32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_epoch_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_epoch_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25812,7 +25670,7 @@ pub mod unit_testing {
                 }
                 AttributeId::VendorId => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_vendor_id(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_vendor_id(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25844,7 +25702,7 @@ pub mod unit_testing {
                     )?;
                     let attr_write_result = self
                         .0
-                        .set_list_nullables_and_optionals_struct(ctx, attr_data.clone());
+                        .set_list_nullables_and_optionals_struct(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25872,7 +25730,7 @@ pub mod unit_testing {
                 AttributeId::EnumAttr => {
                     let attr_data: SimpleEnum =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_enum_attr(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_enum_attr(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25900,7 +25758,7 @@ pub mod unit_testing {
                 AttributeId::StructAttr => {
                     let attr_data: SimpleStruct<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_struct_attr(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_struct_attr(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25928,7 +25786,7 @@ pub mod unit_testing {
                 AttributeId::RangeRestrictedInt8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_range_restricted_int_8_u(ctx, attr_data.clone());
+                        self.0.set_range_restricted_int_8_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25956,7 +25814,7 @@ pub mod unit_testing {
                 AttributeId::RangeRestrictedInt8s => {
                     let attr_data: i8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_range_restricted_int_8_s(ctx, attr_data.clone());
+                        self.0.set_range_restricted_int_8_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -25983,8 +25841,9 @@ pub mod unit_testing {
                 }
                 AttributeId::RangeRestrictedInt16u => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_range_restricted_int_16_u(ctx, attr_data.clone());
+                    let attr_write_result = self
+                        .0
+                        .set_range_restricted_int_16_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26011,8 +25870,9 @@ pub mod unit_testing {
                 }
                 AttributeId::RangeRestrictedInt16s => {
                     let attr_data: i16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_range_restricted_int_16_s(ctx, attr_data.clone());
+                    let attr_write_result = self
+                        .0
+                        .set_range_restricted_int_16_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26043,7 +25903,7 @@ pub mod unit_testing {
                         ctx.data(),
                     )?;
                     let attr_write_result =
-                        self.0.set_list_long_octet_string(ctx, attr_data.clone());
+                        self.0.set_list_long_octet_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26073,7 +25933,7 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self.0.set_list_fabric_scoped(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_list_fabric_scoped(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26100,7 +25960,7 @@ pub mod unit_testing {
                 }
                 AttributeId::TimedWriteBoolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_timed_write_boolean(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_timed_write_boolean(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26128,7 +25988,7 @@ pub mod unit_testing {
                 AttributeId::GeneralErrorBoolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_general_error_boolean(ctx, attr_data.clone());
+                        self.0.set_general_error_boolean(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26156,7 +26016,7 @@ pub mod unit_testing {
                 AttributeId::ClusterErrorBoolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_cluster_error_boolean(ctx, attr_data.clone());
+                        self.0.set_cluster_error_boolean(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26183,7 +26043,7 @@ pub mod unit_testing {
                 }
                 AttributeId::Unsupported => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_unsupported(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_unsupported(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26211,7 +26071,7 @@ pub mod unit_testing {
                 AttributeId::NullableBoolean => {
                     let attr_data: rs_matter_crate::tlv::Nullable<bool> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_boolean(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_boolean(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26239,7 +26099,7 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap8 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_bitmap_8(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_bitmap_8(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26267,7 +26127,7 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap16 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_bitmap_16(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_bitmap_16(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26295,7 +26155,7 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap32 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_bitmap_32(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_bitmap_32(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26323,7 +26183,7 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap64 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_bitmap_64(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_bitmap_64(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26351,7 +26211,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt8u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_8_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_8_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26379,7 +26239,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt16u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_16_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_16_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26407,7 +26267,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt24u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_24_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_24_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26435,7 +26295,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt32u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_32_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_32_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26463,7 +26323,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt40u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_40_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_40_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26491,7 +26351,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt48u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_48_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_48_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26519,7 +26379,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt56u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_56_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_56_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26547,7 +26407,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt64u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_64_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_64_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26575,7 +26435,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt8s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_8_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_8_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26603,7 +26463,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt16s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_16_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_16_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26631,7 +26491,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt24s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_24_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_24_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26659,7 +26519,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt32s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_32_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_32_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26687,7 +26547,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt40s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_40_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_40_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26715,7 +26575,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt48s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_48_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_48_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26743,7 +26603,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt56s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_56_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_56_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26771,7 +26631,7 @@ pub mod unit_testing {
                 AttributeId::NullableInt64s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_int_64_s(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_int_64_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26799,7 +26659,7 @@ pub mod unit_testing {
                 AttributeId::NullableEnum8 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_enum_8(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_enum_8(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26827,7 +26687,7 @@ pub mod unit_testing {
                 AttributeId::NullableEnum16 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_enum_16(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_enum_16(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26856,7 +26716,7 @@ pub mod unit_testing {
                     let attr_data: rs_matter_crate::tlv::Nullable<f32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_nullable_float_single(ctx, attr_data.clone());
+                        self.0.set_nullable_float_single(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26885,7 +26745,7 @@ pub mod unit_testing {
                     let attr_data: rs_matter_crate::tlv::Nullable<f64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_nullable_float_double(ctx, attr_data.clone());
+                        self.0.set_nullable_float_double(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26915,7 +26775,7 @@ pub mod unit_testing {
                         rs_matter_crate::tlv::OctetStr<'_>,
                     > = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result =
-                        self.0.set_nullable_octet_string(ctx, attr_data.clone());
+                        self.0.set_nullable_octet_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26944,7 +26804,8 @@ pub mod unit_testing {
                     let attr_data: rs_matter_crate::tlv::Nullable<
                         rs_matter_crate::tlv::Utf8Str<'_>,
                     > = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_char_string(ctx, attr_data.clone());
+                    let attr_write_result =
+                        self.0.set_nullable_char_string(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -26972,7 +26833,7 @@ pub mod unit_testing {
                 AttributeId::NullableEnumAttr => {
                     let attr_data: rs_matter_crate::tlv::Nullable<SimpleEnum> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_enum_attr(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_enum_attr(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27000,7 +26861,7 @@ pub mod unit_testing {
                 AttributeId::NullableStruct => {
                     let attr_data: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_nullable_struct(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_nullable_struct(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27030,7 +26891,7 @@ pub mod unit_testing {
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result = self
                         .0
-                        .set_nullable_range_restricted_int_8_u(ctx, attr_data.clone());
+                        .set_nullable_range_restricted_int_8_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27060,7 +26921,7 @@ pub mod unit_testing {
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result = self
                         .0
-                        .set_nullable_range_restricted_int_8_s(ctx, attr_data.clone());
+                        .set_nullable_range_restricted_int_8_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27090,7 +26951,7 @@ pub mod unit_testing {
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result = self
                         .0
-                        .set_nullable_range_restricted_int_16_u(ctx, attr_data.clone());
+                        .set_nullable_range_restricted_int_16_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27120,7 +26981,7 @@ pub mod unit_testing {
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let attr_write_result = self
                         .0
-                        .set_nullable_range_restricted_int_16_s(ctx, attr_data.clone());
+                        .set_nullable_range_restricted_int_16_s(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27147,7 +27008,7 @@ pub mod unit_testing {
                 }
                 AttributeId::WriteOnlyInt8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_write_only_int_8_u(ctx, attr_data.clone());
+                    let attr_write_result = self.0.set_write_only_int_8_u(&ctx, attr_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -27186,12 +27047,12 @@ pub mod unit_testing {
         #[allow(unreachable_code)]
         fn invoke(
             &self,
-            ctx: &rs_matter_crate::dm::InvokeContext<'_>,
-            encoder: rs_matter_crate::dm::CmdDataEncoder<'_, '_, '_>,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            reply: impl rs_matter_crate::dm::InvokeReply,
         ) -> Result<(), rs_matter_crate::error::Error> {
             match CommandId::try_from(ctx.cmd().cmd_id)? {
                 CommandId::Test => {
-                    let cmd_invoke_result = self.0.handle_test(ctx);
+                    let cmd_invoke_result = self.0.handle_test(&ctx);
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -27215,7 +27076,7 @@ pub mod unit_testing {
                     cmd_invoke_result?;
                 }
                 CommandId::TestNotHandled => {
-                    let cmd_invoke_result = self.0.handle_test_not_handled(ctx);
+                    let cmd_invoke_result = self.0.handle_test_not_handled(&ctx);
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -27257,9 +27118,11 @@ pub mod unit_testing {
                             MetadataDebug(CommandId::TestSpecific)
                         ))
                     );
-                    let mut writer = encoder.with_command(0u32)?;
+                    let mut writer = reply.with_command(0u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_specific(
-                        ctx,
+                        &ctx,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
                                 MetadataDebug((
@@ -27267,9 +27130,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestSpecific),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27293,10 +27156,10 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestUnknownCommand => {
-                    let cmd_invoke_result = self.0.handle_test_unknown_command(ctx);
+                    let cmd_invoke_result = self.0.handle_test_unknown_command(&ctx);
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -27341,9 +27204,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(1u32)?;
+                    let mut writer = reply.with_command(1u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_add_arguments(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27352,9 +27217,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestAddArguments),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27378,7 +27243,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestSimpleArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27402,9 +27267,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(2u32)?;
+                    let mut writer = reply.with_command(2u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_simple_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27413,9 +27280,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestSimpleArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27439,7 +27306,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestStructArrayArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27463,9 +27330,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(3u32)?;
+                    let mut writer = reply.with_command(3u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_struct_array_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27474,9 +27343,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestStructArrayArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27500,7 +27369,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestStructArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27524,9 +27393,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(8u32)?;
+                    let mut writer = reply.with_command(8u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_struct_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27535,9 +27406,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestStructArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27561,7 +27432,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestNestedStructArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27585,9 +27456,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(8u32)?;
+                    let mut writer = reply.with_command(8u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_nested_struct_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27596,9 +27469,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestNestedStructArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27622,7 +27495,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestListStructArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27646,9 +27519,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(8u32)?;
+                    let mut writer = reply.with_command(8u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_list_struct_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27657,9 +27532,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestListStructArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27683,7 +27558,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestListInt8UArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27707,9 +27582,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(8u32)?;
+                    let mut writer = reply.with_command(8u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_list_int_8_u_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27718,9 +27595,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestListInt8UArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27744,7 +27621,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestNestedStructListArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27768,9 +27645,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(8u32)?;
+                    let mut writer = reply.with_command(8u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_nested_struct_list_argument_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27779,9 +27658,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestNestedStructListArgumentRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27805,7 +27684,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestListNestedStructListArgumentRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27829,10 +27708,12 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(8u32)?;
+                    let mut writer = reply.with_command(8u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result =
                         self.0.handle_test_list_nested_struct_list_argument_request(
-                            ctx,
+                            &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
                                 rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27843,9 +27724,9 @@ pub mod unit_testing {
                                             CommandId::TestListNestedStructListArgumentRequest,
                                         ),
                                     )),
-                                    writer.writer(),
+                                    tw,
                                 ),
-                                &rs_matter_crate::dm::CmdDataWriter::TAG,
+                                tag,
                             )?,
                         );
                     #[cfg(feature = "defmt")]
@@ -27869,7 +27750,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestListInt8UReverseRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27893,9 +27774,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(4u32)?;
+                    let mut writer = reply.with_command(4u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_list_int_8_u_reverse_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27904,9 +27787,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestListInt8UReverseRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27930,7 +27813,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestEnumsRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -27954,9 +27837,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(5u32)?;
+                    let mut writer = reply.with_command(5u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_enums_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -27965,9 +27850,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestEnumsRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -27991,7 +27876,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestNullableOptionalRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -28015,9 +27900,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(6u32)?;
+                    let mut writer = reply.with_command(6u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_nullable_optional_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28026,9 +27913,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestNullableOptionalRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28052,7 +27939,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestComplexNullableOptionalRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -28076,9 +27963,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(7u32)?;
+                    let mut writer = reply.with_command(7u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_complex_nullable_optional_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28087,9 +27976,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestComplexNullableOptionalRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28113,7 +28002,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::SimpleStructEchoRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -28137,9 +28026,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(9u32)?;
+                    let mut writer = reply.with_command(9u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_simple_struct_echo_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28148,9 +28039,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::SimpleStructEchoRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28174,10 +28065,10 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TimedInvokeRequest => {
-                    let cmd_invoke_result = self.0.handle_timed_invoke_request(ctx);
+                    let cmd_invoke_result = self.0.handle_timed_invoke_request(&ctx);
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -28205,7 +28096,7 @@ pub mod unit_testing {
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                     let cmd_invoke_result = self
                         .0
-                        .handle_test_simple_optional_argument_request(ctx, cmd_data.clone());
+                        .handle_test_simple_optional_argument_request(&ctx, cmd_data.clone());
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28252,9 +28143,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(10u32)?;
+                    let mut writer = reply.with_command(10u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_emit_test_event_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28263,9 +28156,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestEmitTestEventRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28289,7 +28182,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestEmitTestFabricScopedEventRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -28313,10 +28206,12 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(11u32)?;
+                    let mut writer = reply.with_command(11u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result =
                         self.0.handle_test_emit_test_fabric_scoped_event_request(
-                            ctx,
+                            &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
                                 rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28327,9 +28222,9 @@ pub mod unit_testing {
                                             CommandId::TestEmitTestFabricScopedEventRequest,
                                         ),
                                     )),
-                                    writer.writer(),
+                                    tw,
                                 ),
-                                &rs_matter_crate::dm::CmdDataWriter::TAG,
+                                tag,
                             )?,
                         );
                     #[cfg(feature = "defmt")]
@@ -28353,7 +28248,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestBatchHelperRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -28377,9 +28272,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(12u32)?;
+                    let mut writer = reply.with_command(12u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_batch_helper_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28388,9 +28285,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestBatchHelperRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28414,7 +28311,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestSecondBatchHelperRequest => {
                     let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
@@ -28438,9 +28335,11 @@ pub mod unit_testing {
                         )),
                         cmd_data
                     );
-                    let mut writer = encoder.with_command(12u32)?;
+                    let mut writer = reply.with_command(12u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
                     let cmd_invoke_result = self.0.handle_test_second_batch_helper_request(
-                        ctx,
+                        &ctx,
                         cmd_data,
                         rs_matter_crate::tlv::TLVBuilder::new(
                             rs_matter_crate::tlv::TLVWriteParent::new(
@@ -28449,9 +28348,9 @@ pub mod unit_testing {
                                     self,
                                     MetadataDebug(CommandId::TestSecondBatchHelperRequest),
                                 )),
-                                writer.writer(),
+                                tw,
                             ),
-                            &rs_matter_crate::dm::CmdDataWriter::TAG,
+                            tag,
                         )?,
                     );
                     #[cfg(feature = "defmt")]
@@ -28475,7 +28374,7 @@ pub mod unit_testing {
                         cmd_invoke_result.as_ref().map(|_| ())
                     );
                     cmd_invoke_result?;
-                    writer.complete()?
+                    rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 other => {
                     #[cfg(feature = "defmt")]
@@ -28521,10 +28420,7 @@ pub mod unit_testing {
             )
         }
     }
-    impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where
-        T: ClusterHandler
-    {
-    }
+    impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where T: ClusterHandler {}
 }
 "#;
 }

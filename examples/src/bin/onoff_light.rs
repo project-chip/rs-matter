@@ -21,7 +21,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 
@@ -126,7 +126,7 @@ fn run() -> Result<(), Error> {
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(matter, buffers, subscriptions, dm_handler);
+    let responder = DefaultResponder::new(matter, buffers, subscriptions, &dm_handler);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
@@ -136,6 +136,9 @@ fn run() -> Result<(), Error> {
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
+
+    // Run the background job the handler might be having
+    let mut dm_handler_job = pin!(dm_handler.run());
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
@@ -183,7 +186,7 @@ fn run() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select(&mut respond, &mut device).coalesce(),
+        select3(&mut respond, &mut device, &mut dm_handler_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.

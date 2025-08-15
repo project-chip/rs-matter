@@ -680,7 +680,7 @@ impl<'a> CertRef<'a> {
         Ok(w.as_slice().len())
     }
 
-    pub fn verify_chain_start(&self) -> CertVerifier {
+    pub fn verify_chain_start(&self) -> CertVerifier<'_> {
         CertVerifier::new(self)
     }
 

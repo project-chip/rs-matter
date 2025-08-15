@@ -74,7 +74,7 @@ impl ToTLV for AuthMode {
         AccessControlEntryAuthModeEnum::from(*self).to_tlv(tag, &mut tw)
     }
 
-    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV, Error>> {
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         TLV::u8(tag, AccessControlEntryAuthModeEnum::from(*self) as _).into_tlv_iter()
     }
 }
@@ -315,7 +315,7 @@ impl<'a> AccessReq<'a> {
     }
 
     /// Return the accessor of the request
-    pub fn accessor(&self) -> &Accessor {
+    pub fn accessor(&self) -> &Accessor<'_> {
         self.accessor
     }
 

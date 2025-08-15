@@ -695,21 +695,21 @@ where
         self.dataver.changed();
     }
 
-    async fn max_networks(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    async fn max_networks(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         self.networks.max_networks()
     }
 
-    async fn connect_max_time_seconds(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    async fn connect_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(self.net_ctl.connect_max_time_seconds())
     }
 
-    async fn scan_max_time_seconds(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    async fn scan_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(self.net_ctl.scan_max_time_seconds())
     }
 
     async fn supported_wi_fi_bands<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             ToTLVArrayBuilder<P, WiFiBandEnum>,
             ToTLVBuilder<P, WiFiBandEnum>,
@@ -753,18 +753,18 @@ where
 
     async fn supported_thread_features(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<ThreadCapabilitiesBitmap, Error> {
         Ok(self.net_ctl.supported_thread_features())
     }
 
-    async fn thread_version(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    async fn thread_version(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.net_ctl.thread_version())
     }
 
     async fn networks<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<NetworkInfoStructArrayBuilder<P>, NetworkInfoStructBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
@@ -803,20 +803,20 @@ where
         }
     }
 
-    async fn interface_enabled(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    async fn interface_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         self.networks.enabled()
     }
 
     async fn last_networking_status(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<NetworkCommissioningStatusEnum>, Error> {
         Ok(Nullable::new(self.net_ctl.last_networking_status()?))
     }
 
     async fn last_network_id<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         self.net_ctl.last_network_id(|network_id| {
@@ -830,14 +830,14 @@ where
 
     async fn last_connect_error_value(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<i32>, Error> {
         Ok(Nullable::new(self.net_ctl.last_connect_error_value()?))
     }
 
     async fn set_interface_enabled(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: bool,
     ) -> Result<(), Error> {
         self.networks.set_enabled(value)
@@ -845,7 +845,7 @@ where
 
     async fn handle_scan_networks<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: ScanNetworksRequest<'_>,
         response: ScanNetworksResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -952,7 +952,7 @@ where
 
     async fn handle_add_or_update_wi_fi_network<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: AddOrUpdateWiFiNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -968,7 +968,7 @@ where
 
     async fn handle_add_or_update_thread_network<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: AddOrUpdateThreadNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -983,7 +983,7 @@ where
 
     async fn handle_remove_network<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: RemoveNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -995,7 +995,7 @@ where
 
     async fn handle_connect_network<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: ConnectNetworkRequest<'_>,
         mut response: ConnectNetworkResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1098,7 +1098,7 @@ where
 
     async fn handle_reorder_network<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: ReorderNetworkRequest<'_>,
         response: NetworkConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1112,7 +1112,7 @@ where
 
     async fn handle_query_identity<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: QueryIdentityRequest<'_>,
         _response: QueryIdentityResponseBuilder<P>,
     ) -> Result<P, Error> {

@@ -23,7 +23,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -90,11 +90,14 @@ fn main() -> Result<(), Error> {
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
+
+    // Run the background job the handler might be having
+    let mut dm_handler_job = pin!(dm_handler.run());
 
     // Create the Matter UDP socket
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -113,7 +116,12 @@ fn main() -> Result<(), Error> {
     let mut persist = pin!(psm.run(dir, &matter));
 
     // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut persist, &mut respond);
+    let all = select4(
+        &mut transport,
+        &mut mdns,
+        &mut persist,
+        select(&mut respond, &mut dm_handler_job).coalesce(),
+    );
 
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all.coalesce())
@@ -187,7 +195,7 @@ impl LevelControlHandler {
     }
 
     /// Update the volume level of the handler
-    fn set_level(&self, state: u8, ctx: &InvokeContext<'_>) {
+    fn set_level(&self, state: u8, ctx: impl InvokeContext) {
         let old_state = self.level.replace(state);
 
         if old_state != state {
@@ -222,29 +230,29 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
         self.dataver.changed();
     }
 
-    async fn current_level(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+    async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(Nullable::some(self.level.get()))
     }
 
-    async fn options(&self, _ctx: &ReadContext<'_>) -> Result<OptionsBitmap, Error> {
+    async fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
         Ok(OptionsBitmap::empty())
     }
 
     async fn set_options(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         _value: OptionsBitmap,
     ) -> Result<(), Error> {
         Ok(())
     }
 
-    async fn on_level(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+    async fn on_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(Nullable::none())
     }
 
     async fn set_on_level(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         _value: Nullable<u8>,
     ) -> Result<(), Error> {
         Ok(())
@@ -252,7 +260,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_move_to_level(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
     ) -> Result<(), Error> {
         info!("Moving to level: {}", request.level()?);
@@ -264,7 +272,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_move(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: MoveRequest<'_>,
     ) -> Result<(), Error> {
         info!(
@@ -278,7 +286,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_step(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: StepRequest<'_>,
     ) -> Result<(), Error> {
         info!(
@@ -293,7 +301,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_stop(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: StopRequest<'_>,
     ) -> Result<(), Error> {
         info!("Stopping");
@@ -303,7 +311,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_move_to_level_with_on_off(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!("Moving to level with on/off: {}", request.level()?);
@@ -315,7 +323,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_move_with_on_off(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: MoveWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!(
@@ -329,7 +337,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_step_with_on_off(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: StepWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!(
@@ -344,7 +352,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_stop_with_on_off(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: StopWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!("Stopping with on/off");
@@ -354,7 +362,7 @@ impl level_control::ClusterAsyncHandler for LevelControlHandler {
 
     async fn handle_move_to_closest_frequency(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: MoveToClosestFrequencyRequest<'_>,
     ) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())

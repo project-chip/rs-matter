@@ -199,22 +199,22 @@ impl<'a> Cluster<'a> {
     ///
     /// The provided attribute ID must be a global attribute, or else
     /// an error will be returned.
-    pub fn read(&self, attr: AttrId, mut writer: AttrDataWriter) -> Result<(), Error> {
+    pub fn read<W: Reply>(&self, attr: AttrId, mut writer: W) -> Result<(), Error> {
         match attr.try_into()? {
             GlobalElements::GeneratedCmdList => {
-                self.encode_generated_command_ids(&AttrDataWriter::TAG, &mut *writer)?;
+                self.encode_generated_command_ids(&W::TAG, writer.writer())?;
                 writer.complete()
             }
             GlobalElements::AcceptedCmdList => {
-                self.encode_accepted_command_ids(&AttrDataWriter::TAG, &mut *writer)?;
+                self.encode_accepted_command_ids(&W::TAG, writer.writer())?;
                 writer.complete()
             }
             GlobalElements::EventList => {
-                self.encode_event_ids(&AttrDataWriter::TAG, &mut *writer)?;
+                self.encode_event_ids(&W::TAG, &mut writer.writer())?;
                 writer.complete()
             }
             GlobalElements::AttributeList => {
-                self.encode_attribute_ids(&AttrDataWriter::TAG, &mut *writer)?;
+                self.encode_attribute_ids(&W::TAG, &mut writer.writer())?;
                 writer.complete()
             }
             GlobalElements::FeatureMap => {

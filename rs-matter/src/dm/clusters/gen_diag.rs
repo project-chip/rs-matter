@@ -211,7 +211,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
 
     fn network_interfaces<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<NetworkInterfaceArrayBuilder<P>, NetworkInterfaceBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
@@ -247,17 +247,17 @@ impl ClusterHandler for GenDiagHandler<'_> {
         }
     }
 
-    fn reboot_count(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn reboot_count(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         self.diag.reboot_count()
     }
 
-    fn test_event_triggers_enabled(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    fn test_event_triggers_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         self.diag.test_event_triggers_enabled()
     }
 
     fn handle_test_event_trigger(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestEventTriggerRequest<'_>,
     ) -> Result<(), Error> {
         let key = request.enable_key()?.0;
@@ -268,7 +268,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
 
     fn handle_time_snapshot<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _response: TimeSnapshotResponseBuilder<P>,
     ) -> Result<P, Error> {
         Err(ErrorCode::CommandNotFound.into())

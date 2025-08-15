@@ -27,7 +27,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -101,11 +101,14 @@ fn main() -> Result<(), Error> {
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
+
+    // Run the background job the handler might be having
+    let mut dm_handler_job = pin!(dm_handler.run());
 
     // Create the Matter UDP socket
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -124,7 +127,12 @@ fn main() -> Result<(), Error> {
     let mut persist = pin!(psm.run(dir, &matter));
 
     // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut persist, &mut respond);
+    let all = select4(
+        &mut transport,
+        &mut mdns,
+        &mut persist,
+        select(&mut respond, &mut dm_handler_job).coalesce(),
+    );
 
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all.coalesce())
@@ -208,7 +216,7 @@ impl MediaHandler {
     }
 
     /// Update the state of the handler
-    fn set_state(&self, state: PlaybackStateEnum, ctx: &InvokeContext<'_>) {
+    fn set_state(&self, state: PlaybackStateEnum, ctx: impl InvokeContext) {
         let old_state = self.state.replace(state);
 
         if old_state != state {
@@ -240,14 +248,14 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn current_state(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<media_playback::PlaybackStateEnum, Error> {
         Ok(self.state.get())
     }
 
     async fn handle_play<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         response: media_playback::PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
         info!("Playback started");
@@ -259,7 +267,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_pause<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
         info!("Playback paused");
@@ -271,7 +279,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_stop<P: TLVBuilderParent>(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
         info!("Playback stopped");
@@ -283,7 +291,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_start_over<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
         // Not supported
@@ -292,7 +300,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_previous<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
         // Not supported
@@ -301,7 +309,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_next<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
         // Not supported
@@ -310,7 +318,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_rewind<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: RewindRequest<'_>,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -320,7 +328,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_fast_forward<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: FastForwardRequest<'_>,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -330,7 +338,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_skip_forward<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: SkipForwardRequest<'_>,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -340,7 +348,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_skip_backward<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: SkipBackwardRequest<'_>,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -350,7 +358,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_seek<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: SeekRequest<'_>,
         _response: PlaybackResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -360,7 +368,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_activate_audio_track(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: ActivateAudioTrackRequest<'_>,
     ) -> Result<(), Error> {
         // Not supported
@@ -369,14 +377,14 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
 
     async fn handle_activate_text_track(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: ActivateTextTrackRequest<'_>,
     ) -> Result<(), Error> {
         // Not supported
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_deactivate_text_track(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
+    async fn handle_deactivate_text_track(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         // Not supported
         Err(ErrorCode::InvalidCommand.into())
     }
@@ -417,7 +425,7 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
 
     async fn accept_header<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<Utf8StrArrayBuilder<P>, Utf8StrBuilder<P>>,
     ) -> Result<P, Error> {
         const RANDOM_MEDIA_HEADERS: &[&str] = &[
@@ -459,14 +467,14 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
 
     async fn supported_streaming_protocols(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<SupportedProtocolsBitmap, Error> {
         Ok(SupportedProtocolsBitmap::all())
     }
 
     async fn handle_launch_url<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: LaunchURLRequest<'_>,
         response: LauncherResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -480,7 +488,7 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
 
     async fn handle_launch_content<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: LaunchContentRequest<'_>,
         response: LauncherResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -525,7 +533,7 @@ impl keypad_input::ClusterAsyncHandler for KeypadInputHandler {
 
     async fn handle_send_key<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: SendKeyRequest<'_>,
         response: SendKeyResponseBuilder<P>,
     ) -> Result<P, Error> {
