@@ -6,3 +6,6 @@ Cargo.lock
 .devenv/
 .devenv.flake.nix
 devenv.lock
+
+# Build artifacts and temporary files
+.build/

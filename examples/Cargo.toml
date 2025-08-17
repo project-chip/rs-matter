@@ -20,6 +20,9 @@ name = "media_player"
 [[bin]]
 name = "bridge"
 
+[[bin]]
+name = "chip_tool_tests"
+
 [features]
 default = ["log"]
 log = []

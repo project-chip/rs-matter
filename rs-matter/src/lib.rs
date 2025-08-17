@@ -574,18 +574,30 @@ impl<'a> Matter<'a> {
     where
         F: FnMut(MatterMdnsService) -> Result<(), Error>,
     {
+        debug!("=== Currently published mDNS services");
+
         let pase_mgr = self.pase_mgr.borrow();
         let fabric_mgr = self.fabric_mgr.borrow();
 
         if let Some(service) = pase_mgr.mdns_service() {
+            // Do not remove this logging line or change its formatting.
+            // C++ E2E tests rely on this log line to determine when the mDNS service is published
+            debug!("mDNS service published: {:?}", service);
+
             f(service)?;
         }
 
         for fabric in fabric_mgr.iter() {
             if let Some(service) = fabric.mdns_service() {
+                // Do not remove this logging line or change its formatting.
+                // C++ E2E tests rely on this log line to determine when the mDNS service is published
+                debug!("mDNS service published: {:?}", service);
+
                 f(service)?;
             }
         }
+
+        debug!("===");
 
         Ok(())
     }
