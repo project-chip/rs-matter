@@ -1,9 +1,10 @@
+use core::cell::Cell;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
-// use log::{warn, info}; // todo there seems to be a conflict
+use embassy_time::{Duration, Instant};
+
 use crate::dm::{Dataver, InvokeContext, ReadContext, WriteContext, Cluster};
 use crate::tlv::Nullable;
-
 use crate::dm::clusters::level_control;
 pub use crate::dm::clusters::decl::level_control::*;
 use crate::with;
@@ -11,13 +12,14 @@ use crate::error::{Error, ErrorCode};
 
 enum Task {
     Stop,
-    Fade{target: u8, transition_time: u16},
+    MoveToLevel{target: u8, transition_time: u16},
 }
 
 pub struct LevelControlCluster<'a, T: LevelControlHooks> {
     dataver: Dataver,
     handler: &'a T,
     task_signal: Signal<NoopRawMutex, Task>,
+    last_current_level_update: Cell<Instant>,
 }
 
 impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
@@ -26,10 +28,25 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
         Self {
             dataver,
             handler,
-            task_signal: Signal::new()
+            task_signal: Signal::new(),
+            last_current_level_update: Cell::new(Instant::from_millis(0)),
         }
     }
 
+    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
+    }
+
+    // Processes the options of commands 'without On/Off'.
+    // Returns true if execution of the command should continue, false otherwise.
+    fn should_continue(&self, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> bool {
+        let temporary_options = (options_mask & options_override) | self.handler.raw_get_options();
+
+        temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF)
+    }
+
+    // Runs an async task manager for the cluster.
     async fn run(&self) -> Result<(), Error> {
         loop {
             let mut task = self.task_signal.wait().await;
@@ -46,55 +63,117 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
     async fn task_manager(&self, task: Task) {
         match task {
             Task::Stop => return,
-            Task::Fade{ target, transition_time} => {
-                self.fade(target, transition_time).await;
+            Task::MoveToLevel{ target, transition_time} => {
+                if let Err(e) = self.move_to_level_transition(target, transition_time).await {
+                    error!("{}", e.to_string());
+                }
             },
         }
     }
 
-    async fn fade(&self, target_level: u8, transition_time: u16) {
-        let current_level = self.handler.raw_get_current_level();
-        // todo: current_level should be Nullabel. If null, return status failure? Or log error?
-        //  see here for equivalent code in cpp impl: https://github.com/project-chip/connectedhomeip/blob/8adaf97c152e478200784629499756e81c53fd15/src/app/clusters/level-control/level-control.cpp#L904
+    fn write_remaining_time_quietly(&self, remaining_time: Duration, is_start_of_transition: bool) -> Result<(), Error> {
+        let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
+
+        self.handler.raw_set_remaining_time(remaining_time_ds as u16)?;
+
+        // RemainingTime Quiet report conditions:
+        // - When it changes to 0, or
+        // - When it changes from 0 to any value higher than 10, or
+        // - When it changes, with a delta larger than 10, caused by the invoke of a command.
+        let previous_remaining_time = self.handler.raw_get_remaining_time();
+        let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
+        let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
+        let changed_by_gt_10 = remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
+
+        if changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10 {
+            // todo notify.changed();
+        }
+
+        Ok(())
+    }
+
+    fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
+        let previous_value = self.handler.raw_get_current_level();
+        let last_update = Instant::now() - self.last_current_level_update.get();
+        self.last_current_level_update.set(Instant::now());
+        self.handler.raw_set_current_level(current_level.clone())?;
+
+        // CurrentLevel Quiet report conditions:
+        // - At most once per second, or
+        // - At the end of the movement/transition, or
+        // - When it changes from null to any other value and vice versa.
+        if last_update.ge(&Duration::from_secs(1)) || is_end_of_transition || previous_value.is_none() || current_level.is_none() {
+            // todo notify.changed();
+        }
+
+        Ok(())
+    }
+
+    async fn move_to_level_transition(&self, target_level: u8, transition_time: u16) -> Result<(), Error> {
+        let event_start_time = Instant::now();
+
+        // Check if current_level is null. If so, return error.
+        //  todo: currently returning an incorrect error.
+        //  Equivalent code in cpp impl: https://github.com/project-chip/connectedhomeip/blob/8adaf97c152e478200784629499756e81c53fd15/src/app/clusters/level-control/level-control.cpp#L904
+        let mut current_level = match self.handler.raw_get_current_level().into_option() {
+            Some(cl) => cl,
+            None => return Err(ErrorCode::InvalidState.into()),
+        };
 
         let increasing = current_level < target_level;
 
+        let steps = match increasing {
+            true => {target_level - current_level},
+            false => {current_level - target_level},
+        };
+
+        let mut remaining_time = Duration::from_millis(transition_time as u64 * 100);
+        let event_duration = Duration::from_millis_floor(remaining_time.as_millis() / steps as u64);
+
+        let startup_latency = Instant::now() - event_start_time;
         loop {
-            // todo cluster logic
-            let steps = match increasing {
-                true => {target_level - current_level},
-                false => {current_level - target_level},
-            };
+            let event_start_time = Instant::now();
 
-            let step_size: u8 = 1;
-            let duration = transition_time / (steps as u16 / step_size as u16);
-            let new_level = current_level + step_size;
-
-            // todo: Handle errors.
-            self.handler.raw_set_current_level(new_level).unwrap();
-            self.handler.set_level(new_level).unwrap();
-            if new_level == target_level {
-                return;
+            match increasing {
+                true => current_level += 1,
+                false => current_level -= 1,
             }
 
-            // todo if withOnOff command, update the OnOff cluster accordingly
-            //  This is going to require passing the context through the signal
+            let is_transition_start = remaining_time.as_millis() == (transition_time as u64 * 100);
+            let is_transition_end = current_level == target_level;
+            
+            self.handler.set_level(current_level)?;
+            self.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
 
-            embassy_time::Timer::after(embassy_time::Duration::from_millis(duration as u64)).await;
+            if is_transition_end {
+                self.write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)?;
+
+                // todo if withOnOff command, update the OnOff cluster accordingly.
+                //  This is going to require passing the context through the signal
+
+                return Ok(());
+            }
+            else {
+                match remaining_time > event_duration {
+                    true => remaining_time -= event_duration,
+                    false => {
+                        warn!("remaining time is 0 before level reached target");
+                        remaining_time = Duration::from_millis(0)
+                    },
+                }
+
+                self.write_remaining_time_quietly(remaining_time, is_transition_start)?;
+            }
+            
+            let latency = match is_transition_start {
+                false => embassy_time::Instant::now() - event_start_time,
+                true => (embassy_time::Instant::now() - event_start_time) + startup_latency,
+            };            
+            match event_duration.checked_sub(latency) {
+                Some(wait_time) => embassy_time::Timer::after(wait_time).await,
+                None => warn!("no wait time. Consider dynamically adjusting the step size?"),
+            }
         }
-    }
-
-    /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
-    }
-
-    // Processes the options of commands 'without On/Off'.
-    // Returns true if execution of the command should continue, false otherwise.
-    fn should_continue(&self, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> bool {
-        let temporary_options = (options_mask & options_override) | self.handler.raw_get_options();
-
-        temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF)
     }
 
     // A single method for dealing with the MoveToLevel and MoveToLevelWithOnOff logic.
@@ -115,14 +194,13 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
             None | Some(0) => {
                 self.task_signal.signal(Task::Stop);
                 self.handler.set_level(level)?;
-                self.handler.raw_set_current_level(level)?;
-                ctx.notify_changed();
+                self.write_current_level_quietly(Nullable::some(level), true)?;
+                self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
                 // todo: possibly update the OnOff cluster
             }
             Some(t_time) => {
-                self.task_signal.signal(Task::Fade { target: level, transition_time: t_time});
-                ctx.notify_changed();
+                self.task_signal.signal(Task::MoveToLevel { target: level, transition_time: t_time});
             }
         }
 
@@ -171,7 +249,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
         info!("LevelControl: Called current_level()");
-        Ok(Nullable::some(self.handler.raw_get_current_level()))
+        Ok(self.handler.raw_get_current_level())
     }
 
     fn options(
@@ -363,8 +441,8 @@ pub trait LevelControlHooks {
     fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
     fn raw_get_on_level(&self) -> Nullable<u8>;
     fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
-    fn raw_get_current_level(&self) -> u8;
-    fn raw_set_current_level(&self, value: u8) -> Result<(), Error>;
+    fn raw_get_current_level(&self) -> Nullable<u8>;
+    fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
     fn raw_get_startup_current_level(&self) -> Nullable<u8>;
     fn raw_set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
     fn raw_get_remaining_time(&self) -> u16;
