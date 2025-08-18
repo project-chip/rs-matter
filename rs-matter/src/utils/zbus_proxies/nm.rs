@@ -41,6 +41,7 @@ pub mod vpn_connection;
 pub mod wifi_p2ppeer;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum NMDeviceState {
     /// the device's state is unknown
@@ -82,6 +83,7 @@ pub enum NMDeviceState {
 
 /// NMState values indicate the current overall networking state.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
 pub enum NM80211Mode {
     /// the device or access point mode is unknown
