@@ -529,9 +529,7 @@ impl<'a> Matter<'a> {
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
     pub fn notify_persist(&self) {
-        if self.fabrics_changed() || self.basic_info_changed() {
-            self.persist_notification.notify();
-        }
+        self.persist_notification.notify();
     }
 
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
