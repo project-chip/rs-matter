@@ -17,16 +17,18 @@
 
 //! An example Matter device that implements the On/Off Light cluster over Wifi with commissioning over Bluetooth (Linux only).
 //!
-//! Some Linux systems might require the user running the app have elevated permissions, so run with `sudo`!
-//! E.g. `sudo ./onoff_light_bt <your-wlan-interface-name>`
-//!
-//! The example uses the BlueZ BLE stack and the `wpa_supplicant` daemon to connect to BT and to manage Wifi networks.
+//! The example uses the BlueZ BLE stack and either the `NetworkManager` or directly the `wpa_supplicant` daemon
+//! to connect to BT and to manage Wifi networks.
 //! Therefore, it is likely to run only on Linux-based systems (e.g., Ubuntu, Debian, etc.), because BlueZ is Linux-specific.
+//!
+//! Do note that running the app with the `wpa_supplicant` daemon, some Linux systems might require the user running the app to have
+//! elevated permissions, so run with `sudo`!
+//! E.g. `sudo ./onoff_light_bt <your-wlan-interface-name>`
 //!
 //! Utilizing `wpa_supplicant` and `dhclient` to manage Wifi networks is useful primarily in embedded Linux scenarios,
 //! where - moreover - the Linux stack does not have NetworkManager installed. For regular Linux systems, or for embedded
-//! Linux systems having NetworkManager, look at the forthcoming `onoff_light_bt_nm` example instead, as it would be much
-//! more straightfoward to run in that it would not need elevated permissions, nor the presence of the `dhclient` command.
+//! Linux systems having NetworkManager, using the NetworkManager code-path is recommended, as it is much
+//! more straightfoward to run it, in that it does not need elevated permissions, nor the presence of the `dhclient` and `ip` commands.
 
 use core::pin::pin;
 
@@ -57,6 +59,7 @@ use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
+use rs_matter::transport::network::wifi::nm::NetMgrCtl;
 use rs_matter::transport::network::wifi::wpa_supp::unix::DhClientCtl;
 use rs_matter::transport::network::wifi::wpa_supp::WpaSuppCtl;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -77,23 +80,29 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
-    let mut args = std::env::args();
-
-    let if_name = if args.len() > 2 {
-        eprintln!("Usage: onoff_light_bt [if_name]");
+    let args = std::env::args().into_iter().skip(1).collect::<Vec<_>>();
+    if args.len() > 2 {
+        eprintln!("Usage: onoff_light_bt [-w] [if_name]");
+        eprintln!(
+            "  -w      - use wpa_supplicant to manage Wifi networks (default is NetworkManager)"
+        );
         eprintln!("  if_name - the name of the Wifi interface to use, e.g. 'wlan0', 'wlx80afca061a16', etc.");
         eprintln!("            If not set, defaults to 'wlan0'.");
 
         return Ok(());
-    } else if args.len() == 1 {
-        warn!("Ran without params, using 'wlan0' as the Wifi interface name");
+    }
 
-        "wlan0".to_string()
+    let use_wpa_supp = args.iter().any(|arg| arg == "-w");
+    if use_wpa_supp {
+        warn!("Using wpa_supplicant to manage Wifi networks, make sure you run with `sudo`!");
     } else {
-        let if_name = args.nth(1).unwrap();
-        info!("Using Wifi network interface: {if_name}");
-        if_name
-    };
+        info!("Using NetworkManager to manage Wifi networks");
+    }
+
+    let if_name = args.into_iter().find(|arg| arg != "-w").unwrap_or_else(|| {
+        warn!("Ran without iface arg, using 'wlan0' as the Wifi interface name");
+        "wlan0".into()
+    });
 
     // Create the Matter object
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
@@ -117,21 +126,30 @@ fn main() -> Result<(), Error> {
 
     // The network controller based on `wpa_supplicant` and `dhclient`.
     let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
-    let net_ctl = NetCtlWithStatusImpl::new(
-        &net_ctl_state,
-        WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
-    );
-
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = dm_handler(&matter, &on_off, &net_ctl, &networks);
-
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(responder.run::<4, 4>());
+    let mut respond = pin!(async {
+        if use_wpa_supp {
+            let wpa_supp = NetCtlWithStatusImpl::new(
+                &net_ctl_state,
+                WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
+            );
+
+            let dm_handler = dm_handler(&matter, &on_off, &wpa_supp, &networks);
+            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+
+            responder.run::<4, 4>().await
+        } else {
+            let nm =
+                NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
+
+            let dm_handler = dm_handler(&matter, &on_off, &nm, &networks);
+            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+
+            responder.run::<4, 4>().await
+        }
+    });
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
