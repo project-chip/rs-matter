@@ -137,17 +137,17 @@ fn main() -> Result<(), Error> {
             );
 
             let dm_handler = dm_handler(&matter, &on_off, &wpa_supp, &networks);
-            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
 
-            responder.run::<4, 4>().await
+            select(responder.run::<4, 4>(), dm_handler.run()).await
         } else {
             let nm =
                 NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
 
             let dm_handler = dm_handler(&matter, &on_off, &nm, &networks);
-            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
 
-            responder.run::<4, 4>().await
+            select(responder.run::<4, 4>(), dm_handler.run()).await
         }
     });
 

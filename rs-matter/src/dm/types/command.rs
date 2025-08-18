@@ -63,7 +63,7 @@ impl CmdDetails<'_> {
         )
     }
 
-    pub fn success(&self, tracker: &CmdDataTracker) -> Option<CmdStatus> {
+    pub(crate) fn success(&self, tracker: &CmdDataTracker) -> Option<CmdStatus> {
         if tracker.needs_status() {
             self.status(IMStatusCode::Success)
         } else {
@@ -71,7 +71,7 @@ impl CmdDetails<'_> {
         }
     }
 
-    pub fn status(&self, status: IMStatusCode) -> Option<CmdStatus> {
+    pub(crate) fn status(&self, status: IMStatusCode) -> Option<CmdStatus> {
         if self.should_report(status) {
             Some(CmdStatus::new(
                 CmdPath::new(

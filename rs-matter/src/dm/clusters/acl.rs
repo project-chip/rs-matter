@@ -21,8 +21,8 @@ use core::num::NonZeroU8;
 
 use crate::acl::{self, AclEntry};
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, ChangeNotify, Cluster, Dataver,
-    ReadContext, WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, ReadContext,
+    WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
@@ -93,7 +93,6 @@ impl AclHandler {
             TLVArray<'_, AccessControlEntryStruct<'_>>,
             AccessControlEntryStruct<'_>,
         >,
-        _notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         match value {
             ArrayAttributeWrite::Replace(list) => {
@@ -150,7 +149,7 @@ impl ClusterHandler for AclHandler {
 
     fn acl<P: TLVBuilderParent>(
         &self,
-        ctx: &ReadContext<'_>,
+        ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             AccessControlEntryStructArrayBuilder<P>,
             AccessControlEntryStructBuilder<P>,
@@ -163,21 +162,21 @@ impl ClusterHandler for AclHandler {
         )
     }
 
-    fn subjects_per_access_control_entry(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::SUBJECTS_PER_ENTRY as _)
     }
 
-    fn targets_per_access_control_entry(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn targets_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::TARGETS_PER_ENTRY as _)
     }
 
-    fn access_control_entries_per_fabric(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn access_control_entries_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::ENTRIES_PER_FABRIC as _)
     }
 
     fn set_acl(
         &self,
-        ctx: &WriteContext<'_>,
+        ctx: impl WriteContext,
         value: ArrayAttributeWrite<
             TLVArray<'_, AccessControlEntryStruct<'_>>,
             AccessControlEntryStruct<'_>,
@@ -188,7 +187,6 @@ impl ClusterHandler for AclHandler {
             &mut ctx.exchange().matter().fabric_mgr.borrow_mut(),
             fab_idx,
             value,
-            ctx.notify,
         )
     }
 }
@@ -216,8 +214,8 @@ mod tests {
         AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
     };
     use crate::dm::{
-        ArrayAttributeRead, ArrayAttributeWrite, AttrDataEncoder, AttrDataWriter, AttrDetails,
-        Node, Privilege,
+        ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReplyInstance, Node, Privilege,
+        ReadReply, ReadReplyInstance, Reply,
     };
     use crate::fabric::FabricMgr;
     use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, TLVWriter, ToTLV};
@@ -478,7 +476,7 @@ mod tests {
         writebuf: &mut WriteBuf<'_>,
     ) {
         let mut tw = TLVWriter::new(writebuf);
-        let encoder = AttrDataEncoder::new(attr, &mut tw);
+        let encoder = ReadReplyInstance::new(attr, &mut tw);
         let mut writer = unwrap!(unwrap!(encoder.with_dataver(acl.dataver.get())));
         let build_root = TLVWriteParent::new((), writer.writer());
         unwrap!(acl.acl(
@@ -486,7 +484,7 @@ mod tests {
             attr,
             ArrayAttributeRead::ReadAll(unwrap!(AccessControlEntryStructArrayBuilder::new(
                 build_root,
-                &AttrDataWriter::TAG
+                &AttrReplyInstance::TAG
             )))
         ));
 
@@ -503,7 +501,6 @@ mod tests {
             fab_mgr,
             fab_idx,
             ArrayAttributeWrite::Add(AccessControlEntryStruct::new(data.clone())),
-            &()
         ));
     }
 
@@ -518,11 +515,10 @@ mod tests {
             fab_mgr,
             fab_idx,
             ArrayAttributeWrite::Update(index, AccessControlEntryStruct::new(data.clone())),
-            &()
         ));
     }
 
     fn acl_remove(acl: &AclHandler, fab_mgr: &mut FabricMgr, index: u16, fab_idx: NonZeroU8) {
-        unwrap!(acl.set_acl(fab_mgr, fab_idx, ArrayAttributeWrite::Remove(index), &()));
+        unwrap!(acl.set_acl(fab_mgr, fab_idx, ArrayAttributeWrite::Remove(index)));
     }
 }

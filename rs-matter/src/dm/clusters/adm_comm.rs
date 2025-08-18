@@ -57,7 +57,7 @@ impl ClusterHandler for AdminCommHandler {
         self.dataver.changed();
     }
 
-    fn window_status(&self, ctx: &ReadContext<'_>) -> Result<CommissioningWindowStatusEnum, Error> {
+    fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
         let session_type = ctx.exchange().matter().pase_mgr.borrow().session_type();
 
         Ok(match session_type {
@@ -67,7 +67,7 @@ impl ClusterHandler for AdminCommHandler {
         })
     }
 
-    fn admin_fabric_index(&self, ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+    fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         let session_mgr = ctx.exchange().matter().transport_mgr.session_mgr.borrow();
 
         let fab_idx = session_mgr.iter().find_map(|session| {
@@ -81,7 +81,7 @@ impl ClusterHandler for AdminCommHandler {
         Ok(Nullable::new(fab_idx))
     }
 
-    fn admin_vendor_id(&self, ctx: &ReadContext<'_>) -> Result<Nullable<u16>, Error> {
+    fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         let session_mgr = ctx.exchange().matter().transport_mgr.session_mgr.borrow();
         let fabric_mgr = ctx.exchange().matter().fabric_mgr.borrow();
 
@@ -103,7 +103,7 @@ impl ClusterHandler for AdminCommHandler {
 
     fn handle_open_commissioning_window(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
         let matter = ctx.exchange().matter();
@@ -120,7 +120,7 @@ impl ClusterHandler for AdminCommHandler {
 
     fn handle_open_basic_commissioning_window(
         &self,
-        ctx: &InvokeContext<'_>,
+        ctx: impl InvokeContext,
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
         let matter = ctx.exchange().matter();
@@ -133,7 +133,7 @@ impl ClusterHandler for AdminCommHandler {
         )
     }
 
-    fn handle_revoke_commissioning(&self, ctx: &InvokeContext<'_>) -> Result<(), Error> {
+    fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         let matter = ctx.exchange().matter();
 
         matter

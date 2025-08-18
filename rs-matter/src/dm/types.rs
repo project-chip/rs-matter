@@ -21,23 +21,23 @@ pub use attribute::*;
 pub use cluster::*;
 pub use command::*;
 pub use dataver::*;
-pub use encoder::*;
 pub use endpoint::*;
 pub use handler::*;
 pub use metadata::*;
 pub use node::*;
 pub use privilege::*;
+pub use reply::*;
 
 mod attribute;
 mod cluster;
 mod command;
 mod dataver;
-mod encoder;
 mod endpoint;
 mod handler;
 mod metadata;
 mod node;
 mod privilege;
+mod reply;
 
 pub type EndptId = u16;
 pub type ClusterId = u32;

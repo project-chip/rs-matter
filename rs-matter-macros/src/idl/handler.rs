@@ -76,6 +76,16 @@ pub fn handler(
         .map(|cmd| handler_command(cmd, asynch, delegate, cluster, &krate));
 
     if delegate {
+        let run = if asynch {
+            quote!(
+                async fn run(&self) -> Result<(), #krate::error::Error> {
+                    (**self).run().await
+                }
+            )
+        } else {
+            quote!()
+        };
+
         quote!(
             impl<T> #handler_name for &T
             where
@@ -86,6 +96,8 @@ pub fn handler(
                 fn dataver(&self) -> u32 { T::dataver(self) }
                 fn dataver_changed(&self) { T::dataver_changed(self) }
 
+                #run
+
                 #(#handler_attribute_methods)*
 
                 #(#handler_attribute_write_methods)*
@@ -94,6 +106,16 @@ pub fn handler(
             }
         )
     } else {
+        let run = if asynch {
+            quote!(
+                async fn run(&self) -> Result<(), #krate::error::Error> {
+                    core::future::pending::<Result::<(), #krate::error::Error>>().await
+                }
+            )
+        } else {
+            quote!()
+        };
+
         quote!(
             #[doc = "The handler trait for the cluster."]
             pub trait #handler_name {
@@ -103,6 +125,8 @@ pub fn handler(
                 fn dataver(&self) -> u32;
 
                 fn dataver_changed(&self);
+
+                #run
 
                 #(#handler_attribute_methods)*
 
@@ -244,6 +268,16 @@ pub fn handler_adaptor(
         )
     };
 
+    let run = if asynch {
+        quote!(
+            async fn run(&self) -> Result<(), #krate::error::Error> {
+                self.0.run().await
+            }
+        )
+    } else {
+        quote!()
+    };
+
     let pasync = if asynch { quote!(async) } else { quote!() };
 
     let stream = quote!(
@@ -259,10 +293,10 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn read(
                 &self,
-                ctx: &#krate::dm::ReadContext<'_>,
-                encoder: #krate::dm::AttrDataEncoder<'_, '_, '_>,
+                ctx: impl #krate::dm::ReadContext,
+                reply: impl #krate::dm::ReadReply,
             ) -> Result<(), #krate::error::Error> {
-                if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
+                if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                     if ctx.attr().is_system() {
                         ctx.attr().cluster()?.read(ctx.attr().attr_id, writer)
                     } else {
@@ -276,7 +310,7 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn write(
                 &self,
-                ctx: &#krate::dm::WriteContext<'_>,
+                ctx: impl #krate::dm::WriteContext,
             ) -> Result<(), #krate::error::Error> {
                 ctx.attr().check_dataver(self.0.dataver())?;
 
@@ -294,8 +328,8 @@ pub fn handler_adaptor(
             #[allow(unreachable_code)]
             #pasync fn invoke(
                 &self,
-                ctx: &#krate::dm::InvokeContext<'_>,
-                encoder: #krate::dm::CmdDataEncoder<'_, '_, '_>,
+                ctx: impl #krate::dm::InvokeContext,
+                reply: impl #krate::dm::InvokeReply,
             ) -> Result<(), #krate::error::Error> {
                 #invoke_stream
 
@@ -303,6 +337,8 @@ pub fn handler_adaptor(
 
                 Ok(())
             }
+
+            #run
         }
 
         impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &#handler_adaptor_name<T>, Q)>
@@ -399,13 +435,13 @@ fn handler_attribute(
 
         if !delegate && attr.field.is_optional {
             quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::dm::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
                     Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
         } else {
             let stream = quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: &#krate::dm::ReadContext<'_>, builder: #attr_type) -> Result<P, #krate::error::Error>
+                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>
             );
 
             if delegate {
@@ -416,13 +452,13 @@ fn handler_attribute(
         }
     } else if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error> {
+            #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::ReadContext<'_>) -> Result<#attr_type, #krate::error::Error>
+            #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>
         );
 
         if delegate {
@@ -486,13 +522,13 @@ fn handler_attribute_write(
 
     if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error> {
+            #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: &#krate::dm::WriteContext<'_>, value: #attr_type) -> Result<(), #krate::error::Error>
+            #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
         );
 
         if delegate {
@@ -565,7 +601,7 @@ fn handler_command(
                 let stream = quote!(
                     #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                         &self,
-                        ctx: &#krate::dm::InvokeContext<'_>,
+                        ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
                         response: #field_resp,
                     ) -> Result<P, #krate::error::Error>
@@ -580,7 +616,7 @@ fn handler_command(
                 let stream = quote!(
                     #pasync fn #cmd_name(
                         &self,
-                        ctx: &#krate::dm::InvokeContext<'_>,
+                        ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
                     ) -> Result<#field_resp, #krate::error::Error>
                 );
@@ -595,7 +631,7 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
-                    ctx: &#krate::dm::InvokeContext<'_>,
+                    ctx: impl #krate::dm::InvokeContext,
                     request: #field_req,
                 ) -> Result<(), #krate::error::Error>
             );
@@ -611,7 +647,7 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                     &self,
-                    ctx: &#krate::dm::InvokeContext<'_>,
+                    ctx: impl #krate::dm::InvokeContext,
                     response: #field_resp,
                 ) -> Result<P, #krate::error::Error>
             );
@@ -625,7 +661,7 @@ fn handler_command(
             let stream = quote!(
                 #pasync fn #cmd_name(
                     &self,
-                    ctx: &#krate::dm::InvokeContext<'_>,
+                    ctx: impl #krate::dm::InvokeContext,
                 ) -> Result<#field_resp, #krate::error::Error>
             );
 
@@ -639,7 +675,7 @@ fn handler_command(
         let stream = quote!(
             #pasync fn #cmd_name(
                 &self,
-                ctx: &#krate::dm::InvokeContext<'_>,
+                ctx: impl #krate::dm::InvokeContext,
             ) -> Result<(), #krate::error::Error>
         );
 
@@ -712,12 +748,15 @@ fn handler_adaptor_attribute_match(
                 AttributeId::#attr_name => {
                     #attr_read_debug_build_start
 
+                    let tag = #krate::dm::Reply::tag(&writer);
+                    let tw = #krate::dm::Reply::writer(&mut writer);
+
                     let attr_read_result = self.0.#attr_method_name(
-                        ctx,
+                        &ctx,
                         #krate::dm::ArrayAttributeRead::new(
                             ctx.attr().list_index.clone(),
-                            #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
-                            &#krate::dm::AttrDataWriter::TAG,
+                            #krate::tlv::TLVWriteParent::new(#attr_debug_id, tw),
+                            tag,
                         )?,
                     )#sawait;
 
@@ -725,7 +764,7 @@ fn handler_adaptor_attribute_match(
 
                     attr_read_result?;
 
-                    writer.complete()
+                    #krate::dm::Reply::complete(writer)
                 }
             )
         } else {
@@ -733,27 +772,30 @@ fn handler_adaptor_attribute_match(
                 AttributeId::#attr_name => {
                     #attr_read_debug_build_start
 
-                    let attr_read_result = self.0.#attr_method_name(ctx, #krate::tlv::TLVBuilder::new(
-                        #krate::tlv::TLVWriteParent::new(#attr_debug_id, writer.writer()),
-                        &#krate::dm::AttrDataWriter::TAG,
+                    let tag = #krate::dm::Reply::tag(&writer);
+                    let tw = #krate::dm::Reply::writer(&mut writer);
+
+                    let attr_read_result = self.0.#attr_method_name(&ctx, #krate::tlv::TLVBuilder::new(
+                        #krate::tlv::TLVWriteParent::new(#attr_debug_id, tw),
+                        tag,
                     )?)#sawait;
 
                     #attr_read_debug_build_end
 
                     attr_read_result?;
 
-                    writer.complete()
+                    #krate::dm::Reply::complete(writer)
                 }
             )
         }
     } else {
         quote!(
             AttributeId::#attr_name => {
-               let attr_read_result = self.0.#attr_method_name(ctx)#sawait;
+                let attr_read_result = self.0.#attr_method_name(&ctx)#sawait;
 
                 #attr_read_debug
 
-                writer.set(attr_read_result?)
+                #krate::dm::Reply::set(writer, attr_read_result?)
             }
         )
     }
@@ -804,7 +846,7 @@ fn handler_adaptor_attribute_write_match(
             AttributeId::#attr_name => {
                 let attr_data = #krate::dm::ArrayAttributeWrite::new(ctx.attr().list_index.clone(), ctx.data())?;
 
-                let attr_write_result = self.0.#attr_method_name(ctx, attr_data.clone())#sawait;
+                let attr_write_result = self.0.#attr_method_name(&ctx, attr_data.clone())#sawait;
 
                 #attr_write_debug
 
@@ -816,7 +858,7 @@ fn handler_adaptor_attribute_write_match(
             AttributeId::#attr_name => {
                 let attr_data: #attr_type = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                let attr_write_result = self.0.#attr_method_name(ctx, attr_data.clone())#sawait;
+                let attr_write_result = self.0.#attr_method_name(&ctx, attr_data.clone())#sawait;
 
                 #attr_write_debug
 
@@ -942,14 +984,16 @@ fn handler_adaptor_command_match(
 
                         #cmd_invoke_debug_build_start
 
-                        let mut writer = encoder.with_command(#field_resp_cmd_code)?;
+                        let mut writer = reply.with_command(#field_resp_cmd_code)?;
+                        let tag = #krate::dm::Reply::tag(&writer);
+                        let tw = #krate::dm::Reply::writer(&mut writer);
 
                         let cmd_invoke_result = self.0.#cmd_method_name(
-                            ctx,
+                            &ctx,
                             cmd_data,
                             #krate::tlv::TLVBuilder::new(
-                                #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
-                                &#krate::dm::CmdDataWriter::TAG,
+                                #krate::tlv::TLVWriteParent::new(#cmd_debug_id, tw),
+                                tag,
                             )?
                         )#sawait;
 
@@ -957,7 +1001,7 @@ fn handler_adaptor_command_match(
 
                         cmd_invoke_result?;
 
-                        writer.complete()?
+                        #krate::dm::Reply::complete(writer)?
                     }
                 )
             } else {
@@ -965,13 +1009,13 @@ fn handler_adaptor_command_match(
                     CommandId::#cmd_name => {
                         let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                        let writer = encoder.with_command(#field_resp_cmd_code)?;
+                        let writer = reply.with_command(#field_resp_cmd_code)?;
 
-                        let cmd_invoke_result = self.0.#cmd_method_name(ctx, cmd_data.clone())#sawait;
+                        let cmd_invoke_result = self.0.#cmd_method_name(&ctx, cmd_data.clone())#sawait;
 
                         #cmd_invoke_debug
 
-                        writer.set(cmd_invoke_result?)?;
+                        #krate::dm::Reply::set(writer, cmd_invoke_result?)?;
                     }
                 )
             }
@@ -980,7 +1024,7 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                    let cmd_invoke_result = self.0.#cmd_method_name(ctx, cmd_data.clone())#sawait;
+                    let cmd_invoke_result = self.0.#cmd_method_name(&ctx, cmd_data.clone())#sawait;
 
                     #cmd_invoke_debug
 
@@ -994,13 +1038,15 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     #cmd_invoke_debug_noarg_build_start
 
-                    let mut writer = encoder.with_command(#field_resp_cmd_code)?;
+                    let mut writer = reply.with_command(#field_resp_cmd_code)?;
+                    let tag = #krate::dm::Reply::tag(&writer);
+                    let tw = #krate::dm::Reply::writer(&mut writer);
 
                     let cmd_invoke_result = self.0.#cmd_method_name(
-                        ctx,
+                        &ctx,
                         #krate::tlv::TLVBuilder::new(
-                            #krate::tlv::TLVWriteParent::new(#cmd_debug_id, writer.writer()),
-                            &#krate::dm::CmdDataWriter::TAG,
+                            #krate::tlv::TLVWriteParent::new(#cmd_debug_id, tw),
+                            tag,
                         )?,
                     )#sawait;
 
@@ -1008,26 +1054,26 @@ fn handler_adaptor_command_match(
 
                     cmd_invoke_result?;
 
-                    writer.complete()?
+                    #krate::dm::Reply::complete(writer)?
                 }
             )
         } else {
             quote!(quote!(
                 CommandId::#cmd_name => {
-                    let writer = encoder.with_command(#field_resp_cmd_code)?;
+                    let writer = reply.with_command(#field_resp_cmd_code)?;
 
-                    let cmd_invoke_result = self.0.#cmd_method_name(ctx)#sawait;
+                    let cmd_invoke_result = self.0.#cmd_method_name(&ctx)#sawait;
 
                     #cmd_invoke_debug_noarg
 
-                    writer.set(cmd_invoke_result?)?;
+                    #krate::dm::Reply::set(writer, cmd_invoke_result?)?;
                 }
             ))
         }
     } else {
         quote!(
             CommandId::#cmd_name => {
-                let cmd_invoke_result = self.0.#cmd_method_name(ctx)#sawait;
+                let cmd_invoke_result = self.0.#cmd_method_name(&ctx)#sawait;
 
                 #cmd_invoke_debug_noarg
 
@@ -1141,29 +1187,29 @@ mod tests {
                     fn dataver_changed(&self);
                     fn on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error>;
                     fn global_scene_control(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<
                         rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                         rs_matter_crate::error::Error,
@@ -1172,49 +1218,49 @@ mod tests {
                     }
                     fn set_on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn set_off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn set_start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
                     fn handle_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_on(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_toggle(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_off_with_effect(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OffWithEffectRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_on_with_recall_global_scene(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                     fn handle_on_with_timed_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OnWithTimedOffRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
                 }
@@ -1239,31 +1285,31 @@ mod tests {
                     }
                     fn on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         T::on_off(self, ctx)
                     }
                     fn global_scene_control(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         T::global_scene_control(self, ctx)
                     }
                     fn on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         T::on_time(self, ctx)
                     }
                     fn off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         T::off_wait_time(self, ctx)
                     }
                     fn start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<
                         rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                         rs_matter_crate::error::Error,
@@ -1272,59 +1318,59 @@ mod tests {
                     }
                     fn set_on_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::set_on_time(self, ctx, value)
                     }
                     fn set_off_wait_time(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::set_off_wait_time(self, ctx, value)
                     }
                     fn set_start_up_on_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::set_start_up_on_off(self, ctx, value)
                     }
                     fn handle_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_off(self, ctx)
                     }
                     fn handle_on(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_on(self, ctx)
                     }
                     fn handle_toggle(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_toggle(self, ctx)
                     }
                     fn handle_off_with_effect(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OffWithEffectRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_off_with_effect(self, ctx, request)
                     }
                     fn handle_on_with_recall_global_scene(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_on_with_recall_global_scene(self, ctx)
                     }
                     fn handle_on_with_timed_off(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OnWithTimedOffRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         T::handle_on_with_timed_off(self, ctx, request)
@@ -1357,16 +1403,16 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn read(
                         &self,
-                        ctx: &rs_matter_crate::dm::ReadContext<'_>,
-                        encoder: rs_matter_crate::dm::AttrDataEncoder<'_, '_, '_>,
+                        ctx: impl rs_matter_crate::dm::ReadContext,
+                        reply: impl rs_matter_crate::dm::ReadReply,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        if let Some(mut writer) = encoder.with_dataver(self.0.dataver())? {
+                        if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                             if ctx.attr().is_system() {
                                 ctx.attr().cluster()?.read(ctx.attr().attr_id, writer)
                             } else {
                                 match AttributeId::try_from(ctx.attr().attr_id)? {
                                     AttributeId::OnOff => {
-                                        let attr_read_result = self.0.on_off(ctx);
+                                        let attr_read_result = self.0.on_off(&ctx);
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1387,10 +1433,10 @@ mod tests {
                                             )),
                                             attr_read_result
                                         );
-                                        writer.set(attr_read_result?)
+                                        rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::GlobalSceneControl => {
-                                        let attr_read_result = self.0.global_scene_control(ctx);
+                                        let attr_read_result = self.0.global_scene_control(&ctx);
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1417,10 +1463,10 @@ mod tests {
                                             )),
                                             attr_read_result
                                         );
-                                        writer.set(attr_read_result?)
+                                        rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::OnTime => {
-                                        let attr_read_result = self.0.on_time(ctx);
+                                        let attr_read_result = self.0.on_time(&ctx);
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1441,10 +1487,10 @@ mod tests {
                                             )),
                                             attr_read_result
                                         );
-                                        writer.set(attr_read_result?)
+                                        rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::OffWaitTime => {
-                                        let attr_read_result = self.0.off_wait_time(ctx);
+                                        let attr_read_result = self.0.off_wait_time(&ctx);
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1465,10 +1511,10 @@ mod tests {
                                             )),
                                             attr_read_result
                                         );
-                                        writer.set(attr_read_result?)
+                                        rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::StartUpOnOff => {
-                                        let attr_read_result = self.0.start_up_on_off(ctx);
+                                        let attr_read_result = self.0.start_up_on_off(&ctx);
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1489,7 +1535,7 @@ mod tests {
                                             )),
                                             attr_read_result
                                         );
-                                        writer.set(attr_read_result?)
+                                        rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     #[allow(unreachable_code)]
                                     other => {
@@ -1515,7 +1561,7 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn write(
                         &self,
-                        ctx: &rs_matter_crate::dm::WriteContext<'_>,
+                        ctx: impl rs_matter_crate::dm::WriteContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         ctx.attr().check_dataver(self.0.dataver())?;
                         if ctx.attr().is_system() {
@@ -1525,7 +1571,7 @@ mod tests {
                             AttributeId::OnTime => {
                                 let attr_data: u16 =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                                let attr_write_result = self.0.set_on_time(ctx, attr_data.clone());
+                                let attr_write_result = self.0.set_on_time(&ctx, attr_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1554,7 +1600,7 @@ mod tests {
                                 let attr_data: u16 =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result =
-                                    self.0.set_off_wait_time(ctx, attr_data.clone());
+                                    self.0.set_off_wait_time(&ctx, attr_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1583,7 +1629,7 @@ mod tests {
                                 let attr_data: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum> =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result =
-                                    self.0.set_start_up_on_off(ctx, attr_data.clone());
+                                    self.0.set_start_up_on_off(&ctx, attr_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1630,12 +1676,12 @@ mod tests {
                     #[allow(unreachable_code)]
                     fn invoke(
                         &self,
-                        ctx: &rs_matter_crate::dm::InvokeContext<'_>,
-                        encoder: rs_matter_crate::dm::CmdDataEncoder<'_, '_, '_>,
+                        ctx: impl rs_matter_crate::dm::InvokeContext,
+                        reply: impl rs_matter_crate::dm::InvokeReply,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         match CommandId::try_from(ctx.cmd().cmd_id)? {
                             CommandId::Off => {
-                                let cmd_invoke_result = self.0.handle_off(ctx);
+                                let cmd_invoke_result = self.0.handle_off(&ctx);
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1659,7 +1705,7 @@ mod tests {
                                 cmd_invoke_result?;
                             }
                             CommandId::On => {
-                                let cmd_invoke_result = self.0.handle_on(ctx);
+                                let cmd_invoke_result = self.0.handle_on(&ctx);
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1683,7 +1729,7 @@ mod tests {
                                 cmd_invoke_result?;
                             }
                             CommandId::Toggle => {
-                                let cmd_invoke_result = self.0.handle_toggle(ctx);
+                                let cmd_invoke_result = self.0.handle_toggle(&ctx);
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1710,7 +1756,7 @@ mod tests {
                                 let cmd_data: OffWithEffectRequest<'_> =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let cmd_invoke_result =
-                                    self.0.handle_off_with_effect(ctx, cmd_data.clone());
+                                    self.0.handle_off_with_effect(&ctx, cmd_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1737,7 +1783,7 @@ mod tests {
                             }
                             CommandId::OnWithRecallGlobalScene => {
                                 let cmd_invoke_result =
-                                    self.0.handle_on_with_recall_global_scene(ctx);
+                                    self.0.handle_on_with_recall_global_scene(&ctx);
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1764,7 +1810,7 @@ mod tests {
                                 let cmd_data: OnWithTimedOffRequest<'_> =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let cmd_invoke_result =
-                                    self.0.handle_on_with_timed_off(ctx, cmd_data.clone());
+                                    self.0.handle_on_with_timed_off(&ctx, cmd_data.clone());
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",

@@ -375,109 +375,109 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         self.dataver.changed();
     }
 
-    fn boolean(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    fn boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.data.borrow().boolean)
     }
 
-    fn bitmap_8(&self, _ctx: &ReadContext<'_>) -> Result<Bitmap8MaskMap, Error> {
+    fn bitmap_8(&self, _ctx: impl ReadContext) -> Result<Bitmap8MaskMap, Error> {
         Ok(self.data.borrow().bitmap_8)
     }
 
-    fn bitmap_16(&self, _ctx: &ReadContext<'_>) -> Result<Bitmap16MaskMap, Error> {
+    fn bitmap_16(&self, _ctx: impl ReadContext) -> Result<Bitmap16MaskMap, Error> {
         Ok(self.data.borrow().bitmap_16)
     }
 
-    fn bitmap_32(&self, _ctx: &ReadContext<'_>) -> Result<Bitmap32MaskMap, Error> {
+    fn bitmap_32(&self, _ctx: impl ReadContext) -> Result<Bitmap32MaskMap, Error> {
         Ok(self.data.borrow().bitmap_32)
     }
 
-    fn bitmap_64(&self, _ctx: &ReadContext<'_>) -> Result<Bitmap64MaskMap, Error> {
+    fn bitmap_64(&self, _ctx: impl ReadContext) -> Result<Bitmap64MaskMap, Error> {
         Ok(self.data.borrow().bitmap_64)
     }
 
-    fn int_8_u(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    fn int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(self.data.borrow().int_8_u)
     }
 
-    fn int_16_u(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn int_16_u(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.data.borrow().int_16_u)
     }
 
-    fn int_24_u(&self, _ctx: &ReadContext<'_>) -> Result<u32, Error> {
+    fn int_24_u(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(self.data.borrow().int_24_u)
     }
 
-    fn int_32_u(&self, _ctx: &ReadContext<'_>) -> Result<u32, Error> {
+    fn int_32_u(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(self.data.borrow().int_32_u)
     }
 
-    fn int_40_u(&self, _ctx: &ReadContext<'_>) -> Result<u64, Error> {
+    fn int_40_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(self.data.borrow().int_40_u)
     }
 
-    fn int_48_u(&self, _ctx: &ReadContext<'_>) -> Result<u64, Error> {
+    fn int_48_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(self.data.borrow().int_48_u)
     }
 
-    fn int_56_u(&self, _ctx: &ReadContext<'_>) -> Result<u64, Error> {
+    fn int_56_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(self.data.borrow().int_56_u)
     }
 
-    fn int_64_u(&self, _ctx: &ReadContext<'_>) -> Result<u64, Error> {
+    fn int_64_u(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(self.data.borrow().int_64_u)
     }
 
-    fn int_8_s(&self, _ctx: &ReadContext<'_>) -> Result<i8, Error> {
+    fn int_8_s(&self, _ctx: impl ReadContext) -> Result<i8, Error> {
         Ok(self.data.borrow().int_8_s)
     }
 
-    fn int_16_s(&self, _ctx: &ReadContext<'_>) -> Result<i16, Error> {
+    fn int_16_s(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
         Ok(self.data.borrow().int_16_s)
     }
 
-    fn int_24_s(&self, _ctx: &ReadContext<'_>) -> Result<i32, Error> {
+    fn int_24_s(&self, _ctx: impl ReadContext) -> Result<i32, Error> {
         Ok(self.data.borrow().int_24_s)
     }
 
-    fn int_32_s(&self, _ctx: &ReadContext<'_>) -> Result<i32, Error> {
+    fn int_32_s(&self, _ctx: impl ReadContext) -> Result<i32, Error> {
         Ok(self.data.borrow().int_32_s)
     }
 
-    fn int_40_s(&self, _ctx: &ReadContext<'_>) -> Result<i64, Error> {
+    fn int_40_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
         Ok(self.data.borrow().int_40_s)
     }
 
-    fn int_48_s(&self, _ctx: &ReadContext<'_>) -> Result<i64, Error> {
+    fn int_48_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
         Ok(self.data.borrow().int_48_s)
     }
 
-    fn int_56_s(&self, _ctx: &ReadContext<'_>) -> Result<i64, Error> {
+    fn int_56_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
         Ok(self.data.borrow().int_56_s)
     }
 
-    fn int_64_s(&self, _ctx: &ReadContext<'_>) -> Result<i64, Error> {
+    fn int_64_s(&self, _ctx: impl ReadContext) -> Result<i64, Error> {
         Ok(self.data.borrow().int_64_s)
     }
 
-    fn enum_8(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    fn enum_8(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(self.data.borrow().enum_8)
     }
 
-    fn enum_16(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn enum_16(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.data.borrow().enum_16)
     }
 
-    fn float_single(&self, _ctx: &ReadContext<'_>) -> Result<f32, Error> {
+    fn float_single(&self, _ctx: impl ReadContext) -> Result<f32, Error> {
         Ok(self.data.borrow().float_single)
     }
 
-    fn float_double(&self, _ctx: &ReadContext<'_>) -> Result<f64, Error> {
+    fn float_double(&self, _ctx: impl ReadContext) -> Result<f64, Error> {
         Ok(self.data.borrow().float_double)
     }
 
     fn octet_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: OctetsBuilder<P>,
     ) -> Result<P, Error> {
         builder.set(Octets(self.data.borrow().octet_string.as_slice()))
@@ -485,7 +485,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn list_int_8_u<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u8>, ToTLVBuilder<P, u8>>,
     ) -> Result<P, Error> {
         match builder {
@@ -511,7 +511,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn list_octet_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
@@ -537,7 +537,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn list_struct_octet_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             TestListStructOctetArrayBuilder<P>,
             TestListStructOctetBuilder<P>,
@@ -575,7 +575,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn long_octet_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: OctetsBuilder<P>,
     ) -> Result<P, Error> {
         builder.set(Octets(self.data.borrow().long_octet_string.as_slice()))
@@ -583,7 +583,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn char_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         builder.set(self.data.borrow().char_string.as_str())
@@ -591,27 +591,27 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn long_char_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
     ) -> Result<P, Error> {
         builder.set(self.data.borrow().long_char_string.as_str())
     }
 
-    fn epoch_us(&self, _ctx: &ReadContext<'_>) -> Result<u64, Error> {
+    fn epoch_us(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(self.data.borrow().epoch_us)
     }
 
-    fn epoch_s(&self, _ctx: &ReadContext<'_>) -> Result<u32, Error> {
+    fn epoch_s(&self, _ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(self.data.borrow().epoch_s)
     }
 
-    fn vendor_id(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn vendor_id(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.data.borrow().vendor_id)
     }
 
     fn list_nullables_and_optionals_struct<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
             NullablesAndOptionalsStructArrayBuilder<P>,
             NullablesAndOptionalsStructBuilder<P>,
@@ -723,13 +723,13 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         }
     }
 
-    fn enum_attr(&self, _ctx: &ReadContext<'_>) -> Result<SimpleEnum, Error> {
+    fn enum_attr(&self, _ctx: impl ReadContext) -> Result<SimpleEnum, Error> {
         Ok(self.data.borrow().enum_attr)
     }
 
     fn struct_attr<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: SimpleStructBuilder<P>,
     ) -> Result<P, Error> {
         let data = self.data.borrow();
@@ -747,25 +747,25 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .end()
     }
 
-    fn range_restricted_int_8_u(&self, _ctx: &ReadContext<'_>) -> Result<u8, Error> {
+    fn range_restricted_int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(self.data.borrow().range_restricted_int_8_u)
     }
 
-    fn range_restricted_int_8_s(&self, _ctx: &ReadContext<'_>) -> Result<i8, Error> {
+    fn range_restricted_int_8_s(&self, _ctx: impl ReadContext) -> Result<i8, Error> {
         Ok(self.data.borrow().range_restricted_int_8_s)
     }
 
-    fn range_restricted_int_16_u(&self, _ctx: &ReadContext<'_>) -> Result<u16, Error> {
+    fn range_restricted_int_16_u(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(self.data.borrow().range_restricted_int_16_u)
     }
 
-    fn range_restricted_int_16_s(&self, _ctx: &ReadContext<'_>) -> Result<i16, Error> {
+    fn range_restricted_int_16_s(&self, _ctx: impl ReadContext) -> Result<i16, Error> {
         Ok(self.data.borrow().range_restricted_int_16_s)
     }
 
     fn list_long_octet_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         match builder {
@@ -793,136 +793,136 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn list_fabric_scoped<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         _builder: ArrayAttributeRead<TestFabricScopedArrayBuilder<P>, TestFabricScopedBuilder<P>>,
     ) -> Result<P, Error> {
         todo!()
     }
 
-    fn timed_write_boolean(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    fn timed_write_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         todo!()
     }
 
-    fn general_error_boolean(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    fn general_error_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         todo!()
     }
 
-    fn cluster_error_boolean(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    fn cluster_error_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         todo!()
     }
 
-    fn nullable_boolean(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<bool>, Error> {
+    fn nullable_boolean(&self, _ctx: impl ReadContext) -> Result<Nullable<bool>, Error> {
         Ok(self.data.borrow().nullable_boolean.clone())
     }
 
-    fn nullable_bitmap_8(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<Bitmap8MaskMap>, Error> {
+    fn nullable_bitmap_8(&self, _ctx: impl ReadContext) -> Result<Nullable<Bitmap8MaskMap>, Error> {
         Ok(self.data.borrow().nullable_bitmap_8.clone())
     }
 
     fn nullable_bitmap_16(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<Bitmap16MaskMap>, Error> {
         Ok(self.data.borrow().nullable_bitmap_16.clone())
     }
 
     fn nullable_bitmap_32(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<Bitmap32MaskMap>, Error> {
         Ok(self.data.borrow().nullable_bitmap_32.clone())
     }
 
     fn nullable_bitmap_64(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<Bitmap64MaskMap>, Error> {
         Ok(self.data.borrow().nullable_bitmap_64.clone())
     }
 
-    fn nullable_int_8_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+    fn nullable_int_8_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(self.data.borrow().nullable_int_8_u.clone())
     }
 
-    fn nullable_int_16_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u16>, Error> {
+    fn nullable_int_16_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(self.data.borrow().nullable_int_16_u.clone())
     }
 
-    fn nullable_int_24_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u32>, Error> {
+    fn nullable_int_24_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
         Ok(self.data.borrow().nullable_int_24_u.clone())
     }
 
-    fn nullable_int_32_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u32>, Error> {
+    fn nullable_int_32_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
         Ok(self.data.borrow().nullable_int_32_u.clone())
     }
 
-    fn nullable_int_40_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u64>, Error> {
+    fn nullable_int_40_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(self.data.borrow().nullable_int_40_u.clone())
     }
 
-    fn nullable_int_48_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u64>, Error> {
+    fn nullable_int_48_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(self.data.borrow().nullable_int_48_u.clone())
     }
 
-    fn nullable_int_56_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u64>, Error> {
+    fn nullable_int_56_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(self.data.borrow().nullable_int_56_u.clone())
     }
 
-    fn nullable_int_64_u(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u64>, Error> {
+    fn nullable_int_64_u(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(self.data.borrow().nullable_int_64_u.clone())
     }
 
-    fn nullable_int_8_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i8>, Error> {
+    fn nullable_int_8_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i8>, Error> {
         Ok(self.data.borrow().nullable_int_8_s.clone())
     }
 
-    fn nullable_int_16_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i16>, Error> {
+    fn nullable_int_16_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i16>, Error> {
         Ok(self.data.borrow().nullable_int_16_s.clone())
     }
 
-    fn nullable_int_24_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i32>, Error> {
+    fn nullable_int_24_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i32>, Error> {
         Ok(self.data.borrow().nullable_int_24_s.clone())
     }
 
-    fn nullable_int_32_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i32>, Error> {
+    fn nullable_int_32_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i32>, Error> {
         Ok(self.data.borrow().nullable_int_32_s.clone())
     }
 
-    fn nullable_int_40_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i64>, Error> {
+    fn nullable_int_40_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
         Ok(self.data.borrow().nullable_int_40_s.clone())
     }
 
-    fn nullable_int_48_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i64>, Error> {
+    fn nullable_int_48_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
         Ok(self.data.borrow().nullable_int_48_s.clone())
     }
 
-    fn nullable_int_56_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i64>, Error> {
+    fn nullable_int_56_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
         Ok(self.data.borrow().nullable_int_56_s.clone())
     }
 
-    fn nullable_int_64_s(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<i64>, Error> {
+    fn nullable_int_64_s(&self, _ctx: impl ReadContext) -> Result<Nullable<i64>, Error> {
         Ok(self.data.borrow().nullable_int_64_s.clone())
     }
 
-    fn nullable_enum_8(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u8>, Error> {
+    fn nullable_enum_8(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(self.data.borrow().nullable_enum_8.clone())
     }
 
-    fn nullable_enum_16(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<u16>, Error> {
+    fn nullable_enum_16(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(self.data.borrow().nullable_enum_16.clone())
     }
 
-    fn nullable_float_single(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<f32>, Error> {
+    fn nullable_float_single(&self, _ctx: impl ReadContext) -> Result<Nullable<f32>, Error> {
         Ok(self.data.borrow().nullable_float_single.clone())
     }
 
-    fn nullable_float_double(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<f64>, Error> {
+    fn nullable_float_double(&self, _ctx: impl ReadContext) -> Result<Nullable<f64>, Error> {
         Ok(self.data.borrow().nullable_float_double.clone())
     }
 
     fn nullable_octet_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
     ) -> Result<P, Error> {
         if let Some(o) = self.data.borrow().nullable_octet_string.as_opt_deref() {
@@ -934,7 +934,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn nullable_char_string<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: NullableBuilder<P, Utf8StrBuilder<P>>,
     ) -> Result<P, Error> {
         if let Some(o) = self.data.borrow().nullable_char_string.as_opt_deref() {
@@ -944,13 +944,13 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         }
     }
 
-    fn nullable_enum_attr(&self, _ctx: &ReadContext<'_>) -> Result<Nullable<SimpleEnum>, Error> {
+    fn nullable_enum_attr(&self, _ctx: impl ReadContext) -> Result<Nullable<SimpleEnum>, Error> {
         Ok(self.data.borrow().nullable_enum_attr.clone())
     }
 
     fn nullable_struct<P: TLVBuilderParent>(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
         builder: NullableBuilder<P, SimpleStructBuilder<P>>,
     ) -> Result<P, Error> {
         if let Some(s) = self.data.borrow().nullable_struct.as_opt_ref() {
@@ -973,21 +973,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn nullable_range_restricted_int_8_u(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
         Ok(self.data.borrow().nullable_range_restricted_int_8_u.clone())
     }
 
     fn nullable_range_restricted_int_8_s(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<i8>, Error> {
         Ok(self.data.borrow().nullable_range_restricted_int_8_s.clone())
     }
 
     fn nullable_range_restricted_int_16_u(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<u16>, Error> {
         Ok(self
             .data
@@ -998,7 +998,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn nullable_range_restricted_int_16_s(
         &self,
-        _ctx: &ReadContext<'_>,
+        _ctx: impl ReadContext,
     ) -> Result<Nullable<i16>, Error> {
         Ok(self
             .data
@@ -1007,132 +1007,132 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .clone())
     }
 
-    fn set_boolean(&self, _ctx: &WriteContext<'_>, value: bool) -> Result<(), Error> {
+    fn set_boolean(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {
         self.data.borrow_mut().boolean = value;
         Ok(())
     }
 
-    fn set_bitmap_8(&self, _ctx: &WriteContext<'_>, value: Bitmap8MaskMap) -> Result<(), Error> {
+    fn set_bitmap_8(&self, _ctx: impl WriteContext, value: Bitmap8MaskMap) -> Result<(), Error> {
         self.data.borrow_mut().bitmap_8 = value;
         Ok(())
     }
 
-    fn set_bitmap_16(&self, _ctx: &WriteContext<'_>, value: Bitmap16MaskMap) -> Result<(), Error> {
+    fn set_bitmap_16(&self, _ctx: impl WriteContext, value: Bitmap16MaskMap) -> Result<(), Error> {
         self.data.borrow_mut().bitmap_16 = value;
         Ok(())
     }
 
-    fn set_bitmap_32(&self, _ctx: &WriteContext<'_>, value: Bitmap32MaskMap) -> Result<(), Error> {
+    fn set_bitmap_32(&self, _ctx: impl WriteContext, value: Bitmap32MaskMap) -> Result<(), Error> {
         self.data.borrow_mut().bitmap_32 = value;
         Ok(())
     }
 
-    fn set_bitmap_64(&self, _ctx: &WriteContext<'_>, value: Bitmap64MaskMap) -> Result<(), Error> {
+    fn set_bitmap_64(&self, _ctx: impl WriteContext, value: Bitmap64MaskMap) -> Result<(), Error> {
         self.data.borrow_mut().bitmap_64 = value;
         Ok(())
     }
 
-    fn set_int_8_u(&self, _ctx: &WriteContext<'_>, value: u8) -> Result<(), Error> {
+    fn set_int_8_u(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
         self.data.borrow_mut().int_8_u = value;
         Ok(())
     }
 
-    fn set_int_16_u(&self, _ctx: &WriteContext<'_>, value: u16) -> Result<(), Error> {
+    fn set_int_16_u(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.data.borrow_mut().int_16_u = value;
         Ok(())
     }
 
-    fn set_int_24_u(&self, _ctx: &WriteContext<'_>, value: u32) -> Result<(), Error> {
+    fn set_int_24_u(&self, _ctx: impl WriteContext, value: u32) -> Result<(), Error> {
         self.data.borrow_mut().int_24_u = value;
         Ok(())
     }
 
-    fn set_int_32_u(&self, _ctx: &WriteContext<'_>, value: u32) -> Result<(), Error> {
+    fn set_int_32_u(&self, _ctx: impl WriteContext, value: u32) -> Result<(), Error> {
         self.data.borrow_mut().int_32_u = value;
         Ok(())
     }
 
-    fn set_int_40_u(&self, _ctx: &WriteContext<'_>, value: u64) -> Result<(), Error> {
+    fn set_int_40_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         self.data.borrow_mut().int_40_u = value;
         Ok(())
     }
 
-    fn set_int_48_u(&self, _ctx: &WriteContext<'_>, value: u64) -> Result<(), Error> {
+    fn set_int_48_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         self.data.borrow_mut().int_48_u = value;
         Ok(())
     }
 
-    fn set_int_56_u(&self, _ctx: &WriteContext<'_>, value: u64) -> Result<(), Error> {
+    fn set_int_56_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         self.data.borrow_mut().int_56_u = value;
         Ok(())
     }
 
-    fn set_int_64_u(&self, _ctx: &WriteContext<'_>, value: u64) -> Result<(), Error> {
+    fn set_int_64_u(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         self.data.borrow_mut().int_64_u = value;
         Ok(())
     }
 
-    fn set_int_8_s(&self, _ctx: &WriteContext<'_>, value: i8) -> Result<(), Error> {
+    fn set_int_8_s(&self, _ctx: impl WriteContext, value: i8) -> Result<(), Error> {
         self.data.borrow_mut().int_8_s = value;
         Ok(())
     }
 
-    fn set_int_16_s(&self, _ctx: &WriteContext<'_>, value: i16) -> Result<(), Error> {
+    fn set_int_16_s(&self, _ctx: impl WriteContext, value: i16) -> Result<(), Error> {
         self.data.borrow_mut().int_16_s = value;
         Ok(())
     }
 
-    fn set_int_24_s(&self, _ctx: &WriteContext<'_>, value: i32) -> Result<(), Error> {
+    fn set_int_24_s(&self, _ctx: impl WriteContext, value: i32) -> Result<(), Error> {
         self.data.borrow_mut().int_24_s = value;
         Ok(())
     }
 
-    fn set_int_32_s(&self, _ctx: &WriteContext<'_>, value: i32) -> Result<(), Error> {
+    fn set_int_32_s(&self, _ctx: impl WriteContext, value: i32) -> Result<(), Error> {
         self.data.borrow_mut().int_32_s = value;
         Ok(())
     }
 
-    fn set_int_40_s(&self, _ctx: &WriteContext<'_>, value: i64) -> Result<(), Error> {
+    fn set_int_40_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
         self.data.borrow_mut().int_40_s = value;
         Ok(())
     }
 
-    fn set_int_48_s(&self, _ctx: &WriteContext<'_>, value: i64) -> Result<(), Error> {
+    fn set_int_48_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
         self.data.borrow_mut().int_48_s = value;
         Ok(())
     }
 
-    fn set_int_56_s(&self, _ctx: &WriteContext<'_>, value: i64) -> Result<(), Error> {
+    fn set_int_56_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
         self.data.borrow_mut().int_56_s = value;
         Ok(())
     }
 
-    fn set_int_64_s(&self, _ctx: &WriteContext<'_>, value: i64) -> Result<(), Error> {
+    fn set_int_64_s(&self, _ctx: impl WriteContext, value: i64) -> Result<(), Error> {
         self.data.borrow_mut().int_64_s = value;
         Ok(())
     }
 
-    fn set_enum_8(&self, _ctx: &WriteContext<'_>, value: u8) -> Result<(), Error> {
+    fn set_enum_8(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
         self.data.borrow_mut().enum_8 = value;
         Ok(())
     }
 
-    fn set_enum_16(&self, _ctx: &WriteContext<'_>, value: u16) -> Result<(), Error> {
+    fn set_enum_16(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.data.borrow_mut().enum_16 = value;
         Ok(())
     }
 
-    fn set_float_single(&self, _ctx: &WriteContext<'_>, value: f32) -> Result<(), Error> {
+    fn set_float_single(&self, _ctx: impl WriteContext, value: f32) -> Result<(), Error> {
         self.data.borrow_mut().float_single = value;
         Ok(())
     }
 
-    fn set_float_double(&self, _ctx: &WriteContext<'_>, value: f64) -> Result<(), Error> {
+    fn set_float_double(&self, _ctx: impl WriteContext, value: f64) -> Result<(), Error> {
         self.data.borrow_mut().float_double = value;
         Ok(())
     }
 
-    fn set_octet_string(&self, _ctx: &WriteContext<'_>, value: OctetStr<'_>) -> Result<(), Error> {
+    fn set_octet_string(&self, _ctx: impl WriteContext, value: OctetStr<'_>) -> Result<(), Error> {
         self.data.borrow_mut().octet_string =
             value.0.try_into().map_err(|_| ErrorCode::InvalidAction)?;
         Ok(())
@@ -1140,7 +1140,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_list_int_8_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: ArrayAttributeWrite<TLVArray<'_, u8>, u8>,
     ) -> Result<(), Error> {
         match value {
@@ -1189,7 +1189,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_list_octet_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: ArrayAttributeWrite<TLVArray<'_, OctetStr<'_>>, OctetStr<'_>>,
     ) -> Result<(), Error> {
         match value {
@@ -1243,7 +1243,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_list_struct_octet_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: ArrayAttributeWrite<TLVArray<'_, TestListStructOctet<'_>>, TestListStructOctet<'_>>,
     ) -> Result<(), Error> {
         match value {
@@ -1319,7 +1319,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_long_octet_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: OctetStr<'_>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().long_octet_string =
@@ -1327,7 +1327,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         Ok(())
     }
 
-    fn set_char_string(&self, _ctx: &WriteContext<'_>, value: Utf8Str<'_>) -> Result<(), Error> {
+    fn set_char_string(&self, _ctx: impl WriteContext, value: Utf8Str<'_>) -> Result<(), Error> {
         self.data.borrow_mut().char_string =
             value.try_into().map_err(|_| ErrorCode::InvalidAction)?;
         Ok(())
@@ -1335,7 +1335,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_long_char_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Utf8Str<'_>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().long_char_string =
@@ -1343,24 +1343,24 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         Ok(())
     }
 
-    fn set_epoch_us(&self, _ctx: &WriteContext<'_>, value: u64) -> Result<(), Error> {
+    fn set_epoch_us(&self, _ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         self.data.borrow_mut().epoch_us = value;
         Ok(())
     }
 
-    fn set_epoch_s(&self, _ctx: &WriteContext<'_>, value: u32) -> Result<(), Error> {
+    fn set_epoch_s(&self, _ctx: impl WriteContext, value: u32) -> Result<(), Error> {
         self.data.borrow_mut().epoch_s = value;
         Ok(())
     }
 
-    fn set_vendor_id(&self, _ctx: &WriteContext<'_>, value: u16) -> Result<(), Error> {
+    fn set_vendor_id(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.data.borrow_mut().vendor_id = value;
         Ok(())
     }
 
     fn set_list_nullables_and_optionals_struct(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: ArrayAttributeWrite<
             TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
             NullablesAndOptionalsStruct<'_>,
@@ -1425,14 +1425,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         }
     }
 
-    fn set_enum_attr(&self, _ctx: &WriteContext<'_>, value: SimpleEnum) -> Result<(), Error> {
+    fn set_enum_attr(&self, _ctx: impl WriteContext, value: SimpleEnum) -> Result<(), Error> {
         self.data.borrow_mut().enum_attr = value;
         Ok(())
     }
 
     fn set_struct_attr(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: SimpleStruct<'_>,
     ) -> Result<(), Error> {
         let mut data = self.data.borrow_mut();
@@ -1459,7 +1459,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_range_restricted_int_8_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: u8,
     ) -> Result<(), Error> {
         self.data.borrow_mut().range_restricted_int_8_u = value;
@@ -1468,7 +1468,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_range_restricted_int_8_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: i8,
     ) -> Result<(), Error> {
         self.data.borrow_mut().range_restricted_int_8_s = value;
@@ -1477,7 +1477,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_range_restricted_int_16_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: u16,
     ) -> Result<(), Error> {
         self.data.borrow_mut().range_restricted_int_16_u = value;
@@ -1486,7 +1486,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_range_restricted_int_16_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: i16,
     ) -> Result<(), Error> {
         self.data.borrow_mut().range_restricted_int_16_s = value;
@@ -1495,7 +1495,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_list_long_octet_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: ArrayAttributeWrite<TLVArray<'_, OctetStr<'_>>, OctetStr<'_>>,
     ) -> Result<(), Error> {
         match value {
@@ -1549,19 +1549,19 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_list_fabric_scoped(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         _value: ArrayAttributeWrite<TLVArray<'_, TestFabricScoped<'_>>, TestFabricScoped<'_>>,
     ) -> Result<(), Error> {
         todo!()
     }
 
-    fn set_timed_write_boolean(&self, _ctx: &WriteContext<'_>, _value: bool) -> Result<(), Error> {
+    fn set_timed_write_boolean(&self, _ctx: impl WriteContext, _value: bool) -> Result<(), Error> {
         todo!()
     }
 
     fn set_general_error_boolean(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         _value: bool,
     ) -> Result<(), Error> {
         todo!()
@@ -1569,7 +1569,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_cluster_error_boolean(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         _value: bool,
     ) -> Result<(), Error> {
         todo!()
@@ -1577,7 +1577,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_boolean(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<bool>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_boolean = value;
@@ -1586,7 +1586,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_bitmap_8(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<Bitmap8MaskMap>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_bitmap_8 = value;
@@ -1595,7 +1595,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_bitmap_16(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<Bitmap16MaskMap>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_bitmap_16 = value;
@@ -1604,7 +1604,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_bitmap_32(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<Bitmap32MaskMap>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_bitmap_32 = value;
@@ -1613,7 +1613,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_bitmap_64(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<Bitmap64MaskMap>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_bitmap_64 = value;
@@ -1622,7 +1622,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_8_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_8_u = value;
@@ -1631,7 +1631,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_16_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_16_u = value;
@@ -1640,7 +1640,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_24_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u32>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_24_u = value;
@@ -1649,7 +1649,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_32_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u32>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_32_u = value;
@@ -1658,7 +1658,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_40_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_40_u = value;
@@ -1667,7 +1667,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_48_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_48_u = value;
@@ -1676,7 +1676,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_56_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_56_u = value;
@@ -1685,7 +1685,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_64_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_64_u = value;
@@ -1694,7 +1694,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_8_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i8>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_8_s = value;
@@ -1703,7 +1703,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_16_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i16>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_16_s = value;
@@ -1712,7 +1712,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_24_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i32>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_24_s = value;
@@ -1721,7 +1721,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_32_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i32>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_32_s = value;
@@ -1730,7 +1730,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_40_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_40_s = value;
@@ -1739,7 +1739,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_48_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_48_s = value;
@@ -1748,7 +1748,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_56_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_56_s = value;
@@ -1757,7 +1757,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_int_64_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_int_64_s = value;
@@ -1766,7 +1766,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_enum_8(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_enum_8 = value;
@@ -1775,7 +1775,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_enum_16(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_enum_16 = value;
@@ -1784,7 +1784,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_float_single(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<f32>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_float_single = value;
@@ -1793,7 +1793,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_float_double(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<f64>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_float_double = value;
@@ -1802,7 +1802,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_octet_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<OctetStr<'_>>,
     ) -> Result<(), Error> {
         if let Some(value) = value.into_option() {
@@ -1817,7 +1817,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_char_string(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<Utf8Str<'_>>,
     ) -> Result<(), Error> {
         if let Some(value) = value.into_option() {
@@ -1832,7 +1832,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_enum_attr(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<SimpleEnum>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_enum_attr = value;
@@ -1841,7 +1841,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_struct(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<SimpleStruct<'_>>,
     ) -> Result<(), Error> {
         if let Some(s) = value.into_option() {
@@ -1867,7 +1867,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_range_restricted_int_8_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_range_restricted_int_8_u = value;
@@ -1876,7 +1876,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_range_restricted_int_8_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i8>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_range_restricted_int_8_s = value;
@@ -1885,7 +1885,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_range_restricted_int_16_u(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_range_restricted_int_16_u = value;
@@ -1894,36 +1894,36 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_nullable_range_restricted_int_16_s(
         &self,
-        _ctx: &WriteContext<'_>,
+        _ctx: impl WriteContext,
         value: Nullable<i16>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().nullable_range_restricted_int_16_s = value;
         Ok(())
     }
 
-    fn handle_test(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
+    fn handle_test(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Ok(())
     }
 
-    fn handle_test_not_handled(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
+    fn handle_test_not_handled(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         todo!()
     }
 
     fn handle_test_specific<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         response: TestSpecificResponseBuilder<P>,
     ) -> Result<P, Error> {
         response.return_value(7)?.end()
     }
 
-    fn handle_test_unknown_command(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
+    fn handle_test_unknown_command(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         todo!()
     }
 
     fn handle_test_add_arguments<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestAddArgumentsRequest<'_>,
         response: TestAddArgumentsResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1937,7 +1937,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_simple_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestSimpleArgumentRequestRequest<'_>,
         response: TestSimpleArgumentResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1946,7 +1946,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_struct_array_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: TestStructArrayArgumentRequestRequest<'_>,
         _response: TestStructArrayArgumentResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1955,7 +1955,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_struct_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestStructArgumentRequestRequest<'_>,
         response: BooleanResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1975,7 +1975,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_nested_struct_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestNestedStructArgumentRequestRequest<'_>,
         response: BooleanResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -1999,7 +1999,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_list_struct_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestListStructArgumentRequestRequest<'_>,
         response: BooleanResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2036,7 +2036,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_list_int_8_u_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestListInt8UArgumentRequestRequest<'_>,
         response: BooleanResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2057,7 +2057,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_nested_struct_list_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestNestedStructListArgumentRequestRequest<'_>,
         response: BooleanResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2109,7 +2109,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_list_nested_struct_list_argument_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestListNestedStructListArgumentRequestRequest<'_>,
         response: BooleanResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2206,7 +2206,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_list_int_8_u_reverse_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestListInt8UReverseRequestRequest<'_>,
         response: TestListInt8UReverseResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2229,7 +2229,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_enums_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestEnumsRequestRequest<'_>,
         response: TestEnumsResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2241,7 +2241,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_nullable_optional_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestNullableOptionalRequestRequest<'_>,
         response: TestNullableOptionalResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2255,7 +2255,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_complex_nullable_optional_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestComplexNullableOptionalRequestRequest<'_>,
         response: TestComplexNullableOptionalResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2385,7 +2385,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_simple_struct_echo_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: SimpleStructEchoRequestRequest<'_>,
         response: SimpleStructResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2405,13 +2405,13 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .end()
     }
 
-    fn handle_timed_invoke_request(&self, _ctx: &InvokeContext<'_>) -> Result<(), Error> {
+    fn handle_timed_invoke_request(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         todo!()
     }
 
     fn handle_test_simple_optional_argument_request(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestSimpleOptionalArgumentRequestRequest<'_>,
     ) -> Result<(), Error> {
         if request.arg_1()?.is_some() {
@@ -2423,7 +2423,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_emit_test_event_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: TestEmitTestEventRequestRequest<'_>,
         _response: TestEmitTestEventResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2432,7 +2432,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_emit_test_fabric_scoped_event_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         _request: TestEmitTestFabricScopedEventRequestRequest<'_>,
         _response: TestEmitTestFabricScopedEventResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2441,7 +2441,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_batch_helper_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestBatchHelperRequestRequest<'_>,
         response: TestBatchHelperResponseBuilder<P>,
     ) -> Result<P, Error> {
@@ -2465,7 +2465,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn handle_test_second_batch_helper_request<P: TLVBuilderParent>(
         &self,
-        _ctx: &InvokeContext<'_>,
+        _ctx: impl InvokeContext,
         request: TestSecondBatchHelperRequestRequest<'_>,
         response: TestBatchHelperResponseBuilder<P>,
     ) -> Result<P, Error> {

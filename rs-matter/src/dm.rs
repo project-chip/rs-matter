@@ -165,7 +165,14 @@ where
 
         for item in metadata.node().read(&req, &exchange.accessor()?)? {
             if item?
-                .map(|attr| self.handler.read_awaits(&ReadContext::new(exchange, &attr)))
+                .map(|attr| {
+                    self.handler.read_awaits(ReadContextInstance::new(
+                        exchange,
+                        &self.handler,
+                        &self.buffers,
+                        &attr,
+                    ))
+                })
                 .unwrap_or(false)
             {
                 awaits = true;
@@ -181,7 +188,15 @@ where
             let mut attrs = node.read(&req, &accessor)?.peekable();
 
             if !req
-                .respond(&self.handler, exchange, None, &mut attrs, &mut wb, true)
+                .respond(
+                    &self.handler,
+                    &self.buffers,
+                    exchange,
+                    None,
+                    &mut attrs,
+                    &mut wb,
+                    true,
+                )
                 .await?
             {
                 drop(attrs);
@@ -222,7 +237,15 @@ where
 
         loop {
             let more_chunks = req
-                .respond(&self.handler, exchange, None, &mut attrs, &mut wb, true)
+                .respond(
+                    &self.handler,
+                    &self.buffers,
+                    exchange,
+                    None,
+                    &mut attrs,
+                    &mut wb,
+                    true,
+                )
                 .await?;
 
             exchange.send(OpCode::ReportData, wb.as_slice()).await?;
@@ -269,8 +292,10 @@ where
         for item in metadata.node().write(&req, &exchange.accessor()?)? {
             if item?
                 .map(|(attr, _)| {
-                    self.handler.write_awaits(&WriteContext::new(
+                    self.handler.write_awaits(WriteContextInstance::new(
                         exchange,
+                        &self.handler,
+                        &self.buffers,
                         &attr,
                         &TLVElement::new(&[]),
                         &(),
@@ -295,14 +320,28 @@ where
 
             let req = WriteReqRef::new(TLVElement::new(&rx));
 
-            req.respond(&self.handler, exchange, &metadata.node(), self, &mut wb)
-                .await?
+            req.respond(
+                &self.handler,
+                &self.buffers,
+                exchange,
+                &metadata.node(),
+                self,
+                &mut wb,
+            )
+            .await?
         } else {
             // No, they won't. Answer the request by directly using the RX packet
             // of the transport layer, as the operation won't await.
 
-            req.respond(&self.handler, exchange, &metadata.node(), self, &mut wb)
-                .await?
+            req.respond(
+                &self.handler,
+                &self.buffers,
+                exchange,
+                &metadata.node(),
+                self,
+                &mut wb,
+            )
+            .await?
         };
 
         exchange.send(OpCode::WriteResponse, wb.as_slice()).await?;
@@ -340,8 +379,10 @@ where
         for item in metadata.node().invoke(&req, &exchange.accessor()?)? {
             if item?
                 .map(|(cmd, _)| {
-                    self.handler.invoke_awaits(&InvokeContext::new(
+                    self.handler.invoke_awaits(InvokeContextInstance::new(
                         exchange,
+                        &self.handler,
+                        &self.buffers,
                         &cmd,
                         &TLVElement::new(&[]),
                         &(),
@@ -368,6 +409,7 @@ where
 
             req.respond(
                 &self.handler,
+                &self.buffers,
                 exchange,
                 &metadata.node(),
                 self,
@@ -381,6 +423,7 @@ where
 
             req.respond(
                 &self.handler,
+                &self.buffers,
                 exchange,
                 &metadata.node(),
                 self,
@@ -716,6 +759,7 @@ where
                 let more_chunks = req
                     .respond(
                         &self.handler,
+                        &self.buffers,
                         exchange,
                         Some(id),
                         &mut attrs,
@@ -852,9 +896,11 @@ impl<'a> ReportDataReq<'a> {
     // the end of long reads.
     const LONG_READS_TLV_RESERVE_SIZE: usize = 24;
 
-    pub(crate) async fn respond<T, I>(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn respond<T, B, I>(
         &self,
         handler: T,
+        buffers: B,
         exchange: &Exchange<'_>,
         subscription_id: Option<u32>,
         attrs: &mut Peekable<I>,
@@ -863,6 +909,7 @@ impl<'a> ReportDataReq<'a> {
     ) -> Result<bool, Error>
     where
         T: DataModelHandler,
+        B: BufferAccess<IMBuffer>,
         I: Iterator<Item = Result<Result<AttrDetails<'a>, AttrStatus>, Error>>,
     {
         wb.reset();
@@ -894,7 +941,9 @@ impl<'a> ReportDataReq<'a> {
         while let Some(item) = attrs.peek() {
             match item {
                 Ok(item) => {
-                    if AttrDataEncoder::handle_read(exchange, item, &handler, &mut tw).await? {
+                    if ReadReplyInstance::handle_read(exchange, item, &handler, &buffers, &mut tw)
+                        .await?
+                    {
                         attrs.next();
                     } else {
                         break;
@@ -930,9 +979,10 @@ impl<'a> ReportDataReq<'a> {
 }
 
 impl WriteReqRef<'_> {
-    async fn respond<T>(
+    async fn respond<T, B>(
         &self,
         handler: T,
+        buffers: B,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
         notify: &dyn ChangeNotify,
@@ -940,6 +990,7 @@ impl WriteReqRef<'_> {
     ) -> Result<bool, Error>
     where
         T: DataModelHandler,
+        B: BufferAccess<IMBuffer>,
     {
         let accessor = exchange.accessor()?;
 
@@ -964,7 +1015,8 @@ impl WriteReqRef<'_> {
             node.write(self, &accessor)?.collect();
 
         for item in write_attrs {
-            AttrDataEncoder::handle_write(exchange, &item?, &handler, &mut tw, notify).await?;
+            ReadReplyInstance::handle_write(exchange, &item?, &handler, &buffers, &mut tw, notify)
+                .await?;
         }
 
         tw.end_container()?;
@@ -975,9 +1027,11 @@ impl WriteReqRef<'_> {
 }
 
 impl InvReqRef<'_> {
-    async fn respond<T>(
+    #[allow(clippy::too_many_arguments)]
+    async fn respond<T, B>(
         &self,
         handler: T,
+        buffers: B,
         exchange: &Exchange<'_>,
         node: &Node<'_>,
         notify: &dyn ChangeNotify,
@@ -986,6 +1040,7 @@ impl InvReqRef<'_> {
     ) -> Result<(), Error>
     where
         T: DataModelHandler,
+        B: BufferAccess<IMBuffer>,
     {
         wb.reset();
 
@@ -1008,7 +1063,8 @@ impl InvReqRef<'_> {
         let accessor = exchange.accessor()?;
 
         for item in node.invoke(self, &accessor)? {
-            CmdDataEncoder::handle(&item?, &handler, &mut tw, exchange, notify).await?;
+            InvokeReplyInstance::handle(&item?, &handler, &buffers, &mut tw, exchange, notify)
+                .await?;
         }
 
         if has_requests {

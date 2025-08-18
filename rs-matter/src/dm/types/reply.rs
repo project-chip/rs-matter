@@ -15,43 +15,83 @@
  *    limitations under the License.
  */
 
-use core::fmt::Debug;
-use core::marker::PhantomData;
-use core::ops::{Deref, DerefMut};
-
+use crate::dm::IMBuffer;
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
     CmdRespTag, CmdStatus, IMStatusCode,
 };
-use crate::tlv::TLVTag;
-use crate::tlv::{FromTLV, TLVElement, TLVWrite, TLVWriter, TagType, ToTLV};
+use crate::tlv::{TLVElement, TLVTag, TLVWrite, TLVWriter, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
+use crate::utils::storage::pooled::BufferAccess;
 
 use super::{
-    AttrDetails, ChangeNotify, CmdDetails, DataModelHandler, InvokeContext, ReadContext,
-    WriteContext,
+    AttrDetails, ChangeNotify, CmdDetails, DataModelHandler, InvokeContextInstance,
+    ReadContextInstance, WriteContextInstance,
 };
 
-pub struct AttrDataEncoder<'a, 'b, 'c> {
+// A type for writing the outcome of an attribute-read or command-invoke operation.
+pub trait Reply {
+    /// The tag to use if writing the data "manually" by using the `writer` method.
+    const TAG: TagType;
+
+    /// Set the TLV value of the reply and complete.
+    fn set<T: ToTLV>(self, value: T) -> Result<(), Error>;
+
+    /// Return the tag to use if writing the TLV reply data in smaller chunks by using the `writer` method
+    /// (as opposed to just calling `set`).
+    /// A convenience method to avoid using the `Self::TAG` directly.
+    fn tag(&self) -> &'static TagType {
+        &Self::TAG
+    }
+
+    /// Remove everything written via the `writer` method since the last call to `reset`.
+    fn reset(&mut self);
+
+    /// Return a TLV writer to write the TLV reply data manually.
+    fn writer(&mut self) -> impl TLVWrite + '_;
+
+    /// Complete the manual TLV write of the reply.
+    fn complete(self) -> Result<(), Error>;
+}
+
+/// A trait for encoding the attribute value for an attribute read operation.
+pub trait ReadReply {
+    /// Return the reply data writer for an attribute, if the given `dataver` is still the latest
+    /// cluster dataver.
+    fn with_dataver(self, dataver: u32) -> Result<Option<impl Reply>, Error>;
+}
+
+/// A trait for encoding the result from a command invoke operation.
+pub trait InvokeReply {
+    /// Return the reply data writer for a command with the provided Command ID.
+    fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
+}
+
+/// A concrete implementation of the `ReadReply` trait for encoding attribute data.
+pub(crate) struct ReadReplyInstance<'a, 'b, 'c> {
     dataver_filter: Option<u32>,
     path: AttrPath,
     tw: &'a mut TLVWriter<'b, 'c>,
 }
 
-impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
-    pub async fn handle_read<T: DataModelHandler>(
+impl<'a, 'b, 'c> ReadReplyInstance<'a, 'b, 'c> {
+    pub(crate) async fn handle_read<T: DataModelHandler, B: BufferAccess<IMBuffer>>(
         exchange: &Exchange<'_>,
         item: &Result<AttrDetails<'_>, AttrStatus>,
-        handler: &T,
+        handler: T,
+        buffers: B,
         tw: &mut TLVWriter<'_, '_>,
     ) -> Result<bool, Error> {
         let status = match item {
             Ok(attr) => {
-                let encoder = AttrDataEncoder::new(attr, tw);
+                let encoder = ReadReplyInstance::new(attr, tw);
 
                 let result = handler
-                    .read(&ReadContext::new(exchange, attr), encoder)
+                    .read(
+                        ReadContextInstance::new(exchange, &handler, buffers, attr),
+                        encoder,
+                    )
                     .await;
                 match result {
                     Ok(()) => None,
@@ -75,17 +115,20 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         Ok(true)
     }
 
-    pub(crate) async fn handle_write<T: DataModelHandler>(
+    pub(crate) async fn handle_write<T: DataModelHandler, B: BufferAccess<IMBuffer>>(
         exchange: &Exchange<'_>,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
-        handler: &T,
+        handler: T,
+        buffers: B,
         tw: &mut TLVWriter<'_, '_>,
         notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let status = match item {
             Ok((attr, data)) => {
                 let result = handler
-                    .write(&WriteContext::new(exchange, attr, data, notify))
+                    .write(WriteContextInstance::new(
+                        exchange, &handler, buffers, attr, data, notify,
+                    ))
                     .await;
                 match result {
                     Ok(()) => attr.status(IMStatusCode::Success)?,
@@ -105,27 +148,30 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
         Ok(())
     }
 
-    pub fn new(attr: &AttrDetails, tw: &'a mut TLVWriter<'b, 'c>) -> Self {
+    pub(crate) fn new(attr: &AttrDetails, tw: &'a mut TLVWriter<'b, 'c>) -> Self {
         Self {
             dataver_filter: attr.dataver,
             path: attr.path(),
             tw,
         }
     }
+}
 
-    pub fn with_dataver(self, dataver: u32) -> Result<Option<AttrDataWriter<'a, 'b, 'c>>, Error> {
+impl<'a, 'b, 'c> ReadReply for ReadReplyInstance<'a, 'b, 'c> {
+    fn with_dataver(self, dataver: u32) -> Result<Option<impl Reply>, Error> {
         if self
             .dataver_filter
             .map(|dataver_filter| dataver_filter != dataver)
             .unwrap_or(true)
         {
-            let mut writer = AttrDataWriter::new(self.tw);
+            let mut writer = AttrReplyInstance::new(self.tw);
+            let mut tw = writer.writer();
 
-            writer.start_struct(&TLVTag::Anonymous)?;
-            writer.start_struct(&TLVTag::Context(AttrRespTag::Data as _))?;
-            writer.u32(&TLVTag::Context(AttrDataTag::DataVer as _), dataver)?;
+            tw.start_struct(&TLVTag::Anonymous)?;
+            tw.start_struct(&TLVTag::Context(AttrRespTag::Data as _))?;
+            tw.u32(&TLVTag::Context(AttrDataTag::DataVer as _), dataver)?;
             self.path
-                .to_tlv(&TagType::Context(AttrDataTag::Path as _), &mut *writer)?;
+                .to_tlv(&TagType::Context(AttrDataTag::Path as _), tw)?;
 
             Ok(Some(writer))
         } else {
@@ -134,13 +180,14 @@ impl<'a, 'b, 'c> AttrDataEncoder<'a, 'b, 'c> {
     }
 }
 
-pub struct AttrDataWriter<'a, 'b, 'c> {
+/// A concrete implementation of the `Reply` trait for returning attribute data.
+pub(crate) struct AttrReplyInstance<'a, 'b, 'c> {
     tw: &'a mut TLVWriter<'b, 'c>,
     anchor: usize,
     completed: bool,
 }
 
-impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
+impl<'a, 'b, 'c> AttrReplyInstance<'a, 'b, 'c> {
     pub const TAG: TLVTag = TLVTag::Context(AttrDataTag::Data as _);
 
     fn new(tw: &'a mut TLVWriter<'b, 'c>) -> Self {
@@ -152,13 +199,17 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
             completed: false,
         }
     }
+}
 
-    pub fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
+impl<'a, 'b, 'c> Reply for AttrReplyInstance<'a, 'b, 'c> {
+    const TAG: TagType = Self::TAG;
+
+    fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
         value.to_tlv(&Self::TAG, &mut self.tw)?;
         self.complete()
     }
 
-    pub fn complete(mut self) -> Result<(), Error> {
+    fn complete(mut self) -> Result<(), Error> {
         self.tw.end_container()?;
         self.tw.end_container()?;
 
@@ -167,8 +218,8 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
         Ok(())
     }
 
-    pub fn writer(&mut self) -> &mut TLVWriter<'b, 'c> {
-        self.tw
+    fn writer(&mut self) -> impl TLVWrite + '_ {
+        &mut self.tw
     }
 
     fn reset(&mut self) {
@@ -176,7 +227,7 @@ impl<'a, 'b, 'c> AttrDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl Drop for AttrDataWriter<'_, '_, '_> {
+impl Drop for AttrReplyInstance<'_, '_, '_> {
     fn drop(&mut self) {
         if !self.completed {
             self.reset();
@@ -184,22 +235,8 @@ impl Drop for AttrDataWriter<'_, '_, '_> {
     }
 }
 
-impl<'b, 'c> Deref for AttrDataWriter<'_, 'b, 'c> {
-    type Target = TLVWriter<'b, 'c>;
-
-    fn deref(&self) -> &Self::Target {
-        self.tw
-    }
-}
-
-impl DerefMut for AttrDataWriter<'_, '_, '_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.tw
-    }
-}
-
 #[derive(Default)]
-pub struct CmdDataTracker {
+pub(crate) struct CmdDataTracker {
     skip_status: bool,
 }
 
@@ -217,16 +254,18 @@ impl CmdDataTracker {
     }
 }
 
-pub struct CmdDataEncoder<'a, 'b, 'c> {
+/// A concrete implementation of the `InvokeReply` trait for encoding command data.
+pub(crate) struct InvokeReplyInstance<'a, 'b, 'c> {
     tracker: &'a mut CmdDataTracker,
     path: CmdPath,
     tw: &'a mut TLVWriter<'b, 'c>,
 }
 
-impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
-    pub(crate) async fn handle<T: DataModelHandler>(
+impl<'a, 'b, 'c> InvokeReplyInstance<'a, 'b, 'c> {
+    pub(crate) async fn handle<T: DataModelHandler, B: BufferAccess<IMBuffer>>(
         item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
-        handler: &T,
+        handler: T,
+        buffers: B,
         tw: &mut TLVWriter<'_, '_>,
         exchange: &Exchange<'_>,
         notify: &dyn ChangeNotify,
@@ -234,10 +273,13 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
         let status = match item {
             Ok((cmd, data)) => {
                 let mut tracker = CmdDataTracker::new();
-                let encoder = CmdDataEncoder::new(cmd, &mut tracker, tw);
+                let encoder = InvokeReplyInstance::new(cmd, &mut tracker, tw);
 
                 let result = handler
-                    .invoke(&InvokeContext::new(exchange, cmd, data, notify), encoder)
+                    .invoke(
+                        InvokeContextInstance::new(exchange, &handler, buffers, cmd, data, notify),
+                        encoder,
+                    )
                     .await;
                 match result {
                     Ok(()) => cmd.success(&tracker),
@@ -271,29 +313,33 @@ impl<'a, 'b, 'c> CmdDataEncoder<'a, 'b, 'c> {
             tw,
         }
     }
+}
 
-    pub fn with_command(mut self, cmd: u32) -> Result<CmdDataWriter<'a, 'b, 'c>, Error> {
-        let mut writer = CmdDataWriter::new(self.tracker, self.tw);
+impl<'a, 'b, 'c> InvokeReply for InvokeReplyInstance<'a, 'b, 'c> {
+    fn with_command(mut self, cmd: u32) -> Result<impl Reply, Error> {
+        let mut writer = CmdReplyInstance::new(self.tracker, self.tw);
+        let mut tw = writer.writer();
 
-        writer.start_struct(&TLVTag::Anonymous)?;
-        writer.start_struct(&TLVTag::Context(CmdRespTag::Cmd as _))?;
+        tw.start_struct(&TLVTag::Anonymous)?;
+        tw.start_struct(&TLVTag::Context(CmdRespTag::Cmd as _))?;
 
         self.path.path.leaf = Some(cmd as _);
         self.path
-            .to_tlv(&TagType::Context(CmdDataTag::Path as _), &mut *writer)?;
+            .to_tlv(&TagType::Context(CmdDataTag::Path as _), tw)?;
 
         Ok(writer)
     }
 }
 
-pub struct CmdDataWriter<'a, 'b, 'c> {
+/// A concrete implementation of the `Reply` trait for writing command data.
+pub(crate) struct CmdReplyInstance<'a, 'b, 'c> {
     tracker: &'a mut CmdDataTracker,
     tw: &'a mut TLVWriter<'b, 'c>,
     anchor: usize,
     completed: bool,
 }
 
-impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
+impl<'a, 'b, 'c> CmdReplyInstance<'a, 'b, 'c> {
     pub const TAG: TagType = TagType::Context(CmdDataTag::Data as _);
 
     fn new(tracker: &'a mut CmdDataTracker, tw: &'a mut TLVWriter<'b, 'c>) -> Self {
@@ -306,13 +352,17 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
             completed: false,
         }
     }
+}
 
-    pub fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
+impl<'a, 'b, 'c> Reply for CmdReplyInstance<'a, 'b, 'c> {
+    const TAG: TagType = Self::TAG;
+
+    fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
         value.to_tlv(&Self::TAG, &mut self.tw)?;
         self.complete()
     }
 
-    pub fn complete(mut self) -> Result<(), Error> {
+    fn complete(mut self) -> Result<(), Error> {
         self.tw.end_container()?;
         self.tw.end_container()?;
 
@@ -322,8 +372,8 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
         Ok(())
     }
 
-    pub fn writer(&mut self) -> &mut TLVWriter<'b, 'c> {
-        self.tw
+    fn writer(&mut self) -> impl TLVWrite + '_ {
+        &mut self.tw
     }
 
     fn reset(&mut self) {
@@ -331,72 +381,10 @@ impl<'a, 'b, 'c> CmdDataWriter<'a, 'b, 'c> {
     }
 }
 
-impl Drop for CmdDataWriter<'_, '_, '_> {
+impl Drop for CmdReplyInstance<'_, '_, '_> {
     fn drop(&mut self) {
         if !self.completed {
             self.reset();
         }
-    }
-}
-
-impl<'b, 'c> Deref for CmdDataWriter<'_, 'b, 'c> {
-    type Target = TLVWriter<'b, 'c>;
-
-    fn deref(&self) -> &Self::Target {
-        self.tw
-    }
-}
-
-impl DerefMut for CmdDataWriter<'_, '_, '_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.tw
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttrType<T>(PhantomData<fn() -> T>);
-
-impl<T> AttrType<T> {
-    pub const fn new() -> Self {
-        Self(PhantomData)
-    }
-
-    pub fn encode(&self, writer: AttrDataWriter, value: T) -> Result<(), Error>
-    where
-        T: ToTLV,
-    {
-        writer.set(value)
-    }
-
-    pub fn decode<'a>(&self, data: &'a TLVElement) -> Result<T, Error>
-    where
-        T: FromTLV<'a>,
-    {
-        T::from_tlv(data)
-    }
-}
-
-impl<T> Default for AttrType<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct AttrUtfType;
-
-impl AttrUtfType {
-    pub const fn new() -> Self {
-        Self
-    }
-
-    pub fn encode(&self, writer: AttrDataWriter, value: &str) -> Result<(), Error> {
-        writer.set(value)
-    }
-
-    pub fn decode<'a>(&self, data: &TLVElement<'a>) -> Result<&'a str, IMStatusCode> {
-        data.utf8().map_err(|_| IMStatusCode::InvalidDataType)
     }
 }

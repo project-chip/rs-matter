@@ -23,7 +23,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
@@ -76,11 +76,14 @@ fn main() -> Result<(), Error> {
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, dm_handler);
+    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
+
+    // Run the background job the handler might be having
+    let mut dm_handler_job = pin!(dm_handler.run());
 
     // Create the Matter UDP socket
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -99,7 +102,12 @@ fn main() -> Result<(), Error> {
     let mut persist = pin!(psm.run(dir, &matter));
 
     // Combine all async tasks in a single one
-    let all = select4(&mut transport, &mut mdns, &mut persist, &mut respond);
+    let all = select4(
+        &mut transport,
+        &mut mdns,
+        &mut persist,
+        select(&mut respond, &mut dm_handler_job).coalesce(),
+    );
 
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all.coalesce())
@@ -251,7 +259,7 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         self.dataver.changed();
     }
 
-    fn reachable(&self, _ctx: &ReadContext<'_>) -> Result<bool, Error> {
+    fn reachable(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         // This is the only mandatory attribute.
         //
         // We always report that the bridged device is reachable,
