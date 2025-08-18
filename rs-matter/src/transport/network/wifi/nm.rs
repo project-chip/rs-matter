@@ -294,7 +294,7 @@ impl NetCtl for NetMgrCtl<'_> {
         loop {
             // Wait for the scan to complete
             //
-            // NOTE: It seems NetworkManager - unlike `wpa_supplicant` - does not provide a way to
+            // NOTE: It seems NetworkManager - unlike `wpa_supplicant` - does not provide a way
             // to get a "Scan done" signal, so we just monitor the "access point added / removed"
             // signals and timeout if we don't see one incoming after a few seconds
 
