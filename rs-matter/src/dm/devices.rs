@@ -44,6 +44,11 @@ pub const DEV_TYPE_ON_OFF_LIGHT: DeviceType = DeviceType {
     drev: 2,
 };
 
+pub const DEV_TYPE_DIMMABLE_LIGHT: DeviceType = DeviceType {
+    dtype: 0x0101,
+    drev: 3,
+};
+
 /// A constant representing the Smart Speaker device in Matter.
 pub const DEV_TYPE_SMART_SPEAKER: DeviceType = DeviceType {
     dtype: 0x0022,

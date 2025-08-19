@@ -3,8 +3,9 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
-use crate::dm::{Dataver, InvokeContext, ReadContext, WriteContext, Cluster};
+use crate::utils::storage::WriteBuf;
 use crate::tlv::Nullable;
+use crate::dm::{AsyncHandler, AttrDetails, Cluster, Dataver, InvokeContext, ReadContext, ReadContextInstance, ReadReply, ReadReplyInstance, WriteContext};
 use crate::dm::clusters::level_control;
 pub use crate::dm::clusters::decl::level_control::*;
 use crate::with;
@@ -34,8 +35,8 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
+    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
+        HandlerAsyncAdaptor(self)
     }
 
     // Processes the options of commands 'without On/Off'.
@@ -177,7 +178,7 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
     }
 
     // A single method for dealing with the MoveToLevel and MoveToLevelWithOnOff logic.
-    fn move_to_level(&self, ctx: impl InvokeContext, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error>{
+    async fn move_to_level(&self, ctx: impl InvokeContext, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error>{
         // todo should this be corrected? Check the cpp impl
         if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
             return Err(Error::new(ErrorCode::InvalidCommand))
@@ -197,7 +198,36 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
                 self.write_current_level_quietly(Nullable::some(level), true)?;
                 self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
-                // todo: possibly update the OnOff cluster
+                // todo: update the OnOff cluster
+                let attr = AttrDetails{
+                    node: ctx.cmd().node,
+                    endpoint_id: ctx.cmd().endpoint_id,
+                    cluster_id: crate::dm::clusters::decl::on_off::FULL_CLUSTER.id,
+                    attr_id: crate::dm::clusters::decl::on_off::AttributeId::OnOff as u32,
+                    list_index: None,
+                    fab_idx: 0,
+                    fab_filter: false,
+                    dataver: None,
+                    wildcard: false,
+                };
+                let read_context = ReadContextInstance::new(
+                    ctx.exchange(),
+                    ctx.handler(),
+                    ctx.buffers(),
+                    &attr,
+                );
+                let mut buf = [0u8; 1024]; // todo get accurate size?
+                let mut wb = WriteBuf::new(&mut buf);
+                let mut tw = crate::tlv::TLVWriter::new(&mut wb);
+                let reply = ReadReplyInstance::new(&attr, &mut tw);
+                let result = ctx.handler().read(read_context, reply).await;
+
+                match result {
+                    Ok(_) => {
+                        // todo read reply and print it.
+                    },
+                    Err(e) => error!("{}", e.to_string()),
+                }
             }
             Some(t_time) => {
                 self.task_signal.signal(Task::MoveToLevel { target: level, transition_time: t_time});
@@ -208,7 +238,7 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
     }
 }
 
-impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
+impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T> {
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_revision(7)
@@ -244,7 +274,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
 
     // fn current_frequency(&self,ctx:impl crate::dm::ReadContext) -> Result<u16,crate::error::Error>{
 
-    fn current_level(
+    async fn current_level(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
@@ -252,7 +282,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(self.handler.raw_get_current_level())
     }
 
-    fn options(
+    async fn options(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<OptionsBitmap, Error> {
@@ -260,7 +290,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(self.handler.raw_get_options())
     }
 
-    fn on_level(
+    async fn on_level(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
@@ -268,7 +298,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(self.handler.raw_get_on_level())
     }
 
-    fn set_options(
+    async fn set_options(
         &self,
         _ctx: impl WriteContext,
         value: OptionsBitmap,
@@ -277,7 +307,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         self.handler.raw_set_options(value)
     }
 
-    fn set_on_level(
+    async fn set_on_level(
         &self,
         ctx: impl WriteContext,
         value: Nullable<u8>,
@@ -289,27 +319,27 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16,Error> {
+    async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16,Error> {
         info!("LevelControl: Called remaining_time()");
         Ok(self.handler.raw_get_remaining_time())
     }
 
-    fn max_level(&self, _ctx: impl ReadContext) -> Result<u8,Error> {
+    async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8,Error> {
         info!("LevelControl: Called max_level()");
         Ok(T::MAX_LEVEL)
     }
 
-    fn min_level(&self, _ctx: impl ReadContext) -> Result<u8,Error> {
+    async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8,Error> {
         info!("LevelControl: Called min_level()");
         Ok(T::MIN_LEVEL)
     }
 
-    fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8> ,Error> {
+    async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8> ,Error> {
         info!("LevelControl: Called start_up_current_level()");
         Ok(self.handler.raw_get_startup_current_level())
     }
 
-    fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(),Error> {
+    async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(),Error> {
         info!("LevelControl: Called set_start_up_current_level()");
         self.handler.raw_set_startup_current_level(value)?;
         self.dataver_changed();
@@ -317,17 +347,17 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_move_to_level(
+    async fn handle_move_to_level(
         &self,
         ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move_to_level()");
 
-        self.move_to_level(ctx, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
+        self.move_to_level(ctx, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?).await
     }
 
-    fn handle_move(
+    async fn handle_move(
         &self,
         _ctx: impl InvokeContext,
         request: MoveRequest<'_>,
@@ -352,7 +382,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_step(
+    async fn handle_step(
         &self,
         _ctx: impl InvokeContext,
         request: StepRequest<'_>,
@@ -367,7 +397,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_stop(
+    async fn handle_stop(
         &self,
         _ctx: impl InvokeContext,
         request: StopRequest<'_>,
@@ -382,17 +412,17 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_move_to_level_with_on_off(
+    async fn handle_move_to_level_with_on_off(
         &self,
         ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move_to_level_with_on_off()");
 
-        self.move_to_level(ctx, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
+        self.move_to_level(ctx, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?).await
     }
 
-    fn handle_move_with_on_off(
+    async fn handle_move_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         _request: MoveWithOnOffRequest<'_>,
@@ -401,7 +431,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_step_with_on_off(
+    async fn handle_step_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         _request: StepWithOnOffRequest<'_>,
@@ -410,7 +440,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_stop_with_on_off(
+    async fn handle_stop_with_on_off(
         &self,
         _ctx: impl InvokeContext,
         _request: StopWithOnOffRequest<'_>,
@@ -419,7 +449,7 @@ impl<'a, T: LevelControlHooks> ClusterHandler for LevelControlCluster<'a, T> {
         Ok(())
     }
 
-    fn handle_move_to_closest_frequency(
+    async fn handle_move_to_closest_frequency(
         &self,
         _ctx: impl InvokeContext,
         _request: MoveToClosestFrequencyRequest<'_>,
