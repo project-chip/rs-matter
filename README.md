@@ -48,11 +48,22 @@ With that said, provisioning and operating under the major Smart Home controller
 
 ## Next steps
 
-* Enable a CI that runs `rs-matter` against the Python/XML TCK tests of the Matter C++ SDK;
+* ✅ Enable a CI that runs `rs-matter` against the ConnectedHomeIP YAML tests - **now available via `xtask`!**
 * More intelligent reporting on subscriptions;
 * Support for Events.
 
 Also look at all [open issues](https://github.com/project-chip/rs-matter/issues).
+
+## Continuous Integration
+
+`rs-matter` includes comprehensive CI testing:
+
+- **Standard CI**: Runs on every push and PR with build, test, linting across multiple feature combinations
+- **ConnectedHomeIP Integration**: Native Rust tooling via `xtask` for running official Matter test cases
+  - Run locally during development: `cargo xtask itest`
+  - Automated nightly CI execution
+  - Iterative test enablement workflow for developers
+  - See [`.github/workflows/README.md`](.github/workflows/README.md) for complete documentation
 
 ## How does it look like?
 

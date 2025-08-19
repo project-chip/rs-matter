@@ -450,6 +450,11 @@ where
         let req = SubscribeReqRef::new(TLVElement::new(&rx));
         debug!("IM: Subscribe request: {:?}", req);
 
+        if let Err(err) = self.validate_subscribe(&req).await {
+            error!("Invalid subscribe request: {:?}", err);
+            return Self::send_status(exchange, err.code().into()).await;
+        }
+
         let (fabric_idx, peer_node_id) = exchange.with_session(|sess| {
             let fabric_idx =
                 NonZeroU8::new(sess.get_local_fabric_idx()).ok_or(ErrorCode::Invalid)?;
@@ -529,6 +534,37 @@ where
                     });
 
                 subscribed.set(true);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates the subscription request.
+    async fn validate_subscribe(&self, req: &SubscribeReqRef<'_>) -> Result<(), Error> {
+        // As per spec, we need to validate that the subscription request
+        // contains existing endpoints, clusters and attributes, and if not
+        // we should (a bit surprisingly) return InvalidAction
+
+        let metadata = self.handler.lock().await;
+
+        if let Some(attr_requests) = req.attr_requests()? {
+            let node = metadata.node();
+
+            for attr_req in attr_requests {
+                let attr_req = attr_req?;
+
+                if let Some(endpt) = attr_req.endpoint {
+                    let endpoint = node.endpoint(endpt).ok_or(ErrorCode::InvalidAction)?;
+
+                    if let Some(clst) = attr_req.cluster {
+                        let cluster = endpoint.cluster(clst).ok_or(ErrorCode::InvalidAction)?;
+
+                        if let Some(attr) = attr_req.attr {
+                            let _ = cluster.attribute(attr).ok_or(ErrorCode::InvalidAction)?;
+                        }
+                    }
+                }
             }
         }
 

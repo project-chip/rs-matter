@@ -20,6 +20,9 @@ name = "media_player"
 [[bin]]
 name = "bridge"
 
+[[bin]]
+name = "chip_tool_tests"
+
 [features]
 default = ["log"]
 log = []
@@ -41,3 +44,4 @@ nix = { version = "0.27", features = ["net"] }
 async-io = "2"
 futures-lite = "2"
 rs-matter = { path = "../rs-matter", features = ["async-io"] }
+async-signal = "0.2"
