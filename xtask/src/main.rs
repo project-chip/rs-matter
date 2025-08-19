@@ -56,7 +56,7 @@ enum Command {
         /// Timeout for each test in seconds
         #[arg(long, default_value = "120")]
         timeout: u32,
-        /// Skip settting up of the Chip environment (assume it's already set up)
+        /// Skip setting up of the Chip environment (assume it's already set up)
         #[arg(long)]
         skip_setup: bool,
         /// Skip building the tested executable (assume it's already built)
@@ -109,12 +109,12 @@ impl Command {
                 skip_setup,
                 skip_build,
             } => {
-                if !skip_setup {
-                    Command::ItestExe(build_args.clone()).run(print_cmd_output)?;
+                if !*skip_setup {
+                    Command::ItestSetup(setup_args.clone()).run(print_cmd_output)?;
                 }
 
                 if !*skip_build {
-                    Command::ItestSetup(setup_args.clone()).run(print_cmd_output)?;
+                    Command::ItestExe(build_args.clone()).run(print_cmd_output)?;
                 }
 
                 ITests::new(workspace_dir(), print_cmd_output).run(

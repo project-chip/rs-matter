@@ -48,7 +48,7 @@ With that said, provisioning and operating under the major Smart Home controller
 
 ## Next steps
 
-* ✅ Enable a CI that runs `rs-matter` against the ConnectedHomeIP YAML tests - **now available via `xtask`!**
+* Enable more ConnectedHomeIP YAML tests;
 * More intelligent reporting on subscriptions;
 * Support for Events.
 
@@ -63,7 +63,6 @@ Also look at all [open issues](https://github.com/project-chip/rs-matter/issues)
   - Run locally during development: `cargo xtask itest`
   - Automated nightly CI execution
   - Iterative test enablement workflow for developers
-  - See [`.github/workflows/README.md`](.github/workflows/README.md) for complete documentation
 
 ## How does it look like?
 

@@ -43,7 +43,7 @@ const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 /// The name of the tested `rs-matter` executable
 const TEST_EXE_NAME: &str = "chip_tool_tests";
 
-/// The tooling thaqt is checked for presence in the command line
+/// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
     "bash",
     "git",
@@ -533,7 +533,7 @@ impl ITests {
         let arch = env::consts::ARCH;
         let cpu = match arch {
             "x86_64" => "X64",
-            // TODO: Is this correct for Mac MX?
+            // TODO: Is this correct for M1/M2 (Apple Silicon)?
             "aarch64" => "ARM64",
             _ => {
                 anyhow::bail!("Unsupported host architecture: {arch}");
