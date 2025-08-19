@@ -220,7 +220,7 @@ impl ITests {
         self.run_command(&mut cmd)?;
 
         // Detect host platform for selective submodule initialization
-        let platform = self.host_os()?;
+        let platform = self.host_platform()?;
         info!("Detected platform: {platform}");
 
         // Initialize submodules selectively for host platform only
@@ -412,7 +412,7 @@ impl ITests {
             ninja -C out/host chip-tool
             "#,
             activate_script.display(),
-            self.host_os()?,
+            env::consts::OS,
             self.host_cpu()?
         );
 
@@ -520,18 +520,20 @@ impl ITests {
         self.workspace_dir.join(CHIP_DIR)
     }
 
-    fn host_os(&self) -> anyhow::Result<&str> {
+    fn host_platform(&self) -> anyhow::Result<&str> {
         let os = env::consts::OS;
-        if os != "linux" && os != "macos" {
-            anyhow::bail!("Unsupported host OS: {os}");
-        }
+        let chip_platform = match os {
+            "linux" => "linux",
+            "macos" => "darwin",
+            _ => anyhow::bail!("Unsupported host OS: {os}"),
+        };
 
-        Ok(os)
+        Ok(chip_platform)
     }
 
     fn host_cpu(&self) -> anyhow::Result<&str> {
         let arch = env::consts::ARCH;
-        let cpu = match arch {
+        let chip_cpu = match arch {
             "x86_64" => "X64",
             // TODO: Is this correct for M1/M2 (Apple Silicon)?
             "aarch64" => "ARM64",
@@ -540,6 +542,6 @@ impl ITests {
             }
         };
 
-        Ok(cpu)
+        Ok(chip_cpu)
     }
 }
