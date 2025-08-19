@@ -408,12 +408,10 @@ impl ITests {
         let build_script = format!(
             r#"
             source "{}" &&
-            gn gen out/host --args='target_os="{}" target_cpu="{}" is_debug=false' &&
+            gn gen out/host --args='is_debug=false' &&
             ninja -C out/host chip-tool
             "#,
             activate_script.display(),
-            env::consts::OS,
-            self.host_cpu()?
         );
 
         self.run_command_with(
@@ -529,19 +527,5 @@ impl ITests {
         };
 
         Ok(chip_platform)
-    }
-
-    fn host_cpu(&self) -> anyhow::Result<&str> {
-        let arch = env::consts::ARCH;
-        let chip_cpu = match arch {
-            "x86_64" => "X64",
-            // TODO: Is this correct for M1/M2 (Apple Silicon)?
-            "aarch64" => "ARM64",
-            _ => {
-                anyhow::bail!("Unsupported host architecture: {arch}");
-            }
-        };
-
-        Ok(chip_cpu)
     }
 }
