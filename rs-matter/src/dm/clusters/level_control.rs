@@ -1,10 +1,13 @@
+use core::any::Any;
 use core::cell::Cell;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
+use crate::dm::clusters::grp_key_mgmt::KeySetReadRequest;
+use crate::im::AttrResp;
 use crate::utils::storage::WriteBuf;
-use crate::tlv::Nullable;
+use crate::tlv::{FromTLV, Nullable, TLVElement, TLVWrite};
 use crate::dm::{AsyncHandler, AttrDetails, Cluster, Dataver, InvokeContext, ReadContext, ReadContextInstance, ReadReply, ReadReplyInstance, WriteContext};
 use crate::dm::clusters::level_control;
 pub use crate::dm::clusters::decl::level_control::*;
@@ -45,20 +48,6 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
         let temporary_options = (options_mask & options_override) | self.handler.raw_get_options();
 
         temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF)
-    }
-
-    // Runs an async task manager for the cluster.
-    async fn run(&self) -> Result<(), Error> {
-        loop {
-            let mut task = self.task_signal.wait().await;
-
-            loop {
-                match embassy_futures::select::select(self.task_manager(task), self.task_signal.wait()).await {
-                    embassy_futures::select::Either::First(_) => break,
-                    embassy_futures::select::Either::Second(new_task) => task = new_task,
-                };
-            }
-        }
     }
 
     async fn task_manager(&self, task: Task) {
@@ -143,6 +132,7 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
             let is_transition_start = remaining_time.as_millis() == (transition_time as u64 * 100);
             let is_transition_end = current_level == target_level;
             
+            debug!("move_to_level_transition: Setting current level: {}", current_level);
             self.handler.set_level(current_level)?;
             self.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
 
@@ -189,7 +179,7 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
             return Ok(());
         }
 
-        info!("setting level to {}", level);
+        info!("setting level to {} with transition time {:?}", level, transition_time);
 
         match transition_time {
             None | Some(0) => {
@@ -220,13 +210,17 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
                 let mut wb = WriteBuf::new(&mut buf);
                 let mut tw = crate::tlv::TLVWriter::new(&mut wb);
                 let reply = ReadReplyInstance::new(&attr, &mut tw);
-                let result = ctx.handler().read(read_context, reply).await;
+                ctx.handler().read(read_context, reply).await?;
 
-                match result {
-                    Ok(_) => {
-                        // todo read reply and print it.
+                let attr_response = AttrResp::from_tlv(&TLVElement::new(&buf))?;
+                match attr_response {
+                    AttrResp::Status(_attr_status) => {
+                        error!("Error reading onoff value");
                     },
-                    Err(e) => error!("{}", e.to_string()),
+                    AttrResp::Data(attr_data) => {
+                        let a = attr_data.data.bool()?;
+                        info!("bool: {}", a);
+                    },
                 }
             }
             Some(t_time) => {
@@ -263,6 +257,20 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
                 | CommandId::StepWithOnOff
                 | CommandId::StopWithOnOff
         ));
+
+    // Runs an async task manager for the cluster.
+    async fn run(&self) -> Result<(), Error> {
+        loop {
+            let mut task = self.task_signal.wait().await;
+
+            loop {
+                match embassy_futures::select::select(self.task_manager(task), self.task_signal.wait()).await {
+                    embassy_futures::select::Either::First(_) => break,
+                    embassy_futures::select::Either::Second(new_task) => task = new_task,
+                };
+            }
+        }
+    }
 
     fn dataver(&self) -> u32 {
         self.dataver.get()

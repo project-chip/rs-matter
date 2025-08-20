@@ -148,16 +148,16 @@ fn run() -> Result<(), Error> {
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
-    let mut device = pin!(async {
-        loop {
-            Timer::after(Duration::from_secs(5)).await;
+    // let mut device = pin!(async {
+    //     loop {
+    //         Timer::after(Duration::from_secs(5)).await;
 
-            on_off.set(!on_off.get());
-            subscriptions.notify_changed();
+    //         on_off.set(!on_off.get());
+    //         subscriptions.notify_changed();
 
-            info!("Lamp toggled");
-        }
-    });
+    //         info!("Lamp toggled");
+    //     }
+    // });
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -192,7 +192,7 @@ fn run() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select4(&mut respond, &mut device, &mut dm_handler_job, &mut level_control_job).coalesce(),
+        select3(&mut respond,&mut dm_handler_job, &mut level_control_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
