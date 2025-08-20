@@ -37,7 +37,7 @@ const DEFAULT_TESTS: &[&str] = &[
 ];
 
 /// The default Git reference to use for the Chip repository
-const CHIP_DEFAULT_GITREF: &str = "master";
+pub const CHIP_DEFAULT_GITREF: &str = "v1.2-branch"; //"master";
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
@@ -173,7 +173,7 @@ impl ITests {
 
         // Clone or update Chip repository
         if !chip_dir.exists() {
-            info!("Cloning Chip repository (shallow clone)...");
+            info!("Cloning Chip repository...");
 
             // Ensure parent directories exist
             if let Some(parent) = chip_dir.parent() {
@@ -183,8 +183,8 @@ impl ITests {
 
             let mut cmd = Command::new("git");
 
-            cmd.arg("clone")
-                .arg("--depth=1")
+            cmd
+                .arg("clone")
                 .arg("https://github.com/project-chip/connectedhomeip.git")
                 .arg(&chip_dir);
 

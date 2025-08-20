@@ -170,7 +170,7 @@ impl Verbosity {
 #[derive(Parser, Debug, Clone)]
 struct ItestSetupArgs {
     /// Chip repository reference (branch/tag/commit)
-    #[arg(long, default_value = "master")]
+    #[arg(long, default_value = itest::CHIP_DEFAULT_GITREF)]
     gitref: String,
     /// Force setup even if cached
     #[arg(long)]

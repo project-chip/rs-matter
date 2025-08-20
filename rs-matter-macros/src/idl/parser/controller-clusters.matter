@@ -8761,14 +8761,17 @@ internal cluster UnitTesting = 4294048773 {
   command TestNotHandled(): DefaultSuccess = 1;
   /** Simple command without any parameters and with a specific response */
   command TestSpecific(): TestSpecificResponse = 2;
-  /** Simple command that should not be added to the server. */
-  command TestUnknownCommand(): DefaultSuccess = 3;
+// TODO: Think how to model this
+//  /** Simple command that should not be added to the server. */
+//  command TestUnknownCommand(): DefaultSuccess = 3;
   /** Command that takes two arguments and returns their sum. */
   command TestAddArguments(TestAddArgumentsRequest): TestAddArgumentsResponse = 4;
-  /** Command that takes an argument which is bool */
-  command TestSimpleArgumentRequest(TestSimpleArgumentRequestRequest): TestSimpleArgumentResponse = 5;
-  /** Command that takes various arguments that are arrays, including an array of structs which have a list member. */
-  command TestStructArrayArgumentRequest(TestStructArrayArgumentRequestRequest): TestStructArrayArgumentResponse = 6;
+// TODO: Not available in Matter V1.2; we either need to use the older, Matter V1.2 version of the IDL
+// or upgrade to exactly V1.4.2 and test against V1.4.2 
+//  /** Command that takes an argument which is bool */
+//  command TestSimpleArgumentRequest(TestSimpleArgumentRequestRequest): TestSimpleArgumentResponse = 5;
+//  /** Command that takes various arguments that are arrays, including an array of structs which have a list member. */
+//  command TestStructArrayArgumentRequest(TestStructArrayArgumentRequestRequest): TestStructArrayArgumentResponse = 6;
   /** Command that takes an argument which is struct.  The response echoes the
         'b' field of the single arg. */
   command TestStructArgumentRequest(TestStructArgumentRequestRequest): BooleanResponse = 7;
@@ -8807,9 +8810,11 @@ internal cluster UnitTesting = 4294048773 {
   /** Command that takes various arguments which can be nullable and/or optional.  The
         response returns information about which things were received and what
         their state was. */
-  command TestComplexNullableOptionalRequest(TestComplexNullableOptionalRequestRequest): TestComplexNullableOptionalResponse = 16;
-  /** Command that takes an argument which is a struct.  The response echoes
-        the struct back. */
+// TODO: Not available in Matter V1.2; we either need to use the older, Matter V1.2 version of the IDL
+// or upgrade to exactly V1.4.2 and test against V1.4.2 
+//  command TestComplexNullableOptionalRequest(TestComplexNullableOptionalRequestRequest): TestComplexNullableOptionalResponse = 16;
+//  /** Command that takes an argument which is a struct.  The response echoes
+//        the struct back. */
   command SimpleStructEchoRequest(SimpleStructEchoRequestRequest): SimpleStructResponse = 17;
   /** Command that just responds with a success status if the timed invoke
         conditions are met. */
@@ -8820,10 +8825,12 @@ internal cluster UnitTesting = 4294048773 {
   command TestEmitTestEventRequest(TestEmitTestEventRequestRequest): TestEmitTestEventResponse = 20;
   /** Command that takes identical arguments to the fields of the TestFabricScopedEvent and logs the TestFabricScopedEvent to the buffer.  Command returns an event ID as the response. */
   command TestEmitTestFabricScopedEventRequest(TestEmitTestFabricScopedEventRequestRequest): TestEmitTestFabricScopedEventResponse = 21;
-  /** Command that responds after sleepBeforeResponseTimeMs with an octet_string the size requested with fillCharacter. */
-  command TestBatchHelperRequest(TestBatchHelperRequestRequest): TestBatchHelperResponse = 22;
-  /** Second command that responds after sleepBeforeResponseTimeMs with an octet_string the size requested with fillCharacter. */
-  command TestSecondBatchHelperRequest(TestSecondBatchHelperRequestRequest): TestBatchHelperResponse = 23;
+// TODO: Not available in Matter V1.2; we either need to use the older, Matter V1.2 version of the IDL
+// or upgrade to exactly V1.4.2 and test against V1.4.2 
+//  /** Command that responds after sleepBeforeResponseTimeMs with an octet_string the size requested with fillCharacter. */
+//  command TestBatchHelperRequest(TestBatchHelperRequestRequest): TestBatchHelperResponse = 22;
+//  /** Second command that responds after sleepBeforeResponseTimeMs with an octet_string the size requested with fillCharacter. */
+//  command TestSecondBatchHelperRequest(TestSecondBatchHelperRequestRequest): TestBatchHelperResponse = 23;
 }
 
 /** The Fault Injection Cluster provide a means for a test harness to configure faults(for example triggering a fault in the system). */

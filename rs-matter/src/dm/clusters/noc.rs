@@ -149,7 +149,7 @@ impl ClusterHandler for NocHandler {
                 if let Some(fabric) = fabric {
                     read_into(fabric, builder)
                 } else {
-                    Err(ErrorCode::InvalidAction.into()) // TODO
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -201,7 +201,7 @@ impl ClusterHandler for NocHandler {
                 if let Some(fabric) = fabric {
                     read_into(fabric, builder)
                 } else {
-                    Err(ErrorCode::InvalidAction.into()) // TODO
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -241,7 +241,7 @@ impl ClusterHandler for NocHandler {
                 if let Some(fabric) = fabric {
                     builder.set(Octets::new(fabric.root_ca()))
                 } else {
-                    Err(ErrorCode::InvalidAction.into()) // TODO
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }

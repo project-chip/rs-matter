@@ -10,7 +10,8 @@ on:
       chip_ref:
         description: 'Chip repository reference (branch/tag/commit)'
         required: false
-        default: 'master'
+#        default: 'master'
+        default: 'v1.2-branch'
         type: string
 
 env:

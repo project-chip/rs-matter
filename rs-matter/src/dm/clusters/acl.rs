@@ -75,7 +75,7 @@ impl AclHandler {
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some((fab_idx, entry)) = acls.nth(index as usize) else {
-                    return Err(ErrorCode::InvalidAction.into()); // TODO
+                    return Err(ErrorCode::ConstraintError.into());
                 };
 
                 entry.read_into(fab_idx, builder)
@@ -102,7 +102,7 @@ impl AclHandler {
                     entry.check()?;
                 }
                 if list.iter().count() > acl::ENTRIES_PER_FABRIC {
-                    Err(ErrorCode::InvalidAction)?;
+                    Err(ErrorCode::ConstraintError)?;
                 }
 
                 // Now add everything

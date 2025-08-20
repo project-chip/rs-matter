@@ -69,6 +69,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::CommandNotFound => IMStatusCode::UnsupportedCommand,
             ErrorCode::InvalidAction => IMStatusCode::InvalidAction,
             ErrorCode::InvalidCommand => IMStatusCode::InvalidCommand,
+            ErrorCode::InvalidDataType => IMStatusCode::InvalidDataType,
             ErrorCode::UnsupportedAccess => IMStatusCode::UnsupportedAccess,
             ErrorCode::Busy => IMStatusCode::Busy,
             ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,

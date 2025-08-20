@@ -946,7 +946,7 @@ where
                         .end()
                 }
             }
-            NetworkType::Ethernet => Err(ErrorCode::InvalidAction.into()), // TODO
+            NetworkType::Ethernet => Err(ErrorCode::InvalidAction.into()),
         }
     }
 
@@ -1000,7 +1000,7 @@ where
         mut response: ConnectNetworkResponseBuilder<P>,
     ) -> Result<P, Error> {
         if request.network_id()?.0.len() > MAX_WIRELESS_NETWORK_ID_LEN {
-            return Err(ErrorCode::InvalidAction.into());
+            return Err(ErrorCode::ConstraintError.into());
         }
 
         let (status, err_code) = match self.net_ctl.net_type() {
