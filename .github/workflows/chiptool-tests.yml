@@ -32,6 +32,9 @@ jobs:
       - name: Checkout rs-matter
         uses: actions/checkout@v4
 
+      - name: Install libdbus
+        run: sudo apt-get install -y libdbus-1-dev
+
       - name: Build xtask
         run: |
           cd xtask; cargo build
