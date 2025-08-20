@@ -6,7 +6,7 @@ members = [
         "examples",
 ]
 
-exclude = ["tools/tlv"]
+exclude = ["tools/tlv", "xtask"]
 
 [profile.release]
 opt-level = "z"

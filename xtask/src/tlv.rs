@@ -1,11 +1,71 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+use log::warn;
+
+use rs_matter::cert::CertRef;
+use rs_matter::tlv::TLVElement;
+
+/// Decode the provided TLVs
+///
+/// # Arguments
+/// - `tlv_str`: A string containing hex or decimal TLV octets, separated by comma
+/// - `dec`: If true, the input is interpreted as decimal; otherwise, it is interpreted as hexadecimal
+/// - `cert`: If true, the function will attempt to parse the TLV as a certificate
+/// - `as_asn1`: If true, the function will convert the certificate to ASN.1 format and print it
+pub fn decode(tlv_str: &str, dec: bool, cert: bool, as_asn1: bool) -> anyhow::Result<()> {
+    warn!("Decoding TLV octets: '{tlv_str}'");
+
+    let base = if dec { InputBase::Dec } else { InputBase::Hex };
+    let tlv = base.parse_list(tlv_str, ',');
+
+    let tlv = TLVElement::new(tlv.as_slice());
+
+    warn!("Output:\n{}", tlv.clone());
+
+    if cert {
+        let cert = CertRef::new(tlv.clone());
+
+        warn!("Certificate:\n{cert}");
+    }
+
+    if as_asn1 {
+        let cert = CertRef::new(tlv);
+
+        let mut buf = [0_u8; 1024];
+
+        let len = cert.as_asn1(&mut buf)?;
+
+        warn!("Certificate:\n{cert}");
+
+        warn!("ASN1-Encoded:\n{:02x?}", &buf[..len]);
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
-pub enum InputBase {
+enum InputBase {
     Hex,
     Dec,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ParseError {
+struct ParseError {
     pub input: String,
     pub error: std::num::ParseIntError,
 }
@@ -43,7 +103,7 @@ impl InputBase {
         .map_err(error_map)
     }
 
-    /// Parses a separated list of values.
+    /// Parses a separated list of bytes.
     ///
     /// # Examples
     ///

@@ -62,3 +62,11 @@ jobs:
       - name: Examples
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo build --examples --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
+
+      - name: Xtask Fmt
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cd xtask; cargo fmt -- --check
+
+      - name: Xtask Clippy
+        if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
+        run: cd xtask; cargo clippy --no-deps -- -Dwarnings

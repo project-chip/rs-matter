@@ -1,0 +1,93 @@
+---
+name: ChipToolIntegrationTests
+
+on:
+  schedule:
+    # Run every night at 2:00 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      chip_ref:
+        description: 'Chip repository reference (branch/tag/commit)'
+        required: false
+        default: 'master'
+        type: string
+
+env:
+  RUST_TOOLCHAIN: stable
+  CARGO_TERM_COLOR: always
+
+jobs:
+  yaml_integration_tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Checkout rs-matter
+        uses: actions/checkout@v4
+
+      - name: Install libdbus
+        run: sudo apt-get install -y libdbus-1-dev
+
+      - name: Build xtask
+        run: |
+          cd xtask; cargo build
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install `./xtask/target/debug/xtask -v s itest-packages`
+
+      - name: Fix unshare permissions
+        run: |
+            sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Cache Chip build
+        uses: actions/cache@v4
+        with:
+          path: .build/itest/connectedhomeip
+          key: >-
+            ${{ runner.os }}-chip-${{
+            inputs.chip_ref || 'master' }}-${{
+            hashFiles('.build/itest/connectedhomeip/**/*.py',
+            '.build/itest/connectedhomeip/**/*.sh', '.build/itest/connectedhomeip/**/BUILD.gn') }}
+          restore-keys: |
+            ${{ runner.os }}-chip-
+
+      # - name: Cache Rust dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ~/.cargo/registry
+      #       ~/.cargo/git
+      #       target
+      #       xtask/target
+      #     key: >-
+      #       ${{ runner.os }}-cargo-${{
+      #       hashFiles('**/Cargo.lock') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-cargo-
+
+      - name: Setup Chip environment
+        run: |
+          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'master' }}"
+
+      - name: Run YAML Integration Tests
+        run: |
+          cargo xtask itest
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: |
+            /tmp/rs-matter*/
+            .build/itest/connectedhomeip/out/host/chip-tool.log
+          retention-days: 7

@@ -1,8 +1,11 @@
 target
 Cargo.lock
 .vscode
-.embuild
 
+# Nix
 .devenv/
 .devenv.flake.nix
 devenv.lock
+
+# Build artifacts and temporary files from Xtask
+.build/

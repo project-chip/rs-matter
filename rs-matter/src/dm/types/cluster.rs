@@ -179,6 +179,16 @@ impl<'a> Cluster<'a> {
         }
     }
 
+    /// Return a reference to the attribute with the given ID, if it exists.
+    pub fn attribute(&self, id: AttrId) -> Option<&Attribute> {
+        self.attributes().find(|attr| attr.id == id)
+    }
+
+    /// Return a reference to the command with the given ID, if it exists.
+    pub fn command(&self, id: CmdId) -> Option<&Command> {
+        self.commands().find(|cmd| cmd.id == id)
+    }
+
     /// Return an iterator over the attributes of the cluster which are
     /// configured to be included based on the provided configuration.
     pub(crate) fn attributes(&self) -> impl Iterator<Item = &Attribute> + '_ {
