@@ -287,7 +287,7 @@ impl AttrDetails<'_> {
                     leaf: Some(self.attr_id as _),
                 },
                 status,
-                0,
+                None,
             )))
         } else {
             Ok(None)

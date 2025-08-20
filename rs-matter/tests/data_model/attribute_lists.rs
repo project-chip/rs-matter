@@ -48,7 +48,7 @@ fn attr_list_ops() {
 
     // Test 1: Add Operation - add val0
     let input = &[TestAttrData::new(None, att_path.clone(), &val0)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
+    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
 
     ImEngine::write_reqs(input, expected);
     {
@@ -58,7 +58,7 @@ fn attr_list_ops() {
 
     // Test 2: Another Add Operation - add val1
     let input = &[TestAttrData::new(None, att_path.clone(), &val1)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
+    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
 
     ImEngine::write_reqs(input, expected);
     {
@@ -69,7 +69,7 @@ fn attr_list_ops() {
     // Test 3: Edit Operation - edit val1 to val0
     att_path.list_index = Some(Nullable::some(1));
     let input = &[TestAttrData::new(None, att_path.clone(), &val0)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
+    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
 
     ImEngine::write_reqs(input, expected);
     {
@@ -80,7 +80,7 @@ fn attr_list_ops() {
     // Test 4: Delete Operation - delete index 0
     att_path.list_index = Some(Nullable::some(0));
     let input = &[TestAttrData::new(None, att_path.clone(), &delete_item)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
+    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
 
     ImEngine::write_reqs(input, expected);
     {
@@ -92,7 +92,7 @@ fn attr_list_ops() {
     let overwrite_val: [u32; 2] = [20, 21];
     att_path.list_index = None;
     let input = &[TestAttrData::new(None, att_path.clone(), &overwrite_val)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
+    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
 
     ImEngine::write_reqs(input, expected);
     {
@@ -103,7 +103,7 @@ fn attr_list_ops() {
     // Test 6: Overwrite Operation - delete whole list
     att_path.list_index = None;
     let input = &[TestAttrData::new(None, att_path, &delete_all)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, 0)];
+    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
 
     ImEngine::write_reqs(input, expected);
     {

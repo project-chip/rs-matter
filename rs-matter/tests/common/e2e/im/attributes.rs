@@ -29,7 +29,7 @@ use crate::common::e2e::E2eRunner;
 macro_rules! attr_status {
     ($path:expr, $status:expr) => {
         $crate::common::e2e::im::attributes::TestAttrResp::AttrStatus(
-            rs_matter::im::AttrStatus::new($path, $status, 0),
+            rs_matter::im::AttrStatus::new($path, $status, None),
         )
     };
 }

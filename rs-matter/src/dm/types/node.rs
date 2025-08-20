@@ -280,7 +280,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
     }
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
-        AttrStatus::new(&self.path.to_gp(), status, 0)
+        AttrStatus::new(&self.path.to_gp(), status, None)
     }
 }
 
@@ -322,7 +322,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
     }
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
-        AttrStatus::new(&self.path.to_gp(), status, 0)
+        AttrStatus::new(&self.path.to_gp(), status, None)
     }
 }
 
@@ -360,7 +360,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
     }
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
-        CmdStatus::new(self.path, status, 0)
+        CmdStatus::new(self.path, status, None)
     }
 }
 

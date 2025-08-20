@@ -58,8 +58,8 @@ fn test_timed_write_fail_and_success() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
-        AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
+        AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
+        AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
     ];
 
     let im = ImEngine::new_default();
