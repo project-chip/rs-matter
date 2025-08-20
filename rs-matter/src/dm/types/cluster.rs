@@ -272,12 +272,45 @@ impl<'a> Cluster<'a> {
         Self::encode_command_ids(tag, tw, self.commands().map(|cmd| cmd.id))
     }
 
-    fn encode_generated_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn encode_generated_command_ids<W: TLVWrite>(
+        &self,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
         debug!(
             "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read -> Ok([",
             self.id
         );
-        Self::encode_command_ids(tag, tw, self.commands().filter_map(|cmd| cmd.resp_id))
+
+        // Matter C++ SDK unit tests do require the generated command IDs to be in ascending order and not to have repetitions.
+        // Therefore, we are generating the array incrementally, using a variation of the selection sort algorithm
+
+        tw.start_array(tag)?;
+
+        let mut max_inserted_cmd = None;
+
+        while let Some(next_cmd) = self
+            .commands()
+            .filter_map(|cmd| cmd.resp_id)
+            .filter(|cmd| {
+                max_inserted_cmd
+                    .map(|max_inserted| *cmd > max_inserted)
+                    .unwrap_or(true)
+            })
+            .min()
+        {
+            tw.u32(&TLVTag::Anonymous, next_cmd)?;
+
+            debug!("    Cmd: 0x{:02x}, ", next_cmd);
+
+            max_inserted_cmd = Some(next_cmd);
+        }
+
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 
     fn encode_event_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
