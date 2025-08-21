@@ -22,7 +22,7 @@ use strum::FromRepr;
 
 use crate::attribute_enum;
 use crate::error::{Error, ErrorCode};
-use crate::im::{AttrPath, AttrStatus, GenericPath, IMStatusCode};
+use crate::im::{AttrPath, AttrStatus, IMStatusCode};
 use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
 use crate::utils::maybe::Maybe;
 
@@ -310,17 +310,9 @@ impl AttrDetails<'_> {
             })
     }
 
-    pub const fn status(&self, status: IMStatusCode) -> Option<AttrStatus> {
+    pub fn status(&self, status: IMStatusCode) -> Option<AttrStatus> {
         if self.should_report(status) {
-            Some(AttrStatus::new(
-                &GenericPath {
-                    endpoint: Some(self.endpoint_id),
-                    cluster: Some(self.cluster_id),
-                    leaf: Some(self.attr_id as _),
-                },
-                status,
-                None,
-            ))
+            Some(AttrStatus::new(self.reply_path(), status, None))
         } else {
             None
         }

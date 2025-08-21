@@ -44,7 +44,11 @@ fn test_timed_write_fail_and_success() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let input = &[TestAttrData::new(None, AttrPath::new(&ep_att), &val0 as _)];
+    let input = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&ep_att),
+        &val0 as _,
+    )];
 
     let ep0_att = GenericPath::new(
         Some(0),
@@ -58,8 +62,8 @@ fn test_timed_write_fail_and_success() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
-        AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
+        AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None),
+        AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
     ];
 
     let im = ImEngine::new_default();

@@ -39,10 +39,10 @@ mod node;
 mod privilege;
 mod reply;
 
-pub type EndptId = u16;
-pub type ClusterId = u32;
-pub type AttrId = u32;
-pub type CmdId = u32;
+pub type EndptId = crate::im::EndptId;
+pub type ClusterId = crate::im::ClusterId;
+pub type AttrId = crate::im::AttrId;
+pub type CmdId = crate::im::CmdId;
 
 #[derive(Debug, ToTLV, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
