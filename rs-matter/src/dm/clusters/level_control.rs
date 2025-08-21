@@ -1,15 +1,13 @@
-use core::any::Any;
 use core::cell::Cell;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
-use crate::dm::clusters::grp_key_mgmt::KeySetReadRequest;
 use crate::im::AttrResp;
 use crate::utils::storage::WriteBuf;
-use crate::tlv::{FromTLV, Nullable, TLVElement, TLVWrite};
-use crate::dm::{AsyncHandler, AttrDetails, Cluster, Dataver, InvokeContext, ReadContext, ReadContextInstance, ReadReply, ReadReplyInstance, WriteContext};
-use crate::dm::clusters::level_control;
+use crate::tlv::{FromTLV, Nullable, TLVElement};
+use crate::dm::{AsyncHandler, AttrDetails, Cluster, CmdDetails, Dataver, InvokeContext, InvokeContextInstance, InvokeReplyInstance, ReadContext, ReadContextInstance, CmdDataTracker, ReadReplyInstance, WriteContext};
+use crate::dm::clusters::{decl, level_control};
 pub use crate::dm::clusters::decl::level_control::*;
 use crate::with;
 use crate::error::{Error, ErrorCode};
@@ -99,6 +97,123 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
         Ok(())
     }
 
+    // Update the on_off attribute of the OnOff cluster.
+    // 
+    // From section 1.6.4.1.2
+    // When the level is reduced to its minimum the OnOff attribute is automatically turned to FALSE, 
+    // and when the level is increased above its minimum the OnOff attribute is automatically turned to TRUE.
+    async fn update_coupled_onoff(&self, ctx: impl InvokeContext, current_level: u8) -> Result<(), Error>{
+        // From section 1.6.4.1.2.
+        // There are two sets of commands provided in the Level Control cluster. These are identical, except
+        // that the first set (MoveToLevel, Move and Step commands) SHALL NOT affect the OnOff attribute,
+        // whereas the second set ('with On/Off' variants) SHALL.
+        let with_on_off_commands: u32 = 
+            CommandId::MoveToLevelWithOnOff as u32 |
+            CommandId::MoveWithOnOff as u32 |
+            CommandId::StepWithOnOff as u32 | 
+            CommandId::StopWithOnOff as u32;
+        if ctx.cmd().cmd_id & with_on_off_commands == 0 {
+            return Ok(());
+        }
+        
+        // step1 : get the current on_off value. Probably not needed.
+        let attr = AttrDetails{
+            node: ctx.cmd().node,
+            endpoint_id: ctx.cmd().endpoint_id,
+            cluster_id: crate::dm::clusters::decl::on_off::FULL_CLUSTER.id,
+            attr_id: crate::dm::clusters::decl::on_off::AttributeId::OnOff as u32,
+            list_index: None,
+            fab_idx: 0,
+            fab_filter: false,
+            dataver: None,
+            wildcard: false,
+        };
+        let read_context = ReadContextInstance::new(
+            ctx.exchange(),
+            ctx.handler(),
+            ctx.buffers(),
+            &attr,
+        );
+        let mut buf = [0u8; 1024]; // todo get accurate size?
+        let mut wb = WriteBuf::new(&mut buf);
+        let mut tw = crate::tlv::TLVWriter::new(&mut wb);
+        let reply = ReadReplyInstance::new(&attr, &mut tw);
+        ctx.handler().read(read_context, reply).await?;
+
+        let attr_response = AttrResp::from_tlv(&TLVElement::new(&buf))?;
+        let on_off = match attr_response {
+            AttrResp::Status(_attr_status) => {
+                // todo not the correct error
+                return Err(ErrorCode::AttributeNotFound.into())
+            },
+            AttrResp::Data(attr_data) => {
+                attr_data.data.bool()?
+            },
+        };
+
+        // step 2: set the on_off value based on the current level.
+        let new_on_off_value = current_level > T::MIN_LEVEL;
+
+        if on_off != new_on_off_value {
+            let mut buf = [0u8; 1024]; // todo get accurate size?
+            let mut wb = WriteBuf::new(&mut buf);
+            let mut tw = crate::tlv::TLVWriter::new(&mut wb);
+            let tlv_element = &TLVElement::new(&[]);
+            let mut tracker = CmdDataTracker::new();
+
+            match new_on_off_value {
+                true => {
+                    let cmd_details = CmdDetails{
+                        node: ctx.cmd().node,
+                        endpoint_id: ctx.cmd().endpoint_id,
+                        cluster_id: decl::on_off::FULL_CLUSTER.id,
+                        cmd_id: decl::on_off::CommandId::On as u32,
+                        wildcard: false,
+                    };
+
+                    let on_invoke_context = InvokeContextInstance::new(
+                        ctx.exchange(),
+                        ctx.handler(),
+                        ctx.buffers(),
+                        &cmd_details,
+                        &tlv_element,
+                        &(),
+                    );
+
+                    let reply = InvokeReplyInstance::new(&cmd_details, &mut tracker, &mut tw);
+                    // COMPILATION ERROR overflow depth limit
+                    ctx.handler().invoke(on_invoke_context, reply).await?;
+                    // todo read reply for success
+                },
+                false => {
+                    let cmd_details = CmdDetails{
+                        node: ctx.cmd().node,
+                        endpoint_id: ctx.cmd().endpoint_id,
+                        cluster_id: decl::on_off::FULL_CLUSTER.id,
+                        cmd_id: decl::on_off::CommandId::Off as u32,
+                        wildcard: false,
+                    };
+
+                    let off_invoke_context = InvokeContextInstance::new(
+                        ctx.exchange(),
+                        ctx.handler(),
+                        ctx.buffers(),
+                        &cmd_details,
+                        &tlv_element,
+                        &(),
+                    );
+
+                    let reply = InvokeReplyInstance::new(&cmd_details, &mut tracker, &mut tw);
+                    // COMPILATION ERROR overflow depth limit
+                    ctx.handler().invoke(off_invoke_context, reply).await?;
+                    // todo read reply for success
+                },
+            }
+        }
+
+        Ok(())
+    }
+
     async fn move_to_level_transition(&self, target_level: u8, transition_time: u16) -> Result<(), Error> {
         let event_start_time = Instant::now();
 
@@ -141,6 +256,8 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
 
                 // todo if withOnOff command, update the OnOff cluster accordingly.
                 //  This is going to require passing the context through the signal
+                // self.update_coupled_onoff(ctx, current_level).await?;
+                
 
                 return Ok(());
             }
@@ -188,40 +305,8 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
                 self.write_current_level_quietly(Nullable::some(level), true)?;
                 self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
-                // todo: update the OnOff cluster
-                let attr = AttrDetails{
-                    node: ctx.cmd().node,
-                    endpoint_id: ctx.cmd().endpoint_id,
-                    cluster_id: crate::dm::clusters::decl::on_off::FULL_CLUSTER.id,
-                    attr_id: crate::dm::clusters::decl::on_off::AttributeId::OnOff as u32,
-                    list_index: None,
-                    fab_idx: 0,
-                    fab_filter: false,
-                    dataver: None,
-                    wildcard: false,
-                };
-                let read_context = ReadContextInstance::new(
-                    ctx.exchange(),
-                    ctx.handler(),
-                    ctx.buffers(),
-                    &attr,
-                );
-                let mut buf = [0u8; 1024]; // todo get accurate size?
-                let mut wb = WriteBuf::new(&mut buf);
-                let mut tw = crate::tlv::TLVWriter::new(&mut wb);
-                let reply = ReadReplyInstance::new(&attr, &mut tw);
-                ctx.handler().read(read_context, reply).await?;
+                self.update_coupled_onoff(ctx, level).await?;
 
-                let attr_response = AttrResp::from_tlv(&TLVElement::new(&buf))?;
-                match attr_response {
-                    AttrResp::Status(_attr_status) => {
-                        error!("Error reading onoff value");
-                    },
-                    AttrResp::Data(attr_data) => {
-                        let a = attr_data.data.bool()?;
-                        info!("bool: {}", a);
-                    },
-                }
             }
             Some(t_time) => {
                 self.task_signal.signal(Task::MoveToLevel { target: level, transition_time: t_time});
@@ -490,5 +575,3 @@ pub trait LevelControlHooks {
     // Do not update attribute states.
     fn set_level(&self, level: u8) -> Result<(), Error>;
 }
-
-
