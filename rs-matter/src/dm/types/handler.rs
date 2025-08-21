@@ -27,7 +27,7 @@ use super::{AttrDetails, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply}
 
 pub use asynch::*;
 
-pub(crate) trait ChangeNotify {
+pub trait ChangeNotify {
     fn notify(&self, endpt: EndptId, clust: ClusterId);
 }
 

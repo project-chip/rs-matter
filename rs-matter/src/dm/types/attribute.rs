@@ -51,12 +51,12 @@ impl Attribute {
     }
 
     /// Return `true` if the attribute is a system one (i.e. a global attribute).
-    pub fn is_system(&self) -> bool {
+    pub const fn is_system(&self) -> bool {
         Self::is_system_attr(self.id)
     }
 
     /// Return `true` if the attribute ID is a system one (i.e. a global attribute).
-    pub fn is_system_attr(attr_id: AttrId) -> bool {
+    pub const fn is_system_attr(attr_id: AttrId) -> bool {
         attr_id >= (GlobalElements::GeneratedCmdList as AttrId) && attr_id <= u16::MAX as AttrId
     }
 }
@@ -67,6 +67,7 @@ impl core::fmt::Display for Attribute {
     }
 }
 
+/// An enum for the attribute IDs of all Matter Global attributes
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u32)]
@@ -82,24 +83,30 @@ pub enum GlobalElements {
 
 attribute_enum!(GlobalElements);
 
+/// The global attribute for the Generated Command List.
 pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
     GlobalElements::GeneratedCmdList as _,
     Access::RV,
     Quality::A,
 );
 
+/// The global attribute for the Accepted Command List.
 pub const ACCEPTED_COMMAND_LIST: Attribute =
     Attribute::new(GlobalElements::AcceptedCmdList as _, Access::RV, Quality::A);
 
+/// The global attribute for the Event List.
 pub const EVENT_LIST: Attribute =
     Attribute::new(GlobalElements::EventList as _, Access::RV, Quality::A);
 
+/// The global attribute for the Attribute List.
 pub const ATTRIBUTE_LIST: Attribute =
     Attribute::new(GlobalElements::AttributeList as _, Access::RV, Quality::A);
 
+/// The global attribute for the Feature Map.
 pub const FEATURE_MAP: Attribute =
     Attribute::new(GlobalElements::FeatureMap as _, Access::RV, Quality::NONE);
 
+/// The global attribute for the Cluster Revision.
 pub const CLUSTER_REVISION: Attribute = Attribute::new(
     GlobalElements::ClusterRevision as _,
     Access::RV,
@@ -134,6 +141,7 @@ macro_rules! attributes {
     }
 }
 
+/// A macro to generate a `TryFrom` implementation for an attribute enum.
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! attribute_enum {
@@ -157,6 +165,8 @@ pub enum ArrayAttributeRead<T, E> {
     ReadAll(T),
     /// Read one element of the array
     ReadOne(u16, E),
+    /// Read an empty array
+    ReadNone(T),
 }
 
 impl<T, E> ArrayAttributeRead<T, E> {
@@ -171,12 +181,10 @@ impl<T, E> ArrayAttributeRead<T, E> {
         T: TLVBuilder<P>,
         E: TLVBuilder<P>,
     {
-        if let Some(Some(index)) = index.clone().map(Into::into) {
-            // Valid index - read one element
-            Ok(Self::ReadOne(index, TLVBuilder::new(parent, tag)?))
-        } else {
-            // Read the whole array
-            Ok(Self::ReadAll(TLVBuilder::new(parent, tag)?))
+        match index.map(Nullable::into_option) {
+            Some(Some(index)) => Ok(Self::ReadOne(index, E::new(parent, tag)?)),
+            Some(None) => Ok(Self::ReadNone(T::new(parent, tag)?)),
+            None => Ok(Self::ReadAll(T::new(parent, tag)?)),
         }
     }
 }
@@ -206,59 +214,89 @@ impl<T, E> ArrayAttributeWrite<T, E> {
         T: FromTLV<'a>,
         E: FromTLV<'a>,
     {
-        if let Some(Some(index)) = index.clone().map(Into::into) {
-            // If the index is valid, this is an item update or removal
-            if data.null().is_ok() {
-                // Data is null - item removal
-                Ok(Self::Remove(index))
-            } else {
-                Ok(Self::Update(index, FromTLV::from_tlv(data)?))
+        match index.map(Nullable::into_option) {
+            Some(Some(_index)) => {
+                // Index is present and non-null => this is an item update or removal
+                // Note that this is not supported by the Matter Core spec yet (section 10.6.4.3.1 "Lists" in V1.4.2), so we return an error instead
+
+                // if data.null().is_ok() {
+                //     // Data is null - item removal
+                //     Ok(Self::Remove(index))
+                // } else {
+                //     Ok(Self::Update(index, FromTLV::from_tlv(data)?))
+                // }
+
+                Err(ErrorCode::InvalidAction.into())
             }
-        } else if data.array().is_ok() {
-            // The data is an array, so the whole array needs to be replaced
-            Ok(Self::Replace(FromTLV::from_tlv(data)?))
-        } else {
-            // The data is not an array and there is no index, so this must be an Add operation
-            Ok(Self::Add(FromTLV::from_tlv(data)?))
+            Some(None) => {
+                // Index is present but null => item addition
+                Ok(Self::Add(FromTLV::from_tlv(data)?))
+            }
+            None => {
+                // Index is not present => array replace
+                Ok(Self::Replace(FromTLV::from_tlv(data)?))
+            }
         }
     }
 }
 
-// TODO: What if we instead of creating this, we just pass the AttrData/AttrPath to the read/write
-// methods?
-/// The Attribute Details structure records the details about the attribute under consideration.
-#[derive(Debug)]
+/// The `AttrDetails` type captures all necessary information to perform an Attribute Read or Write operation
+///
+/// This type is built by the Data Model during the expansion of the attributes in the `Read` and `Write` IM actions
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttrDetails<'a> {
+    /// The node meta-data
     pub node: &'a Node<'a>,
-    /// The actual endpoint ID
+    /// The concrete (expanded) endpoint ID
     pub endpoint_id: EndptId,
-    /// The actual cluster ID
+    /// The concrete (expanded) cluster ID
     pub cluster_id: ClusterId,
-    /// The actual attribute ID
+    /// The concrete (expanded) attribute ID
     pub attr_id: AttrId,
-    /// List Index, if any
+    /// List index, if any
     pub list_index: Option<Nullable<u16>>,
-    /// The current Fabric Index
+    /// Valid only when the operation is attrubute read of
+    /// an individual array item
+    /// When `true`, the path written to the output will contain
+    /// `null` as a list index. This is necessary when we are returning
+    /// an array attribute in a chunked manner
+    pub list_chunked: bool,
+    /// The fabric index associated with this request
     pub fab_idx: u8,
-    /// Fabric Filtering Activated
+    /// Whether fabric filtering is active for this request
     pub fab_filter: bool,
+    /// Attribute expected data version (when writing)
     pub dataver: Option<u32>,
+    /// Whether the original attribute was a wildcard one
     pub wildcard: bool,
 }
 
 impl AttrDetails<'_> {
-    pub fn is_system(&self) -> bool {
+    /// Return `true` if the attribute is a system one (i.e. a global attribute).
+    pub const fn is_system(&self) -> bool {
         Attribute::is_system_attr(self.attr_id)
     }
 
-    pub fn path(&self) -> AttrPath {
+    /// Return the path with which this attribute read/write request
+    /// should be replied.
+    pub fn reply_path(&self) -> AttrPath {
         AttrPath {
+            node: None,
             endpoint: Some(self.endpoint_id),
             cluster: Some(self.cluster_id),
             attr: Some(self.attr_id),
-            list_index: self.list_index.clone(),
-            ..Default::default()
+            list_index: if self.list_chunked {
+                match self.list_index.as_ref().map(|li| li.as_opt_ref()) {
+                    // Convert specific indexed item to item with index null (= append)
+                    Some(Some(_)) => Some(Nullable::none()),
+                    // Convert the `rs-matter`-specific request for an empty array to Matter spec compliant result
+                    Some(None) | None => None,
+                }
+            } else {
+                self.list_index.clone()
+            },
+            tag_compression: None,
         }
     }
 
@@ -272,9 +310,9 @@ impl AttrDetails<'_> {
             })
     }
 
-    pub fn status(&self, status: IMStatusCode) -> Result<Option<AttrStatus>, Error> {
+    pub const fn status(&self, status: IMStatusCode) -> Option<AttrStatus> {
         if self.should_report(status) {
-            Ok(Some(AttrStatus::new(
+            Some(AttrStatus::new(
                 &GenericPath {
                     endpoint: Some(self.endpoint_id),
                     cluster: Some(self.cluster_id),
@@ -282,9 +320,9 @@ impl AttrDetails<'_> {
                 },
                 status,
                 None,
-            )))
+            ))
         } else {
-            Ok(None)
+            None
         }
     }
 
@@ -302,7 +340,7 @@ impl AttrDetails<'_> {
         Ok(())
     }
 
-    fn should_report(&self, status: IMStatusCode) -> bool {
+    const fn should_report(&self, status: IMStatusCode) -> bool {
         !self.wildcard
             || !matches!(
                 status,

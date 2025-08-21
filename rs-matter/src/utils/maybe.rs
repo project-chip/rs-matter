@@ -96,11 +96,14 @@ impl<T, G> Maybe<T, G> {
     pub fn init<I: init::Init<T, E>, E>(value: Option<I>) -> impl init::Init<Self, E> {
         unsafe {
             init::init_from_closure(move |slot: *mut Self| {
-                addr_of_mut!((*slot).some).write(value.is_some());
+                let some = value.is_some();
 
                 if let Some(value) = value {
                     value.__init(addr_of_mut!((*slot).value) as _)?;
                 }
+
+                // Only set this once the value is initialized
+                addr_of_mut!((*slot).some).write(some);
 
                 Ok(())
             })

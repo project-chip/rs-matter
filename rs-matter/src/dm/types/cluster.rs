@@ -209,22 +209,30 @@ impl<'a> Cluster<'a> {
     ///
     /// The provided attribute ID must be a global attribute, or else
     /// an error will be returned.
-    pub fn read<W: Reply>(&self, attr: AttrId, mut writer: W) -> Result<(), Error> {
-        match attr.try_into()? {
+    pub fn read<W: Reply>(&self, attr: &AttrDetails, mut writer: W) -> Result<(), Error> {
+        match attr.attr_id.try_into()? {
             GlobalElements::GeneratedCmdList => {
-                self.encode_generated_command_ids(&W::TAG, writer.writer())?;
+                self.encode_generated_command_ids(
+                    Self::fetch_index(attr),
+                    &W::TAG,
+                    writer.writer(),
+                )?;
                 writer.complete()
             }
             GlobalElements::AcceptedCmdList => {
-                self.encode_accepted_command_ids(&W::TAG, writer.writer())?;
+                self.encode_accepted_command_ids(
+                    Self::fetch_index(attr),
+                    &W::TAG,
+                    writer.writer(),
+                )?;
                 writer.complete()
             }
             GlobalElements::EventList => {
-                self.encode_event_ids(&W::TAG, &mut writer.writer())?;
+                self.encode_event_ids(Self::fetch_index(attr), &W::TAG, &mut writer.writer())?;
                 writer.complete()
             }
             GlobalElements::AttributeList => {
-                self.encode_attribute_ids(&W::TAG, &mut writer.writer())?;
+                self.encode_attribute_ids(Self::fetch_index(attr), &W::TAG, &mut writer.writer())?;
                 writer.complete()
             }
             GlobalElements::FeatureMap => {
@@ -248,45 +256,99 @@ impl<'a> Cluster<'a> {
         }
     }
 
-    fn encode_attribute_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        debug!("Endpt(0x??)::Cluster(:04x)::Attr::AttributeIDs(0xNN)::Read -> Ok([");
+    fn encode_attribute_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
+        debug!(
+            "Endpt(0x??)::Cluster(:04x)::Attr::AttributeIDs(0xNN)::Read{{{:?}}} -> Ok([",
+            index
+        );
 
-        tw.start_array(tag)?;
-        for attr in self.attributes() {
+        if let Some(Some(index)) = index {
+            let attr = self
+                .attributes()
+                .nth(index)
+                .ok_or(ErrorCode::ConstraintError)?;
+
             tw.u32(&TLVTag::Anonymous, attr.id)?;
             debug!("    Attr: 0x{:02x},", attr.id);
-        }
+        } else {
+            tw.start_array(tag)?;
 
-        tw.end_container()?;
+            if index.is_none() {
+                for attr in self.attributes() {
+                    tw.u32(&TLVTag::Anonymous, attr.id)?;
+                    debug!("    Attr: 0x{:02x},", attr.id);
+                }
+            }
+
+            tw.end_container()?;
+        }
 
         debug!("])");
 
         Ok(())
     }
 
-    fn encode_accepted_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
-        debug!(
-            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AcceptedCmdIDs(0xfff9)::Read -> Ok([",
-            self.id
-        );
-        Self::encode_command_ids(tag, tw, self.commands().map(|cmd| cmd.id))
-    }
-
-    fn encode_generated_command_ids<W: TLVWrite>(
+    fn encode_accepted_command_ids<W: TLVWrite>(
         &self,
+        index: Option<Option<usize>>,
         tag: &TLVTag,
         mut tw: W,
     ) -> Result<(), Error> {
         debug!(
-            "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read -> Ok([",
-            self.id
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AcceptedCmdIDs(0xfff9)::Read{{{:?}}} -> Ok([",
+            self.id, index
         );
 
+        if let Some(Some(index)) = index {
+            let cmd = self
+                .commands()
+                .nth(index)
+                .ok_or(ErrorCode::ConstraintError)?;
+
+            tw.u32(&TLVTag::Anonymous, cmd.id)?;
+            debug!("    Cmd: 0x{:02x}, ", cmd.id);
+        } else {
+            tw.start_array(tag)?;
+
+            if index.is_none() {
+                for cmd in self.commands() {
+                    tw.u32(&TLVTag::Anonymous, cmd.id)?;
+                    debug!("    Cmd: 0x{:02x}, ", cmd.id);
+                }
+            }
+
+            tw.end_container()?;
+        }
+
+        debug!("])");
+
+        Ok(())
+    }
+
+    fn encode_generated_command_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
         // Matter C++ SDK unit tests do require the generated command IDs to be in ascending order and not to have repetitions.
         // Therefore, we are generating the array incrementally, using a variation of the selection sort algorithm
 
-        tw.start_array(tag)?;
+        debug!(
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read{{{:?}}} -> Ok(",
+            self.id, index
+        );
 
+        if !matches!(index, Some(Some(_))) {
+            tw.start_array(tag)?;
+        }
+
+        let mut count = 0;
         let mut max_inserted_cmd = None;
 
         while let Some(next_cmd) = self
@@ -299,51 +361,59 @@ impl<'a> Cluster<'a> {
             })
             .min()
         {
-            tw.u32(&TLVTag::Anonymous, next_cmd)?;
-
-            debug!("    Cmd: 0x{:02x}, ", next_cmd);
+            if index == Some(Some(count)) || index.is_none() {
+                tw.u32(&TLVTag::Anonymous, next_cmd)?;
+                debug!("    Cmd: 0x{:02x}, ", next_cmd);
+            }
 
             max_inserted_cmd = Some(next_cmd);
+            count += 1;
         }
 
-        tw.end_container()?;
+        if let Some(Some(index)) = index {
+            if index >= count {
+                Err(ErrorCode::ConstraintError)?;
+            }
+        }
+
+        if !matches!(index, Some(Some(_))) {
+            tw.end_container()?;
+        }
 
         debug!("])");
 
         Ok(())
     }
 
-    fn encode_event_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+    fn encode_event_ids<W: TLVWrite>(
+        &self,
+        index: Option<Option<usize>>,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
         debug!(
-            "Endpt(0x??)::Cluster(0x{:04x})::Attr::EventIDs(0xfffa)::Read -> Ok([",
-            self.id
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::EventIDs(0xfffa)::Read{{{:?}}} -> Ok([",
+            self.id, index
         );
 
         // No events for now
-        tw.start_array(tag)?;
-        tw.end_container()?;
+
+        if let Some(Some(_)) = index {
+            Err(ErrorCode::ConstraintError)?;
+        } else {
+            tw.start_array(tag)?;
+            tw.end_container()?;
+        }
 
         debug!("])");
 
         Ok(())
     }
 
-    fn encode_command_ids<W: TLVWrite>(
-        tag: &TLVTag,
-        mut tw: W,
-        cmds: impl Iterator<Item = CmdId>,
-    ) -> Result<(), Error> {
-        tw.start_array(tag)?;
-        for cmd in cmds {
-            tw.u32(&TLVTag::Anonymous, cmd)?;
-            debug!("    Cmd: 0x{:02x}, ", cmd);
-        }
-
-        tw.end_container()?;
-
-        debug!("])");
-
-        Ok(())
+    fn fetch_index(attr: &AttrDetails) -> Option<Option<usize>> {
+        attr.list_index
+            .clone()
+            .map(|li| li.into_option().map(|index| index as usize))
     }
 }
 

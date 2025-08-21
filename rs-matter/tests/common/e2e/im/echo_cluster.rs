@@ -160,7 +160,7 @@ impl EchoHandler {
 
         if let Some(mut writer) = reply.with_dataver(self.data_ver.get())? {
             if attr.is_system() {
-                CLUSTER.read(attr.attr_id, writer)
+                CLUSTER.read(attr, writer)
             } else {
                 match attr.attr_id.try_into()? {
                     Attributes::Att1 => writer.set(0x1234_u16),

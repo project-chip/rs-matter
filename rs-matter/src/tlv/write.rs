@@ -22,87 +22,6 @@ use crate::utils::storage::WriteBuf;
 
 use super::{TLVControl, TLVTag, TLVTagType, TLVValue, TLVValueType};
 
-/// For backwards compatibility
-pub struct TLVWriter<'a, 'b>(&'a mut WriteBuf<'b>);
-
-impl<'a, 'b> TLVWriter<'a, 'b> {
-    pub fn new(buf: &'a mut WriteBuf<'b>) -> Self {
-        Self(buf)
-    }
-
-    /// Write a tag and a TLV Octet String to the TLV stream, where the Octet String is a slice of u8 bytes.
-    ///
-    /// The writing is done via a user-supplied callback `cb`, that is expected to fill the provided buffer with the data
-    /// and to return the length of the written data.
-    ///
-    /// This method is useful when the data to be written needs to be computed first, and the computation needs a buffer where
-    /// to operate.
-    ///
-    /// Note that this method always uses a Str16l value type to write the data, which restricts the data length to no more than
-    /// 65535 bytes.
-    pub fn str_cb(
-        &mut self,
-        tag: &TLVTag,
-        cb: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
-    ) -> Result<(), Error> {
-        self.0.str_cb(tag, cb)
-    }
-
-    /// Write a tag and a TLV UTF-8 String to the TLV stream, where the UTF-8 String is a str.
-    ///
-    /// The writing is done via a user-supplied callback `cb`, that is expected to fill the provided buffer with the data
-    /// and to return the length of the written data.
-    ///
-    /// This method is useful when the data to be written needs to be computed first, and the computation needs a buffer where
-    /// to operate.
-    ///
-    /// Note that this method always uses a Utf16l value type to write the data, which restricts the data length to no more than
-    /// 65535 bytes.
-    pub fn utf8_cb(
-        &mut self,
-        tag: &TLVTag,
-        cb: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
-    ) -> Result<(), Error> {
-        self.0.utf8_cb(tag, cb)
-    }
-}
-
-impl TLVWrite for TLVWriter<'_, '_> {
-    type Position = usize;
-
-    fn write(&mut self, byte: u8) -> Result<(), Error> {
-        WriteBuf::append(self.0, &[byte])
-    }
-
-    fn get_tail(&self) -> Self::Position {
-        WriteBuf::get_tail(self.0)
-    }
-
-    fn rewind_to(&mut self, pos: Self::Position) {
-        WriteBuf::rewind_tail_to(self.0, pos)
-    }
-
-    fn available_space(&mut self) -> &mut [u8] {
-        WriteBuf::empty_as_mut_slice(self.0)
-    }
-
-    fn str_cb(
-        &mut self,
-        tag: &TLVTag,
-        cb: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
-    ) -> Result<(), Error> {
-        self.0.str_cb(tag, cb)
-    }
-
-    fn utf8_cb(
-        &mut self,
-        tag: &TLVTag,
-        cb: impl FnOnce(&mut [u8]) -> Result<usize, Error>,
-    ) -> Result<(), Error> {
-        self.0.utf8_cb(tag, cb)
-    }
-}
-
 /// A trait representing a storage where data can be serialized as a TLV stream.
 /// by synchronously emitting bytes to the storage.
 ///
@@ -118,7 +37,7 @@ impl TLVWrite for TLVWriter<'_, '_> {
 ///
 /// For iterator-style TLV serialization look at the `ToTLVIter` trait.
 pub trait TLVWrite {
-    type Position;
+    type Position: PartialEq + Copy;
 
     /// Write a TLV tag and value to the TLV stream.
     fn tlv(&mut self, tag: &TLVTag, value: &TLVValue) -> Result<(), Error> {

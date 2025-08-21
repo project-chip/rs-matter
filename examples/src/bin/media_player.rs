@@ -462,6 +462,7 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
 
                 builder.set(RANDOM_MEDIA_HEADERS[index])
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

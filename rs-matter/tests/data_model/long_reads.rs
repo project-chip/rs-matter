@@ -24,7 +24,6 @@ use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{StatusResp, SubscribeResp};
 
-use crate::attr_data;
 use crate::common::e2e::im::attributes::TestAttrResp;
 use crate::common::e2e::im::{echo_cluster as echo, ReplyProcessor, TestSubscribeReq};
 use crate::common::e2e::im::{TestReadReq, TestReportDataMsg};
@@ -32,6 +31,7 @@ use crate::common::e2e::test::E2eTest;
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
+use crate::{attr_data, attr_data_lel};
 
 static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 29, desc::AttributeId::DeviceTypeList, None),
@@ -73,6 +73,27 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 40, GlobalElements::AcceptedCmdList, None),
     attr_data!(0, 40, GlobalElements::EventList, None),
     attr_data!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
     attr_data!(0, 40, GlobalElements::FeatureMap, None),
     attr_data!(0, 40, GlobalElements::ClusterRevision, None),
     attr_data!(0, 48, gen_comm::AttributeId::Breadcrumb, None),
@@ -191,13 +212,196 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(1, echo::ID, GlobalElements::ClusterRevision, None),
 ];
 
+static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
+    attr_data!(0, 29, desc::AttributeId::DeviceTypeList, None),
+    attr_data!(0, 29, desc::AttributeId::ServerList, None),
+    attr_data!(0, 29, desc::AttributeId::ClientList, None),
+    attr_data!(0, 29, desc::AttributeId::PartsList, None),
+    attr_data!(0, 29, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 29, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 29, GlobalElements::EventList, None),
+    attr_data!(0, 29, GlobalElements::AttributeList, None),
+    attr_data!(0, 29, GlobalElements::FeatureMap, None),
+    attr_data!(0, 29, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 31, acl::AttributeId::Acl, None),
+    attr_data!(0, 31, acl::AttributeId::SubjectsPerAccessControlEntry, None),
+    attr_data!(0, 31, acl::AttributeId::TargetsPerAccessControlEntry, None),
+    attr_data!(0, 31, acl::AttributeId::AccessControlEntriesPerFabric, None),
+    attr_data!(0, 31, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 31, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 31, GlobalElements::EventList, None),
+    attr_data!(0, 31, GlobalElements::AttributeList, None),
+    attr_data!(0, 31, GlobalElements::FeatureMap, None),
+    attr_data!(0, 31, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 40, basic_info::AttributeId::DataModelRevision, None),
+    attr_data!(0, 40, basic_info::AttributeId::VendorName, None),
+    attr_data!(0, 40, basic_info::AttributeId::VendorID, None),
+    attr_data!(0, 40, basic_info::AttributeId::ProductName, None),
+    attr_data!(0, 40, basic_info::AttributeId::ProductID, None),
+    attr_data!(0, 40, basic_info::AttributeId::NodeLabel, None),
+    attr_data!(0, 40, basic_info::AttributeId::Location, None),
+    attr_data!(0, 40, basic_info::AttributeId::HardwareVersion, None),
+    attr_data!(0, 40, basic_info::AttributeId::HardwareVersionString, None),
+    attr_data!(0, 40, basic_info::AttributeId::SoftwareVersion, None),
+    attr_data!(0, 40, basic_info::AttributeId::SoftwareVersionString, None),
+    attr_data!(0, 40, basic_info::AttributeId::SerialNumber, None),
+    attr_data!(0, 40, basic_info::AttributeId::CapabilityMinima, None),
+    attr_data!(0, 40, basic_info::AttributeId::SpecificationVersion, None),
+    attr_data!(0, 40, basic_info::AttributeId::MaxPathsPerInvoke, None),
+    attr_data!(0, 40, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 40, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 40, GlobalElements::EventList, None),
+    attr_data!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 40, GlobalElements::AttributeList, None),
+    attr_data!(0, 40, GlobalElements::FeatureMap, None),
+    attr_data!(0, 40, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 48, gen_comm::AttributeId::Breadcrumb, None),
+    attr_data!(0, 48, gen_comm::AttributeId::BasicCommissioningInfo, None),
+    attr_data!(0, 48, gen_comm::AttributeId::RegulatoryConfig, None),
+    attr_data!(0, 48, gen_comm::AttributeId::LocationCapability, None),
+    attr_data!(
+        0,
+        48,
+        gen_comm::AttributeId::SupportsConcurrentConnection,
+        None
+    ),
+    attr_data!(0, 48, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 48, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 48, GlobalElements::EventList, None),
+    attr_data!(0, 48, GlobalElements::AttributeList, None),
+    attr_data!(0, 48, GlobalElements::FeatureMap, None),
+    attr_data!(0, 48, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 51, gen_diag::AttributeId::NetworkInterfaces, None),
+    attr_data!(0, 51, gen_diag::AttributeId::RebootCount, None),
+    attr_data!(0, 51, gen_diag::AttributeId::TestEventTriggersEnabled, None),
+    attr_data!(0, 51, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 51, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 51, GlobalElements::EventList, None),
+    attr_data!(0, 51, GlobalElements::AttributeList, None),
+    attr_data!(0, 51, GlobalElements::FeatureMap, None),
+    attr_data!(0, 51, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 60, adm_comm::AttributeId::WindowStatus, None),
+    attr_data!(0, 60, adm_comm::AttributeId::AdminFabricIndex, None),
+    attr_data!(0, 60, adm_comm::AttributeId::AdminVendorId, None),
+    attr_data!(0, 60, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 60, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 60, GlobalElements::EventList, None),
+    attr_data!(0, 60, GlobalElements::AttributeList, None),
+    attr_data!(0, 60, GlobalElements::FeatureMap, None),
+    attr_data!(0, 60, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 62, noc::AttributeId::NOCs, None),
+    attr_data!(0, 62, noc::AttributeId::Fabrics, None),
+    attr_data!(0, 62, noc::AttributeId::SupportedFabrics, None),
+    attr_data!(0, 62, noc::AttributeId::CommissionedFabrics, None),
+    attr_data!(0, 62, noc::AttributeId::TrustedRootCertificates, None),
+    attr_data!(0, 62, noc::AttributeId::CurrentFabricIndex, None),
+    attr_data!(0, 62, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 62, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 62, GlobalElements::EventList, None),
+    attr_data!(0, 62, GlobalElements::AttributeList, None),
+    attr_data!(0, 62, GlobalElements::FeatureMap, None),
+    attr_data!(0, 62, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 63, grp_key_mgmt::AttributeId::GroupKeyMap, None),
+    attr_data!(0, 63, grp_key_mgmt::AttributeId::GroupTable, None),
+    attr_data!(0, 63, grp_key_mgmt::AttributeId::MaxGroupsPerFabric, None),
+    attr_data!(
+        0,
+        63,
+        grp_key_mgmt::AttributeId::MaxGroupKeysPerFabric,
+        None
+    ),
+    attr_data!(0, 63, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 63, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 63, GlobalElements::EventList, None),
+    attr_data!(0, 63, GlobalElements::AttributeList, None),
+    attr_data!(0, 63, GlobalElements::FeatureMap, None),
+    attr_data!(0, 63, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 49, net_comm::AttributeId::MaxNetworks, None),
+    attr_data!(0, 49, net_comm::AttributeId::Networks, None),
+    attr_data!(0, 49, net_comm::AttributeId::InterfaceEnabled, None),
+    attr_data!(0, 49, net_comm::AttributeId::LastNetworkingStatus, None),
+    attr_data!(0, 49, net_comm::AttributeId::LastNetworkID, None),
+    attr_data!(0, 49, net_comm::AttributeId::LastConnectErrorValue, None),
+    attr_data!(0, 49, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 49, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 49, GlobalElements::EventList, None),
+    attr_data!(0, 49, GlobalElements::AttributeList, None),
+    attr_data!(0, 49, GlobalElements::FeatureMap, None),
+    attr_data!(0, 49, GlobalElements::ClusterRevision, None),
+    attr_data!(0, 55, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, 55, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, 55, GlobalElements::EventList, None),
+    attr_data!(0, 55, GlobalElements::AttributeList, None),
+    attr_data!(0, 55, GlobalElements::FeatureMap, None),
+    attr_data!(0, 55, GlobalElements::ClusterRevision, None),
+    attr_data!(0, echo::ID, echo::AttributesDiscriminants::Att1, None),
+    attr_data!(0, echo::ID, echo::AttributesDiscriminants::Att2, None),
+    attr_data!(0, echo::ID, echo::AttributesDiscriminants::AttCustom, None),
+    attr_data!(0, echo::ID, GlobalElements::GeneratedCmdList, None),
+    attr_data!(0, echo::ID, GlobalElements::AcceptedCmdList, None),
+    attr_data!(0, echo::ID, GlobalElements::EventList, None),
+    attr_data!(0, echo::ID, GlobalElements::AttributeList, None),
+    attr_data!(0, echo::ID, GlobalElements::FeatureMap, None),
+    attr_data!(0, echo::ID, GlobalElements::ClusterRevision, None),
+    attr_data!(1, 29, desc::AttributeId::DeviceTypeList, None),
+    attr_data!(1, 29, desc::AttributeId::ServerList, None),
+    attr_data!(1, 29, desc::AttributeId::ClientList, None),
+    attr_data!(1, 29, desc::AttributeId::PartsList, None),
+    attr_data!(1, 29, GlobalElements::GeneratedCmdList, None),
+    attr_data!(1, 29, GlobalElements::AcceptedCmdList, None),
+    attr_data!(1, 29, GlobalElements::EventList, None),
+    attr_data!(1, 29, GlobalElements::AttributeList, None),
+    attr_data!(1, 29, GlobalElements::FeatureMap, None),
+    attr_data!(1, 29, GlobalElements::ClusterRevision, None),
+    attr_data!(1, 6, on_off::AttributeId::OnOff, None),
+    attr_data!(1, 6, GlobalElements::GeneratedCmdList, None),
+    attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
+    attr_data_lel!(1, 6, GlobalElements::AcceptedCmdList, None),
+    attr_data_lel!(1, 6, GlobalElements::AcceptedCmdList, None),
+    attr_data_lel!(1, 6, GlobalElements::AcceptedCmdList, None),
+    attr_data!(1, 6, GlobalElements::EventList, None),
+    attr_data!(1, 6, GlobalElements::AttributeList, None),
+    attr_data!(1, 6, GlobalElements::FeatureMap, None),
+    attr_data!(1, 6, GlobalElements::ClusterRevision, None),
+    attr_data!(1, echo::ID, echo::AttributesDiscriminants::Att1, None),
+    attr_data!(1, echo::ID, echo::AttributesDiscriminants::Att2, None),
+    attr_data!(1, echo::ID, echo::AttributesDiscriminants::AttCustom, None),
+    attr_data!(1, echo::ID, GlobalElements::GeneratedCmdList, None),
+    attr_data!(1, echo::ID, GlobalElements::AcceptedCmdList, None),
+    attr_data!(1, echo::ID, GlobalElements::EventList, None),
+    attr_data!(1, echo::ID, GlobalElements::AttributeList, None),
+    attr_data!(1, echo::ID, GlobalElements::FeatureMap, None),
+    attr_data!(1, echo::ID, GlobalElements::ClusterRevision, None),
+];
+
 #[test]
 fn test_long_read_success() {
     const PART_1: usize = 38;
-    const PART_2: usize = 37;
+    const PART_2: usize = 40;
     const PART_3: usize = 37;
+    const PART_4: usize = 38;
 
-    // Read the entire attribute database, which requires 3 reads to complete
+    // Read the entire attribute database, which requires multiple reads to complete
     init_env_logger();
 
     let im = ImEngine::new_default();
@@ -244,7 +448,18 @@ fn test_long_read_success() {
                     status: IMStatusCode::Success,
                 },
                 TestReportDataMsg {
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..]),
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..][..PART_4]),
+                    more_chunks: Some(true),
+                    ..Default::default()
+                },
+                ReplyProcessor::remove_attr_data,
+            ),
+            &TLVTest::continue_report(
+                StatusResp {
+                    status: IMStatusCode::Success,
+                },
+                TestReportDataMsg {
+                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..][PART_4..]),
                     suppress_response: Some(true),
                     ..Default::default()
                 },
@@ -257,10 +472,11 @@ fn test_long_read_success() {
 #[test]
 fn test_long_read_subscription_success() {
     const PART_1: usize = 38;
-    const PART_2: usize = 37;
+    const PART_2: usize = 40;
     const PART_3: usize = 37;
+    const PART_4: usize = 38;
 
-    // Subscribe to the entire attribute database, which requires 3 reads to complete
+    // Subscribe to the entire attribute database, which requires multiple reads to complete
     init_env_logger();
 
     let im = ImEngine::new_default();
@@ -279,7 +495,7 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_RESPS[..PART_1]),
+                    attr_reports: Some(&ATTR_SUBSCR_RESPS[..PART_1]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -291,7 +507,7 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][..PART_2]),
+                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][..PART_2]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -303,7 +519,7 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][..PART_3]),
+                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][PART_2..][..PART_3]),
                     more_chunks: Some(true),
                     ..Default::default()
                 },
@@ -315,7 +531,19 @@ fn test_long_read_subscription_success() {
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    attr_reports: Some(&ATTR_RESPS[PART_1..][PART_2..][PART_3..]),
+                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][PART_2..][PART_3..][..PART_4]),
+                    more_chunks: Some(true),
+                    ..Default::default()
+                },
+                ReplyProcessor::remove_attr_data,
+            ),
+            &TLVTest::continue_report(
+                StatusResp {
+                    status: IMStatusCode::Success,
+                },
+                TestReportDataMsg {
+                    subscription_id: Some(1),
+                    attr_reports: Some(&ATTR_SUBSCR_RESPS[PART_1..][PART_2..][PART_3..][PART_4..]),
                     ..Default::default()
                 },
                 ReplyProcessor::remove_attr_data,

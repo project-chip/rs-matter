@@ -338,7 +338,20 @@ impl UnitTestingHandlerData {
             range_restricted_int_8_s: -20,
             range_restricted_int_16_u: 200,
             range_restricted_int_16_s: -100,
-            list_long_octet_string <- Vec::init(),
+            list_long_octet_string <- Vec::init().chain(|vec| {
+                for _ in 0..4 {
+                    let item = Vec::init()
+                        .chain(|item| {
+                            unwrap!(item.extend_from_slice(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
+
+                            Ok(())
+                        });
+
+                    unwrap!(vec.push_init_unchecked(item));
+                }
+
+                Ok(())
+            }),
             list_fabric_scoped <- Vec::init(),
             timed_write_boolean: false,
             nullable_boolean <- Nullable::init_none(),
@@ -541,6 +554,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
                 builder.end()
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -567,6 +581,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
                 builder.end()
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -605,6 +620,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
                 builder.end()
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -755,6 +771,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
                 builder.end()
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -823,6 +840,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
                 builder.end()
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

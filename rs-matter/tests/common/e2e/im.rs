@@ -21,7 +21,7 @@ use rs_matter::error::Error;
 use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath};
 use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
 use rs_matter::im::{ReportDataMsg, WriteReqTag};
-use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, TLVWriter, ToTLV};
+use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;
 
@@ -104,7 +104,7 @@ impl<'a> TestWriteReq<'a> {
 }
 
 impl TestToTLV for TestWriteReq<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         if let Some(supress_response) = self.suppress_response {
@@ -238,7 +238,7 @@ impl<'a> TestReportDataMsg<'a> {
 }
 
 impl TestToTLV for TestReportDataMsg<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         if let Some(subscription_id) = self.subscription_id {
@@ -303,7 +303,7 @@ impl<'a> TestInvReq<'a> {
 }
 
 impl TestToTLV for TestInvReq<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         if let Some(suppress_response) = self.suppress_response {
@@ -350,7 +350,7 @@ impl<'a> TestInvResp<'a> {
 }
 
 impl TestToTLV for TestInvResp<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         if let Some(suppress_response) = self.suppress_response {
@@ -391,24 +391,23 @@ impl ReplyProcessor {
     /// Remove the dataver and/or the data value from the `AttrData` payload, if so requested
     pub fn process(&self, element: &TLVElement, buf: &mut [u8]) -> Result<usize, Error> {
         let mut wb = WriteBuf::new(buf);
-        let mut tw = TLVWriter::new(&mut wb);
 
         if self.is_empty() {
-            element.to_tlv(&TLVTag::Anonymous, &mut tw)?;
+            element.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
             return Ok(wb.get_tail());
         }
 
         let report_data = ReportDataMsg::from_tlv(element)?;
 
-        tw.start_struct(&TLVTag::Anonymous)?;
+        wb.start_struct(&TLVTag::Anonymous)?;
 
         if let Some(subscription_id) = report_data.subscription_id {
-            tw.u32(&TLVTag::Context(0), subscription_id)?;
+            wb.u32(&TLVTag::Context(0), subscription_id)?;
         }
 
         if let Some(attr_reports) = report_data.attr_reports {
-            tw.start_array(&TLVTag::Context(1))?;
+            wb.start_array(&TLVTag::Context(1))?;
 
             for attr_report in attr_reports {
                 let mut attr_report = attr_report?;
@@ -423,25 +422,25 @@ impl ReplyProcessor {
                     }
                 }
 
-                attr_report.to_tlv(&TLVTag::Anonymous, &mut tw)?;
+                attr_report.to_tlv(&TLVTag::Anonymous, &mut wb)?;
             }
 
-            tw.end_container()?;
+            wb.end_container()?;
         }
 
         if let Some(event_reports) = report_data.event_reports {
-            tw.bool(&TLVTag::Context(2), event_reports)?;
+            wb.bool(&TLVTag::Context(2), event_reports)?;
         }
 
         if let Some(more_chunks) = report_data.more_chunks {
-            tw.bool(&TLVTag::Context(3), more_chunks)?;
+            wb.bool(&TLVTag::Context(3), more_chunks)?;
         }
 
         if let Some(suppress_response) = report_data.suppress_response {
-            tw.bool(&TLVTag::Context(4), suppress_response)?;
+            wb.bool(&TLVTag::Context(4), suppress_response)?;
         }
 
-        tw.end_container()?;
+        wb.end_container()?;
 
         Ok(wb.get_tail())
     }

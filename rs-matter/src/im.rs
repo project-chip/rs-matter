@@ -177,8 +177,9 @@ impl GenericPath {
             _ => Err(ErrorCode::Invalid.into()),
         }
     }
+
     /// Returns true, if the path is wildcard
-    pub fn is_wildcard(&self) -> bool {
+    pub const fn is_wildcard(&self) -> bool {
         !matches!(
             *self,
             GenericPath {
@@ -195,9 +196,9 @@ impl GenericPath {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ReportDataReq<'a> {
-    Read(&'a ReadReqRef<'a>),
-    Subscribe(&'a SubscribeReqRef<'a>),
-    SubscribeReport(&'a SubscribeReqRef<'a>),
+    Read(&'a ReadReq<'a>),
+    Subscribe(&'a SubscribeReq<'a>),
+    SubscribeReport(&'a SubscribeReq<'a>),
 }
 
 impl<'a> ReportDataReq<'a> {
@@ -250,27 +251,11 @@ impl SubscribeResp {
     }
 }
 
-#[derive(Debug, Default, Clone, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
-pub struct SubscribeReq<'a> {
-    pub keep_subs: bool,
-    pub min_int_floor: u16,
-    pub max_int_ceil: u16,
-    pub attr_requests: Option<TLVArray<'a, AttrPath>>,
-    pub event_requests: Option<TLVArray<'a, EventPath>>,
-    pub event_filters: Option<TLVArray<'a, EventFilter>>,
-    // The Context Tags are discontiguous for some reason
-    pub _dummy: Option<bool>,
-    pub fabric_filtered: bool,
-    pub dataver_filters: Option<TLVArray<'a, DataVersionFilter>>,
-}
-
 #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
 #[tlvargs(lifetime = "'a")]
-pub struct SubscribeReqRef<'a>(TLVElement<'a>);
+pub struct SubscribeReq<'a>(TLVElement<'a>);
 
-impl<'a> SubscribeReqRef<'a> {
+impl<'a> SubscribeReq<'a> {
     pub const fn new(element: TLVElement<'a>) -> Self {
         Self(element)
     }
@@ -308,7 +293,7 @@ impl<'a> SubscribeReqRef<'a> {
     }
 }
 
-impl fmt::Debug for SubscribeReqRef<'_> {
+impl fmt::Debug for SubscribeReq<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubscribeReqRef")
             .field("keep_subs", &self.keep_subs())
@@ -324,7 +309,7 @@ impl fmt::Debug for SubscribeReqRef<'_> {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for SubscribeReqRef<'_> {
+impl defmt::Format for SubscribeReq<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(f,
             "SubscribeReqRef {{\n  keep_subs: {:?},\n  min_int_floor: {:?},\n  max_int_ceil: {:?},\n  attr_requests: {:?},\n  event_requests: {:?},\n  event_filters: {:?},\n  fabric_filtered: {:?},\n  dataver_filters: {:?},\n}}",
@@ -377,20 +362,11 @@ pub enum InvReqTag {
     InvokeRequests = 2,
 }
 
-#[derive(Debug, Default, Clone, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
-pub struct InvReq<'a> {
-    pub suppress_response: Option<bool>,
-    pub timed_request: Option<bool>,
-    pub inv_requests: Option<TLVArray<'a, CmdData<'a>>>,
-}
-
 #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
 #[tlvargs(lifetime = "'a")]
-pub struct InvReqRef<'a>(TLVElement<'a>);
+pub struct InvReq<'a>(TLVElement<'a>);
 
-impl<'a> InvReqRef<'a> {
+impl<'a> InvReq<'a> {
     pub const fn new(element: TLVElement<'a>) -> Self {
         Self(element)
     }
@@ -418,7 +394,7 @@ impl<'a> InvReqRef<'a> {
     }
 }
 
-impl fmt::Debug for InvReqRef<'_> {
+impl fmt::Debug for InvReq<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InvReqRef")
             .field("suppress_response", &self.suppress_response())
@@ -429,7 +405,7 @@ impl fmt::Debug for InvReqRef<'_> {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for InvReqRef<'_> {
+impl defmt::Format for InvReq<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(f,
             "InvReqRef {{\n  suppress_response: {:?},\n  timed_request: {:?},\n  inv_requests: {:?},\n}}",
@@ -458,22 +434,11 @@ pub enum InvRespTag {
     InvokeResponses = 1,
 }
 
-#[derive(Debug, Default, Clone, ToTLV, FromTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
-pub struct ReadReq<'a> {
-    pub attr_requests: Option<TLVArray<'a, AttrPath>>,
-    pub event_requests: Option<TLVArray<'a, EventPath>>,
-    pub event_filters: Option<TLVArray<'a, EventFilter>>,
-    pub fabric_filtered: bool,
-    pub dataver_filters: Option<TLVArray<'a, DataVersionFilter>>,
-}
-
 #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
 #[tlvargs(lifetime = "'a")]
-pub struct ReadReqRef<'a>(TLVElement<'a>);
+pub struct ReadReq<'a>(TLVElement<'a>);
 
-impl<'a> ReadReqRef<'a> {
+impl<'a> ReadReq<'a> {
     pub const fn new(element: TLVElement<'a>) -> Self {
         Self(element)
     }
@@ -499,7 +464,7 @@ impl<'a> ReadReqRef<'a> {
     }
 }
 
-impl fmt::Debug for ReadReqRef<'_> {
+impl fmt::Debug for ReadReq<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadReqRef")
             .field("attr_requests", &self.attr_requests())
@@ -512,7 +477,7 @@ impl fmt::Debug for ReadReqRef<'_> {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for ReadReqRef<'_> {
+impl defmt::Format for ReadReq<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(f,
             "ReadReqRef {{\n  attr_requests: {:?},\n  event_requests: {:?},\n  event_filters: {:?},\n  fabric_filtered: {:?},\n  dataver_filters: {:?},\n}}",
@@ -538,16 +503,6 @@ pub enum ReadReqTag {
     DataVersionFilters = 4,
 }
 
-#[derive(Debug, Clone, FromTLV, ToTLV)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
-pub struct WriteReq<'a> {
-    pub supress_response: Option<bool>,
-    pub timed_request: Option<bool>,
-    pub write_requests: TLVArray<'a, AttrData<'a>>,
-    pub more_chunked: Option<bool>,
-}
-
 // This enum is helpful when we are constructing the request
 // step by step in incremental manner
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -562,9 +517,9 @@ pub enum WriteReqTag {
 
 #[derive(FromTLV, ToTLV, Clone, PartialEq, Eq, Hash)]
 #[tlvargs(lifetime = "'a")]
-pub struct WriteReqRef<'a>(TLVElement<'a>);
+pub struct WriteReq<'a>(TLVElement<'a>);
 
-impl<'a> WriteReqRef<'a> {
+impl<'a> WriteReq<'a> {
     pub const fn new(element: TLVElement<'a>) -> Self {
         Self(element)
     }
@@ -591,7 +546,7 @@ impl<'a> WriteReqRef<'a> {
         TLVArray::new(self.0.r#struct()?.find_ctx(2)?)
     }
 
-    pub fn more_chunked(&self) -> Result<bool, Error> {
+    pub fn more_chunks(&self) -> Result<bool, Error> {
         self.0
             .r#struct()?
             .find_ctx(3)?
@@ -601,26 +556,26 @@ impl<'a> WriteReqRef<'a> {
     }
 }
 
-impl fmt::Debug for WriteReqRef<'_> {
+impl fmt::Debug for WriteReq<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WriteReqRef")
             .field("supress_response", &self.supress_response())
             .field("timed_request", &self.timed_request())
             .field("write_requests", &self.write_requests())
-            .field("more_chunked", &self.more_chunked())
+            .field("more_chunks", &self.more_chunks())
             .finish()
     }
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for WriteReqRef<'_> {
+impl defmt::Format for WriteReq<'_> {
     fn format(&self, f: defmt::Formatter<'_>) {
         defmt::write!(f,
-            "WriteReqRef {{\n  supress_response: {:?},\n  timed_request: {:?},\n  write_requests: {:?},\n  more_chunked: {:?},\n}}",
+            "WriteReqRef {{\n  supress_response: {:?},\n  timed_request: {:?},\n  write_requests: {:?},\n  more_chunks: {:?},\n}}",
             self.supress_response(),
             self.timed_request(),
             self.write_requests(),
-            self.more_chunked(),
+            self.more_chunks(),
         )
     }
 }
@@ -668,7 +623,7 @@ pub enum CmdResp<'a> {
 }
 
 impl CmdResp<'_> {
-    pub fn status_new(
+    pub const fn status_new(
         cmd_path: CmdPath,
         status: IMStatusCode,
         cluster_status: Option<u16>,
@@ -705,7 +660,7 @@ pub struct CmdStatus {
 }
 
 impl CmdStatus {
-    pub fn new(path: CmdPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
+    pub const fn new(path: CmdPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
         Self {
             path,
             status: Status {
@@ -744,7 +699,7 @@ pub struct Status {
 }
 
 impl Status {
-    pub fn new(status: IMStatusCode, cluster_status: Option<u16>) -> Status {
+    pub const fn new(status: IMStatusCode, cluster_status: Option<u16>) -> Status {
         Status {
             status,
             cluster_status,
@@ -800,7 +755,7 @@ pub struct AttrData<'a> {
 }
 
 impl<'a> AttrData<'a> {
-    pub fn new(data_ver: Option<u32>, path: AttrPath, data: TLVElement<'a>) -> Self {
+    pub const fn new(data_ver: Option<u32>, path: AttrPath, data: TLVElement<'a>) -> Self {
         Self {
             data_ver,
             path,
@@ -867,7 +822,11 @@ pub struct AttrStatus {
 }
 
 impl AttrStatus {
-    pub fn new(path: &GenericPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
+    pub const fn new(
+        path: &GenericPath,
+        status: IMStatusCode,
+        cluster_status: Option<u16>,
+    ) -> Self {
         Self {
             path: AttrPath::new(path),
             status: Status::new(status, cluster_status),
@@ -927,7 +886,7 @@ macro_rules! cmd_path_ib {
 }
 
 impl CmdPath {
-    pub fn new(
+    pub const fn new(
         endpoint: Option<EndptId>,
         cluster: Option<ClusterId>,
         command: Option<CmdId>,

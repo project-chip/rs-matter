@@ -19,7 +19,8 @@ use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::im::GenericPath;
 use rs_matter::im::{AttrPath, AttrStatus};
-use rs_matter::tlv::{TLVTag, TLVWrite, TLVWriter};
+use rs_matter::tlv::{TLVTag, TLVWrite};
+use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
 use crate::common::e2e::E2eRunner;
@@ -49,6 +50,28 @@ macro_rules! attr_data_path {
     };
 }
 
+/// Same as `attr_data_path!`, but generates a path for one concrete
+/// array element in an array attribute
+#[macro_export]
+macro_rules! attr_data_lel_path {
+    ($path:expr, $data:expr) => {
+        $crate::common::e2e::im::attributes::TestAttrResp::AttrData(
+            $crate::common::e2e::im::attributes::TestAttrData {
+                data_ver: None,
+                path: rs_matter::im::AttrPath {
+                    tag_compression: None,
+                    node: None,
+                    endpoint: $path.endpoint,
+                    cluster: $path.cluster,
+                    attr: $path.leaf,
+                    list_index: Some(rs_matter::tlv::Nullable::none()),
+                },
+                data: $data,
+            },
+        )
+    };
+}
+
 /// A macro for creating a `TestAttrResp` instance of variant `AttrData` taking
 /// an endpoint, cluster, attribute, and data.
 ///
@@ -58,6 +81,22 @@ macro_rules! attr_data_path {
 macro_rules! attr_data {
     ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
         $crate::attr_data_path!(
+            rs_matter::im::GenericPath::new(
+                Some($endpoint as u16),
+                Some($cluster as u32),
+                Some($attr as u32)
+            ),
+            $data
+        )
+    };
+}
+
+/// Same as `attr_data!`, but generates data for one concrete
+/// array element in an array attribute
+#[macro_export]
+macro_rules! attr_data_lel {
+    ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
+        $crate::attr_data_lel_path!(
             rs_matter::im::GenericPath::new(
                 Some($endpoint as u16),
                 Some($cluster as u32),
@@ -91,7 +130,7 @@ impl<'a> TestAttrData<'a> {
 }
 
 impl TestToTLV for TestAttrData<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         if let Some(data_ver) = self.data_ver {
@@ -126,7 +165,7 @@ impl<'a> TestAttrResp<'a> {
 }
 
 impl TestToTLV for TestAttrResp<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         match self {
