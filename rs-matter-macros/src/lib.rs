@@ -22,7 +22,12 @@ use proc_macro2::{Ident, Punct};
 
 use quote::quote;
 
-use crate::idl::{cluster, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL};
+use crate::idl::{
+    cluster, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
+    CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2, CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
+    CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0, CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0,
+    CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
+};
 
 use syn::{parse::Parse, parse_macro_input, DeriveInput, Token};
 
@@ -43,7 +48,7 @@ pub fn derive_totlv(item: TokenStream) -> TokenStream {
     crate::tlv::derive_totlv(ast, get_crate_name()).into()
 }
 
-/// Generate code for one or more Matter cluster definitions as specified in the Matter IDL/ZAP file.
+/// Generate code for one or more Matter cluster definitions as specified in the Matter IDL file.
 ///
 /// The IDL file used is rs_matter_data_model::CSA_STANDARD_CLUSTERS_IDL, so
 /// at this time only "standard" clusters can be imported.
@@ -55,7 +60,25 @@ pub fn import(item: TokenStream) -> TokenStream {
 
     let time = std::time::SystemTime::now();
 
-    let idl = crate::idl::Idl::parse(CSA_STANDARD_CLUSTERS_IDL.into()).unwrap();
+    // Taken from here:
+    // https://github.com/project-chip/connectedhomeip/blob/v1.4.2.0/src/controller/data_model/controller-clusters.matter
+    // https://github.com/project-chip/connectedhomeip/blob/v1.4.0.0/src/controller/data_model/controller-clusters.matter
+    // https://github.com/project-chip/connectedhomeip/blob/v1.3.0.0/src/controller/data_model/controller-clusters.matter
+    // https://github.com/project-chip/connectedhomeip/blob/v1.2.0.1/src/controller/data_model/controller-clusters.matter
+    // https://github.com/project-chip/connectedhomeip/blob/v1.1.0.2/src/controller/data_model/controller-clusters.matter
+    // https://github.com/project-chip/connectedhomeip/blob/v1.0.0.2/src/controller/data_model/controller-clusters.matter
+    let idl_file = match input.matter_version.as_deref() {
+        Some("1.4.2") | Some("1.4.2.0") => CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
+        Some("1.4") | Some("1.4.0") | Some("1.4.0.0") => CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0,
+        Some("1.3") | Some("1.3.0") | Some("1.3.0.0") => CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0,
+        Some("1.2") | Some("1.2.0") | Some("1.2.0.1") => CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
+        Some("1.1") | Some("1.1.0") | Some("1.1.0.2") => CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2,
+        Some("1.0") | Some("1.0.0") | Some("1.0.0.2") => CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
+        None => CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0,
+        Some(other) => panic!("Unknown Matter specification version: {other}"),
+    };
+
+    let idl = crate::idl::Idl::parse(idl_file.into()).unwrap();
 
     let elapsed = time
         .elapsed()
@@ -124,6 +147,9 @@ struct MatterImportArgs {
     /// What clusters to import. If the set is empty, all clusters will be imported
     clusters: HashSet<String>,
 
+    /// The Matter version of the IDL/ZAP file to use
+    matter_version: Option<String>,
+
     /// Whether to print timings for the macro execution
     print_timings: bool,
 
@@ -138,19 +164,20 @@ impl Parse for MatterImportArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut clusters = HashSet::new();
 
+        let mut matter_version = None;
         let mut print_timings = false;
         let mut cap_parse = None;
         let mut cap_codegen = None;
 
-        let mut parse_timings = false;
+        let mut parse_conf = false;
 
-        // Argument is "[Cluster1[[,] Cluster2[,] ...][; [print_timings][[,] cap_parse=XXX][[,] cap_codegen=YYY]]"
+        // Argument is "[Cluster1[[,] Cluster2[,] ...][; matter_version="X.Y.Z"][[,][print_timings]][[,] cap_parse=XXX][[,] cap_codegen=YYY]]"
         while !input.is_empty() {
             if input.peek(Token![,]) {
                 input.parse::<Punct>()?;
             } else if input.peek(Token![;]) {
                 input.parse::<Punct>()?;
-                parse_timings = true;
+                parse_conf = true;
                 break;
             } else {
                 let cluster: Ident = input.parse()?;
@@ -159,7 +186,7 @@ impl Parse for MatterImportArgs {
             }
         }
 
-        if parse_timings {
+        if parse_conf {
             while !input.is_empty() {
                 if input.peek(Token![,]) {
                     input.parse::<Punct>()?;
@@ -167,6 +194,12 @@ impl Parse for MatterImportArgs {
                     let param: Ident = input.parse()?;
 
                     match param.to_string().as_str() {
+                        "matter_version" => {
+                            input.parse::<Token![=]>()?;
+
+                            let value = input.parse::<syn::LitStr>()?;
+                            matter_version = Some(value.value());
+                        }
                         "print_timings" => {
                             print_timings = true;
                         }
@@ -200,6 +233,7 @@ impl Parse for MatterImportArgs {
         Ok(MatterImportArgs {
             rs_matter_crate: get_crate_name(),
             clusters,
+            matter_version,
             print_timings,
             cap_parse,
             cap_codegen,

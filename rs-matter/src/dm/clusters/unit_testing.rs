@@ -24,14 +24,15 @@ use crate::dm::{
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{
     Nullable, NullableBuilder, OctetStr, Octets, OctetsArrayBuilder, OctetsBuilder, TLVArray,
-    TLVBuilderParent, ToTLVArrayBuilder, ToTLVBuilder, Utf8Str, Utf8StrBuilder,
+    TLVBuilder, TLVBuilderParent, TLVTag, TLVWrite, ToTLVArrayBuilder, ToTLVBuilder, Utf8Str,
+    Utf8StrBuilder,
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
 pub use crate::dm::clusters::decl::unit_testing::*;
-use crate::with;
+use crate::{except, with};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -286,6 +287,7 @@ pub struct UnitTestingHandlerData {
     nullable_range_restricted_int_8_s: Nullable<i8>,
     nullable_range_restricted_int_16_u: Nullable<u16>,
     nullable_range_restricted_int_16_s: Nullable<i16>,
+    mei_int_8_u: u8,
 }
 
 impl UnitTestingHandlerData {
@@ -372,6 +374,7 @@ impl UnitTestingHandlerData {
             nullable_range_restricted_int_8_s: Nullable::some(-20),
             nullable_range_restricted_int_16_u: Nullable::some(200),
             nullable_range_restricted_int_16_s: Nullable::some(-100),
+            mei_int_8_u: 0,
         })
     }
 }
@@ -392,7 +395,12 @@ impl<'a> UnitTestingHandler<'a> {
 }
 
 impl ClusterHandler for UnitTestingHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(except!(
+        CommandId::TestUnknownCommand
+            | CommandId::TestSimpleArgumentRequest
+            | CommandId::TestStructArrayArgumentRequest
+            | CommandId::TestComplexNullableOptionalRequest
+    ));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -2045,24 +2053,23 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         }
     }
 
-    // TODO: Not available in Matter V1.2
-    // fn handle_test_simple_argument_request<P: TLVBuilderParent>(
-    //     &self,
-    //     _ctx: impl InvokeContext,
-    //     request: TestSimpleArgumentRequestRequest<'_>,
-    //     response: TestSimpleArgumentResponseBuilder<P>,
-    // ) -> Result<P, Error> {
-    //     response.return_value(request.arg_1()? as _)?.end()
-    // }
+    fn handle_test_simple_argument_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestSimpleArgumentRequestRequest<'_>,
+        response: TestSimpleArgumentResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        response.return_value(request.arg_1()? as _)?.end()
+    }
 
-    // fn handle_test_struct_array_argument_request<P: TLVBuilderParent>(
-    //     &self,
-    //     _ctx: impl InvokeContext,
-    //     _request: TestStructArrayArgumentRequestRequest<'_>,
-    //     _response: TestStructArrayArgumentResponseBuilder<P>,
-    // ) -> Result<P, Error> {
-    //     todo!()
-    // }
+    fn handle_test_struct_array_argument_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: TestStructArrayArgumentRequestRequest<'_>,
+        _response: TestStructArrayArgumentResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        unreachable!()
+    }
 
     fn handle_test_struct_argument_request<P: TLVBuilderParent>(
         &self,
@@ -2365,136 +2372,135 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .end()
     }
 
-    // TODO: Not available in Matter V1.2
-    // fn handle_test_complex_nullable_optional_request<P: TLVBuilderParent>(
-    //     &self,
-    //     _ctx: impl InvokeContext,
-    //     request: TestComplexNullableOptionalRequestRequest<'_>,
-    //     response: TestComplexNullableOptionalResponseBuilder<P>,
-    // ) -> Result<P, Error> {
-    //     response
-    //         .nullable_int_was_null(request.nullable_int()?.is_none())?
-    //         .nullable_int_value(request.nullable_int()?.into_option())?
-    //         .optional_int_was_present(request.optional_int()?.is_some())?
-    //         .optional_int_value(request.optional_int()?)?
-    //         .nullable_optional_int_was_present(request.nullable_optional_int()?.is_some())?
-    //         .nullable_optional_int_was_null(
-    //             request
-    //                 .nullable_optional_int()?
-    //                 .as_ref()
-    //                 .map(Nullable::is_none),
-    //         )?
-    //         .nullable_optional_int_value(
-    //             request
-    //                 .nullable_optional_int()?
-    //                 .and_then(Nullable::into_option),
-    //         )?
-    //         .nullable_string_was_null(request.nullable_string()?.is_none())?
-    //         .nullable_string_value(request.nullable_string()?.into_option())?
-    //         .optional_string_was_present(request.optional_string()?.is_some())?
-    //         .optional_string_value(request.optional_string()?)?
-    //         .nullable_optional_string_was_present(request.nullable_optional_string()?.is_some())?
-    //         .nullable_optional_string_was_null(
-    //             request
-    //                 .nullable_optional_string()?
-    //                 .as_ref()
-    //                 .map(Nullable::is_none),
-    //         )?
-    //         .nullable_optional_string_value(
-    //             request
-    //                 .nullable_optional_string()?
-    //                 .and_then(Nullable::into_option),
-    //         )?
-    //         .nullable_struct_was_null(request.nullable_struct()?.is_none())?
-    //         .nullable_struct_value()?
-    //         .with_some(request.nullable_struct()?.into_option(), |i, o| {
-    //             o.a(i.a()?)?
-    //                 .b(i.b()?)?
-    //                 .c(i.c()?)?
-    //                 .d(i.d()?)?
-    //                 .e(i.e()?)?
-    //                 .f(i.f()?)?
-    //                 .g(i.g()?)?
-    //                 .h(i.h()?)?
-    //                 .end()
-    //         })?
-    //         .optional_struct_was_present(request.optional_struct()?.is_some())?
-    //         .optional_struct_value()?
-    //         .with_some(request.optional_struct()?, |i, o| {
-    //             o.a(i.a()?)?
-    //                 .b(i.b()?)?
-    //                 .c(i.c()?)?
-    //                 .d(i.d()?)?
-    //                 .e(i.e()?)?
-    //                 .f(i.f()?)?
-    //                 .g(i.g()?)?
-    //                 .h(i.h()?)?
-    //                 .end()
-    //         })?
-    //         .nullable_optional_struct_was_present(request.nullable_optional_struct()?.is_some())?
-    //         .nullable_optional_struct_was_null(
-    //             request
-    //                 .nullable_optional_struct()?
-    //                 .as_ref()
-    //                 .map(Nullable::is_none),
-    //         )?
-    //         .nullable_optional_struct_value()?
-    //         .with_some(
-    //             request
-    //                 .nullable_optional_struct()?
-    //                 .and_then(Nullable::into_option),
-    //             |i, o| {
-    //                 o.a(i.a()?)?
-    //                     .b(i.b()?)?
-    //                     .c(i.c()?)?
-    //                     .d(i.d()?)?
-    //                     .e(i.e()?)?
-    //                     .f(i.f()?)?
-    //                     .g(i.g()?)?
-    //                     .h(i.h()?)?
-    //                     .end()
-    //             },
-    //         )?
-    //         .nullable_list_was_null(request.nullable_list()?.is_none())?
-    //         .nullable_list_value()?
-    //         .with_some(request.nullable_list()?.as_opt_ref(), |i, mut o| {
-    //             for i in i.iter() {
-    //                 o = o.push(&i?)?;
-    //             }
+    fn handle_test_complex_nullable_optional_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestComplexNullableOptionalRequestRequest<'_>,
+        response: TestComplexNullableOptionalResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        response
+            .nullable_int_was_null(request.nullable_int()?.is_none())?
+            .nullable_int_value(request.nullable_int()?.into_option())?
+            .optional_int_was_present(request.optional_int()?.is_some())?
+            .optional_int_value(request.optional_int()?)?
+            .nullable_optional_int_was_present(request.nullable_optional_int()?.is_some())?
+            .nullable_optional_int_was_null(
+                request
+                    .nullable_optional_int()?
+                    .as_ref()
+                    .map(Nullable::is_none),
+            )?
+            .nullable_optional_int_value(
+                request
+                    .nullable_optional_int()?
+                    .and_then(Nullable::into_option),
+            )?
+            .nullable_string_was_null(request.nullable_string()?.is_none())?
+            .nullable_string_value(request.nullable_string()?.into_option())?
+            .optional_string_was_present(request.optional_string()?.is_some())?
+            .optional_string_value(request.optional_string()?)?
+            .nullable_optional_string_was_present(request.nullable_optional_string()?.is_some())?
+            .nullable_optional_string_was_null(
+                request
+                    .nullable_optional_string()?
+                    .as_ref()
+                    .map(Nullable::is_none),
+            )?
+            .nullable_optional_string_value(
+                request
+                    .nullable_optional_string()?
+                    .and_then(Nullable::into_option),
+            )?
+            .nullable_struct_was_null(request.nullable_struct()?.is_none())?
+            .nullable_struct_value()?
+            .with_some(request.nullable_struct()?.into_option(), |i, o| {
+                o.a(i.a()?)?
+                    .b(i.b()?)?
+                    .c(i.c()?)?
+                    .d(i.d()?)?
+                    .e(i.e()?)?
+                    .f(i.f()?)?
+                    .g(i.g()?)?
+                    .h(i.h()?)?
+                    .end()
+            })?
+            .optional_struct_was_present(request.optional_struct()?.is_some())?
+            .optional_struct_value()?
+            .with_some(request.optional_struct()?, |i, o| {
+                o.a(i.a()?)?
+                    .b(i.b()?)?
+                    .c(i.c()?)?
+                    .d(i.d()?)?
+                    .e(i.e()?)?
+                    .f(i.f()?)?
+                    .g(i.g()?)?
+                    .h(i.h()?)?
+                    .end()
+            })?
+            .nullable_optional_struct_was_present(request.nullable_optional_struct()?.is_some())?
+            .nullable_optional_struct_was_null(
+                request
+                    .nullable_optional_struct()?
+                    .as_ref()
+                    .map(Nullable::is_none),
+            )?
+            .nullable_optional_struct_value()?
+            .with_some(
+                request
+                    .nullable_optional_struct()?
+                    .and_then(Nullable::into_option),
+                |i, o| {
+                    o.a(i.a()?)?
+                        .b(i.b()?)?
+                        .c(i.c()?)?
+                        .d(i.d()?)?
+                        .e(i.e()?)?
+                        .f(i.f()?)?
+                        .g(i.g()?)?
+                        .h(i.h()?)?
+                        .end()
+                },
+            )?
+            .nullable_list_was_null(request.nullable_list()?.is_none())?
+            .nullable_list_value()?
+            .with_some(request.nullable_list()?.as_opt_ref(), |i, mut o| {
+                for i in i.iter() {
+                    o = o.push(&i?)?;
+                }
 
-    //             o.end()
-    //         })?
-    //         .optional_list_was_present(request.optional_list()?.is_some())?
-    //         .optional_list_value()?
-    //         .with_some(request.optional_list()?, |i, mut o| {
-    //             for i in i.iter() {
-    //                 o = o.push(&i?)?;
-    //             }
+                o.end()
+            })?
+            .optional_list_was_present(request.optional_list()?.is_some())?
+            .optional_list_value()?
+            .with_some(request.optional_list()?, |i, mut o| {
+                for i in i.iter() {
+                    o = o.push(&i?)?;
+                }
 
-    //             o.end()
-    //         })?
-    //         .nullable_optional_list_was_present(request.nullable_optional_list()?.is_some())?
-    //         .nullable_optional_list_was_null(
-    //             request
-    //                 .nullable_optional_list()?
-    //                 .as_ref()
-    //                 .map(Nullable::is_none),
-    //         )?
-    //         .nullable_optional_list_value()?
-    //         .with_some(
-    //             request
-    //                 .nullable_optional_list()?
-    //                 .and_then(Nullable::into_option),
-    //             |i, mut o| {
-    //                 for i in i.iter() {
-    //                     o = o.push(&i?)?;
-    //                 }
+                o.end()
+            })?
+            .nullable_optional_list_was_present(request.nullable_optional_list()?.is_some())?
+            .nullable_optional_list_was_null(
+                request
+                    .nullable_optional_list()?
+                    .as_ref()
+                    .map(Nullable::is_none),
+            )?
+            .nullable_optional_list_value()?
+            .with_some(
+                request
+                    .nullable_optional_list()?
+                    .and_then(Nullable::into_option),
+                |i, mut o| {
+                    for i in i.iter() {
+                        o = o.push(&i?)?;
+                    }
 
-    //                 o.end()
-    //             },
-    //         )?
-    //         .end()
-    // }
+                    o.end()
+                },
+            )?
+            .end()
+    }
 
     fn handle_simple_struct_echo_request<P: TLVBuilderParent>(
         &self,
@@ -2552,52 +2558,76 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         todo!()
     }
 
-    // TODO: Not available in Matter V1.2
-    // fn handle_test_batch_helper_request<P: TLVBuilderParent>(
-    //     &self,
-    //     _ctx: impl InvokeContext,
-    //     request: TestBatchHelperRequestRequest<'_>,
-    //     response: TestBatchHelperResponseBuilder<P>,
-    // ) -> Result<P, Error> {
-    //     // Demonstrates how to skip the builder framework and write raw, unchecked TLV
-    //     let byte = request.fill_character()?;
-    //     let len = request.size_of_response_buffer()? as _;
+    fn handle_test_unknown_command(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+        unreachable!()
+    }
 
-    //     let mut parent = response.unchecked_into_parent();
+    fn handle_test_batch_helper_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestBatchHelperRequestRequest<'_>,
+        response: TestBatchHelperResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        // Demonstrates how to skip the builder framework and write raw, unchecked TLV
+        let byte = request.fill_character()?;
+        let len = request.size_of_response_buffer()? as _;
 
-    //     let writer = parent.writer();
+        let mut parent = response.unchecked_into_parent();
 
-    //     writer.stri(
-    //         &TLVTag::Context(TestBatchHelperResponseTag::Buffer as _),
-    //         len,
-    //         core::iter::repeat_n(byte, len),
-    //     )?;
-    //     writer.end_container()?; // TestBatchHelperResponse struct
+        let writer = parent.writer();
 
-    //     Ok(parent)
-    // }
+        writer.stri(
+            &TLVTag::Context(TestBatchHelperResponseTag::Buffer as _),
+            len,
+            core::iter::repeat_n(byte, len),
+        )?;
+        writer.end_container()?; // TestBatchHelperResponse struct
 
-    // fn handle_test_second_batch_helper_request<P: TLVBuilderParent>(
-    //     &self,
-    //     _ctx: impl InvokeContext,
-    //     request: TestSecondBatchHelperRequestRequest<'_>,
-    //     response: TestBatchHelperResponseBuilder<P>,
-    // ) -> Result<P, Error> {
-    //     // Demonstrates how to skip the builder framework and write raw, unchecked TLV
-    //     let byte = request.fill_character()?;
-    //     let len = request.size_of_response_buffer()? as _;
+        Ok(parent)
+    }
 
-    //     let mut parent = response.unchecked_into_parent();
+    fn handle_test_second_batch_helper_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestSecondBatchHelperRequestRequest<'_>,
+        response: TestBatchHelperResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        // Demonstrates how to skip the builder framework and write raw, unchecked TLV
+        let byte = request.fill_character()?;
+        let len = request.size_of_response_buffer()? as _;
 
-    //     let writer = parent.writer();
+        let mut parent = response.unchecked_into_parent();
 
-    //     writer.stri(
-    //         &TLVTag::Context(TestBatchHelperResponseTag::Buffer as _),
-    //         len,
-    //         core::iter::repeat_n(byte, len),
-    //     )?;
-    //     writer.end_container()?; // TestBatchHelperResponse struct
+        let writer = parent.writer();
 
-    //     Ok(parent)
-    // }
+        writer.stri(
+            &TLVTag::Context(TestBatchHelperResponseTag::Buffer as _),
+            len,
+            core::iter::repeat_n(byte, len),
+        )?;
+        writer.end_container()?; // TestBatchHelperResponse struct
+
+        Ok(parent)
+    }
+
+    fn mei_int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.data.borrow().mei_int_8_u)
+    }
+
+    fn set_mei_int_8_u(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
+        self.data.borrow_mut().mei_int_8_u = value;
+
+        Ok(())
+    }
+
+    fn handle_test_different_vendor_mei_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestDifferentVendorMeiRequestRequest<'_>,
+        response: TestDifferentVendorMeiResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let arg = request.arg_1()?;
+
+        response.arg_1(arg)?.event_number(0)?.end()
+    }
 }

@@ -11,7 +11,7 @@ on:
         description: 'Chip repository reference (branch/tag/commit)'
         required: false
 #        default: 'master'
-        default: 'v1.2-branch'
+        default: 'v1.3.0.0'
         type: string
 
 env:

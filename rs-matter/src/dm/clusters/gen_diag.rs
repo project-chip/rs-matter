@@ -273,4 +273,13 @@ impl ClusterHandler for GenDiagHandler<'_> {
     ) -> Result<P, Error> {
         Err(ErrorCode::CommandNotFound.into())
     }
+
+    fn handle_payload_test_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: PayloadTestRequestRequest<'_>,
+        _response: PayloadTestResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        Err(ErrorCode::CommandNotFound.into())
+    }
 }

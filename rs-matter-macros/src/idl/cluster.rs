@@ -386,7 +386,13 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
             access = quote!(#access.union(#krate::dm::Access::FAB_SENSITIVE));
         }
 
-        let quality = if attr.field.is_optional {
+        let quality = if attr.field.field.data_type.is_list {
+            if attr.field.is_optional {
+                quote!(#krate::dm::Quality::OA)
+            } else {
+                quote!(#krate::dm::Quality::A)
+            }
+        } else if attr.field.is_optional {
             quote!(#krate::dm::Quality::O)
         } else {
             quote!(#krate::dm::Quality::NONE)
@@ -609,25 +615,25 @@ mod tests {
                                 AttributeId::GeneratedCommandList as _,
                                 rs_matter_crate::dm::Access::READ
                                     .union(rs_matter_crate::dm::Access::NEED_VIEW),
-                                rs_matter_crate::dm::Quality::NONE,
+                                rs_matter_crate::dm::Quality::A,
                             ),
                             rs_matter_crate::dm::Attribute::new(
                                 AttributeId::AcceptedCommandList as _,
                                 rs_matter_crate::dm::Access::READ
                                     .union(rs_matter_crate::dm::Access::NEED_VIEW),
-                                rs_matter_crate::dm::Quality::NONE,
+                                rs_matter_crate::dm::Quality::A,
                             ),
                             rs_matter_crate::dm::Attribute::new(
                                 AttributeId::EventList as _,
                                 rs_matter_crate::dm::Access::READ
                                     .union(rs_matter_crate::dm::Access::NEED_VIEW),
-                                rs_matter_crate::dm::Quality::NONE,
+                                rs_matter_crate::dm::Quality::A,
                             ),
                             rs_matter_crate::dm::Attribute::new(
                                 AttributeId::AttributeList as _,
                                 rs_matter_crate::dm::Access::READ
                                     .union(rs_matter_crate::dm::Access::NEED_VIEW),
-                                rs_matter_crate::dm::Quality::NONE,
+                                rs_matter_crate::dm::Quality::A,
                             ),
                             rs_matter_crate::dm::Attribute::new(
                                 AttributeId::FeatureMap as _,

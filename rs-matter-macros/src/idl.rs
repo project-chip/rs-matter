@@ -30,7 +30,18 @@ mod struct_out;
 
 pub use parser::Idl;
 
-pub const CSA_STANDARD_CLUSTERS_IDL: &str = include_str!("idl/parser/controller-clusters.matter");
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0: &str =
+    include_str!("idl/parser/controller-clusters-V1.4.2.0.matter");
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0: &str =
+    include_str!("idl/parser/controller-clusters-V1.4.0.0.matter");
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0: &str =
+    include_str!("idl/parser/controller-clusters-V1.3.0.0.matter");
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1: &str =
+    include_str!("idl/parser/controller-clusters-V1.2.0.1.matter");
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2: &str =
+    include_str!("idl/parser/controller-clusters-V1.1.0.2.matter");
+pub const CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2: &str =
+    include_str!("idl/parser/controller-clusters-V1.0.0.2.matter");
 
 /// Some context data for IDL generation
 ///
@@ -147,7 +158,7 @@ mod tests {
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
 
     use super::Idl;
-    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL};
+    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0};
 
     use crate::idl::IdlGenerateContext;
 
@@ -163,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_unit_testing_cluster() {
-        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL);
+        let idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0);
 
         let cluster = get_cluster_named(&idl, "UnitTesting").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
@@ -187,29 +198,29 @@ mod tests {
 #[allow(unexpected_cfgs)]
 pub mod unit_testing {
     #[cfg(not(feature = "defmt"))]
-    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap16MaskMap : u16 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 16384 ; } }
+    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap16MaskMap : u16 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 16384 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     #[cfg(feature = "defmt")]
-    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap16MaskMap : u16 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 16384 ; } }
+    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap16MaskMap : u16 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 16384 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     rs_matter_crate::bitflags_tlv!(Bitmap16MaskMap, u16);
     #[cfg(not(feature = "defmt"))]
-    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap32MaskMap : u32 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 1073741824 ; } }
+    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap32MaskMap : u32 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 1073741824 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     #[cfg(feature = "defmt")]
-    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap32MaskMap : u32 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 1073741824 ; } }
+    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap32MaskMap : u32 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 1073741824 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     rs_matter_crate::bitflags_tlv!(Bitmap32MaskMap, u32);
     #[cfg(not(feature = "defmt"))]
-    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap64MaskMap : u64 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 4611686018427387904 ; } }
+    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap64MaskMap : u64 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 4611686018427387904 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     #[cfg(feature = "defmt")]
-    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap64MaskMap : u64 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 4611686018427387904 ; } }
+    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap64MaskMap : u64 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 4611686018427387904 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     rs_matter_crate::bitflags_tlv!(Bitmap64MaskMap, u64);
     #[cfg(not(feature = "defmt"))]
-    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap8MaskMap : u8 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 64 ; } }
+    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Bitmap8MaskMap : u8 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 64 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     #[cfg(feature = "defmt")]
-    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap8MaskMap : u8 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 64 ; } }
+    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Bitmap8MaskMap : u8 { const MASK_VAL_1 = 1 ; const MASK_VAL_2 = 2 ; const MASK_VAL_3 = 4 ; const MASK_VAL_4 = 64 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     rs_matter_crate::bitflags_tlv!(Bitmap8MaskMap, u8);
     #[cfg(not(feature = "defmt"))]
-    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct SimpleBitmap : u8 { const VALUE_A = 1 ; const VALUE_B = 2 ; const VALUE_C = 4 ; } }
+    rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct SimpleBitmap : u8 { const VALUE_A = 1 ; const VALUE_B = 2 ; const VALUE_C = 4 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     #[cfg(feature = "defmt")]
-    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct SimpleBitmap : u8 { const VALUE_A = 1 ; const VALUE_B = 2 ; const VALUE_C = 4 ; } }
+    rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct SimpleBitmap : u8 { const VALUE_A = 1 ; const VALUE_B = 2 ; const VALUE_C = 4 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
     rs_matter_crate::bitflags_tlv!(SimpleBitmap, u8);
     #[derive(
         Debug,
@@ -221,6 +232,7 @@ pub mod unit_testing {
         rs_matter_crate :: tlv :: FromTLV,
         rs_matter_crate :: tlv :: ToTLV,
     )]
+    #[tlvargs(datatype = "u8")]
     #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
     #[repr(u8)]
     pub enum SimpleEnum {
@@ -560,6 +572,19 @@ pub mod unit_testing {
         SleepBeforeResponseTimeMs = 0,
         SizeOfResponseBuffer = 1,
         FillCharacter = 2,
+    }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum TestDifferentVendorMeiRequestRequestTag {
+        Arg1 = 0,
+    }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum TestDifferentVendorMeiResponseTag {
+        Arg1 = 0,
+        EventNumber = 1,
     }
     #[derive(PartialEq, Eq, Clone, Hash)]
     pub struct SimpleStruct<'a>(rs_matter_crate::tlv::TLVElement<'a>);
@@ -5373,6 +5398,147 @@ pub mod unit_testing {
                     "fill_character",
                     e
                 ),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct TestDifferentVendorMeiRequestRequest<'a>(rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> TestDifferentVendorMeiRequestRequest<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
+            Self(element)
+        }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
+            &self.0
+        }
+        pub fn arg_1(&self) -> Result<u8, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+        }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestDifferentVendorMeiRequestRequest<'a> {
+        fn from_tlv(
+            element: &rs_matter_crate::tlv::TLVElement<'a>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Ok(Self::new(element.clone()))
+        }
+    }
+    impl rs_matter_crate::tlv::ToTLV for TestDifferentVendorMeiRequestRequest<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
+            &self,
+            tag: &rs_matter_crate::tlv::TLVTag,
+            tw: W,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            self.0.to_tlv(tag, tw)
+        }
+        fn tlv_iter(
+            &self,
+            tag: rs_matter_crate::tlv::TLVTag,
+        ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+        {
+            self.0.tlv_iter(tag)
+        }
+    }
+    impl core::fmt::Debug for TestDifferentVendorMeiRequestRequest<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "TestDifferentVendorMeiRequestRequest")?;
+            match self.arg_1() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for TestDifferentVendorMeiRequestRequest<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{} {{",
+                "TestDifferentVendorMeiRequestRequest"
+            );
+            match self.arg_1() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
+                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct TestDifferentVendorMeiResponse<'a>(rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> TestDifferentVendorMeiResponse<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self {
+            Self(element)
+        }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
+            &self.0
+        }
+        pub fn arg_1(&self) -> Result<u8, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?)
+        }
+        pub fn event_number(&self) -> Result<u64, rs_matter_crate::error::Error> {
+            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+        }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestDifferentVendorMeiResponse<'a> {
+        fn from_tlv(
+            element: &rs_matter_crate::tlv::TLVElement<'a>,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Ok(Self::new(element.clone()))
+        }
+    }
+    impl rs_matter_crate::tlv::ToTLV for TestDifferentVendorMeiResponse<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(
+            &self,
+            tag: &rs_matter_crate::tlv::TLVTag,
+            tw: W,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            self.0.to_tlv(tag, tw)
+        }
+        fn tlv_iter(
+            &self,
+            tag: rs_matter_crate::tlv::TLVTag,
+        ) -> impl Iterator<Item = Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>>
+        {
+            self.0.tlv_iter(tag)
+        }
+    }
+    impl core::fmt::Debug for TestDifferentVendorMeiResponse<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "TestDifferentVendorMeiResponse")?;
+            match self.arg_1() {
+                Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+            }
+            match self.event_number() {
+                Ok(value) => write!(f, "{}: {:?},", "event_number", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "event_number", e)?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for TestDifferentVendorMeiResponse<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "TestDifferentVendorMeiResponse");
+            match self.arg_1() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
+                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+            }
+            match self.event_number() {
+                Ok(value) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "event_number", value)
+                }
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "event_number", e)
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -16892,6 +17058,471 @@ pub mod unit_testing {
             self.0
         }
     }
+    pub struct TestDifferentVendorMeiRequestRequestBuilder<P, const F: usize = 0usize>(P);
+    impl<P> TestDifferentVendorMeiRequestRequestBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestDifferentVendorMeiRequestRequestBuilder<P, 0>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<
+            TestDifferentVendorMeiRequestRequestBuilder<P, 1usize>,
+            rs_matter_crate::error::Error,
+        > {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(0),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiRequestRequestBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestDifferentVendorMeiRequestRequestBuilder<P, 0>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<
+            TestDifferentVendorMeiRequestRequestBuilder<P, 1usize>,
+            rs_matter_crate::error::Error,
+        > {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(0),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiRequestRequestBuilder(self.0))
+        }
+    }
+    impl<P> TestDifferentVendorMeiRequestRequestBuilder<P, 1usize>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for TestDifferentVendorMeiRequestRequestBuilder<P, F>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(
+                f,
+                "{:?}::{}",
+                self.0, "TestDifferentVendorMeiRequestRequest"
+            )
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format
+        for TestDifferentVendorMeiRequestRequestBuilder<P, F>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestDifferentVendorMeiRequestRequest"
+            )
+        }
+    }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent
+        for TestDifferentVendorMeiRequestRequestBuilder<P, F>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestDifferentVendorMeiRequestRequestBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestDifferentVendorMeiRequestRequestArrayBuilder<P>(P);
+    impl<P> TestDifferentVendorMeiRequestRequestArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(
+            self,
+        ) -> Result<
+            TestDifferentVendorMeiRequestRequestBuilder<
+                TestDifferentVendorMeiRequestRequestArrayBuilder<P>,
+            >,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestDifferentVendorMeiRequestRequestArrayBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Anonymous,
+            )
+        }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for TestDifferentVendorMeiRequestRequestArrayBuilder<P>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(
+                f,
+                "{:?}::{}",
+                self.0, "TestDifferentVendorMeiRequestRequest[]"
+            )
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format
+        for TestDifferentVendorMeiRequestRequestArrayBuilder<P>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestDifferentVendorMeiRequestRequest[]"
+            )
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent
+        for TestDifferentVendorMeiRequestRequestArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestDifferentVendorMeiRequestRequestArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestDifferentVendorMeiResponseBuilder<P, const F: usize = 0usize>(P);
+    impl<P> TestDifferentVendorMeiResponseBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestDifferentVendorMeiResponseBuilder<P, 0>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<TestDifferentVendorMeiResponseBuilder<P, 1usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(0),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiResponseBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestDifferentVendorMeiResponseBuilder<P, 0>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn arg_1(
+            mut self,
+            value: u8,
+        ) -> Result<TestDifferentVendorMeiResponseBuilder<P, 1usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +", self, "arg1", value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(0),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiResponseBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> TestDifferentVendorMeiResponseBuilder<P, 1>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent
+            + core::fmt::Debug
+            + rs_matter_crate::reexport::defmt::Format,
+    {
+        pub fn event_number(
+            mut self,
+            value: u64,
+        ) -> Result<TestDifferentVendorMeiResponseBuilder<P, 2usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "defmt")]
+            rs_matter_crate::reexport::defmt::debug!(
+                "{:?}::{} -> {:?} +",
+                self,
+                "eventNumber",
+                value
+            );
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!(
+                "{:?}::{} -> {:?} +",
+                self,
+                "eventNumber",
+                value
+            );
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(1),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiResponseBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> TestDifferentVendorMeiResponseBuilder<P, 1>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+    {
+        pub fn event_number(
+            mut self,
+            value: u64,
+        ) -> Result<TestDifferentVendorMeiResponseBuilder<P, 2usize>, rs_matter_crate::error::Error>
+        {
+            #[cfg(feature = "log")]
+            rs_matter_crate::reexport::log::debug!(
+                "{:?}::{} -> {:?} +",
+                self,
+                "eventNumber",
+                value
+            );
+            rs_matter_crate::tlv::ToTLV::to_tlv(
+                &value,
+                &rs_matter_crate::tlv::TLVTag::Context(1),
+                self.0.writer(),
+            )?;
+            Ok(TestDifferentVendorMeiResponseBuilder(self.0))
+        }
+    }
+    impl<P> TestDifferentVendorMeiResponseBuilder<P, 2usize>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for TestDifferentVendorMeiResponseBuilder<P, F>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestDifferentVendorMeiResponse")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format
+        for TestDifferentVendorMeiResponseBuilder<P, F>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestDifferentVendorMeiResponse"
+            )
+        }
+    }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent
+        for TestDifferentVendorMeiResponseBuilder<P, F>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestDifferentVendorMeiResponseBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
+    pub struct TestDifferentVendorMeiResponseArrayBuilder<P>(P);
+    impl<P> TestDifferentVendorMeiResponseArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        #[doc = "Create a new instance"]
+        pub fn new(
+            mut parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(
+            self,
+        ) -> Result<
+            TestDifferentVendorMeiResponseBuilder<TestDifferentVendorMeiResponseArrayBuilder<P>>,
+            rs_matter_crate::error::Error,
+        > {
+            rs_matter_crate::tlv::TLVBuilder::new(
+                TestDifferentVendorMeiResponseArrayBuilder(self.0),
+                &rs_matter_crate::tlv::TLVTag::Anonymous,
+            )
+        }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for TestDifferentVendorMeiResponseArrayBuilder<P>
+    where
+        P: core::fmt::Debug,
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}::{}", self.0, "TestDifferentVendorMeiResponse[]")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for TestDifferentVendorMeiResponseArrayBuilder<P>
+    where
+        P: rs_matter_crate::reexport::defmt::Format,
+    {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(
+                f,
+                "{:?}::{}",
+                self.0,
+                "TestDifferentVendorMeiResponse[]"
+            )
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for TestDifferentVendorMeiResponseArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write {
+            self.0.writer()
+        }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for TestDifferentVendorMeiResponseArrayBuilder<P>
+    where
+        P: rs_matter_crate::tlv::TLVBuilderParent,
+    {
+        fn new(
+            parent: P,
+            tag: &rs_matter_crate::tlv::TLVTag,
+        ) -> Result<Self, rs_matter_crate::error::Error> {
+            Self::new(parent, tag)
+        }
+        fn unchecked_into_parent(self) -> P {
+            self.0
+        }
+    }
     #[doc = "The attribute IDs for the cluster."]
     #[derive(
         Copy, Clone, Debug, Eq, PartialEq, Hash, rs_matter_crate :: reexport :: strum :: FromRepr,
@@ -16981,6 +17612,7 @@ pub mod unit_testing {
         NullableRangeRestrictedInt16u = 16424,
         NullableRangeRestrictedInt16s = 16425,
         WriteOnlyInt8u = 16426,
+        MeiInt8u = 4294070017,
         GeneratedCommandList = 65528,
         AcceptedCommandList = 65529,
         EventList = 65530,
@@ -17410,6 +18042,9 @@ pub mod unit_testing {
                     "WriteOnlyInt8u",
                     AttributeId::WriteOnlyInt8u as u32
                 )?,
+                AttributeId::MeiInt8u => {
+                    write!(f, "{}(0x{:02x})", "MeiInt8u", AttributeId::MeiInt8u as u32)?
+                }
                 AttributeId::GeneratedCommandList => write!(
                     f,
                     "{}(0x{:02x})",
@@ -17961,6 +18596,12 @@ pub mod unit_testing {
                     "WriteOnlyInt8u",
                     AttributeId::WriteOnlyInt8u as u32
                 ),
+                AttributeId::MeiInt8u => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "MeiInt8u",
+                    AttributeId::MeiInt8u as u32
+                ),
                 AttributeId::GeneratedCommandList => rs_matter_crate::reexport::defmt::write!(
                     f,
                     "{}(0x{:02x})",
@@ -18036,6 +18677,7 @@ pub mod unit_testing {
         TestEmitTestFabricScopedEventRequest = 21,
         TestBatchHelperRequest = 22,
         TestSecondBatchHelperRequest = 23,
+        TestDifferentVendorMeiRequest = 4294049962,
     }
     impl core::convert::TryFrom<rs_matter_crate::dm::CmdId> for CommandId {
         type Error = rs_matter_crate::error::Error;
@@ -18187,6 +18829,12 @@ pub mod unit_testing {
                     "{}(0x{:02x})",
                     "TestSecondBatchHelperRequest",
                     CommandId::TestSecondBatchHelperRequest as u32
+                )?,
+                CommandId::TestDifferentVendorMeiRequest => write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestDifferentVendorMeiRequest",
+                    CommandId::TestDifferentVendorMeiRequest as u32
                 )?,
             }
             write!(f, "::Invoke")
@@ -18362,6 +19010,14 @@ pub mod unit_testing {
                         CommandId::TestSecondBatchHelperRequest as u32
                     )
                 }
+                CommandId::TestDifferentVendorMeiRequest => {
+                    rs_matter_crate::reexport::defmt::write!(
+                        f,
+                        "{}(0x{:02x})",
+                        "TestDifferentVendorMeiRequest",
+                        CommandId::TestDifferentVendorMeiRequest as u32
+                    )
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "::Invoke")
         }
@@ -18386,6 +19042,7 @@ pub mod unit_testing {
         TestEmitTestEventResponse = 10,
         TestEmitTestFabricScopedEventResponse = 11,
         TestBatchHelperResponse = 12,
+        TestDifferentVendorMeiResponse = 4294049979,
     }
     impl core::fmt::Debug for MetadataDebug<CommandResponseId> {
         #[allow(unreachable_code)]
@@ -18469,6 +19126,12 @@ pub mod unit_testing {
                     "{}(0x{:02x})",
                     "TestBatchHelperResponse",
                     CommandResponseId::TestBatchHelperResponse as u32
+                )?,
+                CommandResponseId::TestDifferentVendorMeiResponse => write!(
+                    f,
+                    "{}(0x{:02x})",
+                    "TestDifferentVendorMeiResponse",
+                    CommandResponseId::TestDifferentVendorMeiResponse as u32
                 )?,
             }
             write!(f, "::Response")
@@ -18578,6 +19241,14 @@ pub mod unit_testing {
                         "{}(0x{:02x})",
                         "TestBatchHelperResponse",
                         CommandResponseId::TestBatchHelperResponse as u32
+                    )
+                }
+                CommandResponseId::TestDifferentVendorMeiResponse => {
+                    rs_matter_crate::reexport::defmt::write!(
+                        f,
+                        "{}(0x{:02x})",
+                        "TestDifferentVendorMeiResponse",
+                        CommandResponseId::TestDifferentVendorMeiResponse as u32
                     )
                 }
             }
@@ -18974,7 +19645,7 @@ pub mod unit_testing {
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListOctetString as _,
@@ -18988,7 +19659,7 @@ pub mod unit_testing {
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListStructOctetString as _,
@@ -19002,7 +19673,7 @@ pub mod unit_testing {
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::LongOctetString as _,
@@ -19100,7 +19771,7 @@ pub mod unit_testing {
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::EnumAttr as _,
@@ -19198,7 +19869,7 @@ pub mod unit_testing {
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::ListFabricScoped as _,
@@ -19212,7 +19883,7 @@ pub mod unit_testing {
                                 )
                                 .union(rs_matter_crate::dm::Access::NEED_VIEW),
                         ),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::TimedWriteBoolean as _,
@@ -19748,24 +20419,38 @@ pub mod unit_testing {
                     rs_matter_crate::dm::Quality::O,
                 ),
                 rs_matter_crate::dm::Attribute::new(
+                    AttributeId::MeiInt8u as _,
+                    rs_matter_crate::dm::Access::READ
+                        .union(rs_matter_crate::dm::Access::WRITE)
+                        .union(
+                            rs_matter_crate::dm::Access::NEED_OPERATE
+                                .union(
+                                    rs_matter_crate::dm::Access::NEED_MANAGE
+                                        .union(rs_matter_crate::dm::Access::NEED_ADMIN),
+                                )
+                                .union(rs_matter_crate::dm::Access::NEED_VIEW),
+                        ),
+                    rs_matter_crate::dm::Quality::NONE,
+                ),
+                rs_matter_crate::dm::Attribute::new(
                     AttributeId::GeneratedCommandList as _,
                     rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::AcceptedCommandList as _,
                     rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::EventList as _,
                     rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::AttributeList as _,
                     rs_matter_crate::dm::Access::READ.union(rs_matter_crate::dm::Access::NEED_VIEW),
-                    rs_matter_crate::dm::Quality::NONE,
+                    rs_matter_crate::dm::Quality::A,
                 ),
                 rs_matter_crate::dm::Attribute::new(
                     AttributeId::FeatureMap as _,
@@ -19897,6 +20582,11 @@ pub mod unit_testing {
                 rs_matter_crate::dm::Command::new(
                     CommandId::TestSecondBatchHelperRequest as _,
                     Some(CommandResponseId::TestBatchHelperResponse as _),
+                    rs_matter_crate::dm::Access::WO,
+                ),
+                rs_matter_crate::dm::Command::new(
+                    CommandId::TestDifferentVendorMeiRequest as _,
+                    Some(CommandResponseId::TestDifferentVendorMeiResponse as _),
                     rs_matter_crate::dm::Access::WO,
                 ),
             ],
@@ -20281,6 +20971,10 @@ pub mod unit_testing {
         ) -> Result<u8, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
+        fn mei_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> Result<u8, rs_matter_crate::error::Error>;
         fn set_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -20713,6 +21407,11 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
+        fn set_mei_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error>;
         fn handle_test(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -20854,6 +21553,12 @@ pub mod unit_testing {
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
+        ) -> Result<P, rs_matter_crate::error::Error>;
+        fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestDifferentVendorMeiRequestRequest<'_>,
+            response: TestDifferentVendorMeiResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error>;
     }
     impl<T> ClusterHandler for &T
@@ -21401,6 +22106,12 @@ pub mod unit_testing {
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             T::write_only_int_8_u(self, ctx)
+        }
+        fn mei_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            T::mei_int_8_u(self, ctx)
         }
         fn set_boolean(
             &self,
@@ -21994,6 +22705,13 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error> {
             T::set_write_only_int_8_u(self, ctx, value)
         }
+        fn set_mei_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            T::set_mei_int_8_u(self, ctx, value)
+        }
         fn handle_test(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -22183,6 +22901,14 @@ pub mod unit_testing {
             response: TestBatchHelperResponseBuilder<P>,
         ) -> Result<P, rs_matter_crate::error::Error> {
             T::handle_test_second_batch_helper_request(self, ctx, request, response)
+        }
+        fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestDifferentVendorMeiRequestRequest<'_>,
+            response: TestDifferentVendorMeiResponseBuilder<P>,
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            T::handle_test_different_vendor_mei_request(self, ctx, request, response)
         }
     }
     #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
@@ -24702,6 +25428,30 @@ pub mod unit_testing {
                             );
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
+                        AttributeId::MeiInt8u => {
+                            let attr_read_result = self.0.mei_int_8_u(&ctx);
+                            #[cfg(feature = "defmt")]
+                            rs_matter_crate::reexport::defmt::debug!(
+                                "{:?} -> {:?}",
+                                MetadataDebug((
+                                    ctx.attr().endpoint_id,
+                                    self,
+                                    MetadataDebug((AttributeId::MeiInt8u, false))
+                                )),
+                                attr_read_result
+                            );
+                            #[cfg(feature = "log")]
+                            rs_matter_crate::reexport::log::debug!(
+                                "{:?} -> {:?}",
+                                MetadataDebug((
+                                    ctx.attr().endpoint_id,
+                                    self,
+                                    MetadataDebug((AttributeId::MeiInt8u, false))
+                                )),
+                                attr_read_result
+                            );
+                            rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
+                        }
                         #[allow(unreachable_code)]
                         other => {
                             #[cfg(feature = "defmt")]
@@ -27033,6 +27783,33 @@ pub mod unit_testing {
                     );
                     attr_write_result?;
                 }
+                AttributeId::MeiInt8u => {
+                    let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                    let attr_write_result = self.0.set_mei_int_8_u(&ctx, attr_data.clone());
+                    #[cfg(feature = "defmt")]
+                    rs_matter_crate::reexport::defmt::debug!(
+                        "{:?}({:?}) -> {:?}",
+                        MetadataDebug((
+                            ctx.attr().endpoint_id,
+                            self,
+                            MetadataDebug((AttributeId::MeiInt8u, false))
+                        )),
+                        attr_data,
+                        attr_write_result
+                    );
+                    #[cfg(feature = "log")]
+                    rs_matter_crate::reexport::log::debug!(
+                        "{:?}({:?}) -> {:?}",
+                        MetadataDebug((
+                            ctx.attr().endpoint_id,
+                            self,
+                            MetadataDebug((AttributeId::MeiInt8u, false))
+                        )),
+                        attr_data,
+                        attr_write_result
+                    );
+                    attr_write_result?;
+                }
                 other => {
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::error!("Attribute {:?} not supported", other);
@@ -28370,6 +29147,69 @@ pub mod unit_testing {
                             ctx.cmd().endpoint_id,
                             self,
                             MetadataDebug(CommandId::TestSecondBatchHelperRequest)
+                        )),
+                        cmd_invoke_result.as_ref().map(|_| ())
+                    );
+                    cmd_invoke_result?;
+                    rs_matter_crate::dm::Reply::complete(writer)?
+                }
+                CommandId::TestDifferentVendorMeiRequest => {
+                    let cmd_data = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
+                    #[cfg(feature = "defmt")]
+                    rs_matter_crate::reexport::defmt::debug!(
+                        "{:?}({:?}) -> (build) +",
+                        MetadataDebug((
+                            ctx.cmd().endpoint_id,
+                            self,
+                            MetadataDebug(CommandId::TestDifferentVendorMeiRequest)
+                        )),
+                        cmd_data
+                    );
+                    #[cfg(feature = "log")]
+                    rs_matter_crate::reexport::log::debug!(
+                        "{:?}({:?}) -> (build) +",
+                        MetadataDebug((
+                            ctx.cmd().endpoint_id,
+                            self,
+                            MetadataDebug(CommandId::TestDifferentVendorMeiRequest)
+                        )),
+                        cmd_data
+                    );
+                    let mut writer = reply.with_command(4294049979u32)?;
+                    let tag = rs_matter_crate::dm::Reply::tag(&writer);
+                    let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
+                    let cmd_invoke_result = self.0.handle_test_different_vendor_mei_request(
+                        &ctx,
+                        cmd_data,
+                        rs_matter_crate::tlv::TLVBuilder::new(
+                            rs_matter_crate::tlv::TLVWriteParent::new(
+                                MetadataDebug((
+                                    ctx.cmd().endpoint_id,
+                                    self,
+                                    MetadataDebug(CommandId::TestDifferentVendorMeiRequest),
+                                )),
+                                tw,
+                            ),
+                            tag,
+                        )?,
+                    );
+                    #[cfg(feature = "defmt")]
+                    rs_matter_crate::reexport::defmt::debug!(
+                        "{:?} (end) -> {:?}",
+                        MetadataDebug((
+                            ctx.cmd().endpoint_id,
+                            self,
+                            MetadataDebug(CommandId::TestDifferentVendorMeiRequest)
+                        )),
+                        cmd_invoke_result.as_ref().map(|_| ())
+                    );
+                    #[cfg(feature = "log")]
+                    rs_matter_crate::reexport::log::debug!(
+                        "{:?} (end) -> {:?}",
+                        MetadataDebug((
+                            ctx.cmd().endpoint_id,
+                            self,
+                            MetadataDebug(CommandId::TestDifferentVendorMeiRequest)
                         )),
                         cmd_invoke_result.as_ref().map(|_| ())
                     );

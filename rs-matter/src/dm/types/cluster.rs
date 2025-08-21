@@ -451,9 +451,11 @@ macro_rules! clusters {
 /// A macro that generates a "with" fn for matching attributes and commands
 ///
 /// Usage:
+/// - `with!()` - returns false for all attributes and commands
 /// - `with!(all)` - returns true for all attributes and commands
 /// - `with!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for the specified attributes or commands
-/// - `with!(required; (attr1, attr2, ...))` - returns true for all mandatory attributes and the specified attributes
+/// - `with!(required[; (attr1, attr2, ...)])` - returns true for all mandatory attributes and the specified attributes
+/// - `with!(system[; (attr1, attr2, ...)])` - returns true for all system attributes and the specified attributes
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! with {
@@ -510,6 +512,38 @@ macro_rules! with {
                     $id0 => true,
                     $($id => true,)*
                     _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+}
+
+/// A macro that generates an "except" fn for matching attributes and commands
+///
+/// Usage:
+/// - `except!()` - returns true for all attributes and commands
+/// - `except!(all)` - returns false for all attributes and commands
+/// - `except!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for all but the specified attributes or commands
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! except {
+    () => {
+        |_, _, _| true
+    };
+    (all) => {
+        |_, _, _| false
+    };
+    ($id0:path $(| $id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |leaf, _, _| {
+            if let Ok(l) = leaf.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $id0 => false,
+                    $($id => false,)*
+                    _ => true,
                 }
             } else {
                 false

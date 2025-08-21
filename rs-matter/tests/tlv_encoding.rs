@@ -28,8 +28,10 @@ mod tlv_encoding_tests {
         number2: u32,
     }
 
-    #[derive(PartialEq, Debug, ToTLV, FromTLV)]
+    #[derive(PartialEq, Debug, Copy, Clone, ToTLV, FromTLV)]
+    #[tlvargs(datatype = "u8")]
     #[allow(dead_code)]
+    #[repr(u8)]
     enum SimpleEnum {
         A,
         B,

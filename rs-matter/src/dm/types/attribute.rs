@@ -57,7 +57,7 @@ impl Attribute {
 
     /// Return `true` if the attribute ID is a system one (i.e. a global attribute).
     pub fn is_system_attr(attr_id: AttrId) -> bool {
-        attr_id >= (GlobalElements::GeneratedCmdList as AttrId)
+        attr_id >= (GlobalElements::GeneratedCmdList as AttrId) && attr_id <= u16::MAX as AttrId
     }
 }
 
@@ -85,23 +85,17 @@ attribute_enum!(GlobalElements);
 pub const GENERATED_COMMAND_LIST: Attribute = Attribute::new(
     GlobalElements::GeneratedCmdList as _,
     Access::RV,
-    Quality::NONE,
+    Quality::A,
 );
 
-pub const ACCEPTED_COMMAND_LIST: Attribute = Attribute::new(
-    GlobalElements::AcceptedCmdList as _,
-    Access::RV,
-    Quality::NONE,
-);
+pub const ACCEPTED_COMMAND_LIST: Attribute =
+    Attribute::new(GlobalElements::AcceptedCmdList as _, Access::RV, Quality::A);
 
 pub const EVENT_LIST: Attribute =
-    Attribute::new(GlobalElements::EventList as _, Access::RV, Quality::NONE);
+    Attribute::new(GlobalElements::EventList as _, Access::RV, Quality::A);
 
-pub const ATTRIBUTE_LIST: Attribute = Attribute::new(
-    GlobalElements::AttributeList as _,
-    Access::RV,
-    Quality::NONE,
-);
+pub const ATTRIBUTE_LIST: Attribute =
+    Attribute::new(GlobalElements::AttributeList as _, Access::RV, Quality::A);
 
 pub const FEATURE_MAP: Attribute =
     Attribute::new(GlobalElements::FeatureMap as _, Access::RV, Quality::NONE);

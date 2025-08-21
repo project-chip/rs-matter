@@ -72,7 +72,7 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
     fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
         match element.control()?.value_type {
             TLVValueType::Null => Ok(Maybe::none()),
-            _ => Ok(Maybe::some(T::from_tlv(element)?)),
+            _ => T::nullable_from_tlv(element).map(Maybe::some),
         }
     }
 
@@ -81,7 +81,7 @@ impl<'a, T: FromTLV<'a>> FromTLV<'a> for Maybe<T, AsNullable> {
             init::init_from_closure(move |slot| {
                 let init = match element.control()?.value_type {
                     TLVValueType::Null => None,
-                    _ => Some(T::init_from_tlv(element)),
+                    _ => Some(T::init_nullable_from_tlv(element)),
                 };
 
                 init::Init::__init(Maybe::init(init), slot)
@@ -94,14 +94,14 @@ impl<T: ToTLV> ToTLV for Maybe<T, AsNullable> {
     fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
         match self.as_opt_ref() {
             None => tw.null(tag),
-            Some(s) => s.to_tlv(tag, tw),
+            Some(s) => s.nullable_to_tlv(tag, tw),
         }
     }
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         match self.as_opt_ref() {
             None => EitherIter::First(TLV::null(tag).into_tlv_iter()),
-            Some(s) => EitherIter::Second(s.tlv_iter(tag)),
+            Some(s) => EitherIter::Second(s.nullable_tlv_iter(tag)),
         }
     }
 }

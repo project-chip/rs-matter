@@ -147,36 +147,6 @@ impl Error {
     pub fn details(&self) -> Option<&(dyn std::error::Error + Send)> {
         self.inner.as_ref().map(|err| err.as_ref())
     }
-
-    pub fn remap<F>(self, matcher: F, to: Self) -> Self
-    where
-        F: FnOnce(&Self) -> bool,
-    {
-        if matcher(&self) {
-            to
-        } else {
-            self
-        }
-    }
-
-    pub fn map_invalid(self, to: Self) -> Self {
-        self.remap(
-            |e| matches!(e.code(), ErrorCode::Invalid | ErrorCode::InvalidData),
-            to,
-        )
-    }
-
-    pub fn map_invalid_command(self) -> Self {
-        self.map_invalid(Error::new(ErrorCode::InvalidCommand))
-    }
-
-    pub fn map_invalid_action(self) -> Self {
-        self.map_invalid(Error::new(ErrorCode::InvalidAction))
-    }
-
-    pub fn map_invalid_data_type(self) -> Self {
-        self.map_invalid(Error::new(ErrorCode::InvalidDataType))
-    }
 }
 
 #[cfg(all(feature = "std", feature = "backtrace"))]

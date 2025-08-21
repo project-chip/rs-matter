@@ -61,8 +61,11 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
     // The Matter C++ integration tests do expect our bitflags to preserve any set bits
     // even if these bits are not named / documented
     //
-    // Hence the `const _ = !0;` at the end of the bitflags definition, as per
+    // Hence the `const _INTERNAL_ALL_BITS = !0;` at the end of the bitflags definition, as per
     // https://docs.rs/bitflags/latest/bitflags/#externally-defined-flags
+    //
+    // Note also that the `defmt` version of `bitflags!` does not support the `const _ =` syntax,
+    // and therefore we use the `_INTERNAL_ALL_BITS` named constant instead.
 
     quote!(
         #[cfg(not(feature = "defmt"))]
@@ -72,7 +75,7 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
             pub struct #name: #base_type {
                 #(#items)*
 
-                const _ = !0 ;
+                const _INTERNAL_ALL_BITS = !0;
             }
         }
 
@@ -83,7 +86,7 @@ fn bitmap(b: &Bitmap, context: &IdlGenerateContext) -> TokenStream {
             pub struct #name: #base_type {
                 #(#items)*
 
-                const _ = !0;
+                const _INTERNAL_ALL_BITS = !0;
             }
         }
 
@@ -130,14 +133,14 @@ mod test {
             &bitmaps(cluster, &context),
             &quote!(
                 #[cfg(not(feature = "defmt"))]
-                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; const _ = !0 ; } }
+                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; const _INTERNAL_ALL_BITS = !0 ; } }
                 #[cfg(feature = "defmt")]
-                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; const _ = !0 ; } }
+                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; const _INTERNAL_ALL_BITS = !0 ; } }
                 rs_matter_crate::bitflags_tlv!(Feature, u32);
                 #[cfg(not(feature = "defmt"))]
-                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; const _ = !0 ; } }
+                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; const _INTERNAL_ALL_BITS = !0 ; } }
                 #[cfg(feature = "defmt")]
-                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; const _ = !0 ; } }
+                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; const _INTERNAL_ALL_BITS = !0 ; } }
                 rs_matter_crate::bitflags_tlv!(OnOffControlBitmap, u8);
             )
         );
