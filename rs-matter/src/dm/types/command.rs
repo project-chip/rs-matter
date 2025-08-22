@@ -80,7 +80,7 @@ impl CmdDetails<'_> {
                     Some(self.cmd_id),
                 ),
                 status,
-                0,
+                None,
             ))
         } else {
             None

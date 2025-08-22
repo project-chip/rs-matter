@@ -191,7 +191,7 @@ fn wc_write_attribute() {
     im.handle_write_reqs(
         &handler,
         input0,
-        &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)],
+        &[AttrStatus::new(&ep0_att, IMStatusCode::Success, None)],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
     assert_eq!(
@@ -215,8 +215,8 @@ fn wc_write_attribute() {
         &handler,
         input1,
         &[
-            AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
-            AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
+            AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
+            AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
         ],
     );
     assert_eq!(val1, handler.echo_cluster(0).att_write.get());
@@ -240,9 +240,9 @@ fn exact_write_attribute() {
     let expected_fail = &[AttrStatus::new(
         &ep0_att,
         IMStatusCode::UnsupportedAccess,
-        0,
+        None,
     )];
-    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)];
+    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, None)];
 
     let im = ImEngine::new_default();
     let handler = im.handler();
@@ -288,9 +288,9 @@ fn exact_write_attribute_noc_cat() {
     let expected_fail = &[AttrStatus::new(
         &ep0_att,
         IMStatusCode::UnsupportedAccess,
-        0,
+        None,
     )];
-    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, 0)];
+    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, None)];
 
     /* CAT in NOC is 1 more, in version, than that in ACL */
     let noc_cat = gen_noc_cat(0xABCD, 2);
@@ -354,7 +354,7 @@ fn insufficient_perms_write() {
         &[AttrStatus::new(
             &ep0_att,
             IMStatusCode::UnsupportedAccess,
-            0,
+            None,
         )],
     );
     assert_eq!(
@@ -429,9 +429,9 @@ fn write_with_runtime_acl_add() {
         // write to echo-cluster attribute, write to acl attribute, write to echo-cluster attribute
         &[input0.clone(), acl_input, input0],
         &[
-            AttrStatus::new(&ep0_att, IMStatusCode::UnsupportedAccess, 0),
-            AttrStatus::new(&acl_att, IMStatusCode::Success, 0),
-            AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
+            AttrStatus::new(&ep0_att, IMStatusCode::UnsupportedAccess, None),
+            AttrStatus::new(&acl_att, IMStatusCode::Success, None),
+            AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
         ],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
@@ -580,7 +580,7 @@ fn test_write_data_ver() {
     im.handle_write_reqs(
         &handler,
         input_correct_dataver,
-        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, 0)],
+        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, None)],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 
@@ -597,7 +597,7 @@ fn test_write_data_ver() {
         &[AttrStatus::new(
             &ep0_attwrite,
             IMStatusCode::DataVersionMismatch,
-            0,
+            None,
         )],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
@@ -615,7 +615,7 @@ fn test_write_data_ver() {
     im.handle_write_reqs(
         &handler,
         input_correct_dataver,
-        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, 0)],
+        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, None)],
     );
     assert_eq!(val1, handler.echo_cluster(0).att_write.get());
 

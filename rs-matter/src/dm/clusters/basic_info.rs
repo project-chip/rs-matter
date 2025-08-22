@@ -236,7 +236,7 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
         if label.len() > 32 {
-            return Err(ErrorCode::InvalidAction.into());
+            return Err(ErrorCode::ConstraintError.into());
         }
 
         let mut settings = Self::settings(ctx.exchange()).borrow_mut();
@@ -264,7 +264,7 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
         if location.len() != 2 {
-            return Err(ErrorCode::InvalidAction.into());
+            return Err(ErrorCode::ConstraintError.into());
         }
 
         let mut settings = Self::settings(ctx.exchange()).borrow_mut();

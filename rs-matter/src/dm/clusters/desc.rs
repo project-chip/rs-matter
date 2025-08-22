@@ -163,7 +163,7 @@ impl ClusterHandler for DescHandler<'_> {
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some(dev_type) = endpoint.device_types.get(index as usize) else {
-                    return Err(ErrorCode::InvalidAction.into()); // TODO
+                    return Err(ErrorCode::ConstraintError.into());
                 };
 
                 builder
@@ -191,7 +191,7 @@ impl ClusterHandler for DescHandler<'_> {
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some(cluster) = endpoint.clusters.get(index as usize) else {
-                    return Err(ErrorCode::InvalidAction.into()); // TODO
+                    return Err(ErrorCode::ConstraintError.into());
                 };
 
                 builder.set(&cluster.id)
@@ -209,7 +209,7 @@ impl ClusterHandler for DescHandler<'_> {
         // Client clusters not support yet
         match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.end(),
-            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::InvalidAction.into()), // TODO
+            ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
         }
     }
 
@@ -236,7 +236,7 @@ impl ClusterHandler for DescHandler<'_> {
             }
             ArrayAttributeRead::ReadOne(index, builder) => {
                 let Some(ep_id) = ep_ids.nth(index as usize) else {
-                    return Err(ErrorCode::InvalidAction.into()); // TODO
+                    return Err(ErrorCode::ConstraintError.into());
                 };
 
                 builder.set(&ep_id)

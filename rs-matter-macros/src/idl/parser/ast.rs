@@ -57,11 +57,17 @@ pub struct DataType {
 
 impl DataType {
     pub fn is_utf8_string(&self) -> bool {
-        matches!(self.name.as_str(), "char_string" | "long_char_string")
+        matches!(
+            self.name.to_ascii_lowercase().as_str(),
+            "char_string" | "long_char_string"
+        )
     }
 
     pub fn is_octet_string(&self) -> bool {
-        matches!(self.name.as_str(), "octet_string" | "long_octet_string")
+        matches!(
+            self.name.to_ascii_lowercase().as_str(),
+            "octet_string" | "long_octet_string"
+        )
     }
 
     #[allow(unused)]

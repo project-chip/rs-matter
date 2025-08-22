@@ -1,3 +1,22 @@
+/*
+ *
+ *    Copyright (c) 2023 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! This module contains the implementation of the Unit Testing cluster and its handler.
+
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
     WriteContext,
@@ -13,6 +32,7 @@ use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
 pub use crate::dm::clusters::decl::unit_testing::*;
+use crate::{except, with};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -112,8 +132,11 @@ impl NullablesAndOptionalsStructOwned {
                 a: s.a()?,
                 b: s.b()?,
                 c: s.c()?,
-                d: s.d()?.0.try_into().map_err(|_| ErrorCode::InvalidAction)?,
-                e: s.e()?.try_into().map_err(|_| ErrorCode::InvalidAction)?,
+                d: s.d()?
+                    .0
+                    .try_into()
+                    .map_err(|_| ErrorCode::ConstraintError)?,
+                e: s.e()?.try_into().map_err(|_| ErrorCode::ConstraintError)?,
                 f: s.f()?,
                 g: s.g()?,
                 h: s.h()?,
@@ -126,8 +149,11 @@ impl NullablesAndOptionalsStructOwned {
                 a: s.a()?,
                 b: s.b()?,
                 c: s.c()?,
-                d: s.d()?.0.try_into().map_err(|_| ErrorCode::InvalidAction)?,
-                e: s.e()?.try_into().map_err(|_| ErrorCode::InvalidAction)?,
+                d: s.d()?
+                    .0
+                    .try_into()
+                    .map_err(|_| ErrorCode::ConstraintError)?,
+                e: s.e()?.try_into().map_err(|_| ErrorCode::ConstraintError)?,
                 f: s.f()?,
                 g: s.g()?,
                 h: s.h()?,
@@ -141,8 +167,11 @@ impl NullablesAndOptionalsStructOwned {
                     a: s.a()?,
                     b: s.b()?,
                     c: s.c()?,
-                    d: s.d()?.0.try_into().map_err(|_| ErrorCode::InvalidAction)?,
-                    e: s.e()?.try_into().map_err(|_| ErrorCode::InvalidAction)?,
+                    d: s.d()?
+                        .0
+                        .try_into()
+                        .map_err(|_| ErrorCode::ConstraintError)?,
+                    e: s.e()?.try_into().map_err(|_| ErrorCode::ConstraintError)?,
                     f: s.f()?,
                     g: s.g()?,
                     h: s.h()?,
@@ -225,8 +254,6 @@ pub struct UnitTestingHandlerData {
     list_long_octet_string: Vec<Vec<u8, 1000>, 16>,
     list_fabric_scoped: Vec<TestFabricScoped<'static>, 16>,
     timed_write_boolean: bool,
-    general_error_boolean: bool,
-    cluster_error_boolean: bool,
     nullable_boolean: Nullable<bool>,
     nullable_bitmap_8: Nullable<Bitmap8MaskMap>,
     nullable_bitmap_16: Nullable<Bitmap16MaskMap>,
@@ -260,6 +287,7 @@ pub struct UnitTestingHandlerData {
     nullable_range_restricted_int_8_s: Nullable<i8>,
     nullable_range_restricted_int_16_u: Nullable<u16>,
     nullable_range_restricted_int_16_s: Nullable<i16>,
+    mei_int_8_u: u8,
 }
 
 impl UnitTestingHandlerData {
@@ -299,19 +327,20 @@ impl UnitTestingHandlerData {
             long_char_string: heapless::String::new(),
             epoch_us: 0,
             epoch_s: 0,
-            vendor_id: 0xFFFF,
-            list_nullables_and_optionals_struct <- Vec::init(),
+            vendor_id: 0,
+            list_nullables_and_optionals_struct <- Vec::init().chain(|vec| {
+                unwrap!(vec.push_init_unchecked(NullablesAndOptionalsStructOwned::init()));
+                Ok(())
+            }),
             enum_attr: SimpleEnum::ValueA,
             struct_attr <- SimpleStructOwned::init(),
-            range_restricted_int_8_u: 1,
-            range_restricted_int_8_s: -1,
-            range_restricted_int_16_u: 1,
-            range_restricted_int_16_s: -1,
+            range_restricted_int_8_u: 70,
+            range_restricted_int_8_s: -20,
+            range_restricted_int_16_u: 200,
+            range_restricted_int_16_s: -100,
             list_long_octet_string <- Vec::init(),
             list_fabric_scoped <- Vec::init(),
             timed_write_boolean: false,
-            general_error_boolean: false,
-            cluster_error_boolean: false,
             nullable_boolean <- Nullable::init_none(),
             nullable_bitmap_8 <- Nullable::init_none(),
             nullable_bitmap_16 <- Nullable::init_none(),
@@ -337,14 +366,15 @@ impl UnitTestingHandlerData {
             nullable_enum_16 <- Nullable::init_none(),
             nullable_float_single <- Nullable::init_none(),
             nullable_float_double <- Nullable::init_none(),
-            nullable_octet_string <- Nullable::init_none(),
-            nullable_char_string <- Nullable::init_none(),
+            nullable_octet_string <- Nullable::init_some(Vec::init()),
+            nullable_char_string: Nullable::some(heapless::String::new()),
             nullable_enum_attr <- Nullable::init_none(),
             nullable_struct <- Nullable::init_none(),
-            nullable_range_restricted_int_8_u <- Nullable::init_none(),
-            nullable_range_restricted_int_8_s <- Nullable::init_none(),
-            nullable_range_restricted_int_16_u <- Nullable::init_none(),
-            nullable_range_restricted_int_16_s <- Nullable::init_none(),
+            nullable_range_restricted_int_8_u: Nullable::some(70),
+            nullable_range_restricted_int_8_s: Nullable::some(-20),
+            nullable_range_restricted_int_16_u: Nullable::some(200),
+            nullable_range_restricted_int_16_s: Nullable::some(-100),
+            mei_int_8_u: 0,
         })
     }
 }
@@ -365,7 +395,12 @@ impl<'a> UnitTestingHandler<'a> {
 }
 
 impl ClusterHandler for UnitTestingHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER;
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(except!(
+        CommandId::TestUnknownCommand
+            | CommandId::TestSimpleArgumentRequest
+            | CommandId::TestStructArrayArgumentRequest
+            | CommandId::TestComplexNullableOptionalRequest
+    ));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -494,7 +529,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 if index < data.list_int_8_u.len() as u16 {
                     builder.set(&data.list_int_8_u[index as usize])
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -520,7 +555,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 if index < data.list_octet_string.len() as u16 {
                     builder.set(Octets(data.list_octet_string[index as usize].as_slice()))
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -554,7 +589,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         .member_2(Octets(&s.member_2))?
                         .end()
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -708,7 +743,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
                     read_one(builder, s)
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -776,7 +811,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         data.list_long_octet_string[index as usize].as_slice(),
                     ))
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeRead::ReadAll(mut builder) => {
@@ -804,11 +839,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn general_error_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        todo!()
+        Err(ErrorCode::InvalidDataType.into())
     }
 
     fn cluster_error_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        todo!()
+        Err(ErrorCode::Invalid.into())
     }
 
     fn nullable_boolean(&self, _ctx: impl ReadContext) -> Result<Nullable<bool>, Error> {
@@ -1134,7 +1169,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_octet_string(&self, _ctx: impl WriteContext, value: OctetStr<'_>) -> Result<(), Error> {
         self.data.borrow_mut().octet_string =
-            value.0.try_into().map_err(|_| ErrorCode::InvalidAction)?;
+            value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
         Ok(())
     }
 
@@ -1146,7 +1181,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         match value {
             ArrayAttributeWrite::Replace(arr) => {
                 if arr.iter().count() > 16 {
-                    return Err(ErrorCode::InvalidAction.into());
+                    return Err(ErrorCode::ConstraintError.into());
                 }
 
                 let mut data = self.data.borrow_mut();
@@ -1163,7 +1198,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     unwrap!(data.list_int_8_u.push(item));
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Update(index, item) => {
@@ -1172,7 +1207,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     data.list_int_8_u[index as usize] = item;
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Remove(index) => {
@@ -1181,7 +1216,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     let _ = data.list_int_8_u.remove(index as usize);
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -1195,7 +1230,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         match value {
             ArrayAttributeWrite::Replace(arr) => {
                 if arr.iter().count() > 16 {
-                    return Err(ErrorCode::InvalidAction.into());
+                    return Err(ErrorCode::ConstraintError.into());
                 }
 
                 let mut data = self.data.borrow_mut();
@@ -1203,7 +1238,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 for i in arr {
                     unwrap!(data
                         .list_octet_string
-                        .push(i?.0.try_into().map_err(|_| ErrorCode::InvalidAction)?));
+                        .push(i?.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
                 }
 
                 Ok(())
@@ -1213,20 +1248,20 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 if data.list_octet_string.len() < 16 {
                     unwrap!(data
                         .list_octet_string
-                        .push(item.0.try_into().map_err(|_| ErrorCode::InvalidAction)?));
+                        .push(item.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Update(index, item) => {
                 let mut data = self.data.borrow_mut();
                 if index < data.list_octet_string.len() as u16 {
                     data.list_octet_string[index as usize] =
-                        item.0.try_into().map_err(|_| ErrorCode::InvalidAction)?;
+                        item.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Remove(index) => {
@@ -1235,7 +1270,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     let _ = data.list_octet_string.remove(index as usize);
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -1249,7 +1284,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         match value {
             ArrayAttributeWrite::Replace(arr) => {
                 if arr.iter().count() > 16 {
-                    return Err(ErrorCode::InvalidAction.into());
+                    return Err(ErrorCode::ConstraintError.into());
                 }
 
                 let mut data = self.data.borrow_mut();
@@ -1265,7 +1300,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                                 .member_2()?
                                 .0
                                 .try_into()
-                                .map_err(|_| ErrorCode::InvalidAction)?,
+                                .map_err(|_| ErrorCode::ConstraintError)?,
                         }));
                 }
 
@@ -1282,11 +1317,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                                 .member_2()?
                                 .0
                                 .try_into()
-                                .map_err(|_| ErrorCode::InvalidAction)?,
+                                .map_err(|_| ErrorCode::ConstraintError)?,
                         }));
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Update(index, item) => {
@@ -1298,11 +1333,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                             .member_2()?
                             .0
                             .try_into()
-                            .map_err(|_| ErrorCode::InvalidAction)?,
+                            .map_err(|_| ErrorCode::ConstraintError)?,
                     };
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Remove(index) => {
@@ -1311,7 +1346,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     let _ = data.list_struct_octet_string.remove(index as usize);
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -1323,13 +1358,13 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         value: OctetStr<'_>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().long_octet_string =
-            value.0.try_into().map_err(|_| ErrorCode::InvalidAction)?;
+            value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
         Ok(())
     }
 
     fn set_char_string(&self, _ctx: impl WriteContext, value: Utf8Str<'_>) -> Result<(), Error> {
         self.data.borrow_mut().char_string =
-            value.try_into().map_err(|_| ErrorCode::InvalidAction)?;
+            value.try_into().map_err(|_| ErrorCode::ConstraintError)?;
         Ok(())
     }
 
@@ -1339,7 +1374,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         value: Utf8Str<'_>,
     ) -> Result<(), Error> {
         self.data.borrow_mut().long_char_string =
-            value.try_into().map_err(|_| ErrorCode::InvalidAction)?;
+            value.try_into().map_err(|_| ErrorCode::ConstraintError)?;
         Ok(())
     }
 
@@ -1379,7 +1414,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         match value {
             ArrayAttributeWrite::Replace(arr) => {
                 if arr.iter().count() > 16 {
-                    return Err(ErrorCode::InvalidAction.into());
+                    return Err(ErrorCode::ConstraintError.into());
                 }
 
                 let mut data = self.data.borrow_mut();
@@ -1399,7 +1434,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     data.list_nullables_and_optionals_struct
                         .push_init(to_owned(&item), no_space)
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Update(index, item) => {
@@ -1408,7 +1443,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     data.list_nullables_and_optionals_struct[index as usize].update(&item)?;
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Remove(index) => {
@@ -1419,7 +1454,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         .remove(index as usize);
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -1445,11 +1480,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .d()?
             .0
             .try_into()
-            .map_err(|_| ErrorCode::InvalidAction)?;
+            .map_err(|_| ErrorCode::ConstraintError)?;
         s.e = value
             .e()?
             .try_into()
-            .map_err(|_| ErrorCode::InvalidAction)?;
+            .map_err(|_| ErrorCode::ConstraintError)?;
         s.f = value.f()?;
         s.g = value.g()?;
         s.h = value.h()?;
@@ -1462,7 +1497,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: u8,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().range_restricted_int_8_u = value;
+        const RANGE: core::ops::RangeInclusive<u8> = 20..=100;
+
+        if RANGE.contains(&value) {
+            self.data.borrow_mut().range_restricted_int_8_u = value;
+        } else {
+            Err(ErrorCode::ConstraintError)?;
+        }
+
         Ok(())
     }
 
@@ -1471,7 +1513,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: i8,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().range_restricted_int_8_s = value;
+        const RANGE: core::ops::RangeInclusive<i8> = -40..=50;
+
+        if RANGE.contains(&value) {
+            self.data.borrow_mut().range_restricted_int_8_s = value;
+        } else {
+            Err(ErrorCode::ConstraintError)?;
+        }
+
         Ok(())
     }
 
@@ -1480,7 +1529,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: u16,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().range_restricted_int_16_u = value;
+        const RANGE: core::ops::RangeInclusive<u16> = 100..=1000;
+
+        if RANGE.contains(&value) {
+            self.data.borrow_mut().range_restricted_int_16_u = value;
+        } else {
+            Err(ErrorCode::ConstraintError)?;
+        }
+
         Ok(())
     }
 
@@ -1489,7 +1545,14 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: i16,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().range_restricted_int_16_s = value;
+        const RANGE: core::ops::RangeInclusive<i16> = -150..=200;
+
+        if RANGE.contains(&value) {
+            self.data.borrow_mut().range_restricted_int_16_s = value;
+        } else {
+            Err(ErrorCode::ConstraintError)?;
+        }
+
         Ok(())
     }
 
@@ -1501,7 +1564,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         match value {
             ArrayAttributeWrite::Replace(arr) => {
                 if arr.iter().count() > 16 {
-                    return Err(ErrorCode::InvalidAction.into());
+                    return Err(ErrorCode::ConstraintError.into());
                 }
 
                 let mut data = self.data.borrow_mut();
@@ -1509,7 +1572,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 for i in arr {
                     unwrap!(data
                         .list_long_octet_string
-                        .push(i?.0.try_into().map_err(|_| ErrorCode::InvalidAction)?));
+                        .push(i?.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
                 }
 
                 Ok(())
@@ -1519,20 +1582,20 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 if data.list_long_octet_string.len() < 16 {
                     unwrap!(data
                         .list_long_octet_string
-                        .push(item.0.try_into().map_err(|_| ErrorCode::InvalidAction)?));
+                        .push(item.0.try_into().map_err(|_| ErrorCode::ConstraintError)?));
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Update(index, item) => {
                 let mut data = self.data.borrow_mut();
                 if index < data.list_long_octet_string.len() as u16 {
                     data.list_long_octet_string[index as usize] =
-                        item.0.try_into().map_err(|_| ErrorCode::InvalidAction)?;
+                        item.0.try_into().map_err(|_| ErrorCode::ConstraintError)?;
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
             ArrayAttributeWrite::Remove(index) => {
@@ -1541,7 +1604,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     let _ = data.list_long_octet_string.remove(index as usize);
                     Ok(())
                 } else {
-                    Err(ErrorCode::InvalidAction.into())
+                    Err(ErrorCode::ConstraintError.into())
                 }
             }
         }
@@ -1564,7 +1627,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         _value: bool,
     ) -> Result<(), Error> {
-        todo!()
+        Err(ErrorCode::InvalidDataType.into())
     }
 
     fn set_cluster_error_boolean(
@@ -1572,7 +1635,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         _value: bool,
     ) -> Result<(), Error> {
-        todo!()
+        Err(ErrorCode::Invalid.into())
     }
 
     fn set_nullable_boolean(
@@ -1807,7 +1870,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     ) -> Result<(), Error> {
         if let Some(value) = value.into_option() {
             self.data.borrow_mut().nullable_octet_string =
-                Nullable::some(value.0.try_into().map_err(|_| ErrorCode::InvalidAction)?);
+                Nullable::some(value.0.try_into().map_err(|_| ErrorCode::ConstraintError)?);
         } else {
             self.data.borrow_mut().nullable_octet_string = Nullable::none();
         }
@@ -1822,7 +1885,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     ) -> Result<(), Error> {
         if let Some(value) = value.into_option() {
             self.data.borrow_mut().nullable_char_string =
-                Nullable::some(value.try_into().map_err(|_| ErrorCode::InvalidAction)?);
+                Nullable::some(value.try_into().map_err(|_| ErrorCode::ConstraintError)?);
         } else {
             self.data.borrow_mut().nullable_char_string = Nullable::none();
         }
@@ -1850,8 +1913,11 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 a: s.a()?,
                 b: s.b()?,
                 c: s.c()?,
-                d: s.d()?.0.try_into().map_err(|_| ErrorCode::InvalidAction)?,
-                e: s.e()?.try_into().map_err(|_| ErrorCode::InvalidAction)?,
+                d: s.d()?
+                    .0
+                    .try_into()
+                    .map_err(|_| ErrorCode::ConstraintError)?,
+                e: s.e()?.try_into().map_err(|_| ErrorCode::ConstraintError)?,
                 f: s.f()?,
                 g: s.g()?,
                 h: s.h()?,
@@ -1870,7 +1936,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_range_restricted_int_8_u = value;
+        if let Some(value) = value.into_option() {
+            const RANGE: core::ops::RangeInclusive<u8> = 20..=100;
+
+            if RANGE.contains(&value) {
+                self.data.borrow_mut().nullable_range_restricted_int_8_u = Nullable::some(value);
+            } else {
+                Err(ErrorCode::ConstraintError)?;
+            }
+        } else {
+            self.data
+                .borrow_mut()
+                .nullable_range_restricted_int_8_u
+                .clear();
+        }
+
         Ok(())
     }
 
@@ -1879,7 +1959,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i8>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_range_restricted_int_8_s = value;
+        if let Some(value) = value.into_option() {
+            const RANGE: core::ops::RangeInclusive<i8> = -40..=50;
+
+            if RANGE.contains(&value) {
+                self.data.borrow_mut().nullable_range_restricted_int_8_s = Nullable::some(value);
+            } else {
+                Err(ErrorCode::ConstraintError)?;
+            }
+        } else {
+            self.data
+                .borrow_mut()
+                .nullable_range_restricted_int_8_s
+                .clear();
+        }
+
         Ok(())
     }
 
@@ -1888,7 +1982,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<u16>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_range_restricted_int_16_u = value;
+        if let Some(value) = value.into_option() {
+            const RANGE: core::ops::RangeInclusive<u16> = 100..=1000;
+
+            if RANGE.contains(&value) {
+                self.data.borrow_mut().nullable_range_restricted_int_16_u = Nullable::some(value);
+            } else {
+                Err(ErrorCode::ConstraintError)?;
+            }
+        } else {
+            self.data
+                .borrow_mut()
+                .nullable_range_restricted_int_16_u
+                .clear();
+        }
+
         Ok(())
     }
 
@@ -1897,7 +2005,21 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _ctx: impl WriteContext,
         value: Nullable<i16>,
     ) -> Result<(), Error> {
-        self.data.borrow_mut().nullable_range_restricted_int_16_s = value;
+        if let Some(value) = value.into_option() {
+            const RANGE: core::ops::RangeInclusive<i16> = -150..=200;
+
+            if RANGE.contains(&value) {
+                self.data.borrow_mut().nullable_range_restricted_int_16_s = Nullable::some(value);
+            } else {
+                Err(ErrorCode::ConstraintError)?;
+            }
+        } else {
+            self.data
+                .borrow_mut()
+                .nullable_range_restricted_int_16_s
+                .clear();
+        }
+
         Ok(())
     }
 
@@ -1906,7 +2028,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn handle_test_not_handled(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        todo!()
+        Err(ErrorCode::InvalidCommand.into())
     }
 
     fn handle_test_specific<P: TLVBuilderParent>(
@@ -1915,10 +2037,6 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         response: TestSpecificResponseBuilder<P>,
     ) -> Result<P, Error> {
         response.return_value(7)?.end()
-    }
-
-    fn handle_test_unknown_command(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        todo!()
     }
 
     fn handle_test_add_arguments<P: TLVBuilderParent>(
@@ -1950,7 +2068,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _request: TestStructArrayArgumentRequestRequest<'_>,
         _response: TestStructArrayArgumentResponseBuilder<P>,
     ) -> Result<P, Error> {
-        todo!()
+        unreachable!()
     }
 
     fn handle_test_struct_argument_request<P: TLVBuilderParent>(
@@ -1966,7 +2084,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             && s.c()? == SimpleEnum::ValueB
             && s.d()?.0 == b"octet_string"
             && s.e()? == "char_string"
-            && s.f()? == SimpleBitmap::VALUE_B
+            && s.f()? == SimpleBitmap::VALUE_A
             && s.g()? == 0f32
             && s.h()? == 0f64;
 
@@ -1989,7 +2107,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 && s.c()? == SimpleEnum::ValueB
                 && s.d()?.0 == b"octet_string"
                 && s.e()? == "char_string"
-                && s.f()? == SimpleBitmap::VALUE_B
+                && s.f()? == SimpleBitmap::VALUE_A
                 && s.g()? == 0f32
                 && s.h()? == 0f64
         };
@@ -2018,7 +2136,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 && s1.c()? == SimpleEnum::ValueB
                 && s1.d()?.0 == b"first_octet_string"
                 && s1.e()? == "first_char_string"
-                && s1.f()? == SimpleBitmap::VALUE_B
+                && s1.f()? == SimpleBitmap::VALUE_A
                 && s1.g()? == 0f32
                 && s1.h()? == 0f64
                 && s2.a()? == 1
@@ -2026,7 +2144,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 && s2.c()? == SimpleEnum::ValueC
                 && s2.d()?.0 == b"second_octet_string"
                 && s2.e()? == "second_char_string"
-                && s2.f()? == SimpleBitmap::VALUE_B
+                && s2.f()? == SimpleBitmap::VALUE_A
                 && s2.g()? == 0f32
                 && s2.h()? == 0f64;
         }
@@ -2073,7 +2191,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     && ss.c()? == SimpleEnum::ValueB
                     && ss.d()?.0 == b"octet_string"
                     && ss.e()? == "char_string"
-                    && ss.f()? == SimpleBitmap::VALUE_B
+                    && ss.f()? == SimpleBitmap::VALUE_A
                     && ss.g()? == 0f32
                     && ss.h()? == 0f64
             }
@@ -2090,7 +2208,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         && ls1.c()? == SimpleEnum::ValueC
                         && ls1.d()?.0 == b"nested_octet_string"
                         && ls1.e()? == "nested_char_string"
-                        && ls1.f()? == SimpleBitmap::VALUE_B
+                        && ls1.f()? == SimpleBitmap::VALUE_A
                         && ls1.g()? == 0f32
                         && ls1.h()? == 0f64
                         && ls2.a()? == 2
@@ -2098,7 +2216,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         && ls2.c()? == SimpleEnum::ValueC
                         && ls2.d()?.0 == b"nested_octet_string"
                         && ls2.e()? == "nested_char_string"
-                        && ls2.f()? == SimpleBitmap::VALUE_B
+                        && ls2.f()? == SimpleBitmap::VALUE_A
                         && ls2.g()? == 0f32
                         && ls2.h()? == 0f64
                 }
@@ -2128,7 +2246,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         && c.c()? == SimpleEnum::ValueB
                         && c.d()?.0 == b"octet_string"
                         && c.e()? == "char_string"
-                        && c.f()? == SimpleBitmap::VALUE_B
+                        && c.f()? == SimpleBitmap::VALUE_A
                         && c.g()? == 0f32
                         && c.h()? == 0f64
                 }
@@ -2145,7 +2263,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                             && ls1.c()? == SimpleEnum::ValueC
                             && ls1.d()?.0 == b"nested_octet_string"
                             && ls1.e()? == "nested_char_string"
-                            && ls1.f()? == SimpleBitmap::VALUE_B
+                            && ls1.f()? == SimpleBitmap::VALUE_A
                             && ls1.g()? == 0f32
                             && ls1.h()? == 0f64
                             && ls2.a()? == 2
@@ -2153,7 +2271,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                             && ls2.c()? == SimpleEnum::ValueC
                             && ls2.d()?.0 == b"nested_octet_string"
                             && ls2.e()? == "nested_char_string"
-                            && ls2.f()? == SimpleBitmap::VALUE_B
+                            && ls2.f()? == SimpleBitmap::VALUE_A
                             && ls2.g()? == 0f32
                             && ls2.h()? == 0f64
                     }
@@ -2161,7 +2279,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 && {
                     let e = s.e()?;
 
-                    e.iter().count() == 2 && {
+                    e.iter().count() == 3 && {
                         let mut result = true;
 
                         for (i, j) in e.iter().zip(1_u32..4) {
@@ -2175,12 +2293,13 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     let f = s.f()?;
 
                     f.iter().count() == 3 && {
+                        const STRS: &[&[u8]] =
+                            &[b"octet_string_1", b"octect_string_2", b"octet_string_3"];
+
                         let mut result = true;
 
-                        for (i, j) in f.iter().zip(
-                            [b"octet_string_1", b"octet_string_2", b"octet_string_3"].into_iter(),
-                        ) {
-                            result = result || i?.0 == j;
+                        for (i, j) in f.iter().zip(STRS.iter()) {
+                            result = result || i?.0 == *j;
                         }
 
                         result
@@ -2417,7 +2536,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         if request.arg_1()?.is_some() {
             Ok(())
         } else {
-            Err(ErrorCode::InvalidAction.into()) // TODO: constraint error
+            Err(ErrorCode::ConstraintError.into())
         }
     }
 
@@ -2437,6 +2556,10 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         _response: TestEmitTestFabricScopedEventResponseBuilder<P>,
     ) -> Result<P, Error> {
         todo!()
+    }
+
+    fn handle_test_unknown_command(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+        unreachable!()
     }
 
     fn handle_test_batch_helper_request<P: TLVBuilderParent>(
@@ -2485,5 +2608,26 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         writer.end_container()?; // TestBatchHelperResponse struct
 
         Ok(parent)
+    }
+
+    fn mei_int_8_u(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.data.borrow().mei_int_8_u)
+    }
+
+    fn set_mei_int_8_u(&self, _ctx: impl WriteContext, value: u8) -> Result<(), Error> {
+        self.data.borrow_mut().mei_int_8_u = value;
+
+        Ok(())
+    }
+
+    fn handle_test_different_vendor_mei_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: TestDifferentVendorMeiRequestRequest<'_>,
+        response: TestDifferentVendorMeiResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let arg = request.arg_1()?;
+
+        response.arg_1(arg)?.event_number(0)?.end()
     }
 }

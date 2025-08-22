@@ -36,6 +36,20 @@ macro_rules! bitflags_tlv {
                     $crate::error::Error::from($crate::error::ErrorCode::InvalidData)
                 })
             }
+
+            fn nullable_from_tlv(
+                element: &$crate::tlv::TLVElement<'a>,
+            ) -> Result<Self, $crate::error::Error> {
+                let value = $crate::tlv::TLVElement::$type(element)?;
+
+                if value != $type::MAX {
+                    Self::from_bits(value).ok_or_else(|| {
+                        $crate::error::Error::from($crate::error::ErrorCode::InvalidData)
+                    })
+                } else {
+                    Err($crate::error::ErrorCode::ConstraintError.into())
+                }
+            }
         }
 
         impl $crate::tlv::ToTLV for $enum_name {
@@ -52,6 +66,33 @@ macro_rules! bitflags_tlv {
                 tag: $crate::tlv::TLVTag,
             ) -> impl Iterator<Item = Result<$crate::tlv::TLV<'_>, $crate::error::Error>> {
                 $crate::tlv::TLV::$type(tag, self.bits()).into_tlv_iter()
+            }
+
+            fn nullable_to_tlv<W: $crate::tlv::TLVWrite>(
+                &self,
+                tag: &$crate::tlv::TLVTag,
+                mut tw: W,
+            ) -> Result<(), $crate::error::Error> {
+                if self.bits() != $type::MAX {
+                    tw.$type(tag, self.bits())
+                } else {
+                    Err($crate::error::ErrorCode::ConstraintError.into())
+                }
+            }
+
+            fn nullable_tlv_iter(
+                &self,
+                tag: $crate::tlv::TLVTag,
+            ) -> impl Iterator<Item = Result<$crate::tlv::TLV<'_>, $crate::error::Error>> {
+                if self.bits() != $type::MAX {
+                    $crate::tlv::EitherIter::First(
+                        $crate::tlv::TLV::$type(tag, self.bits()).into_tlv_iter(),
+                    )
+                } else {
+                    $crate::tlv::EitherIter::Second(core::iter::once(Err(
+                        $crate::error::ErrorCode::ConstraintError.into(),
+                    )))
+                }
             }
         }
     };

@@ -272,12 +272,45 @@ impl<'a> Cluster<'a> {
         Self::encode_command_ids(tag, tw, self.commands().map(|cmd| cmd.id))
     }
 
-    fn encode_generated_command_ids<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+    fn encode_generated_command_ids<W: TLVWrite>(
+        &self,
+        tag: &TLVTag,
+        mut tw: W,
+    ) -> Result<(), Error> {
         debug!(
             "Endpt(0x??)::Cluster(0x{:04x})::Attr::GeneratedCmdIDs(0xfff8)::Read -> Ok([",
             self.id
         );
-        Self::encode_command_ids(tag, tw, self.commands().filter_map(|cmd| cmd.resp_id))
+
+        // Matter C++ SDK unit tests do require the generated command IDs to be in ascending order and not to have repetitions.
+        // Therefore, we are generating the array incrementally, using a variation of the selection sort algorithm
+
+        tw.start_array(tag)?;
+
+        let mut max_inserted_cmd = None;
+
+        while let Some(next_cmd) = self
+            .commands()
+            .filter_map(|cmd| cmd.resp_id)
+            .filter(|cmd| {
+                max_inserted_cmd
+                    .map(|max_inserted| *cmd > max_inserted)
+                    .unwrap_or(true)
+            })
+            .min()
+        {
+            tw.u32(&TLVTag::Anonymous, next_cmd)?;
+
+            debug!("    Cmd: 0x{:02x}, ", next_cmd);
+
+            max_inserted_cmd = Some(next_cmd);
+        }
+
+        tw.end_container()?;
+
+        debug!("])");
+
+        Ok(())
     }
 
     fn encode_event_ids<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
@@ -418,9 +451,11 @@ macro_rules! clusters {
 /// A macro that generates a "with" fn for matching attributes and commands
 ///
 /// Usage:
+/// - `with!()` - returns false for all attributes and commands
 /// - `with!(all)` - returns true for all attributes and commands
 /// - `with!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for the specified attributes or commands
-/// - `with!(required; (attr1, attr2, ...))` - returns true for all mandatory attributes and the specified attributes
+/// - `with!(required[; (attr1, attr2, ...)])` - returns true for all mandatory attributes and the specified attributes
+/// - `with!(system[; (attr1, attr2, ...)])` - returns true for all system attributes and the specified attributes
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! with {
@@ -477,6 +512,38 @@ macro_rules! with {
                     $id0 => true,
                     $($id => true,)*
                     _ => false,
+                }
+            } else {
+                false
+            }
+        }
+    };
+}
+
+/// A macro that generates an "except" fn for matching attributes and commands
+///
+/// Usage:
+/// - `except!()` - returns true for all attributes and commands
+/// - `except!(all)` - returns false for all attributes and commands
+/// - `except!(attr_or_cmd1, attr_or_cmd2, ...)` - returns true for all but the specified attributes or commands
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! except {
+    () => {
+        |_, _, _| true
+    };
+    (all) => {
+        |_, _, _| false
+    };
+    ($id0:path $(| $id:path $(|)?)*) => {
+        #[allow(clippy::collapsible_match)]
+        |leaf, _, _| {
+            if let Ok(l) = leaf.id.try_into() {
+                #[allow(unreachable_patterns)]
+                match l {
+                    $id0 => false,
+                    $($id => false,)*
+                    _ => true,
                 }
             } else {
                 false

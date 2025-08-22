@@ -36,9 +36,9 @@ pub fn enums(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 ///
 /// Essentially `enum Foo { kValue.... = ...}`
 fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
-    let base_type = match e.base_type.as_ref() {
-        "enum8" => quote!(u8),
-        "enum16" => quote!(u16),
+    let (base_type, base_type_str) = match e.base_type.as_ref() {
+        "enum8" => (quote!(u8), Literal::string("u8")),
+        "enum16" => (quote!(u16), Literal::string("u16")),
         other => panic!("Unknown enumeration base type {other}"),
     };
     let name = ident(&e.id);
@@ -55,6 +55,7 @@ fn enumeration(e: &Enum, context: &IdlGenerateContext) -> TokenStream {
 
     quote!(
         #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, #krate::tlv::FromTLV, #krate::tlv::ToTLV)]
+        #[tlvargs(datatype = #base_type_str)]
         #[cfg_attr(feature = "defmt", derive(#krate::reexport::defmt::Format))]
         #[repr(#base_type)]
         pub enum #name {
@@ -122,6 +123,7 @@ mod test {
                     rs_matter_crate :: tlv :: FromTLV,
                     rs_matter_crate :: tlv :: ToTLV,
                 )]
+                #[tlvargs(datatype = "u8")]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum DelayedAllOffEffectVariantEnum {
@@ -142,6 +144,7 @@ mod test {
                     rs_matter_crate :: tlv :: FromTLV,
                     rs_matter_crate :: tlv :: ToTLV,
                 )]
+                #[tlvargs(datatype = "u8")]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum DyingLightEffectVariantEnum {
@@ -158,6 +161,7 @@ mod test {
                     rs_matter_crate :: tlv :: FromTLV,
                     rs_matter_crate :: tlv :: ToTLV,
                 )]
+                #[tlvargs(datatype = "u8")]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum EffectIdentifierEnum {
@@ -176,6 +180,7 @@ mod test {
                     rs_matter_crate :: tlv :: FromTLV,
                     rs_matter_crate :: tlv :: ToTLV,
                 )]
+                #[tlvargs(datatype = "u8")]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 #[repr(u8)]
                 pub enum StartUpOnOffEnum {

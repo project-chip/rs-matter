@@ -69,6 +69,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::CommandNotFound => IMStatusCode::UnsupportedCommand,
             ErrorCode::InvalidAction => IMStatusCode::InvalidAction,
             ErrorCode::InvalidCommand => IMStatusCode::InvalidCommand,
+            ErrorCode::InvalidDataType => IMStatusCode::InvalidDataType,
             ErrorCode::UnsupportedAccess => IMStatusCode::UnsupportedAccess,
             ErrorCode::Busy => IMStatusCode::Busy,
             ErrorCode::DataVersionMismatch => IMStatusCode::DataVersionMismatch,
@@ -667,7 +668,11 @@ pub enum CmdResp<'a> {
 }
 
 impl CmdResp<'_> {
-    pub fn status_new(cmd_path: CmdPath, status: IMStatusCode, cluster_status: u16) -> Self {
+    pub fn status_new(
+        cmd_path: CmdPath,
+        status: IMStatusCode,
+        cluster_status: Option<u16>,
+    ) -> Self {
         Self::Status(CmdStatus {
             path: cmd_path,
             status: Status::new(status, cluster_status),
@@ -695,12 +700,12 @@ impl From<CmdStatus> for CmdResp<'_> {
 #[derive(FromTLV, ToTLV, Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CmdStatus {
-    path: CmdPath,
-    status: Status,
+    pub path: CmdPath,
+    pub status: Status,
 }
 
 impl CmdStatus {
-    pub fn new(path: CmdPath, status: IMStatusCode, cluster_status: u16) -> Self {
+    pub fn new(path: CmdPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
         Self {
             path,
             status: Status {
@@ -735,11 +740,11 @@ pub enum CmdDataTag {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Status {
     pub status: IMStatusCode,
-    pub cluster_status: u16,
+    pub cluster_status: Option<u16>,
 }
 
 impl Status {
-    pub fn new(status: IMStatusCode, cluster_status: u16) -> Status {
+    pub fn new(status: IMStatusCode, cluster_status: Option<u16>) -> Status {
         Status {
             status,
             cluster_status,
@@ -857,12 +862,12 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttrStatus {
-    path: AttrPath,
-    status: Status,
+    pub path: AttrPath,
+    pub status: Status,
 }
 
 impl AttrStatus {
-    pub fn new(path: &GenericPath, status: IMStatusCode, cluster_status: u16) -> Self {
+    pub fn new(path: &GenericPath, status: IMStatusCode, cluster_status: Option<u16>) -> Self {
         Self {
             path: AttrPath::new(path),
             status: Status::new(status, cluster_status),

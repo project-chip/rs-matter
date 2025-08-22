@@ -58,6 +58,31 @@ pub trait FromTLV<'a>: Sized + 'a {
             })
         }
     }
+
+    /// Deserialize the type from a TLV-encoded element.
+    ///
+    /// Called when the deserialized value will be placed in `Nullable`
+    /// so as to check whether the value falls in the nullable range of the type, which
+    /// might be shorter than the non-nullable range of the type.
+    fn nullable_from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+        Self::from_tlv(element)
+    }
+
+    /// Generate an in-place initializer for the type that initializes
+    /// the type from a TLV-encoded element.
+    ///
+    /// Called when the deserialized value will be placed in `Nullable`
+    /// so as to check whether the value falls in the nullable range of the type, which
+    /// might be shorter than the non-nullable range of the type.
+    fn init_nullable_from_tlv(element: TLVElement<'a>) -> impl init::Init<Self, Error> {
+        unsafe {
+            init::init_from_closure(move |slot| {
+                core::ptr::write(slot, Self::nullable_from_tlv(&element)?);
+
+                Ok(())
+            })
+        }
+    }
 }
 
 /// A trait representing Rust types that can serialize themselves to
@@ -69,6 +94,25 @@ pub trait ToTLV {
     /// Serialize the type as an iterator of `TLV` instances by potentially borrowing
     /// data from the type.
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>>;
+
+    /// Serialize the type to a TLV-encoded stream.
+    ///
+    /// Called when the serialized value is placed in `Nullable`
+    /// so as to check whether the value falls in the nullable range of the type, which
+    /// might be shorter than the non-nullable range of the type.
+    fn nullable_to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+        self.to_tlv(tag, tw)
+    }
+
+    /// Serialize the type as an iterator of `TLV` instances by potentially borrowing
+    /// data from the type.
+    ///
+    /// Called when the serialized value is placed in `Nullable`
+    /// so as to check whether the value falls in the nullable range of the type, which
+    /// might be shorter than the non-nullable range of the type.
+    fn nullable_tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        self.tlv_iter(tag)
+    }
 }
 
 impl<T> ToTLV for &T
@@ -81,6 +125,14 @@ where
 
     fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
         (*self).tlv_iter(tag)
+    }
+
+    fn nullable_to_tlv<W: TLVWrite>(&self, tag: &TLVTag, tw: W) -> Result<(), Error> {
+        (*self).nullable_to_tlv(tag, tw)
+    }
+
+    fn nullable_tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        (*self).nullable_tlv_iter(tag)
     }
 }
 

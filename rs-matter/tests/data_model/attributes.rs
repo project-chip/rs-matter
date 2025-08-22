@@ -320,8 +320,8 @@ fn test_write_success() {
         TestAttrData::new(None, AttrPath::new(&ep1_att), &val1 as _),
     ];
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
-        AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
+        AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
+        AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
     ];
 
     let im = ImEngine::new_default();
@@ -360,8 +360,8 @@ fn test_write_wc_endpoint() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Success, 0),
-        AttrStatus::new(&ep1_att, IMStatusCode::Success, 0),
+        AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
+        AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
     ];
 
     let im = ImEngine::new_default();
@@ -430,11 +430,11 @@ fn test_write_unsupported_fields() {
         TestAttrData::new(None, AttrPath::new(&wc_attribute), &val0 as _),
     ];
     let expected = &[
-        AttrStatus::new(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint, 0),
-        AttrStatus::new(&invalid_cluster, IMStatusCode::UnsupportedCluster, 0),
-        AttrStatus::new(&invalid_attribute, IMStatusCode::UnsupportedAttribute, 0),
-        AttrStatus::new(&wc_cluster, IMStatusCode::UnsupportedCluster, 0),
-        AttrStatus::new(&wc_attribute, IMStatusCode::UnsupportedAttribute, 0),
+        AttrStatus::new(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint, None),
+        AttrStatus::new(&invalid_cluster, IMStatusCode::UnsupportedCluster, None),
+        AttrStatus::new(&invalid_attribute, IMStatusCode::UnsupportedAttribute, None),
+        AttrStatus::new(&wc_cluster, IMStatusCode::UnsupportedCluster, None),
+        AttrStatus::new(&wc_attribute, IMStatusCode::UnsupportedAttribute, None),
     ];
     let im = ImEngine::new_default();
     let handler = im.handler();

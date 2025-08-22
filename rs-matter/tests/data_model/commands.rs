@@ -76,17 +76,17 @@ fn test_invoke_cmds_unsupported_fields() {
         TestCmdResp::Status(CmdStatus::new(
             invalid_endpoint,
             IMStatusCode::UnsupportedEndpoint,
-            0,
+            None,
         )),
         TestCmdResp::Status(CmdStatus::new(
             invalid_cluster,
             IMStatusCode::UnsupportedCluster,
-            0,
+            None,
         )),
         TestCmdResp::Status(CmdStatus::new(
             invalid_command,
             IMStatusCode::UnsupportedCommand,
-            0,
+            None,
         )),
     ];
     ImEngine::commands(input, expected);
@@ -127,7 +127,7 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
     let expected = &[TestCmdResp::Status(CmdStatus::new(
         expected_path,
         IMStatusCode::Success,
-        0,
+        None,
     ))];
     ImEngine::commands(input, expected);
 }

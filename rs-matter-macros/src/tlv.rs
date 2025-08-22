@@ -295,6 +295,15 @@ fn gen_totlv_for_enum(
     let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
 
     if variant_types.contains(&FieldTypes::Unit) {
+        let datatype = Ident::new(
+            if tlvargs.datatype.as_str() == "struct" {
+                panic!("Unit enums must have a datatype specified");
+            } else {
+                tlvargs.datatype.as_str()
+            },
+            Span::call_site(),
+        );
+
         let (write_func, tags) =
             get_unit_enum_func_and_tags(enum_name, tlvargs.datatype.as_str(), tags);
 
@@ -318,6 +327,22 @@ fn gen_totlv_for_enum(
                 fn tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
                     match self {
                         #( Self::#variant_names => #krate::tlv::TLV::#write_func(tag, #tags).into_tlv_iter(), )*
+                    }
+                }
+
+                fn nullable_to_tlv<W: #krate::tlv::TLVWrite>(&self, tag: &#krate::tlv::TLVTag, mut tw: W) -> Result<(), #krate::error::Error> {
+                    if *self as #datatype != #datatype::MAX {
+                        Self::to_tlv(self, tag, tw)
+                    } else {
+                        Err(#krate::error::ErrorCode::ConstraintError.into())
+                    }
+                }
+
+                fn nullable_tlv_iter(&self, tag: #krate::tlv::TLVTag) -> impl Iterator<Item = Result<#krate::tlv::TLV, #krate::error::Error>> {
+                    if *self as #datatype != #datatype::MAX {
+                        #krate::tlv::EitherIter::First(Self::tlv_iter(self, tag))
+                    } else {
+                        #krate::tlv::EitherIter::Second(core::iter::once(Err(#krate::error::ErrorCode::ConstraintError.into())))
                     }
                 }
             }
@@ -669,6 +694,15 @@ fn gen_fromtlv_for_enum(
 
     let krate = Ident::new(&tlvargs.rs_matter_crate, Span::call_site());
     if variant_types.contains(&FieldTypes::Unit) {
+        let datatype = Ident::new(
+            if tlvargs.datatype.as_str() == "struct" {
+                panic!("Unit enums must have a datatype specified");
+            } else {
+                tlvargs.datatype.as_str()
+            },
+            Span::call_site(),
+        );
+
         let (elem_read_method, tags) =
             get_unit_enum_func_and_tags(enum_name, tlvargs.datatype.as_str(), tags);
 
@@ -680,6 +714,20 @@ fn gen_fromtlv_for_enum(
                         )*
                         _ => Err(#krate::error::ErrorCode::Invalid)?,
                     })
+                }
+
+                fn nullable_from_tlv(element: &#krate::tlv::TLVElement<#lifetime>) -> Result<Self, #krate::error::Error> {
+                    let value = element.#elem_read_method()?;
+
+                    if value != #datatype::MAX {
+                        Ok(match value {
+                            #(#tags => Self::#variant_names,
+                            )*
+                            _ => Err(#krate::error::ErrorCode::Invalid)?,
+                        })
+                    } else {
+                        Err(#krate::error::ErrorCode::ConstraintError.into())
+                    }
                 }
             }
 
@@ -1065,6 +1113,7 @@ mod tests {
     #[test]
     fn test_to_tlv_for_unit_defaults() {
         let ast: DeriveInput = syn::parse2(quote!(
+            #[tlvargs(datatype = "u8")]
             enum TestEnum {
                 ValueA,
                 ValueB,
@@ -1102,6 +1151,33 @@ mod tests {
                         match self {
                             Self::ValueA => rs_matter_maybe_renamed::tlv::TLV::u8(tag, 0u8).into_tlv_iter(),
                             Self::ValueB => rs_matter_maybe_renamed::tlv::TLV::u8(tag, 1u8).into_tlv_iter(),
+                        }
+                    }
+
+                    fn nullable_to_tlv<W: rs_matter_maybe_renamed::tlv::TLVWrite>(
+                        &self,
+                        tag: &rs_matter_maybe_renamed::tlv::TLVTag,
+                        mut tw: W,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                        if *self as u8 != u8::MAX {
+                            Self::to_tlv(self, tag, tw)
+                        } else {
+                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                        }
+                    }
+
+                    fn nullable_tlv_iter(
+                        &self,
+                        tag: rs_matter_maybe_renamed::tlv::TLVTag,
+                    ) -> impl Iterator<
+                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>,
+                    > {
+                        if *self as u8 != u8::MAX {
+                            rs_matter_maybe_renamed::tlv::EitherIter::First(Self::tlv_iter(self, tag))
+                        } else {
+                            rs_matter_maybe_renamed::tlv::EitherIter::Second(core::iter::once(Err(
+                                rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into(),
+                            )))
                         }
                     }
                 }
@@ -1158,6 +1234,33 @@ mod tests {
                             Self::ValueB => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 1u16).into_tlv_iter(),
                             Self::ValueC => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 100u16).into_tlv_iter(),
                             Self::ValueD => rs_matter_maybe_renamed::tlv::TLV::u16(tag, 4660u16).into_tlv_iter(),
+                        }
+                    }
+
+                    fn nullable_to_tlv<W: rs_matter_maybe_renamed::tlv::TLVWrite>(
+                        &self,
+                        tag: &rs_matter_maybe_renamed::tlv::TLVTag,
+                        mut tw: W,
+                    ) -> Result<(), rs_matter_maybe_renamed::error::Error> {
+                        if *self as u16 != u16::MAX {
+                            Self::to_tlv(self, tag, tw)
+                        } else {
+                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                        }
+                    }
+
+                    fn nullable_tlv_iter(
+                        &self,
+                        tag: rs_matter_maybe_renamed::tlv::TLVTag,
+                    ) -> impl Iterator<
+                        Item = Result<rs_matter_maybe_renamed::tlv::TLV, rs_matter_maybe_renamed::error::Error>,
+                    > {
+                        if *self as u16 != u16::MAX {
+                            rs_matter_maybe_renamed::tlv::EitherIter::First(Self::tlv_iter(self, tag))
+                        } else {
+                            rs_matter_maybe_renamed::tlv::EitherIter::Second(core::iter::once(Err(
+                                rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into(),
+                            )))
                         }
                     }
                 }
@@ -1217,6 +1320,7 @@ mod tests {
     #[test]
     fn test_from_tlv_for_unit_enum() {
         let ast: DeriveInput = syn::parse2(quote!(
+            #[tlvargs(datatype = "u8")]
             enum TestEnum {
                 ValueA,
                 ValueB,
@@ -1236,6 +1340,21 @@ mod tests {
                             1u8 => Self::ValueB,
                             _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
                         })
+                    }
+
+                    fn nullable_from_tlv(
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                        let value = element.u8()?;
+                        if value != u8::MAX {
+                            Ok(match value {
+                                0u8 => Self::ValueA,
+                                1u8 => Self::ValueB,
+                                _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                            })
+                        } else {
+                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                        }
                     }
                 }
 
@@ -1282,6 +1401,23 @@ mod tests {
                             4660u16 => Self::D,
                             _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
                        })
+                    }
+
+                    fn nullable_from_tlv(
+                        element: &rs_matter_maybe_renamed::tlv::TLVElement<'_>,
+                    ) -> Result<Self, rs_matter_maybe_renamed::error::Error> {
+                        let value = element.u16()?;
+                        if value != u16::MAX {
+                            Ok(match value {
+                                0u16 => Self::A,
+                                1u16 => Self::B,
+                                100u16 => Self::C,
+                                4660u16 => Self::D,
+                                _ => Err(rs_matter_maybe_renamed::error::ErrorCode::Invalid)?,
+                            })
+                        } else {
+                            Err(rs_matter_maybe_renamed::error::ErrorCode::ConstraintError.into())
+                        }
                     }
                 }
 
