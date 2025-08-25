@@ -20,7 +20,9 @@ env:
 
 jobs:
   yaml_integration_tests:
-    runs-on: ubuntu-latest
+    # Downgrade to 22.04 so that Matter 1.3's `activate.sh` does not fail with "ModuleNotFoundError: No module named 'imp'"
+    # runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
@@ -54,30 +56,13 @@ jobs:
         with:
           path: .build/itest/connectedhomeip
           key: >-
-            ${{ runner.os }}-chip-${{
-            inputs.chip_ref || 'master' }}-${{
+            chip-${{ runner.os }}-${{
             hashFiles('.build/itest/connectedhomeip/**/*.py',
             '.build/itest/connectedhomeip/**/*.sh', '.build/itest/connectedhomeip/**/BUILD.gn') }}
-          restore-keys: |
-            ${{ runner.os }}-chip-
-
-      # - name: Cache Rust dependencies
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: |
-      #       ~/.cargo/registry
-      #       ~/.cargo/git
-      #       target
-      #       xtask/target
-      #     key: >-
-      #       ${{ runner.os }}-cargo-${{
-      #       hashFiles('**/Cargo.lock') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-cargo-
 
       - name: Setup Chip environment
         run: |
-          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'master' }}"
+          cargo xtask itest-setup --gitref "${{ inputs.chip_ref || 'v1.3.0.0' }}"
 
       - name: Run YAML Integration Tests
         run: |
