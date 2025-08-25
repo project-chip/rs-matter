@@ -22,15 +22,15 @@ use std::sync::{Arc, Mutex, Once};
 
 use num_derive::FromPrimitive;
 
+use rs_matter::utils::storage::Vec;
 use strum::{EnumDiscriminants, FromRepr};
 
 use rs_matter::dm::{
-    Access, Attribute, Cluster, Command, Dataver, Handler, InvokeContext, InvokeReply,
-    NonBlockingHandler, Quality, ReadContext, ReadReply, Reply, WriteContext,
+    Access, ArrayAttributeWrite, Attribute, Cluster, Command, Dataver, Handler, InvokeContext,
+    InvokeReply, NonBlockingHandler, Quality, ReadContext, ReadReply, Reply, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
-use rs_matter::im::{attr_list_write, ListOperation};
-use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
+use rs_matter::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite};
 use rs_matter::{attribute_enum, attributes, command_enum, commands, with};
 
 pub const WRITE_LIST_MAX: usize = 5;
@@ -108,7 +108,7 @@ pub const CLUSTER: Cluster<'static> = Cluster {
 /// This is used in the tests to validate any settings that may have happened
 /// to the custom data parts of the cluster
 pub struct TestChecker {
-    pub write_list: [Option<u16>; WRITE_LIST_MAX],
+    pub write_list: Vec<u16, WRITE_LIST_MAX>,
 }
 
 static mut G_TEST_CHECKER: Option<Arc<Mutex<TestChecker>>> = None;
@@ -117,7 +117,7 @@ static INIT: Once = Once::new();
 impl TestChecker {
     fn new() -> Self {
         Self {
-            write_list: [None; WRITE_LIST_MAX],
+            write_list: Vec::new(),
         }
     }
 
@@ -172,14 +172,29 @@ impl EchoHandler {
                         let tc = tc_handle.lock().unwrap();
 
                         {
+                            let list_index = attr.list_index.clone().map(|li| li.into_option());
                             let tag = writer.tag();
                             let mut tw = writer.writer();
 
-                            tw.start_array(tag)?;
-                            for i in tc.write_list.iter().flatten() {
-                                tw.u16(&TLVTag::Anonymous, *i)?;
+                            if list_index.is_none() {
+                                tw.start_array(tag)?;
                             }
-                            tw.end_container()?;
+
+                            if let Some(Some(index)) = list_index.as_ref() {
+                                let data = tc
+                                    .write_list
+                                    .get(*index as usize)
+                                    .ok_or(ErrorCode::ConstraintError)?;
+                                tw.u16(&TLVTag::Anonymous, *data)?;
+                            } else {
+                                for data in &tc.write_list {
+                                    tw.u16(&TLVTag::Anonymous, *data)?;
+                                }
+                            }
+
+                            if list_index.is_none() {
+                                tw.end_container()?;
+                            }
                         }
 
                         writer.complete()
@@ -203,7 +218,7 @@ impl EchoHandler {
             Attributes::AttWrite => self.att_write.set(data.u16()?),
             Attributes::AttCustom => self.att_custom.set(data.u32()?),
             Attributes::AttWriteList => {
-                attr_list_write(attr, data, |op, data| self.write_attr_list(&op, data))?
+                self.write_attr_list(ArrayAttributeWrite::new(attr.list_index.clone(), data)?)?
             }
         }
 
@@ -233,42 +248,44 @@ impl EchoHandler {
         }
     }
 
-    fn write_attr_list(&self, op: &ListOperation, data: &TLVElement) -> Result<(), Error> {
+    fn write_attr_list(
+        &self,
+        op: ArrayAttributeWrite<TLVElement<'_>, TLVElement<'_>>,
+    ) -> Result<(), Error> {
         let tc_handle = TestChecker::get().unwrap();
         let mut tc = tc_handle.lock().unwrap();
         match op {
-            ListOperation::AddItem => {
+            ArrayAttributeWrite::Add(data) => {
                 let data = data.u16()?;
-                for i in 0..WRITE_LIST_MAX {
-                    if tc.write_list[i].is_none() {
-                        tc.write_list[i] = Some(data);
-                        return Ok(());
-                    }
+                tc.write_list
+                    .push(data)
+                    .map_err(|_| ErrorCode::ResourceExhausted.into())
+            }
+            ArrayAttributeWrite::Update(index, data) => {
+                let data = data.u16()?;
+                if index as usize >= tc.write_list.len() {
+                    Err(ErrorCode::InvalidAction.into())
+                } else {
+                    tc.write_list[index as usize] = data;
+                    Ok(())
+                }
+            }
+            ArrayAttributeWrite::Remove(index) => {
+                if index as usize >= tc.write_list.len() {
+                    Err(ErrorCode::InvalidAction.into())
+                } else {
+                    tc.write_list.remove(index as usize);
+                    Ok(())
+                }
+            }
+            ArrayAttributeWrite::Replace(data) => {
+                tc.write_list.clear();
+                for item in TLVArray::<u16>::new(data)?.iter() {
+                    tc.write_list
+                        .push(item?)
+                        .map_err(|_| ErrorCode::ResourceExhausted)?;
                 }
 
-                Err(ErrorCode::ResourceExhausted.into())
-            }
-            ListOperation::EditItem(index) => {
-                let data = data.u16()?;
-                if tc.write_list[*index as usize].is_some() {
-                    tc.write_list[*index as usize] = Some(data);
-                    Ok(())
-                } else {
-                    Err(ErrorCode::InvalidAction.into())
-                }
-            }
-            ListOperation::DeleteItem(index) => {
-                if tc.write_list[*index as usize].is_some() {
-                    tc.write_list[*index as usize] = None;
-                    Ok(())
-                } else {
-                    Err(ErrorCode::InvalidAction.into())
-                }
-            }
-            ListOperation::DeleteList => {
-                for i in 0..WRITE_LIST_MAX {
-                    tc.write_list[i] = None;
-                }
                 Ok(())
             }
         }

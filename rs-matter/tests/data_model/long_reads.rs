@@ -413,7 +413,7 @@ fn test_long_read_success() {
         &handler,
         [
             &TLVTest::read(
-                TestReadReq::reqs(&[AttrPath::new(&GenericPath::new(None, None, None))]),
+                TestReadReq::reqs(&[AttrPath::from_gp(&GenericPath::new(None, None, None))]),
                 TestReportDataMsg {
                     attr_reports: Some(&ATTR_RESPS[..PART_1]),
                     more_chunks: Some(true),
@@ -491,7 +491,9 @@ fn test_long_read_subscription_success() {
                 TestSubscribeReq {
                     min_int_floor: 1,
                     max_int_ceil: 10,
-                    ..TestSubscribeReq::reqs(&[AttrPath::new(&GenericPath::new(None, None, None))])
+                    ..TestSubscribeReq::reqs(&[AttrPath::from_gp(&GenericPath::new(
+                        None, None, None,
+                    ))])
                 },
                 TestReportDataMsg {
                     subscription_id: Some(1),

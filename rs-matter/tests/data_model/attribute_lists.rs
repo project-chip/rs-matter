@@ -17,10 +17,11 @@
 
 use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
-use rs_matter::im::{AttrPath, AttrStatus};
-use rs_matter::tlv::{Nullable, TLVValue};
 
-use crate::common::e2e::im::attributes::TestAttrData;
+use crate::attr_data_req;
+use crate::attr_data_req_lel;
+use crate::attr_status;
+use crate::attr_status_lel;
 use crate::common::e2e::im::echo_cluster::{self, TestChecker};
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
@@ -30,84 +31,56 @@ use crate::common::init_env_logger;
 /// This tests all the attribute list operations
 /// add item, edit item, delete item, overwrite list, delete list
 fn attr_list_ops() {
-    let val0: u16 = 10;
-    let val1: u16 = 15;
     let tc_handle = TestChecker::get().unwrap();
 
     init_env_logger();
 
-    let delete_item = TLVValue::null();
-    let delete_all: &[u32] = &[];
+    let replace_all: &[u16] = &[1, 2];
+    let delete_all: &[u16] = &[];
 
-    let att_data = GenericPath::new(
+    let path = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWriteList as u32),
     );
-    let mut att_path = AttrPath::new(&att_data);
 
-    // Test 1: Add Operation - add val0
-    let input = &[TestAttrData::new(None, att_path.clone(), &val0)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
+    // Test 1: Replace Operation - update the whole list by replacing it
+    let input = &[attr_data_req!(&path, Some(&replace_all))];
+    let expected = &[attr_status!(&path, IMStatusCode::Success)];
 
     ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
-        assert_eq!([Some(val0), None, None, None, None], tc.write_list);
+        assert_eq!(replace_all, tc.write_list.as_slice());
     }
 
-    // Test 2: Another Add Operation - add val1
-    let input = &[TestAttrData::new(None, att_path.clone(), &val1)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
+    // Test 2: Replace Operation with individual array items as separate paths
+    let input = &[
+        attr_data_req!(&path, Some(&delete_all)),
+        attr_data_req_lel!(&path, Some(&3_u16)),
+        attr_data_req_lel!(&path, Some(&4_u16)),
+        attr_data_req_lel!(&path, Some(&5_u16)),
+    ];
+    let expected = &[
+        attr_status!(&path, IMStatusCode::Success),
+        attr_status_lel!(&path, IMStatusCode::Success),
+        attr_status_lel!(&path, IMStatusCode::Success),
+        attr_status_lel!(&path, IMStatusCode::Success),
+    ];
 
     ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
-        assert_eq!([Some(val0), Some(val1), None, None, None], tc.write_list);
+        assert_eq!(&[3, 4, 5], tc.write_list.as_slice());
     }
 
-    // Test 3: Edit Operation - edit val1 to val0
-    att_path.list_index = Some(Nullable::some(1));
-    let input = &[TestAttrData::new(None, att_path.clone(), &val0)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
+    // Test 3: Replace Operation - delete the whole list by replacing it with an empty one
+    let input = &[attr_data_req!(&path, Some(&delete_all))];
+    let expected = &[attr_status!(&path, IMStatusCode::Success)];
 
     ImEngine::write_reqs(input, expected);
     {
         let tc = tc_handle.lock().unwrap();
-        assert_eq!([Some(val0), Some(val0), None, None, None], tc.write_list);
-    }
-
-    // Test 4: Delete Operation - delete index 0
-    att_path.list_index = Some(Nullable::some(0));
-    let input = &[TestAttrData::new(None, att_path.clone(), &delete_item)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
-
-    ImEngine::write_reqs(input, expected);
-    {
-        let tc = tc_handle.lock().unwrap();
-        assert_eq!([None, Some(val0), None, None, None], tc.write_list);
-    }
-
-    // Test 5: Overwrite Operation - overwrite first 2 entries
-    let overwrite_val: [u32; 2] = [20, 21];
-    att_path.list_index = None;
-    let input = &[TestAttrData::new(None, att_path.clone(), &overwrite_val)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
-
-    ImEngine::write_reqs(input, expected);
-    {
-        let tc = tc_handle.lock().unwrap();
-        assert_eq!([Some(20), Some(21), None, None, None], tc.write_list);
-    }
-
-    // Test 6: Overwrite Operation - delete whole list
-    att_path.list_index = None;
-    let input = &[TestAttrData::new(None, att_path, &delete_all)];
-    let expected = &[AttrStatus::new(&att_data, IMStatusCode::Success, None)];
-
-    ImEngine::write_reqs(input, expected);
-    {
-        let tc = tc_handle.lock().unwrap();
-        assert_eq!([None, None, None, None, None], tc.write_list);
+        assert!(tc.write_list.is_empty());
     }
 }

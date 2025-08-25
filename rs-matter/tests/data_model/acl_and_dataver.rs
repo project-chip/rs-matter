@@ -30,7 +30,7 @@ use crate::common::e2e::im::{echo_cluster, ReplyProcessor, TestReadReq, TestRepo
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::e2e::{ImEngine, IM_ENGINE_PEER_ID};
 use crate::common::init_env_logger;
-use crate::{attr_data, attr_data_path, attr_status};
+use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
 const FAB_1: NonZeroU8 = match NonZeroU8::new(1) {
     Some(f) => f,
@@ -63,7 +63,7 @@ fn wc_read_attribute() {
     let handler = im.handler();
 
     // Test1: Empty Response as no ACL matches
-    im.handle_read_reqs(&handler, &[AttrPath::new(&wc_att1)], &[]);
+    im.handle_read_reqs(&handler, &[AttrPath::from_gp(&wc_att1)], &[]);
 
     // Add ACL to allow our peer to only access endpoint 0
     let mut acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
@@ -78,7 +78,7 @@ fn wc_read_attribute() {
     // Test2: Only Single response as only single endpoint is allowed
     im.handle_read_reqs(
         &handler,
-        &[AttrPath::new(&wc_att1)],
+        &[AttrPath::from_gp(&wc_att1)],
         &[TestAttrResp::data(&ep0_att1, &0x1234u16)],
     );
 
@@ -95,7 +95,7 @@ fn wc_read_attribute() {
     // Test3: Both responses are valid
     im.handle_read_reqs(
         &handler,
-        &[AttrPath::new(&wc_att1)],
+        &[AttrPath::from_gp(&wc_att1)],
         &[
             TestAttrResp::data(&ep0_att1, &0x1234u16),
             TestAttrResp::data(&ep1_att1, &0x1234u16),
@@ -119,8 +119,11 @@ fn exact_read_attribute() {
     let handler = im.handler();
 
     // Test1: Unsupported Access error as no ACL matches
-    let input = &[AttrPath::new(&wc_att1)];
-    let expected = &[attr_status!(&wc_att1, IMStatusCode::UnsupportedAccess)];
+    let input = &[AttrPath::from_gp(&wc_att1)];
+    let expected = &[attr_read_status_resp!(
+        &wc_att1,
+        IMStatusCode::UnsupportedAccess
+    )];
     im.handle_read_reqs(&handler, input, expected);
 
     // Add ACL to allow our peer to access any endpoint
@@ -133,7 +136,7 @@ fn exact_read_attribute() {
         .unwrap();
 
     // Test2: Only Single response as only single endpoint is allowed
-    let input = &[AttrPath::new(&wc_att1)];
+    let input = &[AttrPath::from_gp(&wc_att1)];
     let expected = &[attr_data_path!(wc_att1, Some(&0x1234u16))];
     im.handle_read_reqs(&handler, input, expected);
 }
@@ -162,8 +165,16 @@ fn wc_write_attribute() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
 
-    let input0 = &[TestAttrData::new(None, AttrPath::new(&wc_att), &val0 as _)];
-    let input1 = &[TestAttrData::new(None, AttrPath::new(&wc_att), &val1 as _)];
+    let input0 = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&wc_att),
+        &val0 as _,
+    )];
+    let input1 = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&wc_att),
+        &val1 as _,
+    )];
 
     let im = ImEngine::new_default();
     let handler = im.handler();
@@ -191,7 +202,7 @@ fn wc_write_attribute() {
     im.handle_write_reqs(
         &handler,
         input0,
-        &[AttrStatus::new(&ep0_att, IMStatusCode::Success, None)],
+        &[AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None)],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
     assert_eq!(
@@ -215,8 +226,8 @@ fn wc_write_attribute() {
         &handler,
         input1,
         &[
-            AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
-            AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
+            AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None),
+            AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
         ],
     );
     assert_eq!(val1, handler.echo_cluster(0).att_write.get());
@@ -236,13 +247,17 @@ fn exact_write_attribute() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
 
-    let input = &[TestAttrData::new(None, AttrPath::new(&ep0_att), &val0 as _)];
-    let expected_fail = &[AttrStatus::new(
+    let input = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&ep0_att),
+        &val0 as _,
+    )];
+    let expected_fail = &[AttrStatus::from_gp(
         &ep0_att,
         IMStatusCode::UnsupportedAccess,
         None,
     )];
-    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, None)];
+    let expected_success = &[AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None)];
 
     let im = ImEngine::new_default();
     let handler = im.handler();
@@ -284,13 +299,17 @@ fn exact_write_attribute_noc_cat() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
 
-    let input = &[TestAttrData::new(None, AttrPath::new(&ep0_att), &val0 as _)];
-    let expected_fail = &[AttrStatus::new(
+    let input = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&ep0_att),
+        &val0 as _,
+    )];
+    let expected_fail = &[AttrStatus::from_gp(
         &ep0_att,
         IMStatusCode::UnsupportedAccess,
         None,
     )];
-    let expected_success = &[AttrStatus::new(&ep0_att, IMStatusCode::Success, None)];
+    let expected_success = &[AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None)];
 
     /* CAT in NOC is 1 more, in version, than that in ACL */
     let noc_cat = gen_noc_cat(0xABCD, 2);
@@ -332,7 +351,11 @@ fn insufficient_perms_write() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let input0 = &[TestAttrData::new(None, AttrPath::new(&ep0_att), &val0 as _)];
+    let input0 = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&ep0_att),
+        &val0 as _,
+    )];
 
     let im = ImEngine::new_default();
     let handler = im.handler();
@@ -351,7 +374,7 @@ fn insufficient_perms_write() {
     im.handle_write_reqs(
         &handler,
         input0,
-        &[AttrStatus::new(
+        &[AttrStatus::from_gp(
             &ep0_att,
             IMStatusCode::UnsupportedAccess,
             None,
@@ -394,7 +417,7 @@ fn write_with_runtime_acl_add() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let input0 = TestAttrData::new(None, AttrPath::new(&ep0_att), &val0 as _);
+    let input0 = TestAttrData::new(None, AttrPath::from_gp(&ep0_att), &val0 as _);
 
     // Create ACL to allow our peer ADMIN on everything
     let mut allow_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
@@ -405,7 +428,7 @@ fn write_with_runtime_acl_add() {
         Some(acl::AclHandler::CLUSTER.id),
         Some(acl::AttributeId::Acl as u32),
     );
-    let acl_input = TestAttrData::new(None, AttrPath::new(&acl_att), &allow_acl);
+    let acl_input = TestAttrData::new(None, AttrPath::from_gp(&acl_att), &allow_acl);
 
     // Create ACL that only allows write to the ACL Cluster
     let mut basic_acl = AclEntry::new(None, Privilege::ADMIN, AuthMode::Case);
@@ -429,9 +452,9 @@ fn write_with_runtime_acl_add() {
         // write to echo-cluster attribute, write to acl attribute, write to echo-cluster attribute
         &[input0.clone(), acl_input, input0],
         &[
-            AttrStatus::new(&ep0_att, IMStatusCode::UnsupportedAccess, None),
-            AttrStatus::new(&acl_att, IMStatusCode::Success, None),
-            AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
+            AttrStatus::from_gp(&ep0_att, IMStatusCode::UnsupportedAccess, None),
+            AttrStatus::from_gp(&acl_att, IMStatusCode::Success, None),
+            AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None),
         ],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
@@ -463,7 +486,7 @@ fn test_read_data_ver() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
-    let input = &[AttrPath::new(&wc_ep_att1)];
+    let input = &[AttrPath::from_gp(&wc_ep_att1)];
 
     let expected = &[
         attr_data!(
@@ -520,7 +543,7 @@ fn test_read_data_ver() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
-    let input = &[AttrPath::new(&ep0_att1)];
+    let input = &[AttrPath::from_gp(&ep0_att1)];
     im.test_one(
         &handler,
         TLVTest::read(
@@ -574,13 +597,17 @@ fn test_write_data_ver() {
     // Test 1: Write with correct dataversion should succeed
     let input_correct_dataver = &[TestAttrData::new(
         Some(initial_data_ver),
-        AttrPath::new(&ep0_attwrite),
+        AttrPath::from_gp(&ep0_attwrite),
         &val0 as _,
     )];
     im.handle_write_reqs(
         &handler,
         input_correct_dataver,
-        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, None)],
+        &[AttrStatus::from_gp(
+            &ep0_attwrite,
+            IMStatusCode::Success,
+            None,
+        )],
     );
     assert_eq!(val0, handler.echo_cluster(0).att_write.get());
 
@@ -588,13 +615,13 @@ fn test_write_data_ver() {
     // Now the data version would have incremented due to the previous write
     let input_correct_dataver = &[TestAttrData::new(
         Some(initial_data_ver),
-        AttrPath::new(&ep0_attwrite),
+        AttrPath::from_gp(&ep0_attwrite),
         &val1 as _,
     )];
     im.handle_write_reqs(
         &handler,
         input_correct_dataver,
-        &[AttrStatus::new(
+        &[AttrStatus::from_gp(
             &ep0_attwrite,
             IMStatusCode::DataVersionMismatch,
             None,
@@ -609,13 +636,17 @@ fn test_write_data_ver() {
 
     let input_correct_dataver = &[TestAttrData::new(
         Some(new_data_ver),
-        AttrPath::new(&wc_ep_attwrite),
+        AttrPath::from_gp(&wc_ep_attwrite),
         &val1 as _,
     )];
     im.handle_write_reqs(
         &handler,
         input_correct_dataver,
-        &[AttrStatus::new(&ep0_attwrite, IMStatusCode::Success, None)],
+        &[AttrStatus::from_gp(
+            &ep0_attwrite,
+            IMStatusCode::Success,
+            None,
+        )],
     );
     assert_eq!(val1, handler.echo_cluster(0).att_write.get());
 

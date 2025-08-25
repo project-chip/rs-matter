@@ -25,8 +25,9 @@ use embassy_time::{Instant, Timer};
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataTag, StatusResp,
-    SubscribeReq, SubscribeResp, TimedReq, WriteReq, WriteRespTag, PROTO_ID_INTERACTION_MODEL,
+    IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
+    StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq, WriteRespTag,
+    PROTO_ID_INTERACTION_MODEL,
 };
 use crate::respond::ExchangeHandler;
 use crate::tlv::{get_root_node_struct, FromTLV, Nullable, TLVElement, TLVTag, TLVWrite};
@@ -1016,7 +1017,7 @@ where
                 ReportDataReq::Subscribe(_) | ReportDataReq::SubscribeReport(_)
             ));
             wb.u32(
-                &TLVTag::Context(ReportDataTag::SubscriptionId as u8),
+                &TLVTag::Context(ReportDataRespTag::SubscriptionId as u8),
                 subscription_id,
             )?;
         } else {
@@ -1026,7 +1027,7 @@ where
         let has_requests = self.req.attr_requests()?.is_some();
 
         if has_requests {
-            wb.start_array(&TLVTag::Context(ReportDataTag::AttributeReports as u8))?;
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
         }
 
         Ok(())
@@ -1048,11 +1049,17 @@ where
         }
 
         if more_chunks {
-            wb.bool(&TLVTag::Context(ReportDataTag::MoreChunkedMsgs as u8), true)?;
+            wb.bool(
+                &TLVTag::Context(ReportDataRespTag::MoreChunkedMsgs as u8),
+                true,
+            )?;
         }
 
         if !more_chunks && suppress_resp {
-            wb.bool(&TLVTag::Context(ReportDataTag::SupressResponse as u8), true)?;
+            wb.bool(
+                &TLVTag::Context(ReportDataRespTag::SupressResponse as u8),
+                true,
+            )?;
         }
 
         wb.end_container()?;

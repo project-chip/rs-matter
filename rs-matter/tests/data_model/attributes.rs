@@ -24,7 +24,7 @@ use rs_matter::im::{AttrPath, AttrStatus};
 use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
-use crate::{attr_data, attr_data_path, attr_status};
+use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
 #[test]
 fn test_read_success() {
@@ -50,9 +50,9 @@ fn test_read_success() {
         Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
     );
     let input = &[
-        AttrPath::new(&ep0_att1),
-        AttrPath::new(&ep1_att2),
-        AttrPath::new(&ep1_attcustom),
+        AttrPath::from_gp(&ep0_att1),
+        AttrPath::from_gp(&ep1_att2),
+        AttrPath::from_gp(&ep1_attcustom),
     ];
     let expected = &[
         attr_data_path!(ep0_att1, Some(&0x1234u16)),
@@ -93,18 +93,18 @@ fn test_read_unsupported_fields() {
         GenericPath::new(None, Some(echo_cluster::ID), Some(0x1234));
     let invalid_attribute_wc_cluster = GenericPath::new(Some(0), None, Some(0x1234));
     let input = &[
-        AttrPath::new(&invalid_endpoint),
-        AttrPath::new(&invalid_cluster),
-        AttrPath::new(&invalid_cluster_wc_endpoint),
-        AttrPath::new(&invalid_attribute),
-        AttrPath::new(&invalid_attribute_wc_endpoint),
-        AttrPath::new(&invalid_attribute_wc_cluster),
+        AttrPath::from_gp(&invalid_endpoint),
+        AttrPath::from_gp(&invalid_cluster),
+        AttrPath::from_gp(&invalid_cluster_wc_endpoint),
+        AttrPath::from_gp(&invalid_attribute),
+        AttrPath::from_gp(&invalid_attribute_wc_endpoint),
+        AttrPath::from_gp(&invalid_attribute_wc_cluster),
     ];
 
     let expected = &[
-        attr_status!(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint),
-        attr_status!(&invalid_cluster, IMStatusCode::UnsupportedCluster),
-        attr_status!(&invalid_attribute, IMStatusCode::UnsupportedAttribute),
+        attr_read_status_resp!(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint),
+        attr_read_status_resp!(&invalid_cluster, IMStatusCode::UnsupportedCluster),
+        attr_read_status_resp!(&invalid_attribute, IMStatusCode::UnsupportedAttribute),
     ];
     ImEngine::read_reqs(input, expected);
 }
@@ -121,7 +121,7 @@ fn test_read_wc_endpoint_all_have_clusters() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
     );
-    let input = &[AttrPath::new(&wc_ep_att1)];
+    let input = &[AttrPath::from_gp(&wc_ep_att1)];
 
     let expected = &[
         attr_data!(
@@ -152,7 +152,7 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
         Some(on_off::OnOffHandler::CLUSTER.id),
         Some(on_off::AttributeId::OnOff as u32),
     );
-    let input = &[AttrPath::new(&wc_ep_onoff)];
+    let input = &[AttrPath::from_gp(&wc_ep_onoff)];
 
     let expected = &[attr_data!(
         1,
@@ -170,7 +170,7 @@ fn test_read_wc_endpoint_wc_attribute() {
     // - 8 responses are expected, 1+3 attributes on endpoint 0, 1+3 on endpoint 1
     init_env_logger();
     let wc_ep_wc_attr = GenericPath::new(None, Some(echo_cluster::ID), None);
-    let input = &[AttrPath::new(&wc_ep_wc_attr)];
+    let input = &[AttrPath::from_gp(&wc_ep_wc_attr)];
 
     let attr_list: &[u32] = &[
         echo_cluster::AttributesDiscriminants::Att1 as _,
@@ -316,12 +316,12 @@ fn test_write_success() {
     );
 
     let input = &[
-        TestAttrData::new(None, AttrPath::new(&ep0_att), &val0 as _),
-        TestAttrData::new(None, AttrPath::new(&ep1_att), &val1 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&ep0_att), &val0 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&ep1_att), &val1 as _),
     ];
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
-        AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
+        AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None),
+        AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
     ];
 
     let im = ImEngine::new_default();
@@ -346,7 +346,11 @@ fn test_write_wc_endpoint() {
         Some(echo_cluster::ID),
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
-    let input = &[TestAttrData::new(None, AttrPath::new(&ep_att), &val0 as _)];
+    let input = &[TestAttrData::new(
+        None,
+        AttrPath::from_gp(&ep_att),
+        &val0 as _,
+    )];
 
     let ep0_att = GenericPath::new(
         Some(0),
@@ -360,8 +364,8 @@ fn test_write_wc_endpoint() {
         Some(echo_cluster::AttributesDiscriminants::AttWrite as u32),
     );
     let expected = &[
-        AttrStatus::new(&ep0_att, IMStatusCode::Success, None),
-        AttrStatus::new(&ep1_att, IMStatusCode::Success, None),
+        AttrStatus::from_gp(&ep0_att, IMStatusCode::Success, None),
+        AttrStatus::from_gp(&ep1_att, IMStatusCode::Success, None),
     ];
 
     let im = ImEngine::new_default();
@@ -413,28 +417,28 @@ fn test_write_unsupported_fields() {
     let wc_attribute = GenericPath::new(Some(0), Some(echo_cluster::ID), None);
 
     let input = &[
-        TestAttrData::new(None, AttrPath::new(&invalid_endpoint), &val0 as _),
-        TestAttrData::new(None, AttrPath::new(&invalid_cluster), &val0 as _),
-        TestAttrData::new(None, AttrPath::new(&invalid_attribute), &val0 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&invalid_endpoint), &val0 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&invalid_cluster), &val0 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&invalid_attribute), &val0 as _),
         TestAttrData::new(
             None,
-            AttrPath::new(&wc_endpoint_invalid_cluster),
+            AttrPath::from_gp(&wc_endpoint_invalid_cluster),
             &val0 as _,
         ),
         TestAttrData::new(
             None,
-            AttrPath::new(&wc_endpoint_invalid_attribute),
+            AttrPath::from_gp(&wc_endpoint_invalid_attribute),
             &val0 as _,
         ),
-        TestAttrData::new(None, AttrPath::new(&wc_cluster), &val0 as _),
-        TestAttrData::new(None, AttrPath::new(&wc_attribute), &val0 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&wc_cluster), &val0 as _),
+        TestAttrData::new(None, AttrPath::from_gp(&wc_attribute), &val0 as _),
     ];
     let expected = &[
-        AttrStatus::new(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint, None),
-        AttrStatus::new(&invalid_cluster, IMStatusCode::UnsupportedCluster, None),
-        AttrStatus::new(&invalid_attribute, IMStatusCode::UnsupportedAttribute, None),
-        AttrStatus::new(&wc_cluster, IMStatusCode::UnsupportedCluster, None),
-        AttrStatus::new(&wc_attribute, IMStatusCode::UnsupportedAttribute, None),
+        AttrStatus::from_gp(&invalid_endpoint, IMStatusCode::UnsupportedEndpoint, None),
+        AttrStatus::from_gp(&invalid_cluster, IMStatusCode::UnsupportedCluster, None),
+        AttrStatus::from_gp(&invalid_attribute, IMStatusCode::UnsupportedAttribute, None),
+        AttrStatus::from_gp(&wc_cluster, IMStatusCode::UnsupportedCluster, None),
+        AttrStatus::from_gp(&wc_attribute, IMStatusCode::UnsupportedAttribute, None),
     ];
     let im = ImEngine::new_default();
     let handler = im.handler();

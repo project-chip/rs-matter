@@ -435,7 +435,7 @@ where
         tw.start_struct(&TLVTag::Anonymous)?;
         tw.start_struct(&TLVTag::Context(CmdRespTag::Cmd as _))?;
 
-        self.path.path.leaf = Some(cmd as _);
+        self.path.cmd = Some(cmd as _);
         self.path
             .to_tlv(&TagType::Context(CmdDataTag::Path as _), tw)?;
 

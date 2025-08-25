@@ -20,7 +20,7 @@ use bitflags::bitflags;
 use rs_matter::error::Error;
 use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath};
 use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
-use rs_matter::im::{ReportDataMsg, WriteReqTag};
+use rs_matter::im::{ReportDataResp, WriteReqTag};
 use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;
@@ -398,7 +398,7 @@ impl ReplyProcessor {
             return Ok(wb.get_tail());
         }
 
-        let report_data = ReportDataMsg::from_tlv(element)?;
+        let report_data = ReportDataResp::from_tlv(element)?;
 
         wb.start_struct(&TLVTag::Anonymous)?;
 

@@ -281,7 +281,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
     }
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
-        AttrStatus::new(&self.path.to_gp(), status, None)
+        AttrStatus::new(self.path, status, None)
     }
 }
 
@@ -324,7 +324,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
     }
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
-        AttrStatus::new(&self.path.to_gp(), status, None)
+        AttrStatus::new(self.path, status, None)
     }
 }
 
@@ -336,7 +336,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
     type Status = CmdStatus;
 
     fn path(&self) -> GenericPath {
-        self.path.path.clone()
+        self.path.to_gp()
     }
 
     fn expand(

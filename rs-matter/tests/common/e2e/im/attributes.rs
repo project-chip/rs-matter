@@ -25,13 +25,74 @@ use rs_matter::utils::storage::WriteBuf;
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
 use crate::common::e2e::E2eRunner;
 
-/// A macro for creating a `TestAttrResp` instance of variant `Status`.
+/// A macro for creating an `AttrStatus` instance for the provided generic path and `IMStatusCode``
 #[macro_export]
 macro_rules! attr_status {
     ($path:expr, $status:expr) => {
-        $crate::common::e2e::im::attributes::TestAttrResp::AttrStatus(
-            rs_matter::im::AttrStatus::new($path, $status, None),
+        rs_matter::im::AttrStatus::from_gp($path, $status, None)
+    };
+}
+
+/// A macro for creating an `AttrStatus` instance for the provided generic path and `IMStatusCode``,
+/// where the path is for one concrete array element in an array attribute
+#[macro_export]
+macro_rules! attr_status_lel {
+    ($path:expr, $status:expr) => {
+        rs_matter::im::AttrStatus::new(
+            rs_matter::im::AttrPath {
+                tag_compression: None,
+                node: None,
+                endpoint: $path.endpoint,
+                cluster: $path.cluster,
+                attr: $path.leaf,
+                list_index: Some(rs_matter::tlv::Nullable::none()),
+            },
+            $status,
+            None,
         )
+    };
+}
+
+/// A macro for creating a `TestAttrResp` instance of variant `Status`.
+#[macro_export]
+macro_rules! attr_read_status_resp {
+    ($path:expr, $status:expr) => {
+        $crate::common::e2e::im::attributes::TestAttrResp::AttrStatus($crate::attr_status!(
+            $path, $status
+        ))
+    };
+}
+
+/// A macro for creating a `TestAttrData` instance of variant `AttrData` taking
+/// a `GenericPath` instance and data.
+#[macro_export]
+macro_rules! attr_data_req {
+    ($path:expr, $data:expr) => {
+        $crate::common::e2e::im::attributes::TestAttrData {
+            data_ver: None,
+            path: rs_matter::im::AttrPath::from_gp(&$path),
+            data: $data,
+        }
+    };
+}
+
+/// Same as `attr_data_req!`, but generates a path for one concrete
+/// array element in an array attribute
+#[macro_export]
+macro_rules! attr_data_req_lel {
+    ($path:expr, $data:expr) => {
+        $crate::common::e2e::im::attributes::TestAttrData {
+            data_ver: None,
+            path: rs_matter::im::AttrPath {
+                tag_compression: None,
+                node: None,
+                endpoint: $path.endpoint,
+                cluster: $path.cluster,
+                attr: $path.leaf,
+                list_index: Some(rs_matter::tlv::Nullable::none()),
+            },
+            data: $data,
+        }
     };
 }
 
@@ -40,13 +101,9 @@ macro_rules! attr_status {
 #[macro_export]
 macro_rules! attr_data_path {
     ($path:expr, $data:expr) => {
-        $crate::common::e2e::im::attributes::TestAttrResp::AttrData(
-            $crate::common::e2e::im::attributes::TestAttrData {
-                data_ver: None,
-                path: rs_matter::im::AttrPath::new(&$path),
-                data: $data,
-            },
-        )
+        $crate::common::e2e::im::attributes::TestAttrResp::AttrData($crate::attr_data_req!(
+            $path, $data
+        ))
     };
 }
 
@@ -55,20 +112,9 @@ macro_rules! attr_data_path {
 #[macro_export]
 macro_rules! attr_data_lel_path {
     ($path:expr, $data:expr) => {
-        $crate::common::e2e::im::attributes::TestAttrResp::AttrData(
-            $crate::common::e2e::im::attributes::TestAttrData {
-                data_ver: None,
-                path: rs_matter::im::AttrPath {
-                    tag_compression: None,
-                    node: None,
-                    endpoint: $path.endpoint,
-                    cluster: $path.cluster,
-                    attr: $path.leaf,
-                    list_index: Some(rs_matter::tlv::Nullable::none()),
-                },
-                data: $data,
-            },
-        )
+        $crate::common::e2e::im::attributes::TestAttrResp::AttrData($crate::attr_data_req_lel!(
+            $path, $data
+        ))
     };
 }
 
@@ -160,7 +206,7 @@ pub enum TestAttrResp<'a> {
 impl<'a> TestAttrResp<'a> {
     /// Create a new `TestAttrResp` instance with an `AttrData` value.
     pub fn data(path: &GenericPath, data: &'a dyn TestToTLV) -> Self {
-        Self::AttrData(TestAttrData::new(None, AttrPath::new(path), data))
+        Self::AttrData(TestAttrData::new(None, AttrPath::from_gp(path), data))
     }
 }
 
