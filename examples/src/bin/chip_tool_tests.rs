@@ -72,7 +72,7 @@ static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
-    // Enable detailed backtraces for debugging RefCell borrowing issues
+    // Enable detailed backtraces for debugging test failures
     std::env::set_var("RUST_BACKTRACE", "1");
 
     // Special logging configuration compatible with ConnectedHomeIP YAML tests

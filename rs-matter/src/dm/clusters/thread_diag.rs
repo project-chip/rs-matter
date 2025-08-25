@@ -492,6 +492,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                     Err(ErrorCode::InvalidAction.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -533,6 +534,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                     Err(ErrorCode::InvalidAction.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -656,6 +658,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                     Err(ErrorCode::InvalidAction.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

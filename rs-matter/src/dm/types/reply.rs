@@ -15,19 +15,19 @@
  *    limitations under the License.
  */
 
-use crate::dm::IMBuffer;
+use crate::dm::{AsyncHandler, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
     CmdRespTag, CmdStatus, IMStatusCode,
 };
-use crate::tlv::{TLVElement, TLVTag, TLVWrite, TLVWriter, TagType, ToTLV};
+use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::BufferAccess;
 
 use super::{
-    AttrDetails, ChangeNotify, CmdDetails, DataModelHandler, InvokeContextInstance,
-    ReadContextInstance, WriteContextInstance,
+    AttrDetails, ChangeNotify, CmdDetails, InvokeContextInstance, ReadContextInstance,
+    WriteContextInstance,
 };
 
 // A type for writing the outcome of an attribute-read or command-invoke operation.
@@ -68,103 +68,279 @@ pub trait InvokeReply {
     fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
 }
 
-/// A concrete implementation of the `ReadReply` trait for encoding attribute data.
-pub(crate) struct ReadReplyInstance<'a, 'b, 'c> {
-    dataver_filter: Option<u32>,
-    path: AttrPath,
-    tw: &'a mut TLVWriter<'b, 'c>,
+pub struct HandlerInvoker<'a, 'b, D, B> {
+    exchange: &'b mut Exchange<'a>,
+    handler: D,
+    buffers: B,
 }
 
-impl<'a, 'b, 'c> ReadReplyInstance<'a, 'b, 'c> {
-    pub(crate) async fn handle_read<T: DataModelHandler, B: BufferAccess<IMBuffer>>(
-        exchange: &Exchange<'_>,
-        item: &Result<AttrDetails<'_>, AttrStatus>,
-        handler: T,
-        buffers: B,
-        tw: &mut TLVWriter<'_, '_>,
-    ) -> Result<bool, Error> {
-        let status = match item {
-            Ok(attr) => {
-                let encoder = ReadReplyInstance::new(attr, tw);
-
-                let result = handler
-                    .read(
-                        ReadContextInstance::new(exchange, &handler, buffers, attr),
-                        encoder,
-                    )
-                    .await;
-                match result {
-                    Ok(()) => None,
-                    Err(e) => {
-                        if e.code() == ErrorCode::NoSpace {
-                            return Ok(false);
-                        } else {
-                            error!("Error reading attribute: {}", e);
-                            attr.status(e.into())?
-                        }
-                    }
-                }
-            }
-            Err(status) => Some(status.clone()),
-        };
-
-        if let Some(status) = status {
-            AttrResp::Status(status).to_tlv(&TagType::Anonymous, tw)?;
+impl<'a, 'b, D, B> HandlerInvoker<'a, 'b, D, B>
+where
+    D: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    pub const fn new(exchange: &'b mut Exchange<'a>, handler: D, buffers: B) -> Self {
+        Self {
+            exchange,
+            handler,
+            buffers,
         }
-
-        Ok(true)
     }
 
-    pub(crate) async fn handle_write<T: DataModelHandler, B: BufferAccess<IMBuffer>>(
-        exchange: &Exchange<'_>,
+    pub fn exchange(&mut self) -> &mut Exchange<'a> {
+        self.exchange
+    }
+
+    pub async fn process_read<T: TLVWrite>(
+        &mut self,
+        item: &Result<AttrDetails<'_>, AttrStatus>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        let tail = tw.get_tail();
+
+        let result = self.do_process_read(item, &mut tw).await;
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data.
+            tw.rewind_to(tail);
+        }
+
+        result
+    }
+
+    async fn do_process_read<T: TLVWrite>(
+        &mut self,
+        item: &Result<AttrDetails<'_>, AttrStatus>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        let result = match item {
+            Ok(attr) => {
+                let pos = tw.get_tail();
+
+                let result = self.read(attr, &mut tw).await;
+
+                match result {
+                    Ok(()) => Ok(None),
+                    Err(e) if e.code() != ErrorCode::NoSpace => {
+                        error!("Error reading attribute: {:?}", e);
+
+                        tw.rewind_to(pos);
+
+                        Ok(attr.status(e.into()))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(status) => {
+                error!("Error processing attribute read: {:?}", status);
+                Ok(Some(status.clone()))
+            }
+        };
+
+        match result {
+            Ok(Some(status)) => AttrResp::Status(status).to_tlv(&TagType::Anonymous, tw),
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn read<T: TLVWrite>(&mut self, attr: &AttrDetails<'_>, tw: T) -> Result<(), Error> {
+        self.handler
+            .read(
+                ReadContextInstance::new(self.exchange, &self.handler, &self.buffers, attr),
+                ReadReplyInstance::new(attr, tw),
+            )
+            .await
+    }
+
+    pub async fn process_write<T: TLVWrite>(
+        &mut self,
         item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
-        handler: T,
-        buffers: B,
-        tw: &mut TLVWriter<'_, '_>,
+        mut tw: T,
         notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
-        let status = match item {
-            Ok((attr, data)) => {
-                let result = handler
-                    .write(WriteContextInstance::new(
-                        exchange, &handler, buffers, attr, data, notify,
-                    ))
-                    .await;
-                match result {
-                    Ok(()) => attr.status(IMStatusCode::Success)?,
-                    Err(error) => {
-                        error!("Error writing attribute: {}", error);
-                        attr.status(error.into())?
-                    }
-                }
-            }
-            Err(status) => Some(status.clone()),
-        };
+        let tail = tw.get_tail();
 
-        if let Some(status) = status {
-            status.to_tlv(&TagType::Anonymous, tw)?;
+        let result = self.do_process_write(item, &mut tw, notify).await;
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data.
+            tw.rewind_to(tail);
         }
 
-        Ok(())
+        result
     }
 
-    pub(crate) fn new(attr: &AttrDetails, tw: &'a mut TLVWriter<'b, 'c>) -> Self {
+    async fn do_process_write<T: TLVWrite>(
+        &mut self,
+        item: &Result<(AttrDetails<'_>, TLVElement<'_>), AttrStatus>,
+        mut tw: T,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
+        let result = match item {
+            Ok((attr, data)) => {
+                let pos = tw.get_tail();
+
+                let result = self.write(attr, data, notify).await;
+
+                match result {
+                    Ok(()) => Ok(attr.status(IMStatusCode::Success)),
+                    Err(err) if err.code() != ErrorCode::NoSpace => {
+                        error!("Error writing attribute: {}", err);
+
+                        tw.rewind_to(pos);
+
+                        Ok(attr.status(err.into()))
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            Err(status) => {
+                error!("Error processing attribute write: {:?}", status);
+                Ok(Some(status.clone()))
+            }
+        };
+
+        match result {
+            Ok(Some(status)) => status.to_tlv(&TagType::Anonymous, tw),
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn write(
+        &mut self,
+        attr: &AttrDetails<'_>,
+        data: &TLVElement<'_>,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
+        self.handler
+            .write(WriteContextInstance::new(
+                self.exchange,
+                &self.handler,
+                &self.buffers,
+                attr,
+                data,
+                notify,
+            ))
+            .await
+    }
+
+    pub async fn process_invoke<T: TLVWrite>(
+        &mut self,
+        item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
+        mut tw: T,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
+        let tail = tw.get_tail();
+
+        let result = self.do_process_invoke(item, &mut tw, notify).await;
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data.
+            tw.rewind_to(tail);
+        }
+
+        result
+    }
+
+    async fn do_process_invoke<T: TLVWrite>(
+        &mut self,
+        item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
+        mut tw: T,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
+        let result = match item {
+            Ok((cmd, data)) => {
+                let pos = tw.get_tail();
+
+                let result = self.invoke(cmd, data, &mut tw, notify).await;
+
+                match result {
+                    Ok(()) => {
+                        if pos == tw.get_tail() {
+                            Ok(cmd.status(IMStatusCode::Success))
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                    Err(err) if err.code() != ErrorCode::NoSpace => {
+                        error!("Error invoking command: {}", err);
+
+                        tw.rewind_to(pos);
+
+                        Ok(cmd.status(err.into()))
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+            Err(status) => {
+                error!("Error processing command: {:?}", status);
+                Ok(Some(status.clone()))
+            }
+        };
+
+        match result {
+            Ok(Some(status)) => CmdResp::Status(status).to_tlv(&TagType::Anonymous, tw),
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn invoke<T: TLVWrite>(
+        &mut self,
+        cmd: &CmdDetails<'_>,
+        data: &TLVElement<'_>,
+        tw: T,
+        notify: &dyn ChangeNotify,
+    ) -> Result<(), Error> {
+        self.handler
+            .invoke(
+                InvokeContextInstance::new(
+                    self.exchange,
+                    &self.handler,
+                    &self.buffers,
+                    cmd,
+                    data,
+                    notify,
+                ),
+                InvokeReplyInstance::new(cmd, tw),
+            )
+            .await
+    }
+}
+
+/// A concrete implementation of the `ReadReply` trait for encoding attribute data.
+pub struct ReadReplyInstance<T> {
+    dataver_filter: Option<u32>,
+    path: AttrPath,
+    tw: T,
+}
+
+impl<T> ReadReplyInstance<T>
+where
+    T: TLVWrite,
+{
+    pub fn new(attr: &AttrDetails, tw: T) -> Self {
         Self {
             dataver_filter: attr.dataver,
-            path: attr.path(),
+            path: attr.reply_path(),
             tw,
         }
     }
 }
 
-impl<'a, 'b, 'c> ReadReply for ReadReplyInstance<'a, 'b, 'c> {
+impl<T> ReadReply for ReadReplyInstance<T>
+where
+    T: TLVWrite,
+{
     fn with_dataver(self, dataver: u32) -> Result<Option<impl Reply>, Error> {
         if self
             .dataver_filter
             .map(|dataver_filter| dataver_filter != dataver)
             .unwrap_or(true)
         {
-            let mut writer = AttrReplyInstance::new(self.tw);
+            let mut writer = AttrReadReplyInstance::new(self.tw);
             let mut tw = writer.writer();
 
             tw.start_struct(&TLVTag::Anonymous)?;
@@ -180,31 +356,36 @@ impl<'a, 'b, 'c> ReadReply for ReadReplyInstance<'a, 'b, 'c> {
     }
 }
 
-/// A concrete implementation of the `Reply` trait for returning attribute data.
-pub(crate) struct AttrReplyInstance<'a, 'b, 'c> {
-    tw: &'a mut TLVWriter<'b, 'c>,
-    anchor: usize,
-    completed: bool,
+/// A concrete implementation of the `Reply` trait for writing a reply to an attribute read operation.
+pub(crate) struct AttrReadReplyInstance<T>
+where
+    T: TLVWrite,
+{
+    anchor: T::Position,
+    tw: T,
 }
 
-impl<'a, 'b, 'c> AttrReplyInstance<'a, 'b, 'c> {
-    pub const TAG: TLVTag = TLVTag::Context(AttrDataTag::Data as _);
+impl<T> AttrReadReplyInstance<T>
+where
+    T: TLVWrite,
+{
+    pub(crate) const TAG: TLVTag = TLVTag::Context(AttrDataTag::Data as _);
 
-    fn new(tw: &'a mut TLVWriter<'b, 'c>) -> Self {
-        let anchor = tw.get_tail();
-
+    fn new(tw: T) -> Self {
         Self {
+            anchor: tw.get_tail(),
             tw,
-            anchor,
-            completed: false,
         }
     }
 }
 
-impl<'a, 'b, 'c> Reply for AttrReplyInstance<'a, 'b, 'c> {
+impl<T> Reply for AttrReadReplyInstance<T>
+where
+    T: TLVWrite,
+{
     const TAG: TagType = Self::TAG;
 
-    fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
+    fn set<P: ToTLV>(mut self, value: P) -> Result<(), Error> {
         value.to_tlv(&Self::TAG, &mut self.tw)?;
         self.complete()
     }
@@ -212,8 +393,6 @@ impl<'a, 'b, 'c> Reply for AttrReplyInstance<'a, 'b, 'c> {
     fn complete(mut self) -> Result<(), Error> {
         self.tw.end_container()?;
         self.tw.end_container()?;
-
-        self.completed = true;
 
         Ok(())
     }
@@ -227,97 +406,30 @@ impl<'a, 'b, 'c> Reply for AttrReplyInstance<'a, 'b, 'c> {
     }
 }
 
-impl Drop for AttrReplyInstance<'_, '_, '_> {
-    fn drop(&mut self) {
-        if !self.completed {
-            self.reset();
-        }
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct CmdDataTracker {
-    skip_status: bool,
-}
-
-impl CmdDataTracker {
-    pub const fn new() -> Self {
-        Self { skip_status: false }
-    }
-
-    pub(crate) fn complete(&mut self) {
-        self.skip_status = true;
-    }
-
-    pub fn needs_status(&self) -> bool {
-        !self.skip_status
-    }
-}
-
 /// A concrete implementation of the `InvokeReply` trait for encoding command data.
-pub(crate) struct InvokeReplyInstance<'a, 'b, 'c> {
-    tracker: &'a mut CmdDataTracker,
+pub struct InvokeReplyInstance<T> {
     path: CmdPath,
-    tw: &'a mut TLVWriter<'b, 'c>,
+    tw: T,
 }
 
-impl<'a, 'b, 'c> InvokeReplyInstance<'a, 'b, 'c> {
-    pub(crate) async fn handle<T: DataModelHandler, B: BufferAccess<IMBuffer>>(
-        item: &Result<(CmdDetails<'_>, TLVElement<'_>), CmdStatus>,
-        handler: T,
-        buffers: B,
-        tw: &mut TLVWriter<'_, '_>,
-        exchange: &Exchange<'_>,
-        notify: &dyn ChangeNotify,
-    ) -> Result<(), Error> {
-        let status = match item {
-            Ok((cmd, data)) => {
-                let mut tracker = CmdDataTracker::new();
-                let encoder = InvokeReplyInstance::new(cmd, &mut tracker, tw);
-
-                let result = handler
-                    .invoke(
-                        InvokeContextInstance::new(exchange, &handler, buffers, cmd, data, notify),
-                        encoder,
-                    )
-                    .await;
-                match result {
-                    Ok(()) => cmd.success(&tracker),
-                    Err(error) => {
-                        error!("Error invoking command: {}", error);
-                        cmd.status(error.into())
-                    }
-                }
-            }
-            Err(status) => {
-                error!("Error invoking command: {:?}", status);
-                Some(status.clone())
-            }
-        };
-
-        if let Some(status) = status {
-            CmdResp::Status(status).to_tlv(&TagType::Anonymous, tw)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn new(
-        cmd: &CmdDetails,
-        tracker: &'a mut CmdDataTracker,
-        tw: &'a mut TLVWriter<'b, 'c>,
-    ) -> Self {
+impl<T> InvokeReplyInstance<T>
+where
+    T: TLVWrite,
+{
+    pub const fn new(cmd: &CmdDetails, tw: T) -> Self {
         Self {
-            tracker,
-            path: cmd.path(),
+            path: cmd.reply_path(),
             tw,
         }
     }
 }
 
-impl<'a, 'b, 'c> InvokeReply for InvokeReplyInstance<'a, 'b, 'c> {
+impl<T> InvokeReply for InvokeReplyInstance<T>
+where
+    T: TLVWrite,
+{
     fn with_command(mut self, cmd: u32) -> Result<impl Reply, Error> {
-        let mut writer = CmdReplyInstance::new(self.tracker, self.tw);
+        let mut writer = CmdInvokeReplyInstance::new(self.tw);
         let mut tw = writer.writer();
 
         tw.start_struct(&TLVTag::Anonymous)?;
@@ -331,33 +443,36 @@ impl<'a, 'b, 'c> InvokeReply for InvokeReplyInstance<'a, 'b, 'c> {
     }
 }
 
-/// A concrete implementation of the `Reply` trait for writing command data.
-pub(crate) struct CmdReplyInstance<'a, 'b, 'c> {
-    tracker: &'a mut CmdDataTracker,
-    tw: &'a mut TLVWriter<'b, 'c>,
-    anchor: usize,
-    completed: bool,
+/// A concrete implementation of the `Reply` trait for writing the reply of a command invocation.
+struct CmdInvokeReplyInstance<T>
+where
+    T: TLVWrite,
+{
+    anchor: T::Position,
+    tw: T,
 }
 
-impl<'a, 'b, 'c> CmdReplyInstance<'a, 'b, 'c> {
-    pub const TAG: TagType = TagType::Context(CmdDataTag::Data as _);
+impl<T> CmdInvokeReplyInstance<T>
+where
+    T: TLVWrite,
+{
+    const TAG: TagType = TagType::Context(CmdDataTag::Data as _);
 
-    fn new(tracker: &'a mut CmdDataTracker, tw: &'a mut TLVWriter<'b, 'c>) -> Self {
-        let anchor = tw.get_tail();
-
+    fn new(tw: T) -> Self {
         Self {
-            tracker,
+            anchor: tw.get_tail(),
             tw,
-            anchor,
-            completed: false,
         }
     }
 }
 
-impl<'a, 'b, 'c> Reply for CmdReplyInstance<'a, 'b, 'c> {
+impl<T> Reply for CmdInvokeReplyInstance<T>
+where
+    T: TLVWrite,
+{
     const TAG: TagType = Self::TAG;
 
-    fn set<T: ToTLV>(mut self, value: T) -> Result<(), Error> {
+    fn set<P: ToTLV>(mut self, value: P) -> Result<(), Error> {
         value.to_tlv(&Self::TAG, &mut self.tw)?;
         self.complete()
     }
@@ -365,9 +480,6 @@ impl<'a, 'b, 'c> Reply for CmdReplyInstance<'a, 'b, 'c> {
     fn complete(mut self) -> Result<(), Error> {
         self.tw.end_container()?;
         self.tw.end_container()?;
-
-        self.completed = true;
-        self.tracker.complete();
 
         Ok(())
     }
@@ -378,13 +490,5 @@ impl<'a, 'b, 'c> Reply for CmdReplyInstance<'a, 'b, 'c> {
 
     fn reset(&mut self) {
         self.tw.rewind_to(self.anchor);
-    }
-}
-
-impl Drop for CmdReplyInstance<'_, '_, '_> {
-    fn drop(&mut self) {
-        if !self.completed {
-            self.reset();
-        }
     }
 }

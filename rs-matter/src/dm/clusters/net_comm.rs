@@ -748,6 +748,7 @@ where
                     Err(ErrorCode::ConstraintError.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -800,6 +801,7 @@ where
                     Err(ErrorCode::ConstraintError.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

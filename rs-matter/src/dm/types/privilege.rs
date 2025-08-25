@@ -151,7 +151,7 @@ bitflags! {
         const FIXED = 0x04;      // Short: F
         const NULLABLE = 0x08;   // Short: X
         const OPTIONAL = 0x10;   // Short: O
-        const ARRAY = 0x20;     // Short: A
+        const ARRAY = 0x20;
 
         const SN = Self::SCENE.bits() | Self::PERSISTENT.bits();
         const S = Self::SCENE.bits();

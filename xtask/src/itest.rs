@@ -32,6 +32,7 @@ use log::{debug, info, warn};
 const DEFAULT_TESTS: &[&str] = &[
     "TestAttributesById",
     "TestCommandsById",
+    "TestCluster",
     // "TestBasicInformation",
     // "TestAccessControlCluster",
 ];

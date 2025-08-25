@@ -19,7 +19,7 @@ mod tlv_encoding_tests {
     use bitflags::bitflags;
     use rs_matter::bitflags_tlv;
     use rs_matter::error::Error;
-    use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, TLVWriter, ToTLV};
+    use rs_matter::tlv::{FromTLV, TLVElement, TLVTag, ToTLV};
     use rs_matter::utils::storage::WriteBuf;
 
     #[derive(PartialEq, Debug, ToTLV, FromTLV)]
@@ -48,11 +48,10 @@ mod tlv_encoding_tests {
         const MAX_OUTPUT_SIZE: usize = 1024;
 
         let mut output_buffer = [0u8; MAX_OUTPUT_SIZE];
-        let mut write_buf = WriteBuf::new(&mut output_buffer);
-        let mut writer = TLVWriter::new(&mut write_buf);
+        let mut writer = WriteBuf::new(&mut output_buffer);
         what.to_tlv(&TLVTag::Anonymous, &mut writer)?;
 
-        Ok(Vec::from(write_buf.as_slice()))
+        Ok(Vec::from(writer.as_slice()))
     }
 
     fn decode_from_tlv<'a, T: FromTLV<'a>>(data: &'a [u8]) -> Result<T, Error> {

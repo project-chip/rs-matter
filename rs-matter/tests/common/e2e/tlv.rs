@@ -18,7 +18,7 @@
 use core::fmt::Debug;
 
 use rs_matter::error::Error;
-use rs_matter::tlv::{TLVElement, TLVTag, TLVWriter, ToTLV};
+use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;
 
@@ -27,16 +27,16 @@ use super::test::E2eTest;
 /// A `ToTLV` trait variant useful for testing.
 ///
 /// Unlike `ToTLV`, `TestToTLV` is `dyn`-friendly, but therefore does
-/// require a `TLVWriter` to be passed in.
+/// require a `WriteBuf` to be passed in.
 pub trait TestToTLV: Debug + Sync {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error>;
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error>;
 }
 
 impl<T> TestToTLV for T
 where
     T: ToTLV + Debug + Sync,
 {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         ToTLV::to_tlv(self, tag, tw)
     }
 }
@@ -63,7 +63,7 @@ where
 {
     fn fill_input(&self, message_buf: &mut WriteBuf) -> Result<MessageMeta, Error> {
         self.input_payload
-            .test_to_tlv(&TLVTag::Anonymous, &mut TLVWriter::new(message_buf))?;
+            .test_to_tlv(&TLVTag::Anonymous, message_buf)?;
 
         Ok(self.input_meta)
     }
@@ -76,10 +76,8 @@ where
         let mut buf = [0; 1500];
         let mut wb = WriteBuf::new(&mut buf);
 
-        let mut tw = TLVWriter::new(&mut wb);
-
         self.expected_payload
-            .test_to_tlv(&TLVTag::Anonymous, &mut tw)?;
+            .test_to_tlv(&TLVTag::Anonymous, &mut wb)?;
         let expected_element = TLVElement::new(wb.as_slice());
 
         let element = TLVElement::new(message);

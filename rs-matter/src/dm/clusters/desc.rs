@@ -171,6 +171,7 @@ impl ClusterHandler for DescHandler<'_> {
                     .revision(dev_type.drev)?
                     .end()
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -196,6 +197,7 @@ impl ClusterHandler for DescHandler<'_> {
 
                 builder.set(&cluster.id)
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -210,6 +212,7 @@ impl ClusterHandler for DescHandler<'_> {
         match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.end(),
             ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -241,6 +244,7 @@ impl ClusterHandler for DescHandler<'_> {
 
                 builder.set(&ep_id)
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 }

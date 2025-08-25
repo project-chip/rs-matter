@@ -80,6 +80,7 @@ impl AclHandler {
 
                 entry.read_into(fab_idx, builder)
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -214,11 +215,11 @@ mod tests {
         AccessControlEntryStruct, AccessControlEntryStructArrayBuilder, Dataver,
     };
     use crate::dm::{
-        ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReplyInstance, Node, Privilege,
-        ReadReply, ReadReplyInstance, Reply,
+        ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, AttrReadReplyInstance, Node,
+        Privilege, ReadReply, ReadReplyInstance, Reply,
     };
     use crate::fabric::FabricMgr;
-    use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, TLVWriter, ToTLV};
+    use crate::tlv::{get_root_node_struct, TLVElement, TLVTag, TLVWriteParent, ToTLV};
     use crate::utils::rand::dummy_rand;
     use crate::utils::storage::WriteBuf;
 
@@ -230,8 +231,7 @@ mod tests {
     /// Add an ACL entry
     fn acl_cluster_add() {
         let mut buf: [u8; 100] = [0; 100];
-        let mut writebuf = WriteBuf::new(&mut buf);
-        let mut tw = TLVWriter::new(&mut writebuf);
+        let mut tw = WriteBuf::new(&mut buf);
 
         let mut fab_mgr = FabricMgr::new();
 
@@ -243,7 +243,7 @@ mod tests {
         let new = AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case);
 
         unwrap!(new.to_tlv(&TLVTag::Anonymous, &mut tw));
-        let data = unwrap!(get_root_node_struct(writebuf.as_slice()));
+        let data = unwrap!(get_root_node_struct(tw.as_slice()));
 
         // Test, ACL has fabric index 2, but the accessing fabric is 1
         //    the fabric index in the TLV should be ignored and the ACL should be created with entry 1
@@ -261,8 +261,7 @@ mod tests {
     /// - The listindex used for edit should be relative to the current fabric
     fn acl_cluster_edit() {
         let mut buf: [u8; 100] = [0; 100];
-        let mut writebuf = WriteBuf::new(&mut buf);
-        let mut tw = TLVWriter::new(&mut writebuf);
+        let mut tw = WriteBuf::new(&mut buf);
 
         let mut fab_mgr = FabricMgr::new();
 
@@ -289,7 +288,7 @@ mod tests {
 
         let new = AclEntry::new(Some(FAB_2), Privilege::VIEW, AuthMode::Case);
         new.to_tlv(&TLVTag::Anonymous, &mut tw).unwrap();
-        let data = get_root_node_struct(writebuf.as_slice()).unwrap();
+        let data = get_root_node_struct(tw.as_slice()).unwrap();
 
         // Test, Edit Fabric 2's index 1 - with accessing fabric as 2 - allow
         acl_edit(&acl, &mut fab_mgr, 1, &data, FAB_2);
@@ -393,6 +392,7 @@ mod tests {
                 cluster_id: 0,
                 attr_id: 0,
                 list_index: None,
+                list_chunked: false,
                 fab_idx: 1,
                 fab_filter: false,
                 dataver: None,
@@ -423,6 +423,7 @@ mod tests {
                 cluster_id: 0,
                 attr_id: 0,
                 list_index: None,
+                list_chunked: false,
                 fab_idx: 1,
                 fab_filter: true,
                 dataver: None,
@@ -451,6 +452,7 @@ mod tests {
                 cluster_id: 0,
                 attr_id: 0,
                 list_index: None,
+                list_chunked: false,
                 fab_idx: 2,
                 fab_filter: true,
                 dataver: None,
@@ -473,10 +475,9 @@ mod tests {
         acl: &AclHandler,
         fab_mgr: &FabricMgr,
         attr: &AttrDetails<'_>,
-        writebuf: &mut WriteBuf<'_>,
+        tw: &mut WriteBuf<'_>,
     ) {
-        let mut tw = TLVWriter::new(writebuf);
-        let encoder = ReadReplyInstance::new(attr, &mut tw);
+        let encoder = ReadReplyInstance::new(attr, &mut *tw);
         let mut writer = unwrap!(unwrap!(encoder.with_dataver(acl.dataver.get())));
         let build_root = TLVWriteParent::new((), writer.writer());
         unwrap!(acl.acl(
@@ -484,7 +485,7 @@ mod tests {
             attr,
             ArrayAttributeRead::ReadAll(unwrap!(AccessControlEntryStructArrayBuilder::new(
                 build_root,
-                &AttrReplyInstance::TAG
+                &AttrReadReplyInstance::<WriteBuf>::TAG
             )))
         ));
 

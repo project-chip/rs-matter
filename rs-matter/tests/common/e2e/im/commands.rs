@@ -18,7 +18,8 @@
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::im::{CmdPath, CmdStatus};
-use rs_matter::tlv::{TLVTag, TLVWrite, TLVWriter};
+use rs_matter::tlv::{TLVTag, TLVWrite};
+use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
 use crate::common::e2e::E2eRunner;
@@ -79,7 +80,7 @@ impl<'a> TestCmdData<'a> {
 }
 
 impl TestToTLV for TestCmdData<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         self.path.test_to_tlv(&TLVTag::Context(0), tw)?;
@@ -103,7 +104,7 @@ pub enum TestCmdResp<'a> {
 }
 
 impl TestToTLV for TestCmdResp<'_> {
-    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut TLVWriter) -> Result<(), Error> {
+    fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
         match self {

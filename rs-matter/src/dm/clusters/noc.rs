@@ -152,6 +152,7 @@ impl ClusterHandler for NocHandler {
                     Err(ErrorCode::ConstraintError.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -204,6 +205,7 @@ impl ClusterHandler for NocHandler {
                     Err(ErrorCode::ConstraintError.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -244,6 +246,7 @@ impl ClusterHandler for NocHandler {
                     Err(ErrorCode::ConstraintError.into())
                 }
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

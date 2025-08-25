@@ -22,7 +22,7 @@ use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::{
     AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, GenericPath,
-    IMStatusCode, InvReqRef, ReportDataReq, WriteReqRef,
+    IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
 
@@ -89,7 +89,7 @@ impl<'a> Node<'a> {
     #[allow(clippy::type_complexity)]
     pub fn write<'m>(
         &'m self,
-        req: &'m WriteReqRef,
+        req: &'m WriteReq,
         accessor: &'m Accessor<'m>,
     ) -> Result<
         impl Iterator<Item = Result<Result<(AttrDetails<'m>, TLVElement<'m>), AttrStatus>, Error>> + 'm,
@@ -111,7 +111,7 @@ impl<'a> Node<'a> {
     #[allow(clippy::type_complexity)]
     pub fn invoke<'m>(
         &'m self,
-        req: &'m InvReqRef,
+        req: &'m InvReq,
         accessor: &'m Accessor<'m>,
     ) -> Result<
         impl Iterator<Item = Result<Result<(CmdDetails<'m>, TLVElement<'m>), CmdStatus>, Error>> + 'm,
@@ -273,6 +273,7 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
             attr_id: leaf_id as _,
             wildcard: self.path.to_gp().is_wildcard(),
             list_index: self.path.list_index.clone(),
+            list_chunked: false,
             fab_idx: accessor.fab_idx,
             fab_filter: self.fabric_filtered,
             dataver: dataver(self.dataver_filters.as_ref(), endpoint_id, cluster_id)?,
@@ -311,6 +312,7 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
                 attr_id: leaf_id as _,
                 wildcard: self.path.to_gp().is_wildcard(),
                 list_index: self.path.list_index.clone(),
+                list_chunked: false,
                 fab_idx: accessor.fab_idx,
                 fab_filter: false,
                 dataver: self.data_ver,
@@ -474,6 +476,9 @@ where
                                             .nth(self.leaf_index as usize)),
                                     )
                                 } else {
+                                    // TODO: Need to also check that the code is not trying to access an element of an array
+                                    // when the attribute is not an array
+
                                     cluster.check_attr_access(
                                         self.accessor,
                                         GenericPath::new(

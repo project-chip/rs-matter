@@ -66,6 +66,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.end(),
             ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 
@@ -80,6 +81,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         match builder {
             ArrayAttributeRead::ReadAll(builder) => builder.end(),
             ArrayAttributeRead::ReadOne(_, _) => Err(ErrorCode::ConstraintError.into()),
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

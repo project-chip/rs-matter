@@ -815,7 +815,7 @@ pub trait CertConsumer {
 
 #[cfg(test)]
 mod tests {
-    use crate::tlv::{FromTLV, TLVElement, TLVWriter, TagType, ToTLV};
+    use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
     use crate::utils::storage::WriteBuf;
 
     use super::CertRef;
@@ -932,8 +932,7 @@ mod tests {
             let cert = unwrap!(CertRef::from_tlv(&root));
             let mut buf = [0u8; 1024];
             let mut wb = WriteBuf::new(&mut buf);
-            let mut tw = TLVWriter::new(&mut wb);
-            unwrap!(cert.to_tlv(&TagType::Anonymous, &mut tw));
+            unwrap!(cert.to_tlv(&TagType::Anonymous, &mut wb));
 
             let root2 = TLVElement::new(wb.as_slice());
             let cert2 = unwrap!(CertRef::from_tlv(&root2));

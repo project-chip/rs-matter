@@ -244,6 +244,7 @@ impl ClusterHandler for GenDiagHandler<'_> {
                     ErrorCode::InvalidAction.into() // TODO
                 })
             }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
 

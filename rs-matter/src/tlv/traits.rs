@@ -222,7 +222,7 @@ mod tests {
 
     use rs_matter_macros::{FromTLV, ToTLV};
 
-    use crate::tlv::{Octets, TLVElement, TLVWriter, TLV};
+    use crate::tlv::{Octets, TLVElement, TLV};
     use crate::utils::init::InitMaybeUninit;
     use crate::utils::storage::WriteBuf;
 
@@ -244,27 +244,26 @@ mod tests {
 
     fn test_to_tlv<T: ToTLV>(t: T, expected: &[u8]) {
         let mut buf = [0; 20];
-        let mut writebuf = WriteBuf::new(&mut buf);
-        let mut tw = TLVWriter::new(&mut writebuf);
+        let mut tw = WriteBuf::new(&mut buf);
 
         t.to_tlv(&TLVTag::Anonymous, &mut tw).unwrap();
 
-        assert_eq!(writebuf.as_slice(), expected);
+        assert_eq!(tw.as_slice(), expected);
 
-        writebuf.reset();
+        tw.reset();
 
         let mut iter = t
             .tlv_iter(TLVTag::Anonymous)
             .flat_map(TLV::result_into_bytes_iter);
         loop {
             match iter.next() {
-                Some(Ok(byte)) => writebuf.append(&[byte]).unwrap(),
+                Some(Ok(byte)) => tw.append(&[byte]).unwrap(),
                 None => break,
                 _ => panic!("Error in iterator"),
             }
         }
 
-        ::core::assert_eq!(writebuf.as_slice(), expected);
+        ::core::assert_eq!(tw.as_slice(), expected);
     }
 
     #[derive(ToTLV, Debug)]

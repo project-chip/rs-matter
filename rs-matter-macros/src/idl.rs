@@ -22927,7 +22927,7 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error> {
             if let Some(mut writer) = reply.with_dataver(self.0.dataver())? {
                 if ctx.attr().is_system() {
-                    ctx.attr().cluster()?.read(ctx.attr().attr_id, writer)
+                    ctx.attr().cluster()?.read(ctx.attr(), writer)
                 } else {
                     match AttributeId::try_from(ctx.attr().attr_id)? {
                         AttributeId::Boolean => {
