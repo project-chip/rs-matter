@@ -21,6 +21,7 @@
 use core::pin::pin;
 
 use std::net::UdpSocket;
+use std::path::PathBuf;
 
 use async_signal::{Signal, Signals};
 
@@ -29,8 +30,11 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use futures_lite::StreamExt;
 
-use log::{error, info};
+use log::info;
 
+use rs_matter::dm::clusters::basic_info::{
+    BasicInfoConfig, ColorEnum, ProductAppearance, ProductFinishEnum,
+};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
@@ -41,13 +45,13 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::Psm;
+use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
@@ -61,13 +65,23 @@ use static_cell::StaticCell;
 #[path = "../common/mdns.rs"]
 mod mdns;
 
+/// The `chip-tool` tests expect the persistent storage location
+/// to be `/tmp/chip_kvs`.
+///
+/// Moreover, this _must_ be a file rather than a directory.
+///
+/// While there seem to be some facilities to change that in some of the Python scripts,
+/// these facilities are simply not exposed at the top level test suite Python runner.
+/// TODO: Open a bug for that (and for the single-file expectation) in the `connectedhomeip` repo.
+const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
+
 // Statically allocate in BSS the bigger objects
 // `rs-matter` supports efficient initialization of BSS objects (with `init`)
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, rs_matter::dm::IMBuffer>> =
     StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions<3>> = StaticCell::new();
+static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
@@ -90,11 +104,11 @@ fn main() -> Result<(), Error> {
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
         core::mem::size_of::<PooledBuffers<10, NoopRawMutex, rs_matter::dm::IMBuffer>>(),
-        core::mem::size_of::<Subscriptions<3>>()
+        core::mem::size_of::<DefaultSubscriptions>()
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
-        &TEST_DEV_DET,
+        &BASIC_INFO,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
@@ -109,7 +123,9 @@ fn main() -> Result<(), Error> {
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
     // Create the subscriptions
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    let subscriptions = SUBSCRIPTIONS
+        .uninit()
+        .init_with(DefaultSubscriptions::init());
 
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
@@ -143,31 +159,34 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
-    let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
+    let mut transport = pin!(async {
+        // Unconditionally enable basic commissioning because the `chip-tool` tests
+        // expect that - even if the device is already commissioned,
+        // as the code path always unconditionally scans for the QR code.
+        //
+        // TODO: Figure out why the test suite has this expectation and also whether
+        // to instead just always enable printing the QR code to the console at startup
+        // rather than to enable basic commissioning.
+        matter
+            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
+            .await?;
+
+        matter.run_transport(&socket, &socket).await
+    });
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
+    let path = PathBuf::from(PERSIST_FILE_NAME);
 
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(
-            std::env::temp_dir().join("rs-matter-chip-tool-tests"),
-            matter
-        ))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS,))
     );
 
-    // Clean up any previous test data to ensure a fresh start for each test run
-    let dir = std::env::temp_dir().join("rs-matter-chip-tool-tests");
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).unwrap_or_else(|e| {
-            error!("Warning: Failed to clean up previous test data: {e}");
-        });
-    }
+    psm.load(&path, matter, NO_NETWORKS)?;
 
-    psm.load(&dir, matter)?;
-
-    let mut persist = pin!(psm.run(dir, matter));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
 
     // Listen to SIGTERM because at the end of the test we'll receive it
     let mut term_signal = Signals::new([Signal::Term])?;
@@ -187,6 +206,16 @@ fn main() -> Result<(), Error> {
     // Run with a simple `block_on`. Any local executor would do.
     futures_lite::future::block_on(all.coalesce())
 }
+
+/// Overriden so that we can set the product appearance to
+/// what the `TestBasicInformation` tests expect.
+const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
+    product_appearance: ProductAppearance {
+        finish: ProductFinishEnum::Satin,
+        color: Some(ColorEnum::Purple),
+    },
+    ..TEST_DEV_DET
+};
 
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {

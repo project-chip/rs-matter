@@ -497,8 +497,6 @@ impl<'a> Matter<'a> {
         S: NetworkSend,
         R: NetworkReceive,
     {
-        // TODO: Figure out why chip-tool-tests expect the device to still be in commissioning mode
-        // post device reboot, even if it was already commissioned
         if !self.is_commissioned() {
             self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
                 .await?;
@@ -538,7 +536,7 @@ impl<'a> Matter<'a> {
             .load(data, &mut || self.notify_mdns())
     }
 
-    pub fn store_fabrics<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+    pub fn store_fabrics(&self, buf: &mut [u8]) -> Result<usize, Error> {
         self.fabric_mgr.borrow_mut().store(buf)
     }
 
@@ -550,7 +548,7 @@ impl<'a> Matter<'a> {
         self.basic_info_settings.borrow_mut().load(data)
     }
 
-    pub fn store_basic_info<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+    pub fn store_basic_info(&self, buf: &mut [u8]) -> Result<usize, Error> {
         self.basic_info_settings.borrow_mut().store(buf)
     }
 

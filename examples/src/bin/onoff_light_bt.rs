@@ -49,7 +49,7 @@ use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
-use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
@@ -114,7 +114,7 @@ fn main() -> Result<(), Error> {
     let buffers = PooledBuffers::<10, NoopRawMutex, _>::new(0);
 
     // Create the subscriptions
-    let subscriptions = Subscriptions::<3>::new();
+    let subscriptions = DefaultSubscriptions::new();
 
     // Our on-off cluster
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
@@ -166,13 +166,11 @@ fn main() -> Result<(), Error> {
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
+    let path = std::env::temp_dir().join("rs-matter");
 
-    let dir = std::env::temp_dir().join("rs-matter");
+    psm.load(&path, &matter, Some(&networks))?;
 
-    psm.load(&dir, &matter)?;
-    psm.load_networks(&dir, &networks)?;
-
-    let mut persist = pin!(psm.run_with_networks(dir, &matter, Some(&networks)));
+    let mut persist = pin!(psm.run(&path, &matter, Some(&networks)));
 
     // Create and run the mDNS responder
     let mut mdns = pin!(mdns::run_mdns(&matter));

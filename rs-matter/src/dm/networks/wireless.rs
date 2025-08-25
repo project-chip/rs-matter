@@ -154,10 +154,7 @@ where
     ///
     /// # Arguments
     /// - `buf`: The byte slice to store the state into
-    ///
-    /// Returns `Ok(None)` if the state has not changed, `Ok(Some(data))` if the state has changed
-    /// where `data` is the sub-slice of the buffer that contains the data to be persisted
-    pub fn store<'a>(&self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
+    pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
         self.state.lock(|state| state.borrow_mut().store(buf))
     }
 
@@ -429,20 +426,16 @@ where
         Ok(())
     }
 
-    fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        if self.changed {
-            let mut wb = WriteBuf::new(buf);
+    fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        let mut wb = WriteBuf::new(buf);
 
-            self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+        self.networks.to_tlv(&TLVTag::Anonymous, &mut wb)?;
 
-            self.changed = false;
+        self.changed = false;
 
-            let tail = wb.get_tail();
+        let tail = wb.get_tail();
 
-            Ok(Some(&buf[..tail]))
-        } else {
-            Ok(None)
-        }
+        Ok(tail)
     }
 
     fn networks<F>(&self, mut f: F) -> Result<(), Error>

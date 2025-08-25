@@ -33,7 +33,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestAttributesById",
     "TestCommandsById",
     "TestCluster",
-    // "TestBasicInformation",
+    "TestBasicInformation",
     // "TestAccessControlCluster",
 ];
 
@@ -44,6 +44,9 @@ const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
 /// The name of the tested `rs-matter` executable
 const TEST_EXE_NAME: &str = "chip_tool_tests";
+
+/// The name of the tested `rs-matter` executable's PICS file
+const TEST_EXE_PICS_NAME: &str = "chip_tool_tests.pics";
 
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
@@ -289,16 +292,6 @@ impl ITests {
 
         debug!("About to run tests: {tests:?}");
 
-        // Setup environment variables
-        let test_exe_data = tempfile::tempdir()
-            .context("Failed to create temporary directory for tested executable data")?;
-
-        // Clean up any existing data
-        if test_exe_data.path().exists() {
-            fs::remove_dir_all(test_exe_data.path())
-                .context("Failed to clean tested executable data directory")?;
-        }
-
         // Run each test
         for test_name in tests {
             self.run_test(test_name, test_timeout_secs, profile)?;
@@ -319,14 +312,16 @@ impl ITests {
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = chip_dir.join("out/host/chip-tool");
         let test_exe_path = self.test_exe_path(profile);
+        let test_pics_path = self.test_pics_path();
 
         let test_command = format!(
-            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app {}",
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app {} --pics-file {}",
             test_suite_path.display(),
             test_name,
             chip_tool_path.display(),
             timeout_secs,
-            test_exe_path.display()
+            test_exe_path.display(),
+            test_pics_path.display(),
         );
 
         let script_path = chip_dir.join("scripts/run_in_build_env.sh");
@@ -513,6 +508,14 @@ impl ITests {
             .join("target")
             .join(profile)
             .join(TEST_EXE_NAME)
+    }
+
+    fn test_pics_path(&self) -> PathBuf {
+        self.workspace_dir
+            .join("examples")
+            .join("src")
+            .join("bin")
+            .join(TEST_EXE_PICS_NAME)
     }
 
     fn chip_dir(&self) -> PathBuf {

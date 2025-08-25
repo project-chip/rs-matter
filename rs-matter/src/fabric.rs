@@ -445,14 +445,7 @@ impl FabricMgr {
     }
 
     /// Store the fabrics into the provided buffer as TLV data
-    ///
-    /// If the fabrics have not changed since the last store operation, the
-    /// function returns `None` and does not store the fabrics.
-    pub fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        if !self.changed {
-            return Ok(None);
-        }
-
+    pub fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut wb = WriteBuf::new(buf);
 
         wb.start_array(&TLVTag::Anonymous)?;
@@ -469,7 +462,7 @@ impl FabricMgr {
 
         let len = wb.get_tail();
 
-        Ok(Some(&buf[..len]))
+        Ok(len)
     }
 
     /// Check if the fabrics have changed since the last store operation
