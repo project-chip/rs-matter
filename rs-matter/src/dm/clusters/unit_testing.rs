@@ -853,7 +853,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn timed_write_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        todo!()
+        Ok(self.data.borrow().timed_write_boolean)
     }
 
     fn general_error_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
@@ -1636,8 +1636,9 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         todo!()
     }
 
-    fn set_timed_write_boolean(&self, _ctx: impl WriteContext, _value: bool) -> Result<(), Error> {
-        todo!()
+    fn set_timed_write_boolean(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {
+        self.data.borrow_mut().timed_write_boolean = value;
+        Ok(())
     }
 
     fn set_general_error_boolean(
@@ -2543,7 +2544,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     }
 
     fn handle_timed_invoke_request(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
-        todo!()
+        Ok(())
     }
 
     fn handle_test_simple_optional_argument_request(

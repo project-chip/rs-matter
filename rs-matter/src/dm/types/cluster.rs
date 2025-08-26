@@ -121,6 +121,7 @@ impl<'a> Cluster<'a> {
     pub(crate) fn check_attr_access(
         &self,
         accessor: &Accessor,
+        timed: bool,
         path: GenericPath,
         write: bool,
         attr_id: AttrId,
@@ -137,6 +138,10 @@ impl<'a> Cluster<'a> {
             .find(|attr| attr.id == attr_id)
             .map(|attr| attr.access)
             .unwrap_or(Access::empty());
+
+        if write && !timed && target_perms.contains(Access::TIMED_ONLY) {
+            Err(IMStatusCode::NeedsTimedInteraction)?;
+        }
 
         if !target_perms.contains(access_req.operation()) {
             Err(if matches!(access_req.operation(), Access::WRITE) {
@@ -159,6 +164,7 @@ impl<'a> Cluster<'a> {
     pub(crate) fn check_cmd_access(
         &self,
         accessor: &Accessor,
+        timed: bool,
         path: GenericPath,
         cmd_id: CmdId,
     ) -> Result<(), IMStatusCode> {
@@ -170,6 +176,10 @@ impl<'a> Cluster<'a> {
             .find(|cmd| cmd.id == cmd_id)
             .map(|cmd| cmd.access)
             .unwrap_or(Access::empty());
+
+        if !timed && target_perms.contains(Access::TIMED_ONLY) {
+            Err(IMStatusCode::NeedsTimedInteraction)?;
+        }
 
         access_req.set_target_perms(target_perms);
         if access_req.allow() {

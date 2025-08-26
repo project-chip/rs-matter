@@ -68,6 +68,7 @@ impl<'a> Node<'a> {
         Ok(PathExpander::new(
             self,
             accessor,
+            false,
             req.attr_requests()?.map(|reqs| {
                 reqs.into_iter().map(move |path_result| {
                     path_result.map(|path| AttrReadPath {
@@ -98,6 +99,7 @@ impl<'a> Node<'a> {
         Ok(PathExpander::new(
             self,
             accessor,
+            req.timed_request()?,
             Some(req.write_requests()?.into_iter()),
         ))
     }
@@ -120,6 +122,7 @@ impl<'a> Node<'a> {
         Ok(PathExpander::new(
             self,
             accessor,
+            req.timed_request()?,
             req.inv_requests()?.map(move |reqs| reqs.into_iter()),
         ))
     }
@@ -379,6 +382,8 @@ where
     node: &'a Node<'a>,
     /// The accessor to check the access rights.
     accessor: &'a Accessor<'a>,
+    /// Where the paths are part of a timed interaction
+    timed: bool,
     /// The paths to expand.
     items: Option<I>,
     /// The current path item being expanded.
@@ -397,10 +402,16 @@ where
     T: PathExpansionItem<'a>,
 {
     /// Create a new path expander with the given node, accessor, and paths.
-    pub const fn new(node: &'a Node<'a>, accessor: &'a Accessor<'a>, paths: Option<I>) -> Self {
+    pub const fn new(
+        node: &'a Node<'a>,
+        accessor: &'a Accessor<'a>,
+        timed: bool,
+        paths: Option<I>,
+    ) -> Self {
         Self {
             node,
             accessor,
+            timed,
             items: paths,
             item: None,
             endpoint_index: 0,
@@ -465,6 +476,7 @@ where
                                 let check = if matches!(T::OPERATION, Operation::Invoke) {
                                     cluster.check_cmd_access(
                                         self.accessor,
+                                        self.timed,
                                         GenericPath::new(
                                             Some(endpoint.id),
                                             Some(cluster.id),
@@ -481,6 +493,7 @@ where
 
                                     cluster.check_attr_access(
                                         self.accessor,
+                                        self.timed,
                                         GenericPath::new(
                                             Some(endpoint.id),
                                             Some(cluster.id),
@@ -679,7 +692,8 @@ mod test {
         let fab_mgr = RefCell::new(FabricMgr::new());
         let accessor = Accessor::new(0, AccessorSubjects::new(0), Some(AuthMode::Pase), &fab_mgr);
 
-        let expander = PathExpander::new(node, &accessor, Some(input.iter().cloned().map(Ok)));
+        let expander =
+            PathExpander::new(node, &accessor, false, Some(input.iter().cloned().map(Ok)));
 
         assert_eq!(
             expander
