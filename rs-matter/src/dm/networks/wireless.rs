@@ -154,6 +154,8 @@ where
     ///
     /// # Arguments
     /// - `buf`: The byte slice to store the state into
+    ///
+    /// Returns the number of bytes written into the buffer.
     pub fn store(&self, buf: &mut [u8]) -> Result<usize, Error> {
         self.state.lock(|state| state.borrow_mut().store(buf))
     }

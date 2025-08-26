@@ -425,7 +425,11 @@ impl FabricMgr {
         self.changed = false;
     }
 
-    /// Load the fabrics from the provided TLV data
+    /// Load the fabrics from the provided buffer as TLV data.
+    ///
+    /// # Arguments
+    /// - `data`: The TLV data to load the fabrics from
+    /// - `mdns_notif`: A callback function to notify about mDNS changes
     pub fn load(&mut self, data: &[u8], mdns_notif: &mut dyn FnMut()) -> Result<(), Error> {
         self.fabrics.clear();
 
@@ -444,7 +448,12 @@ impl FabricMgr {
         Ok(())
     }
 
-    /// Store the fabrics into the provided buffer as TLV data
+    /// Store the fabrics into the provided buffer as TLV data.
+    ///
+    /// # Arguments
+    /// - `buf`: The byte slice to store the state into
+    ///
+    /// Returns the number of bytes written into the buffer.
     pub fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut wb = WriteBuf::new(buf);
 
