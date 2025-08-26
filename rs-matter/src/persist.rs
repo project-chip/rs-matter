@@ -14,6 +14,9 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
+
+//! This module provides a simple persistent storage manager (PSM) for `rs-matter`.
+
 #[cfg(feature = "std")]
 pub use fileio::*;
 
@@ -25,19 +28,31 @@ pub mod fileio {
     use std::io::{Read, Write};
     use std::path::Path;
 
-    use embassy_futures::select::{select, Either};
+    use embassy_futures::select::select;
     use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 
     use crate::dm::networks::wireless::{Wifi, WirelessNetwork, WirelessNetworks};
     use crate::error::{Error, ErrorCode};
+    use crate::tlv::{Octets, TLVArray, TLVContainerIter, TLVElement, TLVTag, TLVWrite};
     use crate::utils::init::{init, Init};
+    use crate::utils::storage::WriteBuf;
     use crate::Matter;
 
-    const KEY_FABRICS: &str = "fabrics";
-    const KEY_BASIC_INFO: &str = "basic_info";
-    const KEY_WIRELESS_NETWORKS: &str = "wireless_networks";
+    /// A constant representing the absence of wireless networks.
+    pub const NO_NETWORKS: Option<&'static WirelessNetworks<0, NoopRawMutex, Wifi>> = None;
 
-    pub struct Psm<const N: usize = 4096> {
+    /// A simple persistent storage manager (PSM) for `rs-matter`.
+    ///
+    /// This storage saves everything (fabrics, basic info settings and wireless networks (if any))
+    /// as a single file, which is compatible with the `chip-tool` YAML tests which - at least in V1.3.0.0 -
+    /// do expect a single file for all persistent data.
+    ///
+    /// Moreover, this storage always persists the whole state, regardless what had changed, which
+    /// requires a large memory buffer, which can keep the TLV data of all fabrics, basic info settings and wireless networks.
+    ///
+    /// NOTE: Production applications might need a more sophisticated persistent storage where e.g.
+    /// each fabric is stored as a separate item.
+    pub struct Psm<const N: usize = 32768> {
         buf: MaybeUninit<[u8; N]>,
     }
 
@@ -48,6 +63,7 @@ pub mod fileio {
     }
 
     impl<const N: usize> Psm<N> {
+        /// Create a new `Psm` instance.
         #[inline(always)]
         pub const fn new() -> Self {
             Self {
@@ -55,152 +71,140 @@ pub mod fileio {
             }
         }
 
+        /// Return an in-place initializer for `Psm`.
         pub fn init() -> impl Init<Self> {
             init!(Self {
                 buf <- crate::utils::init::zeroed(),
             })
         }
 
-        pub fn load(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
-            fs::create_dir_all(dir)?;
-
-            if let Some(data) =
-                Self::load_key(dir, KEY_FABRICS, unsafe { self.buf.assume_init_mut() })?
-            {
-                matter.load_fabrics(data)?;
-            }
-
-            if let Some(data) =
-                Self::load_key(dir, KEY_BASIC_INFO, unsafe { self.buf.assume_init_mut() })?
-            {
-                matter.load_basic_info(data)?;
-            }
-
-            Ok(())
-        }
-
-        pub fn store(&mut self, dir: &Path, matter: &Matter) -> Result<(), Error> {
-            if matter.fabrics_changed() || matter.basic_info_changed() {
-                fs::create_dir_all(dir)?;
-            }
-
-            if matter.fabrics_changed() {
-                if let Some(data) = matter.store_fabrics(unsafe { self.buf.assume_init_mut() })? {
-                    Self::store_key(dir, KEY_FABRICS, data)?;
-                }
-            }
-
-            if matter.basic_info_changed() {
-                if let Some(data) =
-                    matter.store_basic_info(unsafe { self.buf.assume_init_mut() })?
-                {
-                    Self::store_key(dir, KEY_BASIC_INFO, data)?;
-                }
-            }
-
-            Ok(())
-        }
-
-        pub fn load_networks<const W: usize, M, T>(
+        /// Load the persistent state from the given file path into the provided `Matter` instance
+        ///
+        /// Arguments:
+        /// - `path`: The file path from where to load the persistent state.
+        /// - `matter`: The `Matter` instance to load the state into (for fabrics and basic info settings).
+        /// - `networks`: An optional reference to `WirelessNetworks` to load the wireless networks state into (if provided).
+        pub fn load<P, const W: usize, M, T>(
             &mut self,
-            dir: &Path,
-            networks: &WirelessNetworks<W, M, T>,
+            path: P,
+            matter: &Matter,
+            networks: Option<&WirelessNetworks<W, M, T>>,
         ) -> Result<(), Error>
         where
+            P: AsRef<Path>,
             M: RawMutex,
             T: WirelessNetwork,
         {
-            fs::create_dir_all(dir)?;
+            let buf = unsafe { self.buf.assume_init_mut() };
 
-            if let Some(data) = Self::load_key(dir, KEY_WIRELESS_NETWORKS, unsafe {
-                self.buf.assume_init_mut()
-            })? {
-                networks.load(data)?;
+            let Some(data) = Self::load_storage(path.as_ref(), buf)? else {
+                return Ok(());
+            };
+
+            let mut items: TLVContainerIter<'_, Octets<'_>> =
+                TLVArray::new(TLVElement::new(data))?.iter();
+
+            matter.load_fabrics(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+            matter.load_basic_info(items.next().ok_or(ErrorCode::Invalid)??.0)?;
+
+            if let Some(networks) = networks {
+                networks.load(items.next().ok_or(ErrorCode::Invalid)??.0)?;
             }
 
             Ok(())
         }
 
-        pub fn store_networks<const W: usize, M, T>(
+        /// Store the persistent state from the provided `Matter` instance
+        ///
+        /// If the fabrics, basic info settings or wireless networks (if provided) have not changed,
+        /// this method does nothing.
+        ///
+        /// Arguments:
+        /// - `path`: The file path where to store the persistent state.
+        /// - `matter`: The `Matter` instance whose state to store (for fabrics and basic info settings).
+        /// - `networks`: An optional reference to `WirelessNetworks` whose state to store.
+        pub fn store<P, const W: usize, M, T>(
             &mut self,
-            dir: &Path,
-            networks: &WirelessNetworks<W, M, T>,
+            path: P,
+            matter: &Matter,
+            networks: Option<&WirelessNetworks<W, M, T>>,
         ) -> Result<(), Error>
         where
+            P: AsRef<Path>,
             M: RawMutex,
             T: WirelessNetwork,
         {
-            if networks.changed() {
-                fs::create_dir_all(dir)?;
-
-                if let Some(data) = networks.store(unsafe { self.buf.assume_init_mut() })? {
-                    Self::store_key(dir, KEY_WIRELESS_NETWORKS, data)?;
-                }
+            if !matter.fabrics_changed()
+                && !matter.basic_info_changed()
+                && !networks.map(|networks| networks.changed()).unwrap_or(false)
+            {
+                return Ok(());
             }
+
+            let buf = unsafe { self.buf.assume_init_mut() };
+
+            let mut wb = WriteBuf::new(buf);
+
+            wb.start_array(&TLVTag::Anonymous)?;
+
+            wb.str_cb(&TLVTag::Anonymous, |buf| matter.store_fabrics(buf))?;
+
+            wb.str_cb(&TLVTag::Anonymous, |buf| matter.store_basic_info(buf))?;
+
+            if let Some(networks) = networks {
+                wb.str_cb(&TLVTag::Anonymous, |buf| networks.store(buf))?;
+            }
+
+            wb.end_container()?;
+
+            Self::save_storage(path.as_ref(), wb.as_slice())?;
 
             Ok(())
         }
 
-        pub async fn run<P: AsRef<Path>>(
+        /// Run the persistent storage, which waits for changes in the `Matter` instance
+        /// and the optional `WirelessNetworks` instance (if provided) and stores the state
+        /// to the given file path whenever a change occurs.
+        ///
+        /// Arguments:
+        /// - `path`: The file path where to store the persistent state.
+        /// - `matter`: The `Matter` instance to monitor for changes and for state to store (for fabrics and basic info settings).
+        /// - `networks`: An optional reference to `WirelessNetworks` to monitor for changes and for state to store (if provided).
+        pub async fn run<P, const W: usize, M, T>(
             &mut self,
-            dir: P,
-            matter: &Matter<'_>,
-        ) -> Result<(), Error> {
-            self.run_with_networks(
-                dir,
-                matter,
-                Option::<&WirelessNetworks<0, NoopRawMutex, Wifi>>::None,
-            )
-            .await
-        }
-
-        pub async fn run_with_networks<P: AsRef<Path>, const W: usize, M, T>(
-            &mut self,
-            dir: P,
+            path: P,
             matter: &Matter<'_>,
             networks: Option<&WirelessNetworks<W, M, T>>,
         ) -> Result<(), Error>
         where
+            P: AsRef<Path>,
             M: RawMutex,
             T: WirelessNetwork,
         {
-            let dir = dir.as_ref();
-
             // NOTE: Calling `load` here does not make sense, because the `Psm::run` future / async method is executed
             // concurrently with other `rs-matter` futures. Including the future (`Matter::run`) that takes a decision whether
             // the state of `rs-matter` is such that it is not provisioned yet (no fabrics) and as such
             // it has to open the basic commissioning window and print the QR code.
             //
             // User is supposed to instead explicitly call `load` before calling `Psm::run` and `Matter::run`
-            // self.load(dir, matter)?;
             // self.load_networks(dir, networks)?;
 
             loop {
                 if let Some(networks) = networks {
-                    match select(matter.wait_persist(), networks.wait_persist()).await {
-                        Either::First(_) => {
-                            matter.wait_persist().await;
-                            self.store(dir, matter)?;
-                        }
-                        Either::Second(_) => {
-                            networks.wait_persist().await;
-                            self.store_networks(dir, networks)?;
-                        }
-                    }
+                    select(matter.wait_persist(), networks.wait_persist()).await;
                 } else {
                     matter.wait_persist().await;
-                    self.store(dir, matter)?;
                 }
+
+                self.store(path.as_ref(), matter, networks)?;
             }
         }
 
-        fn load_key<'b>(
-            dir: &Path,
-            key: &str,
-            buf: &'b mut [u8],
-        ) -> Result<Option<&'b [u8]>, Error> {
-            let path = dir.join(key);
-
+        /// Loads the data from the provided file path into the given buffer.
+        ///
+        /// Returns `Ok(Some(&[u8]))` if data was successfully loaded,
+        /// `Ok(None)` if the file does not exist, or an `Err` if an error occurred.
+        fn load_storage<'b>(path: &Path, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
             match fs::File::open(path) {
                 Ok(mut file) => {
                     let mut offset = 0;
@@ -221,7 +225,7 @@ pub mod fileio {
 
                     let data = &buf[..offset];
 
-                    trace!("Key {}: loaded {} bytes {:?}", key, data.len(), data);
+                    trace!("Loaded {} bytes {:?}", data.len(), data);
 
                     Ok(Some(data))
                 }
@@ -229,14 +233,13 @@ pub mod fileio {
             }
         }
 
-        fn store_key(dir: &Path, key: &str, data: &[u8]) -> Result<(), Error> {
-            let path = dir.join(key);
-
+        /// Saves the given data to the specified file path.
+        fn save_storage(path: &Path, data: &[u8]) -> Result<(), Error> {
             let mut file = fs::File::create(path)?;
 
             file.write_all(data)?;
 
-            trace!("Key {}: stored {} bytes {:?}", key, data.len(), data);
+            trace!("Stored {} bytes {:?}", data.len(), data);
 
             Ok(())
         }

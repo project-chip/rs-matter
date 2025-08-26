@@ -26,6 +26,14 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::Notification;
 
+/// The maximum number of subscriptions that can be tracked at the same time by default.
+///
+/// Currently set to 3.
+pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = 3;
+
+/// A type alias for `Subscriptions` with the default maximum number of subscriptions.
+pub type DefaultSubscriptions = Subscriptions<DEFAULT_MAX_SUBSCRIPTIONS>;
+
 struct Subscription {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,
@@ -64,7 +72,7 @@ impl Subscription {
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
-pub struct Subscriptions<const N: usize> {
+pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
     next_subscription_id: AtomicU32,
     subscriptions: RefCell<crate::utils::storage::Vec<Subscription, N>>,
     pub(crate) notification: Notification<NoopRawMutex>,

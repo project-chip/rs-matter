@@ -52,14 +52,14 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
     ArrayAttributeRead, Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler,
     Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::Psm;
+use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::tlv::{TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
@@ -94,7 +94,7 @@ fn main() -> Result<(), Error> {
     let buffers = PooledBuffers::<10, NoopRawMutex, _>::new(0);
 
     // Create the subscriptions
-    let subscriptions = Subscriptions::<3>::new();
+    let subscriptions = DefaultSubscriptions::new();
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
     let dm_handler = dm_handler(&matter);
@@ -119,12 +119,11 @@ fn main() -> Result<(), Error> {
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
+    let path = std::env::temp_dir().join("rs-matter");
 
-    let dir = std::env::temp_dir().join("rs-matter");
+    psm.load(&path, &matter, NO_NETWORKS)?;
 
-    psm.load(&dir, &matter)?;
-
-    let mut persist = pin!(psm.run(dir, &matter));
+    let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS));
 
     // Combine all async tasks in a single one
     let all = select4(

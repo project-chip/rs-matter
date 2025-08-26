@@ -47,11 +47,10 @@ pub const TEST_DEV_DET: BasicInfoConfig = BasicInfoConfig {
     sw_ver: 1,
     sw_ver_str: "1",
     serial_no: "123456789",
-    device_name: "MyTest",
     product_name: "ACME Test",
     vendor_name: "ACME",
-    sai: None,
-    sii: None,
+    device_name: "MyTest",
+    ..BasicInfoConfig::new()
 };
 
 #[derive(Debug, Clone)]

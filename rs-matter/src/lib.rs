@@ -497,8 +497,6 @@ impl<'a> Matter<'a> {
         S: NetworkSend,
         R: NetworkReceive,
     {
-        // TODO: Figure out why chip-tool-tests expect the device to still be in commissioning mode
-        // post device reboot, even if it was already commissioned
         if !self.is_commissioned() {
             self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
                 .await?;
@@ -532,28 +530,50 @@ impl<'a> Matter<'a> {
         self.persist_notification.notify();
     }
 
+    /// Load fabrics from the given data
+    ///
+    /// Arguments:
+    /// - `data`: The data to load the fabrics from
     pub fn load_fabrics(&self, data: &[u8]) -> Result<(), Error> {
         self.fabric_mgr
             .borrow_mut()
             .load(data, &mut || self.notify_mdns())
     }
 
-    pub fn store_fabrics<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+    /// Store fabrics into the given buffer
+    ///
+    /// Arguments:
+    /// - `buf`: The buffer to store the fabrics into
+    ///
+    /// Returns the number of bytes written into the buffer.
+    pub fn store_fabrics(&self, buf: &mut [u8]) -> Result<usize, Error> {
         self.fabric_mgr.borrow_mut().store(buf)
     }
 
+    /// Return true if the fabrics have changed since the last call to `store_fabrics`
     pub fn fabrics_changed(&self) -> bool {
         self.fabric_mgr.borrow().is_changed()
     }
 
+    /// Load basic info settings from the given data
+    ///
+    /// Arguments:
+    /// - `data`: The data to load the basic info settings from
     pub fn load_basic_info(&self, data: &[u8]) -> Result<(), Error> {
         self.basic_info_settings.borrow_mut().load(data)
     }
 
-    pub fn store_basic_info<'b>(&self, buf: &'b mut [u8]) -> Result<Option<&'b [u8]>, Error> {
+    /// Store basic info settings into the given buffer
+    ///
+    /// Arguments:
+    /// - `buf`: The buffer to store the basic info settings into
+    ///
+    /// Returns the number of bytes written into the buffer.
+    pub fn store_basic_info(&self, buf: &mut [u8]) -> Result<usize, Error> {
         self.basic_info_settings.borrow_mut().store(buf)
     }
 
+    /// Return true if the basic info settings have changed since the last call to `store_basic_info`
     pub fn basic_info_changed(&self) -> bool {
         self.basic_info_settings.borrow().changed
     }
@@ -568,6 +588,7 @@ impl<'a> Matter<'a> {
         self.persist_notification.wait().await
     }
 
+    /// Invoke the given closure for each currently published Matter mDNS service.
     pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
         F: FnMut(MatterMdnsService) -> Result<(), Error>,

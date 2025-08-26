@@ -425,7 +425,11 @@ impl FabricMgr {
         self.changed = false;
     }
 
-    /// Load the fabrics from the provided TLV data
+    /// Load the fabrics from the provided buffer as TLV data.
+    ///
+    /// # Arguments
+    /// - `data`: The TLV data to load the fabrics from
+    /// - `mdns_notif`: A callback function to notify about mDNS changes
     pub fn load(&mut self, data: &[u8], mdns_notif: &mut dyn FnMut()) -> Result<(), Error> {
         self.fabrics.clear();
 
@@ -444,15 +448,13 @@ impl FabricMgr {
         Ok(())
     }
 
-    /// Store the fabrics into the provided buffer as TLV data
+    /// Store the fabrics into the provided buffer as TLV data.
     ///
-    /// If the fabrics have not changed since the last store operation, the
-    /// function returns `None` and does not store the fabrics.
-    pub fn store<'a>(&mut self, buf: &'a mut [u8]) -> Result<Option<&'a [u8]>, Error> {
-        if !self.changed {
-            return Ok(None);
-        }
-
+    /// # Arguments
+    /// - `buf`: The byte slice to store the state into
+    ///
+    /// Returns the number of bytes written into the buffer.
+    pub fn store(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         let mut wb = WriteBuf::new(buf);
 
         wb.start_array(&TLVTag::Anonymous)?;
@@ -469,7 +471,7 @@ impl FabricMgr {
 
         let len = wb.get_tail();
 
-        Ok(Some(&buf[..len]))
+        Ok(len)
     }
 
     /// Check if the fabrics have changed since the last store operation
