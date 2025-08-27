@@ -654,35 +654,35 @@ pub mod unit_testing {
             write!(f, "{} {{", "SimpleStruct")?;
             match self.a() {
                 Ok(value) => write!(f, "{}: {:?},", "a", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "a", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "a", e.code())?,
             }
             match self.b() {
                 Ok(value) => write!(f, "{}: {:?},", "b", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "b", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "b", e.code())?,
             }
             match self.c() {
                 Ok(value) => write!(f, "{}: {:?},", "c", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "c", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "c", e.code())?,
             }
             match self.d() {
                 Ok(value) => write!(f, "{}: {:?},", "d", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "d", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "d", e.code())?,
             }
             match self.e() {
                 Ok(value) => write!(f, "{}: {:?},", "e", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "e", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "e", e.code())?,
             }
             match self.f() {
                 Ok(value) => write!(f, "{}: {:?},", "f", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "f", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "f", e.code())?,
             }
             match self.g() {
                 Ok(value) => write!(f, "{}: {:?},", "g", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "g", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "g", e.code())?,
             }
             match self.h() {
                 Ok(value) => write!(f, "{}: {:?},", "h", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "h", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "h", e.code())?,
             }
             write!(f, "}}")
         }
@@ -693,35 +693,51 @@ pub mod unit_testing {
             rs_matter_crate::reexport::defmt::write!(f, "{} {{", "SimpleStruct");
             match self.a() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "a", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e.code())
+                }
             }
             match self.b() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "b", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "b", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "b", e.code())
+                }
             }
             match self.c() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "c", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "c", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "c", e.code())
+                }
             }
             match self.d() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "d", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "d", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "d", e.code())
+                }
             }
             match self.e() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "e", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "e", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "e", e.code())
+                }
             }
             match self.f() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "f", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "f", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "f", e.code())
+                }
             }
             match self.g() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "g", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "g", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "g", e.code())
+                }
             }
             match self.h() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "h", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "h", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "h", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -813,7 +829,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestFabricScoped")?;
             match self.fabric_sensitive_int_8_u() {
                 Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_int_8_u", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_int_8_u", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_int_8_u", e.code())?,
             }
             match self.optional_fabric_sensitive_int_8_u() {
                 Ok(Some(value)) => write!(
@@ -822,11 +838,21 @@ pub mod unit_testing {
                     "optional_fabric_sensitive_int_8_u", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "optional_fabric_sensitive_int_8_u")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_fabric_sensitive_int_8_u", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "optional_fabric_sensitive_int_8_u",
+                    e.code()
+                )?,
             }
             match self.nullable_fabric_sensitive_int_8_u() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_fabric_sensitive_int_8_u", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_fabric_sensitive_int_8_u", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_fabric_sensitive_int_8_u",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_fabric_sensitive_int_8_u() {
                 Ok(Some(value)) => write!(
@@ -838,24 +864,30 @@ pub mod unit_testing {
                 Err(e) => write!(
                     f,
                     "{}: ??? {:?},",
-                    "nullable_optional_fabric_sensitive_int_8_u", e
+                    "nullable_optional_fabric_sensitive_int_8_u",
+                    e.code()
                 )?,
             }
             match self.fabric_sensitive_char_string() {
                 Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_char_string", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_char_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_char_string", e.code())?,
             }
             match self.fabric_sensitive_struct() {
                 Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_struct", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_struct", e.code())?,
             }
             match self.fabric_sensitive_int_8_u_list() {
                 Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_int_8_u_list", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_int_8_u_list", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "fabric_sensitive_int_8_u_list",
+                    e.code()
+                )?,
             }
             match self.fabric_index() {
                 Ok(value) => write!(f, "{}: {:?},", "fabric_index", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fabric_index", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fabric_index", e.code())?,
             }
             write!(f, "}}")
         }
@@ -875,7 +907,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "fabric_sensitive_int_8_u",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_fabric_sensitive_int_8_u() {
@@ -894,7 +926,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_fabric_sensitive_int_8_u",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_fabric_sensitive_int_8_u() {
@@ -908,7 +940,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_fabric_sensitive_int_8_u",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_fabric_sensitive_int_8_u() {
@@ -927,7 +959,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_fabric_sensitive_int_8_u",
-                    e
+                    e.code()
                 ),
             }
             match self.fabric_sensitive_char_string() {
@@ -941,7 +973,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "fabric_sensitive_char_string",
-                    e
+                    e.code()
                 ),
             }
             match self.fabric_sensitive_struct() {
@@ -955,7 +987,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "fabric_sensitive_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.fabric_sensitive_int_8_u_list() {
@@ -969,16 +1001,19 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "fabric_sensitive_int_8_u_list",
-                    e
+                    e.code()
                 ),
             }
             match self.fabric_index() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "fabric_index", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "fabric_index", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "fabric_index",
+                    e.code()
+                ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1142,59 +1177,59 @@ pub mod unit_testing {
             write!(f, "{} {{", "NullablesAndOptionalsStruct")?;
             match self.nullable_int() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_int", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int", e.code())?,
             }
             match self.optional_int() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_int", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_int")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_int", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_int", e.code())?,
             }
             match self.nullable_optional_int() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_int", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_int")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int", e.code())?,
             }
             match self.nullable_string() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_string", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string", e.code())?,
             }
             match self.optional_string() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_string", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_string")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_string", e.code())?,
             }
             match self.nullable_optional_string() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_string", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_string")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_string", e.code())?,
             }
             match self.nullable_struct() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_struct", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct", e.code())?,
             }
             match self.optional_struct() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_struct", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_struct")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct", e.code())?,
             }
             match self.nullable_optional_struct() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_struct", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_struct")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_struct", e.code())?,
             }
             match self.nullable_list() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_list", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list", e.code())?,
             }
             match self.optional_list() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_list", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_list")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_list", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_list", e.code())?,
             }
             match self.nullable_optional_list() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_list", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_list")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1207,9 +1242,12 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "nullable_int", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "nullable_int", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_int",
+                    e.code()
+                ),
             }
             match self.optional_int() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -1221,9 +1259,12 @@ pub mod unit_testing {
                 Ok(None) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "optional_int")
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "optional_int", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "optional_int",
+                    e.code()
+                ),
             }
             match self.nullable_optional_int() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -1241,7 +1282,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_int",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_string() {
@@ -1255,7 +1296,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_string",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_string() {
@@ -1272,7 +1313,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_string",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_string() {
@@ -1291,7 +1332,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_string",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_struct() {
@@ -1305,7 +1346,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_struct() {
@@ -1322,7 +1363,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_struct() {
@@ -1341,16 +1382,19 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_list() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "nullable_list", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "nullable_list", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_list",
+                    e.code()
+                ),
             }
             match self.optional_list() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -1362,9 +1406,12 @@ pub mod unit_testing {
                 Ok(None) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "optional_list")
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "optional_list", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "optional_list",
+                    e.code()
+                ),
             }
             match self.nullable_optional_list() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -1382,7 +1429,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_list",
-                    e
+                    e.code()
                 ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
@@ -1437,15 +1484,15 @@ pub mod unit_testing {
             write!(f, "{} {{", "NestedStruct")?;
             match self.a() {
                 Ok(value) => write!(f, "{}: {:?},", "a", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "a", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "a", e.code())?,
             }
             match self.b() {
                 Ok(value) => write!(f, "{}: {:?},", "b", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "b", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "b", e.code())?,
             }
             match self.c() {
                 Ok(value) => write!(f, "{}: {:?},", "c", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "c", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "c", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1456,15 +1503,21 @@ pub mod unit_testing {
             rs_matter_crate::reexport::defmt::write!(f, "{} {{", "NestedStruct");
             match self.a() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "a", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e.code())
+                }
             }
             match self.b() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "b", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "b", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "b", e.code())
+                }
             }
             match self.c() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "c", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "c", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "c", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1545,31 +1598,31 @@ pub mod unit_testing {
             write!(f, "{} {{", "NestedStructList")?;
             match self.a() {
                 Ok(value) => write!(f, "{}: {:?},", "a", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "a", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "a", e.code())?,
             }
             match self.b() {
                 Ok(value) => write!(f, "{}: {:?},", "b", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "b", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "b", e.code())?,
             }
             match self.c() {
                 Ok(value) => write!(f, "{}: {:?},", "c", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "c", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "c", e.code())?,
             }
             match self.d() {
                 Ok(value) => write!(f, "{}: {:?},", "d", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "d", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "d", e.code())?,
             }
             match self.e() {
                 Ok(value) => write!(f, "{}: {:?},", "e", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "e", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "e", e.code())?,
             }
             match self.f() {
                 Ok(value) => write!(f, "{}: {:?},", "f", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "f", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "f", e.code())?,
             }
             match self.g() {
                 Ok(value) => write!(f, "{}: {:?},", "g", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "g", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "g", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1580,31 +1633,45 @@ pub mod unit_testing {
             rs_matter_crate::reexport::defmt::write!(f, "{} {{", "NestedStructList");
             match self.a() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "a", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e.code())
+                }
             }
             match self.b() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "b", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "b", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "b", e.code())
+                }
             }
             match self.c() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "c", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "c", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "c", e.code())
+                }
             }
             match self.d() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "d", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "d", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "d", e.code())
+                }
             }
             match self.e() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "e", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "e", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "e", e.code())
+                }
             }
             match self.f() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "f", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "f", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "f", e.code())
+                }
             }
             match self.g() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "g", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "g", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "g", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1657,7 +1724,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "DoubleNestedStructList")?;
             match self.a() {
                 Ok(value) => write!(f, "{}: {:?},", "a", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "a", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "a", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1668,7 +1735,9 @@ pub mod unit_testing {
             rs_matter_crate::reexport::defmt::write!(f, "{} {{", "DoubleNestedStructList");
             match self.a() {
                 Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "a", value),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "a", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1721,11 +1790,11 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestListStructOctet")?;
             match self.member_1() {
                 Ok(value) => write!(f, "{}: {:?},", "member_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "member_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "member_1", e.code())?,
             }
             match self.member_2() {
                 Ok(value) => write!(f, "{}: {:?},", "member_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "member_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "member_2", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1738,17 +1807,23 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "member_1", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "member_1", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "member_1",
+                    e.code()
+                ),
             }
             match self.member_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "member_2", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "member_2", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "member_2",
+                    e.code()
+                ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1796,7 +1871,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestSpecificResponse")?;
             match self.return_value() {
                 Ok(value) => write!(f, "{}: {:?},", "return_value", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "return_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "return_value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1809,9 +1884,12 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "return_value", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "return_value", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "return_value",
+                    e.code()
+                ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1859,7 +1937,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestAddArgumentsResponse")?;
             match self.return_value() {
                 Ok(value) => write!(f, "{}: {:?},", "return_value", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "return_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "return_value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1872,9 +1950,12 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "return_value", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "return_value", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "return_value",
+                    e.code()
+                ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -1922,7 +2003,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestSimpleArgumentResponse")?;
             match self.return_value() {
                 Ok(value) => write!(f, "{}: {:?},", "return_value", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "return_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "return_value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -1935,9 +2016,12 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "return_value", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "return_value", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "return_value",
+                    e.code()
+                ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2016,27 +2100,27 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestStructArrayArgumentResponse")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.arg_2() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
             }
             match self.arg_3() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_3", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e.code())?,
             }
             match self.arg_4() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_4", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_4", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_4", e.code())?,
             }
             match self.arg_5() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_5", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_5", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_5", e.code())?,
             }
             match self.arg_6() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_6", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_6", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_6", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2049,37 +2133,49 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.arg_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
             }
             match self.arg_3() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_3", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e.code())
+                }
             }
             match self.arg_4() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_4", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_4", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_4", e.code())
+                }
             }
             match self.arg_5() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_5", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_5", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_5", e.code())
+                }
             }
             match self.arg_6() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_6", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_6", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_6", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2130,11 +2226,11 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestAddArgumentsRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.arg_2() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2147,13 +2243,17 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.arg_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2203,7 +2303,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestListInt8UReverseResponse")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2216,7 +2316,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2264,7 +2366,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestSimpleArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2281,7 +2383,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2332,11 +2436,11 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestEnumsResponse")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.arg_2() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2349,13 +2453,17 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.arg_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2434,27 +2542,27 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestStructArrayArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.arg_2() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
             }
             match self.arg_3() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_3", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e.code())?,
             }
             match self.arg_4() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_4", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_4", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_4", e.code())?,
             }
             match self.arg_5() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_5", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_5", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_5", e.code())?,
             }
             match self.arg_6() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_6", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_6", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_6", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2471,37 +2579,49 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.arg_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
             }
             match self.arg_3() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_3", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e.code())
+                }
             }
             match self.arg_4() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_4", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_4", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_4", e.code())
+                }
             }
             match self.arg_5() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_5", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_5", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_5", e.code())
+                }
             }
             match self.arg_6() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_6", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_6", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_6", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2576,22 +2696,22 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestNullableOptionalResponse")?;
             match self.was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "was_present", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "was_present", e.code())?,
             }
             match self.was_null() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "was_null", value)?,
                 Ok(None) => write!(f, "{}: None,", "was_null")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "was_null", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "was_null", e.code())?,
             }
             match self.value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "value", value)?,
                 Ok(None) => write!(f, "{}: None,", "value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "value", e.code())?,
             }
             match self.original_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "original_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "original_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "original_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "original_value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2604,9 +2724,12 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "was_present", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "was_present", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "was_present",
+                    e.code()
+                ),
             }
             match self.was_null() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -2616,16 +2739,21 @@ pub mod unit_testing {
                     value
                 ),
                 Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "was_null"),
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "was_null", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "was_null",
+                    e.code()
+                ),
             }
             match self.value() {
                 Ok(Some(value)) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "value", value)
                 }
                 Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "value"),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e.code())
+                }
             }
             match self.original_value() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -2641,7 +2769,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "original_value",
-                    e
+                    e.code()
                 ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
@@ -2690,7 +2818,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestStructArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -2707,7 +2835,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -2964,25 +3094,30 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestComplexNullableOptionalResponse")?;
             match self.nullable_int_was_null() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_int_was_null", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int_was_null", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int_was_null", e.code())?,
             }
             match self.nullable_int_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_int_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_int_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int_value", e.code())?,
             }
             match self.optional_int_was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "optional_int_was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_int_was_present", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_int_was_present", e.code())?,
             }
             match self.optional_int_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_int_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_int_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_int_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_int_value", e.code())?,
             }
             match self.nullable_optional_int_was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_optional_int_was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int_was_present", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_int_was_present",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_int_was_null() {
                 Ok(Some(value)) => write!(
@@ -2991,32 +3126,37 @@ pub mod unit_testing {
                     "nullable_optional_int_was_null", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_int_was_null")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int_was_null", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_int_was_null",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_int_value() {
                 Ok(Some(value)) => {
                     write!(f, "{}: Some({:?}),", "nullable_optional_int_value", value)?
                 }
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_int_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int_value", e.code())?,
             }
             match self.nullable_string_was_null() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_string_was_null", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string_was_null", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string_was_null", e.code())?,
             }
             match self.nullable_string_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_string_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_string_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string_value", e.code())?,
             }
             match self.optional_string_was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "optional_string_was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_string_was_present", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_string_was_present", e.code())?,
             }
             match self.optional_string_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_string_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_string_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_string_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_string_value", e.code())?,
             }
             match self.nullable_optional_string_was_present() {
                 Ok(value) => write!(
@@ -3027,7 +3167,8 @@ pub mod unit_testing {
                 Err(e) => write!(
                     f,
                     "{}: ??? {:?},",
-                    "nullable_optional_string_was_present", e
+                    "nullable_optional_string_was_present",
+                    e.code()
                 )?,
             }
             match self.nullable_optional_string_was_null() {
@@ -3037,7 +3178,12 @@ pub mod unit_testing {
                     "nullable_optional_string_was_null", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_string_was_null")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_string_was_null", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_string_was_null",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_string_value() {
                 Ok(Some(value)) => write!(
@@ -3046,25 +3192,30 @@ pub mod unit_testing {
                     "nullable_optional_string_value", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_string_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_string_value", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_string_value",
+                    e.code()
+                )?,
             }
             match self.nullable_struct_was_null() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_struct_was_null", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct_was_null", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct_was_null", e.code())?,
             }
             match self.nullable_struct_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_struct_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_struct_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct_value", e.code())?,
             }
             match self.optional_struct_was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "optional_struct_was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct_was_present", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct_was_present", e.code())?,
             }
             match self.optional_struct_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_struct_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_struct_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct_value", e.code())?,
             }
             match self.nullable_optional_struct_was_present() {
                 Ok(value) => write!(
@@ -3075,7 +3226,8 @@ pub mod unit_testing {
                 Err(e) => write!(
                     f,
                     "{}: ??? {:?},",
-                    "nullable_optional_struct_was_present", e
+                    "nullable_optional_struct_was_present",
+                    e.code()
                 )?,
             }
             match self.nullable_optional_struct_was_null() {
@@ -3085,7 +3237,12 @@ pub mod unit_testing {
                     "nullable_optional_struct_was_null", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_struct_was_null")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_struct_was_null", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_struct_was_null",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_struct_value() {
                 Ok(Some(value)) => write!(
@@ -3094,29 +3251,39 @@ pub mod unit_testing {
                     "nullable_optional_struct_value", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_struct_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_struct_value", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_struct_value",
+                    e.code()
+                )?,
             }
             match self.nullable_list_was_null() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_list_was_null", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list_was_null", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list_was_null", e.code())?,
             }
             match self.nullable_list_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_list_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_list_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list_value", e.code())?,
             }
             match self.optional_list_was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "optional_list_was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_list_was_present", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_list_was_present", e.code())?,
             }
             match self.optional_list_value() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_list_value", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_list_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_list_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_list_value", e.code())?,
             }
             match self.nullable_optional_list_was_present() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_optional_list_was_present", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list_was_present", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_list_was_present",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_list_was_null() {
                 Ok(Some(value)) => write!(
@@ -3125,14 +3292,19 @@ pub mod unit_testing {
                     "nullable_optional_list_was_null", value
                 )?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_list_was_null")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list_was_null", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_optional_list_was_null",
+                    e.code()
+                )?,
             }
             match self.nullable_optional_list_value() {
                 Ok(Some(value)) => {
                     write!(f, "{}: Some({:?}),", "nullable_optional_list_value", value)?
                 }
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_list_value")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list_value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list_value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3156,7 +3328,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_int_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_int_value() {
@@ -3173,7 +3345,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_int_value",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_int_was_present() {
@@ -3187,7 +3359,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_int_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_int_value() {
@@ -3204,7 +3376,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_int_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_int_was_present() {
@@ -3218,7 +3390,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_int_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_int_was_null() {
@@ -3237,7 +3409,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_int_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_int_value() {
@@ -3256,7 +3428,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_int_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_string_was_null() {
@@ -3270,7 +3442,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_string_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_string_value() {
@@ -3289,7 +3461,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_string_value",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_string_was_present() {
@@ -3303,7 +3475,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_string_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_string_value() {
@@ -3322,7 +3494,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_string_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_string_was_present() {
@@ -3336,7 +3508,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_string_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_string_was_null() {
@@ -3355,7 +3527,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_string_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_string_value() {
@@ -3374,7 +3546,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_string_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_struct_was_null() {
@@ -3388,7 +3560,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_struct_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_struct_value() {
@@ -3407,7 +3579,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_struct_value",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_struct_was_present() {
@@ -3421,7 +3593,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_struct_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_struct_value() {
@@ -3440,7 +3612,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_struct_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_struct_was_present() {
@@ -3454,7 +3626,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_struct_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_struct_was_null() {
@@ -3473,7 +3645,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_struct_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_struct_value() {
@@ -3492,7 +3664,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_struct_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_list_was_null() {
@@ -3506,7 +3678,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_list_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_list_value() {
@@ -3523,7 +3695,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_list_value",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_list_was_present() {
@@ -3537,7 +3709,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_list_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_list_value() {
@@ -3554,7 +3726,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_list_value",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_list_was_present() {
@@ -3568,7 +3740,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_list_was_present",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_list_was_null() {
@@ -3587,7 +3759,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_list_was_null",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_list_value() {
@@ -3606,7 +3778,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_list_value",
-                    e
+                    e.code()
                 ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
@@ -3655,7 +3827,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestNestedStructArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3672,7 +3844,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -3720,7 +3894,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "BooleanResponse")?;
             match self.value() {
                 Ok(value) => write!(f, "{}: {:?},", "value", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3733,7 +3907,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "value", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -3786,7 +3962,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestListStructArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3803,7 +3979,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -3851,7 +4029,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "SimpleStructResponse")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3864,7 +4042,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -3914,7 +4094,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestListInt8UArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3931,7 +4111,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -3979,7 +4161,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestEmitTestEventResponse")?;
             match self.value() {
                 Ok(value) => write!(f, "{}: {:?},", "value", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -3992,7 +4174,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "value", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4040,7 +4224,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestNestedStructListArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4057,7 +4241,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4105,7 +4291,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestEmitTestFabricScopedEventResponse")?;
             match self.value() {
                 Ok(value) => write!(f, "{}: {:?},", "value", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "value", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "value", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4122,7 +4308,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "value", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "value", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4177,7 +4365,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestListNestedStructListArgumentRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4196,7 +4384,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4246,7 +4436,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestBatchHelperResponse")?;
             match self.buffer() {
                 Ok(value) => write!(f, "{}: {:?},", "buffer", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "buffer", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "buffer", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4259,7 +4449,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "buffer", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "buffer", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "buffer", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4309,7 +4501,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestListInt8UReverseRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4326,7 +4518,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4377,11 +4571,11 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestEnumsRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.arg_2() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4394,13 +4588,17 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.arg_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4457,7 +4655,7 @@ pub mod unit_testing {
             match self.arg_1() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "arg_1", value)?,
                 Ok(None) => write!(f, "{}: None,", "arg_1")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4475,7 +4673,9 @@ pub mod unit_testing {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "arg_1", value)
                 }
                 Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "arg_1"),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4639,59 +4839,59 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestComplexNullableOptionalRequestRequest")?;
             match self.nullable_int() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_int", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_int", e.code())?,
             }
             match self.optional_int() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_int", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_int")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_int", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_int", e.code())?,
             }
             match self.nullable_optional_int() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_int", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_int")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_int", e.code())?,
             }
             match self.nullable_string() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_string", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_string", e.code())?,
             }
             match self.optional_string() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_string", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_string")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_string", e.code())?,
             }
             match self.nullable_optional_string() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_string", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_string")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_string", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_string", e.code())?,
             }
             match self.nullable_struct() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_struct", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_struct", e.code())?,
             }
             match self.optional_struct() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_struct", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_struct")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_struct", e.code())?,
             }
             match self.nullable_optional_struct() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_struct", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_struct")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_struct", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_struct", e.code())?,
             }
             match self.nullable_list() {
                 Ok(value) => write!(f, "{}: {:?},", "nullable_list", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_list", e.code())?,
             }
             match self.optional_list() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "optional_list", value)?,
                 Ok(None) => write!(f, "{}: None,", "optional_list")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "optional_list", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "optional_list", e.code())?,
             }
             match self.nullable_optional_list() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "nullable_optional_list", value)?,
                 Ok(None) => write!(f, "{}: None,", "nullable_optional_list")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "nullable_optional_list", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4708,9 +4908,12 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "nullable_int", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "nullable_int", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_int",
+                    e.code()
+                ),
             }
             match self.optional_int() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -4722,9 +4925,12 @@ pub mod unit_testing {
                 Ok(None) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "optional_int")
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "optional_int", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "optional_int",
+                    e.code()
+                ),
             }
             match self.nullable_optional_int() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -4742,7 +4948,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_int",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_string() {
@@ -4756,7 +4962,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_string",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_string() {
@@ -4773,7 +4979,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_string",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_string() {
@@ -4792,7 +4998,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_string",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_struct() {
@@ -4806,7 +5012,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.optional_struct() {
@@ -4823,7 +5029,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "optional_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_optional_struct() {
@@ -4842,16 +5048,19 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_struct",
-                    e
+                    e.code()
                 ),
             }
             match self.nullable_list() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "nullable_list", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "nullable_list", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "nullable_list",
+                    e.code()
+                ),
             }
             match self.optional_list() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -4863,9 +5072,12 @@ pub mod unit_testing {
                 Ok(None) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "optional_list")
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "optional_list", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "optional_list",
+                    e.code()
+                ),
             }
             match self.nullable_optional_list() {
                 Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
@@ -4883,7 +5095,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "nullable_optional_list",
-                    e
+                    e.code()
                 ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
@@ -4932,7 +5144,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "SimpleStructEchoRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -4945,7 +5157,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -4999,7 +5213,7 @@ pub mod unit_testing {
             match self.arg_1() {
                 Ok(Some(value)) => write!(f, "{}: Some({:?}),", "arg_1", value)?,
                 Ok(None) => write!(f, "{}: None,", "arg_1")?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5017,7 +5231,9 @@ pub mod unit_testing {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "arg_1", value)
                 }
                 Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "arg_1"),
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -5071,15 +5287,15 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestEmitTestEventRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.arg_2() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_2", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_2", e.code())?,
             }
             match self.arg_3() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_3", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_3", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5092,19 +5308,25 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.arg_2() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_2", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_2", e.code())
+                }
             }
             match self.arg_3() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_3", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_3", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -5154,7 +5376,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestEmitTestFabricScopedEventRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5171,7 +5393,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -5225,15 +5449,20 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestBatchHelperRequestRequest")?;
             match self.sleep_before_response_time_ms() {
                 Ok(value) => write!(f, "{}: {:?},", "sleep_before_response_time_ms", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "sleep_before_response_time_ms", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "sleep_before_response_time_ms",
+                    e.code()
+                )?,
             }
             match self.size_of_response_buffer() {
                 Ok(value) => write!(f, "{}: {:?},", "size_of_response_buffer", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "size_of_response_buffer", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "size_of_response_buffer", e.code())?,
             }
             match self.fill_character() {
                 Ok(value) => write!(f, "{}: {:?},", "fill_character", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fill_character", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fill_character", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5253,7 +5482,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "sleep_before_response_time_ms",
-                    e
+                    e.code()
                 ),
             }
             match self.size_of_response_buffer() {
@@ -5267,7 +5496,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "size_of_response_buffer",
-                    e
+                    e.code()
                 ),
             }
             match self.fill_character() {
@@ -5281,7 +5510,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "fill_character",
-                    e
+                    e.code()
                 ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
@@ -5336,15 +5565,20 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestSecondBatchHelperRequestRequest")?;
             match self.sleep_before_response_time_ms() {
                 Ok(value) => write!(f, "{}: {:?},", "sleep_before_response_time_ms", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "sleep_before_response_time_ms", e)?,
+                Err(e) => write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "sleep_before_response_time_ms",
+                    e.code()
+                )?,
             }
             match self.size_of_response_buffer() {
                 Ok(value) => write!(f, "{}: {:?},", "size_of_response_buffer", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "size_of_response_buffer", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "size_of_response_buffer", e.code())?,
             }
             match self.fill_character() {
                 Ok(value) => write!(f, "{}: {:?},", "fill_character", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "fill_character", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fill_character", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5368,7 +5602,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "sleep_before_response_time_ms",
-                    e
+                    e.code()
                 ),
             }
             match self.size_of_response_buffer() {
@@ -5382,7 +5616,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "size_of_response_buffer",
-                    e
+                    e.code()
                 ),
             }
             match self.fill_character() {
@@ -5396,7 +5630,7 @@ pub mod unit_testing {
                     f,
                     "{}: ??? {:?},",
                     "fill_character",
-                    e
+                    e.code()
                 ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
@@ -5445,7 +5679,7 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestDifferentVendorMeiRequestRequest")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5462,7 +5696,9 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
@@ -5513,11 +5749,11 @@ pub mod unit_testing {
             write!(f, "{} {{", "TestDifferentVendorMeiResponse")?;
             match self.arg_1() {
                 Ok(value) => write!(f, "{}: {:?},", "arg_1", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "arg_1", e.code())?,
             }
             match self.event_number() {
                 Ok(value) => write!(f, "{}: {:?},", "event_number", value)?,
-                Err(e) => write!(f, "{}: ??? {:?},", "event_number", e)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "event_number", e.code())?,
             }
             write!(f, "}}")
         }
@@ -5530,15 +5766,20 @@ pub mod unit_testing {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "arg_1", value)
                 }
-                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e),
+                Err(e) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "arg_1", e.code())
+                }
             }
             match self.event_number() {
                 Ok(value) => {
                     rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "event_number", value)
                 }
-                Err(e) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "event_number", e)
-                }
+                Err(e) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: ??? {:?},",
+                    "event_number",
+                    e.code()
+                ),
             }
             rs_matter_crate::reexport::defmt::write!(f, "}}")
         }
