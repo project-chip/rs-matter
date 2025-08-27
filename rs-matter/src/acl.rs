@@ -17,12 +17,15 @@
 
 //! This module contains the implementation of the `rs-matter` Access Control List (ACL)
 
-use core::{fmt::Display, num::NonZeroU8};
+use core::fmt::Display;
+use core::num::NonZeroU8;
+use core::ops::RangeInclusive;
 
 use num_derive::FromPrimitive;
 
 use crate::dm::clusters::acl::{
-    AccessControlEntryAuthModeEnum, AccessControlEntryStruct, AccessControlEntryStructBuilder,
+    AccessControlEntryAuthModeEnum, AccessControlEntryPrivilegeEnum, AccessControlEntryStruct,
+    AccessControlEntryStructBuilder,
 };
 use crate::dm::{Access, ClusterId, EndptId, Privilege};
 use crate::error::{Error, ErrorCode};
@@ -44,7 +47,7 @@ pub const TARGETS_PER_ENTRY: usize = 3;
 
 /// Max ACL entries per fabric
 // TODO: Make this configurable via a cargo feature
-pub const ENTRIES_PER_FABRIC: usize = 3;
+pub const ENTRIES_PER_FABRIC: usize = 4;
 
 /// An enum modeling the different authentication modes
 // TODO: Check if this and the SessionMode can be combined into some generic data structure
@@ -108,6 +111,9 @@ pub const NOC_CAT_SUBJECT_PREFIX: u64 = 0xFFFF_FFFD_0000_0000;
 const NOC_CAT_ID_MASK: u64 = 0xFFFF_0000;
 const NOC_CAT_VERSION_MASK: u64 = 0xFFFF;
 
+/// The Node ID min range
+const NODE_ID_RANGE: RangeInclusive<u64> = 1..=0xFFFF_FFEF_FFFF_FFFF;
+
 /// Is this identifier a NOC CAT
 fn is_noc_cat(id: u64) -> bool {
     (id & NOC_CAT_SUBJECT_PREFIX) == NOC_CAT_SUBJECT_PREFIX
@@ -127,6 +133,11 @@ fn get_noc_cat_version(id: u64) -> u64 {
 /// This only generates the 32-bit CAT ID
 pub fn gen_noc_cat(id: u16, version: u16) -> u32 {
     ((id as u32) << 16) | version as u32
+}
+
+/// Is this identifier a node id
+fn is_node(id: u64) -> bool {
+    NODE_ID_RANGE.contains(&id)
 }
 
 /// The Subjects that identify the Accessor
@@ -397,8 +408,8 @@ impl AclEntry {
             fab_idx,
             privilege,
             auth_mode,
-            subjects: Nullable::some(Vec::new()),
-            targets: Nullable::some(Vec::new()),
+            subjects: Nullable::none(),
+            targets: Nullable::none(),
         }
     }
 
@@ -413,8 +424,8 @@ impl AclEntry {
             fab_idx,
             privilege,
             auth_mode,
-            subjects <- Nullable::init_some(Vec::init()),
-            targets <- Nullable::init_some(Vec::init()),
+            subjects <- Nullable::init_none(),
+            targets <- Nullable::init_none(),
         })
     }
 
@@ -427,37 +438,82 @@ impl AclEntry {
         Self::init(Some(fab_idx), Privilege::empty(), AuthMode::Pase)
             .into_fallible()
             .chain(|e| {
+                if
+                    // As per spec, PASE auth mode is reserved for future use
+                    matches!(entry.auth_mode()?, AccessControlEntryAuthModeEnum::PASE)
+                    // As per spec, Group auth mode cannot have Admin privilege
+                    || matches!(entry.auth_mode()?, AccessControlEntryAuthModeEnum::Group) && matches!(entry.privilege()?, AccessControlEntryPrivilegeEnum::Administer)
+                {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+
                 e.privilege = entry.privilege()?.into();
                 e.auth_mode = entry.auth_mode()?.into();
 
+                // Start with null subjects and targets
+                // so that we can keep those to null if we receive empty subjects' array or empty targets' array
+                // This is what the YAML tests expect
+                e.subjects.clear();
+                e.targets.clear();
+
                 if let Some(subjects) = entry.subjects()?.into_option() {
-                    let esubjects = unwrap!(e.subjects.as_opt_mut());
                     for subject in subjects {
+                        if e.subjects.is_none() {
+                            // Initialize our subjects to non-null lazily, only if we have at least one incoming subject
+                            // This ensures that if the incoming subjects is empty, we keep our subjects as null
+                            // which is what the YAML tests expect, even if we internally treat null and empty subjects the same way
+                            e.subjects.reinit(Nullable::init_some(Vec::init()));
+                        }
+
+                        let esubjects = unwrap!(e.subjects.as_opt_mut());
+
                         let subject = subject?;
 
+                        if matches!(entry.auth_mode()?, AccessControlEntryAuthModeEnum::CASE) && !is_node(subject) && !is_noc_cat(subject) {
+                            // As per spec, CASE auth mode only allows node ids and NOC CATs as subjects
+                            Err(ErrorCode::ConstraintError)?;
+                        }
+
+                        // As per spec, on too many subjects we should return a FAILURE status code
+                        // `ErrorCode::BufferTooSmall` translates to a generic FAILURE status code
                         esubjects
                             .push(subject)
-                            .map_err(|_| ErrorCode::ResourceExhausted)?;
+                            .map_err(|_| ErrorCode::BufferTooSmall)?;
                     }
-                } else {
-                    e.subjects.clear();
                 }
 
                 if let Some(targets) = entry.targets()?.into_option() {
-                    let etargets = unwrap!(e.targets.as_opt_mut());
                     for target in targets {
+                        if e.targets.is_none() {
+                            // Initialize our targets to non-null lazily, only if we have at least one incoming target
+                            // This ensures that if the incoming targets is empty, we keep our targets as null
+                            // which is what the YAML tests expect, even if we internally treat null and empty targets the same way
+                            e.targets.reinit(Nullable::init_some(Vec::init()));
+                        }
+
+                        let etargets = unwrap!(e.targets.as_opt_mut());
+
                         let target = target?;
 
+                        if
+                            // As per spec, either the device type or the endpoint/cluster shuld be set, but not all
+                            target.device_type()?.is_some() && (target.endpoint()?.is_some() || target.cluster()?.is_some())
+                            // As per spec, at least one of device type, endpoint or cluster should be set
+                            || target.device_type()?.is_none() && target.endpoint()?.is_none() && target.cluster()?.is_none()
+                        {
+                            Err(ErrorCode::ConstraintError)?;
+                        }
+
+                        // As per spec, on too many targets we should return a FAILURE status code
+                        // `ErrorCode::BufferTooSmall` translates to a generic FAILURE status code
                         etargets
                             .push(Target::new(
                                 target.endpoint()?.into_option(),
                                 target.cluster()?.into_option(),
                                 target.device_type()?.into_option(),
                             ))
-                            .map_err(|_| ErrorCode::ResourceExhausted)?;
+                            .map_err(|_| ErrorCode::BufferTooSmall)?;
                     }
-                } else {
-                    e.targets.clear();
                 }
 
                 Ok(())
@@ -497,6 +553,28 @@ impl AclEntry {
             })?
             .fabric_index(fab_idx.get())?
             .end()
+    }
+
+    /// Normalize the ACL entry by converting non-null but empty
+    /// subjects/targets to null, as the spec and YAML tests expect
+    pub fn normalize(&mut self) {
+        if self
+            .subjects
+            .as_opt_ref()
+            .map(|subjects| subjects.is_empty())
+            .unwrap_or(false)
+        {
+            self.subjects.clear();
+        }
+
+        if self
+            .targets
+            .as_opt_ref()
+            .map(|targets| targets.is_empty())
+            .unwrap_or(false)
+        {
+            self.targets.clear();
+        }
     }
 
     /// Return the auth mode of the ACL entry
