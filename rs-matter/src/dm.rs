@@ -583,7 +583,7 @@ where
                 .map(|timeout_instant| (exchange.matter().epoch())() > timeout_instant)
                 .unwrap_or(false)
             {
-                Some(IMStatusCode::Timeout)
+                Some(IMStatusCode::UnsupportedAccess)
             } else {
                 None
             }

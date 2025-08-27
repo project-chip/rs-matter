@@ -20557,7 +20557,7 @@ pub mod unit_testing {
                 rs_matter_crate::dm::Command::new(
                     CommandId::TimedInvokeRequest as _,
                     None,
-                    rs_matter_crate::dm::Access::WO,
+                    rs_matter_crate::dm::Access::WO.union(rs_matter_crate::dm::Access::TIMED_ONLY),
                 ),
                 rs_matter_crate::dm::Command::new(
                     CommandId::TestSimpleOptionalArgumentRequest as _,

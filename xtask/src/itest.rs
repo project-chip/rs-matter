@@ -33,6 +33,7 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestAttributesById",
     "TestCommandsById",
     "TestCluster",
+    "TestClusterComplexTypes",
     "TestBasicInformation",
     // "TestAccessControlCluster",
 ];

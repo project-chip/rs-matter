@@ -162,7 +162,7 @@ fn test_timed_write_fail_and_success() {
                     reliable: true,
                 },
                 expected_payload: StatusResp {
-                    status: IMStatusCode::Timeout,
+                    status: IMStatusCode::UnsupportedAccess,
                 },
                 process_reply: ReplyProcessor::none,
             },
@@ -276,7 +276,7 @@ fn test_timed_cmd_timeout() {
                     reliable: true,
                 },
                 expected_payload: StatusResp {
-                    status: IMStatusCode::Timeout,
+                    status: IMStatusCode::UnsupportedAccess,
                 },
                 process_reply: ReplyProcessor::none,
             },

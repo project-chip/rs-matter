@@ -412,12 +412,20 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let commands = cluster.commands.iter().map(|cmd| {
         let cmd_name = ident(&cmd.id);
 
-        let access = match cmd.access {
+        let mut access = match cmd.access {
             AccessPrivilege::View => panic!("Unsupported command access: {:?}", cmd.access),
             AccessPrivilege::Operate => quote!(#krate::dm::Access::WO),
             AccessPrivilege::Manage => quote!(#krate::dm::Access::WM),
             AccessPrivilege::Administer => quote!(#krate::dm::Access::WA),
         };
+
+        if cmd.is_timed {
+            access = quote!(#access.union(#krate::dm::Access::TIMED_ONLY));
+        }
+
+        if cmd.is_fabric_scoped {
+            access = quote!(#access.union(#krate::dm::Access::FAB_SCOPED));
+        }
 
         let resp_id = if cmd.output != NO_RESPONSE {
             let cmd_name = ident(&cmd.output);
