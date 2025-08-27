@@ -57,7 +57,7 @@ impl<'a> ASN1Writer<'a> {
             self.offset += size;
             return Ok(());
         }
-        Err(ErrorCode::NoSpace.into())
+        Err(ErrorCode::BufferTooSmall.into())
     }
 
     pub fn append_tlv<F>(&mut self, tag: u8, len: usize, f: F) -> Result<(), Error>
@@ -73,7 +73,7 @@ impl<'a> ASN1Writer<'a> {
             self.offset += len;
             return Ok(());
         }
-        Err(ErrorCode::NoSpace.into())
+        Err(ErrorCode::BufferTooSmall.into())
     }
 
     fn add_compound(&mut self, val: u8) -> Result<(), Error> {
@@ -83,7 +83,7 @@ impl<'a> ASN1Writer<'a> {
         self.depth[self.current_depth] = self.offset;
         self.current_depth += 1;
         if self.current_depth >= MAX_DEPTH {
-            Err(ErrorCode::NoSpace.into())
+            Err(ErrorCode::BufferTooSmall.into())
         } else {
             Ok(())
         }
@@ -151,7 +151,7 @@ impl<'a> ASN1Writer<'a> {
             // This is done with an 0xA2 followed by 2 bytes of actual len
             3
         } else {
-            Err(ErrorCode::NoSpace)?
+            Err(ErrorCode::BufferTooSmall)?
         };
         Ok(len)
     }

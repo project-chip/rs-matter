@@ -142,7 +142,10 @@ impl<const N: usize> DerefMut for OctetsOwned<N> {
 impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
     fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
         Ok(Self {
-            vec: element.str()?.try_into().map_err(|_| ErrorCode::NoSpace)?,
+            vec: element
+                .str()?
+                .try_into()
+                .map_err(|_| ErrorCode::ConstraintError)?,
         })
     }
 
@@ -151,7 +154,7 @@ impl<'a, const N: usize> FromTLV<'a> for OctetsOwned<N> {
             bytes
                 .vec
                 .extend_from_slice(element.str()?)
-                .map_err(|_| ErrorCode::NoSpace)?;
+                .map_err(|_| ErrorCode::ConstraintError)?;
 
             Ok(())
         })

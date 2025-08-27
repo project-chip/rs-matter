@@ -190,7 +190,7 @@ impl DevAttDataFetcher for TestDevAtt {
             data.copy_from_slice(src);
             Ok(src.len())
         } else {
-            Err(ErrorCode::NoSpace.into())
+            Err(ErrorCode::BufferTooSmall.into())
         }
     }
 }

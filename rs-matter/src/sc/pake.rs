@@ -277,7 +277,7 @@ impl Pake {
             let ke = ke.ok_or(ErrorCode::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
             crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
-                .map_err(|_x| ErrorCode::NoSpace)?;
+                .map_err(|_x| ErrorCode::InvalidData)?;
 
             // Create a session
             let data = spake2p.get_app_data();

@@ -367,7 +367,7 @@ impl ClusterHandler for BasicInfoHandler {
         settings
             .node_label
             .push_str(label)
-            .map_err(|_| ErrorCode::NoSpace)?;
+            .map_err(|_| ErrorCode::ConstraintError)?;
         settings.changed = true;
 
         ctx.exchange().matter().notify_persist();

@@ -419,8 +419,9 @@ where
         for network in iter {
             let network = network?;
 
-            self.networks
-                .push_init(T::init_from_tlv(network), || ErrorCode::NoSpace.into())?;
+            self.networks.push_init(T::init_from_tlv(network), || {
+                ErrorCode::ResourceExhausted.into()
+            })?;
         }
 
         self.changed = false;
@@ -547,7 +548,8 @@ where
             Err(NetworksError::BoundsExceeded)
         } else {
             // Add
-            self.networks.push_init(add, || ErrorCode::NoSpace.into())?;
+            self.networks
+                .push_init(add, || ErrorCode::ResourceExhausted.into())?;
 
             self.changed = true;
 

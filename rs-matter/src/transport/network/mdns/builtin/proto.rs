@@ -43,13 +43,13 @@ fn dns_class_with_flush(dns_class: Class) -> Class {
 
 impl From<ShortBuf> for Error {
     fn from(_: ShortBuf) -> Self {
-        Self::new(ErrorCode::NoSpace)
+        Self::new(ErrorCode::BufferTooSmall)
     }
 }
 
 impl From<PushError> for Error {
     fn from(_: PushError) -> Self {
-        Self::new(ErrorCode::NoSpace)
+        Self::new(ErrorCode::BufferTooSmall)
     }
 }
 

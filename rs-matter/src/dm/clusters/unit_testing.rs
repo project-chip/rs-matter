@@ -1427,7 +1427,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 .chain(|o| o.update(s))
         }
 
-        let no_space = || ErrorCode::NoSpace.into(); // TODO
+        let no_space = || ErrorCode::NoSpace.into();
 
         match value {
             ArrayAttributeWrite::Replace(arr) => {

@@ -282,7 +282,7 @@ where
                     unwrap!(sessions.push_init(
                         Session::process_rx_handshake(address, data, gatt_mtu)?
                             .into_fallible::<Error>(),
-                        || ErrorCode::NoSpace.into(),
+                        || ErrorCode::ResourceExhausted.into(),
                     ));
                 }
 

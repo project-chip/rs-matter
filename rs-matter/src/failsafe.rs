@@ -318,7 +318,7 @@ impl FailSafe {
                 mdns_notif,
             )
             .map_err(|e| {
-                if e.code() == ErrorCode::NoSpace {
+                if e.code() == ErrorCode::ResourceExhausted {
                     ErrorCode::NocFabricTableFull.into()
                 } else {
                     e

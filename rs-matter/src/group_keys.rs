@@ -59,7 +59,7 @@ impl KeySet {
         ];
 
         crypto::hkdf_sha256(compressed_id, ipk, &GRP_KEY_INFO, opkey)
-            .map_err(|_| ErrorCode::NoSpace.into())
+            .map_err(|_| ErrorCode::InvalidData.into())
     }
 
     pub fn op_key(&self) -> &[u8] {

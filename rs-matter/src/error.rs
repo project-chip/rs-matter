@@ -58,6 +58,14 @@ pub enum ErrorCode {
     NoNodeId,
     NoMemory,
     NoSession,
+    // TODO: Rename to `TLVNoWriteSpace` or similar, so that it is clear
+    // that this error code should _only_ be used when writing a TLV using
+    // a `TLVWrite` instance which happens to run out of space
+    //
+    // All other cases of running out of space should use the generic:
+    // - `ResourceExhausted` (when number of fabrics, ACLs, sessions or exchanges becomes too big)
+    // - `BufferTooSmall` or `ConstraintError` when other internal buffers don't fit the data
+    // - ... or use-case-specific error codes like `NoSpaceExchanges` and `NoSpaceSessions`.
     NoSpace,
     NoSpaceExchanges,
     NoSpaceSessions,
