@@ -123,8 +123,8 @@ impl Case {
 
                 let mut decrypted = alloc!([0; 800]); // TODO LARGE BUFFER
                 if encrypted.len() > decrypted.len() {
-                    error!("Data too large");
-                    Err(ErrorCode::NoSpace)?;
+                    error!("Encrypted data too large");
+                    Err(ErrorCode::BufferTooSmall)?;
                 }
                 let decrypted = &mut decrypted[..encrypted.len()];
                 decrypted.copy_from_slice(encrypted);
@@ -400,7 +400,7 @@ impl Case {
             0x53, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x4b, 0x65, 0x79, 0x73,
         ];
         if key.len() < 48 {
-            Err(ErrorCode::NoSpace)?;
+            Err(ErrorCode::InvalidData)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
         unwrap!(salt.extend_from_slice(ipk));
@@ -411,7 +411,7 @@ impl Case {
         //        println!("Session Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &SEKEYS_INFO, key)
-            .map_err(|_x| ErrorCode::NoSpace)?;
+            .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Session Key: key: {:x?}", key);
 
         Ok(())
@@ -448,7 +448,7 @@ impl Case {
     ) -> Result<(), Error> {
         const S3K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x33];
         if key.len() < 16 {
-            Err(ErrorCode::NoSpace)?;
+            Err(ErrorCode::InvalidData)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
         unwrap!(salt.extend_from_slice(ipk));
@@ -461,7 +461,7 @@ impl Case {
         //        println!("Sigma3Key: salt: {:x?}, len: {}", salt, salt.len());
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &S3K_INFO, key)
-            .map_err(|_x| ErrorCode::NoSpace)?;
+            .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Sigma3Key: key: {:x?}", key);
 
         Ok(())
@@ -477,7 +477,7 @@ impl Case {
     ) -> Result<(), Error> {
         const S2K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x32];
         if key.len() < 16 {
-            Err(ErrorCode::NoSpace)?;
+            Err(ErrorCode::InvalidData)?;
         }
         let mut salt = heapless::Vec::<u8, 256>::new();
         unwrap!(salt.extend_from_slice(ipk));
@@ -486,7 +486,7 @@ impl Case {
         unwrap!(salt.extend_from_slice(our_hash));
 
         crypto::hkdf_sha256(salt.as_slice(), shared_secret, &S2K_INFO, key)
-            .map_err(|_x| ErrorCode::NoSpace)?;
+            .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Sigma2Key: key: {:x?}", key);
 
         Ok(())

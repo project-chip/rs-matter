@@ -44,15 +44,17 @@ where
         let mut vec = Vec::<T, N>::new();
 
         for item in TLVArray::new(element.clone())? {
-            vec.push(item?).map_err(|_| ErrorCode::NoSpace)?;
+            vec.push(item?).map_err(|_| ErrorCode::ConstraintError)?;
         }
 
         while !vec.is_full() {
             vec.push(Default::default())
-                .map_err(|_| ErrorCode::NoSpace)?;
+                .map_err(|_| ErrorCode::ConstraintError)?;
         }
 
-        Ok(unwrap!(vec.into_array().map_err(|_| ErrorCode::NoSpace)))
+        Ok(unwrap!(vec
+            .into_array()
+            .map_err(|_| ErrorCode::ConstraintError)))
     }
 }
 

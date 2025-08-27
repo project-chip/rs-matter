@@ -124,7 +124,7 @@ impl<'a> BuiltinMdnsResponder<'a> {
             ) {
                 let buffer = self.matter.transport_tx_buffer();
 
-                let mut buf = buffer.get().await.ok_or(ErrorCode::NoSpace)?;
+                let mut buf = buffer.get().await.ok_or(ErrorCode::ResourceExhausted)?;
                 let mut send = send.lock().await;
 
                 let len = host.broadcast(self, &mut buf, 60)?;
@@ -160,10 +160,10 @@ impl<'a> BuiltinMdnsResponder<'a> {
                 let tx_buf = self.matter.transport_tx_buffer();
                 let rx_buf = self.matter.transport_rx_buffer();
 
-                let mut rx = rx_buf.get().await.ok_or(ErrorCode::NoSpace)?;
+                let mut rx = rx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
                 let (len, addr) = recv.recv_from(&mut rx).await?;
 
-                let mut tx = tx_buf.get().await.ok_or(ErrorCode::NoSpace)?;
+                let mut tx = tx_buf.get().await.ok_or(ErrorCode::ResourceExhausted)?;
                 let mut send = send.lock().await;
 
                 let (len, delay) = match host.respond(self, &rx[..len], &mut tx, 60) {

@@ -52,7 +52,7 @@ where
         Q: Borrow<[u8]>,
     {
         if self.buf.borrow().len() < pb.read_off + pb.left {
-            Err(ErrorCode::NoSpace)?;
+            Err(ErrorCode::BufferTooSmall)?;
         }
 
         self.buf.borrow_mut()[0..pb.read_off + pb.left]

@@ -454,7 +454,7 @@ impl<'a> Matter<'a> {
         timeout_secs: u16,
     ) -> Result<(), Error> {
         let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
-        let mut buf = buf_access.get().await.ok_or(ErrorCode::NoSpace)?;
+        let mut buf = buf_access.get().await.ok_or(ErrorCode::ResourceExhausted)?;
 
         self.pase_mgr.borrow_mut().enable_basic_pase_session(
             self.dev_comm.password,

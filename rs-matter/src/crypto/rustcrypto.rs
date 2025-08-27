@@ -294,7 +294,7 @@ impl KeyPair {
         use p256::ecdsa::signature::Signer;
 
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(ErrorCode::NoSpace.into());
+            return Err(ErrorCode::InvalidData.into());
         }
 
         match &self.key {

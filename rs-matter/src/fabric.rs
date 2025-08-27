@@ -113,13 +113,13 @@ impl Fabric {
     ) -> Result<(), Error> {
         self.root_ca
             .extend_from_slice(root_ca)
-            .map_err(|_| ErrorCode::NoSpace)?;
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
         self.icac
             .extend_from_slice(icac)
-            .map_err(|_| ErrorCode::NoSpace)?;
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
         self.noc
             .extend_from_slice(noc)
-            .map_err(|_| ErrorCode::NoSpace)?;
+            .map_err(|_| ErrorCode::BufferTooSmall)?;
 
         let noc_p = CertRef::new(TLVElement::new(noc));
 
@@ -142,7 +142,7 @@ impl Fabric {
                         e.fab_idx = Some(self.fab_idx);
                         e.add_subject(case_admin_subject)
                     }),
-                || ErrorCode::NoSpace.into(),
+                || ErrorCode::ResourceExhausted.into(),
             )?;
         }
 
@@ -266,7 +266,9 @@ impl Fabric {
         // Overwrite the fabric index with our accessing fabric index
         entry.fab_idx = Some(self.fab_idx);
 
-        self.acl.push(entry).map_err(|_| ErrorCode::NoSpace)?;
+        self.acl
+            .push(entry)
+            .map_err(|_| ErrorCode::ResourceExhausted)?;
 
         Ok(self.acl.len() - 1)
     }
@@ -283,7 +285,8 @@ impl Fabric {
         //     Err(ErrorCode::ConstraintError)?;
         // }
 
-        self.acl.push_init(init, || ErrorCode::NoSpace.into())?;
+        self.acl
+            .push_init(init, || ErrorCode::ResourceExhausted.into())?;
 
         let idx = self.acl.len() - 1;
         let entry = &mut self.acl[idx];
@@ -438,8 +441,9 @@ impl FabricMgr {
         for entry in TLVElement::new(data).array()?.iter() {
             let entry = entry?;
 
-            self.fabrics
-                .push_init(Fabric::init_from_tlv(entry), || ErrorCode::NoSpace.into())?;
+            self.fabrics.push_init(Fabric::init_from_tlv(entry), || {
+                ErrorCode::ResourceExhausted.into()
+            })?;
         }
 
         mdns_notif();
@@ -505,7 +509,7 @@ impl FabricMgr {
             let Some(fab_idx) = (1..u8::MAX)
                 .find(|fab_idx| self.iter().all(|fabric| fabric.fab_idx().get() != *fab_idx))
             else {
-                return Err(ErrorCode::NoSpace.into());
+                return Err(ErrorCode::ResourceExhausted.into());
             };
 
             fab_idx
@@ -515,7 +519,7 @@ impl FabricMgr {
             Fabric::init(fab_idx, key_pair)
                 .into_fallible::<Error>()
                 .chain(post_init),
-            || ErrorCode::NoSpace.into(),
+            || ErrorCode::ResourceExhausted.into(),
         )?;
 
         let fabric = unwrap!(self.fabrics.last_mut());
@@ -598,7 +602,7 @@ impl FabricMgr {
         fabric
             .label
             .push_str(label)
-            .map_err(|_| ErrorCode::NoSpace)?;
+            .map_err(|_| ErrorCode::ConstraintError)?;
 
         self.changed = true;
 

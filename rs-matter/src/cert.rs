@@ -625,7 +625,7 @@ impl<'a> CertRef<'a> {
 
             if dn.tag()? == DNTag::NocCat {
                 if offset == output.len() {
-                    Err(ErrorCode::NoSpace)?;
+                    Err(ErrorCode::InvalidData)?;
                 }
 
                 output[offset] = dn.uint()? as u32;

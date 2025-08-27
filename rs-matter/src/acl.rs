@@ -149,7 +149,7 @@ impl AccessorSubjects {
                 return Ok(());
             }
         }
-        Err(ErrorCode::NoSpace.into())
+        Err(ErrorCode::ResourceExhausted.into())
     }
 
     /// Match the acl_subject with any of the current subjects
@@ -435,7 +435,9 @@ impl AclEntry {
                     for subject in subjects {
                         let subject = subject?;
 
-                        esubjects.push(subject).map_err(|_| ErrorCode::NoSpace)?;
+                        esubjects
+                            .push(subject)
+                            .map_err(|_| ErrorCode::ResourceExhausted)?;
                     }
                 } else {
                     e.subjects.clear();
@@ -452,7 +454,7 @@ impl AclEntry {
                                 target.cluster()?.into_option(),
                                 target.device_type()?.into_option(),
                             ))
-                            .map_err(|_| ErrorCode::NoSpace)?;
+                            .map_err(|_| ErrorCode::ResourceExhausted)?;
                     }
                 } else {
                     e.targets.clear();
@@ -525,7 +527,7 @@ impl AclEntry {
 
         unwrap!(self.subjects.as_opt_mut())
             .push(subject)
-            .map_err(|_| ErrorCode::NoSpace.into())
+            .map_err(|_| ErrorCode::ResourceExhausted.into())
     }
 
     /// Add a CAT id to the ACL entry
@@ -541,7 +543,7 @@ impl AclEntry {
 
         unwrap!(self.targets.as_opt_mut())
             .push(target)
-            .map_err(|_| ErrorCode::NoSpace.into())
+            .map_err(|_| ErrorCode::ResourceExhausted.into())
     }
 
     fn match_accessor(&self, accessor: &Accessor) -> bool {

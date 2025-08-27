@@ -86,7 +86,7 @@ const RADIX: u32 = BASE38_CHARS.len() as u32;
 pub fn encode_string<const N: usize>(bytes: &[u8]) -> Result<heapless::String<N>, Error> {
     let mut string = heapless::String::new();
     for c in encode(bytes) {
-        string.push(c).map_err(|_| ErrorCode::NoSpace)?;
+        string.push(c).map_err(|_| ErrorCode::BufferTooSmall)?;
     }
 
     Ok(string)
@@ -148,7 +148,7 @@ pub fn decode_vec<const N: usize>(base38_str: &str) -> Result<heapless::Vec<u8, 
     let mut vec = heapless::Vec::new();
 
     for byte in decode(base38_str) {
-        vec.push(byte?).map_err(|_| ErrorCode::NoSpace)?;
+        vec.push(byte?).map_err(|_| ErrorCode::BufferTooSmall)?;
     }
 
     Ok(vec)

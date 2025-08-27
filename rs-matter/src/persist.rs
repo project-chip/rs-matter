@@ -211,7 +211,7 @@ pub mod fileio {
 
                     loop {
                         if offset == buf.len() {
-                            Err(ErrorCode::NoSpace)?;
+                            Err(ErrorCode::BufferTooSmall)?;
                         }
 
                         let len = file.read(&mut buf[offset..])?;

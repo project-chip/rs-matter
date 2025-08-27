@@ -43,7 +43,7 @@ where
         let mut vec = Vec::<T, N>::new();
 
         for item in TLVArray::new(element.clone())? {
-            vec.push(item?).map_err(|_| ErrorCode::NoSpace)?;
+            vec.push(item?).map_err(|_| ErrorCode::ConstraintError)?;
         }
 
         Ok(vec)
@@ -54,7 +54,7 @@ where
             let mut iter = TLVArray::new(tlv)?.iter();
 
             while let Some(item) = iter.try_next_init() {
-                vec.push_init(item?, || ErrorCode::NoSpace.into())?;
+                vec.push_init(item?, || ErrorCode::ConstraintError.into())?;
             }
 
             Ok(())
