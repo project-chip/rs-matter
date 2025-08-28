@@ -16,14 +16,13 @@
  */
 
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
-#![recursion_limit = "256"]
+#![recursion_limit = "4000"]
 use core::pin::pin;
 
 use std::net::UdpSocket;
 
 use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{Duration, Timer};
 
 use log::info;
 
@@ -125,6 +124,7 @@ fn run() -> Result<(), Error> {
 
     let level_control_handler = LevelControlHandler::new();
     let level_control_cluster = level_control::LevelControlCluster::new(Dataver::new_rand(matter.rand()), &level_control_handler);
+    level_control_cluster.set_on_off_cluster(&on_off);
     let mut level_control_job = pin!(level_control_cluster.run());
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
@@ -218,11 +218,16 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn dm_handler<'a, 'oc, 'lc>(
     matter: &'a Matter<'a>,
-    on_off: &'a on_off::OnOffHandler,
-    level_control: &'a level_control::LevelControlCluster<LevelControlHandler>,
-) -> impl AsyncMetadata + AsyncHandler + 'a {
+    on_off: &'oc on_off::OnOffHandler,
+    level_control: &'lc level_control::LevelControlCluster<'a, 'oc, LevelControlHandler>,
+) -> impl AsyncMetadata + AsyncHandler + 'a + 'oc + 'lc
+where
+    'oc: 'a,
+    'a: 'oc,
+    'lc: 'a
+{
     (
         NODE,
         endpoints::with_eth(
@@ -242,7 +247,7 @@ fn dm_handler<'a>(
                         Async(on_off::HandlerAdaptor(on_off)),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(level_control::LevelControlCluster::<'_, LevelControlHandler>::CLUSTER.id)),
+                        EpClMatcher::new(Some(1), Some(level_control::LevelControlCluster::<'a, 'oc, LevelControlHandler>::CLUSTER.id)),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
             ),
@@ -281,8 +286,8 @@ impl LevelControlHandler {
 
 impl LevelControlHooks for LevelControlHandler {
     const MIN_LEVEL: u8 = 1;
-
     const MAX_LEVEL: u8 = 254;
+    const FASTEST_RATE: u8 = 50;
 
     fn set_level(&self, _level: u8) -> Result<(), Error> {
         // This is where business logic is implemented to physically change the level.
@@ -340,5 +345,9 @@ impl LevelControlHooks for LevelControlHandler {
     fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error> {
         self.remaining_time.set(value);
         Ok(())
+    }
+
+    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error> {
+        Err(ErrorCode::AttributeNotFound.into())
     }
 }

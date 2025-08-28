@@ -3,41 +3,87 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
-use crate::im::AttrResp;
-use crate::utils::storage::WriteBuf;
-use crate::tlv::{FromTLV, Nullable, TLVElement};
-use crate::dm::{AsyncHandler, AttrDetails, Cluster, CmdDetails, Dataver, InvokeContext, InvokeContextInstance, InvokeReplyInstance, ReadContext, ReadContextInstance, CmdDataTracker, ReadReplyInstance, WriteContext};
-use crate::dm::clusters::{decl, level_control};
+use crate::tlv::Nullable;
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
+use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 pub use crate::dm::clusters::decl::level_control::*;
 use crate::with;
 use crate::error::{Error, ErrorCode};
 
 enum Task {
+    MoveToLevel{with_on_off: bool, target: u8, transition_time: u16},
+    Move{with_on_off: bool, move_mode: MoveModeEnum, event_duration: Duration},
+    // Step{with_on_off: bool},
     Stop,
-    MoveToLevel{target: u8, transition_time: u16},
 }
 
-pub struct LevelControlCluster<'a, T: LevelControlHooks> {
+pub struct LevelControlCluster<'lh, 'oc, T: LevelControlHooks> {
     dataver: Dataver,
-    handler: &'a T,
+    handler: &'lh T,
     task_signal: Signal<NoopRawMutex, Task>,
     last_current_level_update: Cell<Instant>,
+    on_off: Cell<Option<&'oc OnOffHandler>>,
 }
 
-impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
+impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
 
-    pub fn new(dataver: Dataver, handler: &'a T) -> Self {
+    pub fn new(dataver: Dataver, handler: &'lh T) -> Self {
         Self {
             dataver,
             handler,
             task_signal: Signal::new(),
             last_current_level_update: Cell::new(Instant::from_millis(0)),
+            on_off: Cell::new(None),
         }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
         HandlerAsyncAdaptor(self)
+    }
+
+    // Set the OnOff cluster instance that in coupled with this LevelControl cluster, i.e. the OnOff cluster on the same endpoint.
+    // Note: The OnOff cluster on the same endpoint SHALL be set if any of the following is true
+    //   - The OnOff feature is set
+    //   - The `WithOnOff` commands are supported
+    pub fn set_on_off_cluster(&self, cluster: &'oc OnOffHandler) {
+        self.on_off.set(Some(cluster))
+    }
+
+
+    // todo Such a method might be useful to inform the user of any misconfigurations at start-up rather than during operation.
+    // Similar checks are carried out by the Matter certification, however, this would also pick up if the on_off cluster was set when needed.
+    // Validate that the LevelControlCluster has been set up correctly for the desired cluster configuration.
+    // todo decide the type of the errors
+    pub fn validate(&self, cluster: Cluster<'static>) -> Result<(), Error> {
+        if cluster.revision != 7 {
+            // "incorrect version number: expected 7 got {}", cluster.revision
+            return Err(ErrorCode::Invalid.into());
+        }
+
+        if cluster.feature_map & level_control::Feature::ON_OFF.bits() != 0 {
+            if let None = self.on_off.get() {
+                // "a reference to the OnOff cluster must be set when the LIGHTING feature is enabled"
+                return Err(ErrorCode::Invalid.into());
+            }
+
+            // // This is an example. Needs PartialEq derived on AttributeId
+            // if cluster.attributes.contains(AttributeId::MaxLevel) {
+            //     return Err(ErrorCode::Invalid.into());
+            // }
+        }
+
+        if cluster.feature_map & level_control::Feature::LIGHTING.bits() != 0 {
+            // From section 1.6.4.2
+            // A value of 0x00 SHALL NOT be used.
+            // A value of 0x01 SHALL indicate the minimum level that can be attained on a device.
+            // A value of 0xFE SHALL indicate the maximum level that can be attained on a device.
+            if T::MIN_LEVEL == 0 || T::MAX_LEVEL > 0xFE {
+                return Err(ErrorCode::Invalid.into());
+            }
+        }
+
+        Ok(())
     }
 
     // Processes the options of commands 'without On/Off'.
@@ -50,12 +96,19 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
 
     async fn task_manager(&self, task: Task) {
         match task {
-            Task::Stop => return,
-            Task::MoveToLevel{ target, transition_time} => {
-                if let Err(e) = self.move_to_level_transition(target, transition_time).await {
+            Task::MoveToLevel{with_on_off, target, transition_time} => {
+                if let Err(e) = self.move_to_level_transition(with_on_off, target, transition_time).await {
                     error!("{}", e.to_string());
                 }
             },
+            Task::Move { with_on_off, move_mode, event_duration } => {
+                if let Err(e) = self.move_transition(with_on_off, move_mode, event_duration).await {
+                    error!("{}", e.to_string());
+                }
+
+            }
+            // Task::Step { with_on_off } => return, // todo
+            Task::Stop => return,
         }
     }
 
@@ -102,119 +155,72 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
     // From section 1.6.4.1.2
     // When the level is reduced to its minimum the OnOff attribute is automatically turned to FALSE, 
     // and when the level is increased above its minimum the OnOff attribute is automatically turned to TRUE.
-    async fn update_coupled_onoff(&self, ctx: impl InvokeContext, current_level: u8) -> Result<(), Error>{
+    fn update_coupled_on_off(&self, current_level: u8, with_on_off: bool) -> Result<(), Error>{
         // From section 1.6.4.1.2.
         // There are two sets of commands provided in the Level Control cluster. These are identical, except
         // that the first set (MoveToLevel, Move and Step commands) SHALL NOT affect the OnOff attribute,
         // whereas the second set ('with On/Off' variants) SHALL.
-        let with_on_off_commands: u32 = 
-            CommandId::MoveToLevelWithOnOff as u32 |
-            CommandId::MoveWithOnOff as u32 |
-            CommandId::StepWithOnOff as u32 | 
-            CommandId::StopWithOnOff as u32;
-        if ctx.cmd().cmd_id & with_on_off_commands == 0 {
+        info!("update_coupled_onoff: 1");
+        if !with_on_off {
             return Ok(());
         }
-        
-        // step1 : get the current on_off value. Probably not needed.
-        let attr = AttrDetails{
-            node: ctx.cmd().node,
-            endpoint_id: ctx.cmd().endpoint_id,
-            cluster_id: crate::dm::clusters::decl::on_off::FULL_CLUSTER.id,
-            attr_id: crate::dm::clusters::decl::on_off::AttributeId::OnOff as u32,
-            list_index: None,
-            fab_idx: 0,
-            fab_filter: false,
-            dataver: None,
-            wildcard: false,
-        };
-        let read_context = ReadContextInstance::new(
-            ctx.exchange(),
-            ctx.handler(),
-            ctx.buffers(),
-            &attr,
-        );
-        let mut buf = [0u8; 1024]; // todo get accurate size?
-        let mut wb = WriteBuf::new(&mut buf);
-        let mut tw = crate::tlv::TLVWriter::new(&mut wb);
-        let reply = ReadReplyInstance::new(&attr, &mut tw);
-        ctx.handler().read(read_context, reply).await?;
 
-        let attr_response = AttrResp::from_tlv(&TLVElement::new(&buf))?;
-        let on_off = match attr_response {
-            AttrResp::Status(_attr_status) => {
-                // todo not the correct error
-                return Err(ErrorCode::AttributeNotFound.into())
-            },
-            AttrResp::Data(attr_data) => {
-                attr_data.data.bool()?
-            },
-        };
-
-        // step 2: set the on_off value based on the current level.
+        info!("update_coupled_onoff: 2");
         let new_on_off_value = current_level > T::MIN_LEVEL;
-
-        if on_off != new_on_off_value {
-            let mut buf = [0u8; 1024]; // todo get accurate size?
-            let mut wb = WriteBuf::new(&mut buf);
-            let mut tw = crate::tlv::TLVWriter::new(&mut wb);
-            let tlv_element = &TLVElement::new(&[]);
-            let mut tracker = CmdDataTracker::new();
-
-            match new_on_off_value {
-                true => {
-                    let cmd_details = CmdDetails{
-                        node: ctx.cmd().node,
-                        endpoint_id: ctx.cmd().endpoint_id,
-                        cluster_id: decl::on_off::FULL_CLUSTER.id,
-                        cmd_id: decl::on_off::CommandId::On as u32,
-                        wildcard: false,
-                    };
-
-                    let on_invoke_context = InvokeContextInstance::new(
-                        ctx.exchange(),
-                        ctx.handler(),
-                        ctx.buffers(),
-                        &cmd_details,
-                        &tlv_element,
-                        &(),
-                    );
-
-                    let reply = InvokeReplyInstance::new(&cmd_details, &mut tracker, &mut tw);
-                    // COMPILATION ERROR overflow depth limit
-                    ctx.handler().invoke(on_invoke_context, reply).await?;
-                    // todo read reply for success
-                },
-                false => {
-                    let cmd_details = CmdDetails{
-                        node: ctx.cmd().node,
-                        endpoint_id: ctx.cmd().endpoint_id,
-                        cluster_id: decl::on_off::FULL_CLUSTER.id,
-                        cmd_id: decl::on_off::CommandId::Off as u32,
-                        wildcard: false,
-                    };
-
-                    let off_invoke_context = InvokeContextInstance::new(
-                        ctx.exchange(),
-                        ctx.handler(),
-                        ctx.buffers(),
-                        &cmd_details,
-                        &tlv_element,
-                        &(),
-                    );
-
-                    let reply = InvokeReplyInstance::new(&cmd_details, &mut tracker, &mut tw);
-                    // COMPILATION ERROR overflow depth limit
-                    ctx.handler().invoke(off_invoke_context, reply).await?;
-                    // todo read reply for success
-                },
-            }
+        
+        match self.on_off.get() {
+            Some(on_off) => {
+                info!("update_coupled_onoff: 3");
+                let current_on_off = on_off.get();
+                if current_on_off != new_on_off_value {
+                    info!("update_coupled_onoff: 4");
+                    on_off.coupled_cluster_set_on_off(true);
+                }
+            },
+            None => {
+                error!("LevelControlCluster: expected OnOffCluster is missing.\n
+                help: use set_on_off_cluster() to couple the OnOffCluster on the same endpoint with this LevelControlCluster")
+            },
         }
 
         Ok(())
     }
+    
+    // A single move-to-level command handler for both with and without on off.
+    fn move_to_level(&self, with_on_off: bool, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
 
-    async fn move_to_level_transition(&self, target_level: u8, transition_time: u16) -> Result<(), Error> {
+        // todo should this be corrected? Check the cpp impl
+        if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
+            return Err(ErrorCode::InvalidCommand.into())
+        }
+
+        if with_on_off && !self.should_continue(options_mask, options_override) {
+            return Ok(());
+        }
+
+        info!("setting level to {} with transition time {:?}", level, transition_time);
+
+        match transition_time {
+            None | Some(0) => {
+                self.task_signal.signal(Task::Stop);
+                self.handler.set_level(level)?;
+                self.write_current_level_quietly(Nullable::some(level), true)?;
+                self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
+
+                self.update_coupled_on_off(level, with_on_off)?;
+
+            }
+            Some(t_time) => {
+                self.task_signal.signal(Task::MoveToLevel { with_on_off: with_on_off, target: level, transition_time: t_time});
+            }
+        }
+
+        Ok(())
+
+    }
+
+    // Transition the current_level to target_level in the transition_time.
+    async fn move_to_level_transition(&self, with_on_off: bool, target_level: u8, transition_time: u16) -> Result<(), Error> {
         let event_start_time = Instant::now();
 
         // Check if current_level is null. If so, return error.
@@ -254,10 +260,7 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
             if is_transition_end {
                 self.write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)?;
 
-                // todo if withOnOff command, update the OnOff cluster accordingly.
-                //  This is going to require passing the context through the signal
-                // self.update_coupled_onoff(ctx, current_level).await?;
-                
+                self.update_coupled_on_off(current_level, with_on_off)?;
 
                 return Ok(());
             }
@@ -284,40 +287,59 @@ impl<'a, T: LevelControlHooks> LevelControlCluster<'a, T> {
         }
     }
 
-    // A single method for dealing with the MoveToLevel and MoveToLevelWithOnOff logic.
-    async fn move_to_level(&self, ctx: impl InvokeContext, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error>{
-        // todo should this be corrected? Check the cpp impl
-        if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
-            return Err(Error::new(ErrorCode::InvalidCommand))
+    // A single move command handler for both with and without on off.
+    fn move_command(&self, with_on_off: bool, move_mode: MoveModeEnum, rate: Option<u8>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
+        // From Section 1.6.7.2.2
+        // 
+        // If the Rate field is null, then the value of the
+        // DefaultMoveRate attribute SHALL be used if that attribute is supported and its value is not null. If
+        // the Rate field is null and the DefaultMoveRate attribute is either not supported or set to null, then
+        // the device SHOULD move as fast as it is able.
+        let rate = match rate {
+            Some(val) => val,
+            None => {
+                match self.handler.raw_get_default_move_rate() {
+                    Ok(default_move_rate) => {
+                        match default_move_rate.into_option() {
+                            Some(val) => val,
+                            None => T::FASTEST_RATE,
+                        }
+                    }
+                    Err(_) => T::FASTEST_RATE,
+                }
+            },
+        };
+
+        // This will catch the case where T::FASTEST_RATE is 0.
+        // The spec is not explicit about what should be done if this happens.
+        // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
+        // until spec defines a behaviour.
+        if rate == 0 {
+            return Err(Error::new(ErrorCode::InvalidCommand));
         }
 
-        let with_on_off = ctx.cmd().cmd_id == level_control::CommandId::MoveToLevelWithOnOff as u32;
         if with_on_off && !self.should_continue(options_mask, options_override) {
             return Ok(());
         }
 
-        info!("setting level to {} with transition time {:?}", level, transition_time);
+        let event_duration = Duration::from_hz(rate as u64);
+        
+        info!("moving with rate {}", rate);
 
-        match transition_time {
-            None | Some(0) => {
-                self.task_signal.signal(Task::Stop);
-                self.handler.set_level(level)?;
-                self.write_current_level_quietly(Nullable::some(level), true)?;
-                self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
+        self.task_signal.signal(Task::Move { with_on_off: with_on_off, move_mode: move_mode, event_duration: event_duration });
 
-                self.update_coupled_onoff(ctx, level).await?;
+        Ok(())
+    }
 
-            }
-            Some(t_time) => {
-                self.task_signal.signal(Task::MoveToLevel { target: level, transition_time: t_time});
-            }
-        }
-
+    async fn move_transition(&self, with_on_off: bool, move_mode: MoveModeEnum, event_duration: Duration) -> Result<(), Error> {
+        // todo implement
         Ok(())
     }
 }
 
-impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T> {
+impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'lh, 'oc, T> {
+    // todo Because this is const, I don't think that we can populated it by `set` methods in LevelControlCluster to ensure the cluster is setup correctly.
+    // Hence, we should move this to the LevelControlHooks of take it as an input during initialisation.
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
         .with_revision(7)
@@ -365,8 +387,6 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
         self.dataver.changed();
     }
 
-    // fn current_frequency(&self,ctx:impl crate::dm::ReadContext) -> Result<u16,crate::error::Error>{
-
     async fn current_level(
         &self,
         _ctx: impl ReadContext,
@@ -393,11 +413,14 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
 
     async fn set_options(
         &self,
-        _ctx: impl WriteContext,
+        ctx: impl WriteContext,
         value: OptionsBitmap,
     ) -> Result<(), Error> {
         info!("set_options called");
-        self.handler.raw_set_options(value)
+        self.handler.raw_set_options(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
     }
 
     async fn set_on_level(
@@ -406,6 +429,13 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
         value: Nullable<u8>,
     ) -> Result<(), Error> {
         info!("set_on_level called");
+        if let Some(level) = value.clone().into_option() {
+            if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
+                // todo not sure if this is the correct error
+                return Err(ErrorCode::InvalidData.into())
+            }
+        }
+
         self.handler.raw_set_on_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -434,6 +464,13 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
 
     async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(),Error> {
         info!("LevelControl: Called set_start_up_current_level()");
+        if let Some(level) = value.clone().into_option() {
+            if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
+                // todo not sure if this is the correct error
+                return Err(ErrorCode::InvalidData.into())
+            }
+        }
+
         self.handler.raw_set_startup_current_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -442,12 +479,13 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
 
     async fn handle_move_to_level(
         &self,
-        ctx: impl InvokeContext,
+        _ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move_to_level()");
 
-        self.move_to_level(ctx, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?).await
+        self.move_to_level(false, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
+
     }
 
     async fn handle_move(
@@ -457,22 +495,8 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move()");
 
-        if !self.should_continue(request.options_mask()?, request.options_override()?) {
-            // todo Should this return an error?
-            info!("Ignoring command due to options settings");
-            return Ok(());
-        }
+        self.move_command(false, request.move_mode()?, request.rate()?.into_option(), request.options_mask()?, request.options_override()?)
 
-        let rate = request.rate()?.into_option();
-
-        let rate = match rate {
-            Some(0) | None => { return Err(Error::new(ErrorCode::InvalidCommand)); },
-            Some(val) => val,
-        };
-
-        info!("moving with rate {}", rate);
-        // todo implement move
-        Ok(())
     }
 
     async fn handle_step(
@@ -507,21 +531,23 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
 
     async fn handle_move_to_level_with_on_off(
         &self,
-        ctx: impl InvokeContext,
+        _ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move_to_level_with_on_off()");
 
-        self.move_to_level(ctx, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?).await
+        self.move_to_level(true, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
+
     }
 
     async fn handle_move_with_on_off(
         &self,
         _ctx: impl InvokeContext,
-        _request: MoveWithOnOffRequest<'_>,
+        request: MoveWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move_with_on_off()");
-        Ok(())
+
+        self.move_command(true, request.move_mode()?, request.rate()?.into_option(), request.options_mask()?, request.options_override()?)
     }
 
     async fn handle_step_with_on_off(
@@ -550,12 +576,14 @@ impl<'a, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, T
         info!("LevelControl: Called handle_move_to_closest_frequency()");
         Ok(())
     }
+
 }
 
 
 pub trait LevelControlHooks {
     const MIN_LEVEL: u8;
     const MAX_LEVEL: u8;
+    const FASTEST_RATE: u8;
 
     // Raw accessors
     //  These methods should not perform any checks.
@@ -570,6 +598,8 @@ pub trait LevelControlHooks {
     fn raw_set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
     fn raw_get_remaining_time(&self) -> u16;
     fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
+
+    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error>; // todo should these me Options?
 
     // Implements the business logic for setting the level.
     // Do not update attribute states.
