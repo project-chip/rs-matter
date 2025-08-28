@@ -19,6 +19,7 @@
 
 use core::iter::once;
 use core::marker::PhantomData;
+use core::pin::pin;
 
 use alloc::sync::Arc;
 
@@ -335,13 +336,16 @@ impl IndPeers {
         F: Fn(GattPeripheralEvent),
     {
         let result = {
-            let mut read = state
+            let read = state
                 .peers
                 .iter_mut()
                 .map(|endpoint| endpoint.socket.readable())
                 .collect::<storage::Vec<_, MAX_CONNECTIONS>>();
 
-            select(select_slice(&mut read), notif.wait()).await
+            let read = pin!(read);
+            let read = unsafe { read.map_unchecked_mut(|read| read.as_mut_slice()) };
+
+            select(select_slice(read), notif.wait()).await
         };
 
         match result {
