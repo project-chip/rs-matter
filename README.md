@@ -1,9 +1,9 @@
 # ![alt text](https://avatars.githubusercontent.com/u/61027988?s=48&v=4 "rs-matter") rs-matter
 
-[![license](https://img.shields.io/badge/license-Apache2-green.svg)](https://raw.githubusercontent.com/project-chip/matter-rs/main/LICENSE)
-[![CI](https://github.com/project-chip/matter-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/project-chip/matter-rs/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Apache2-green.svg)](https://raw.githubusercontent.com/project-chip/rs-matter/main/LICENSE)
+[![CI](https://github.com/project-chip/rs-matter/actions/workflows/ci.yml/badge.svg)](https://github.com/project-chip/rs-matter/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/rs-matter.svg)](https://crates.io/crates/rs-matter)
-[![Matrix](https://img.shields.io/matrix/matter-rs:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#matter-rs:matrix.org)
+[![Matrix](https://img.shields.io/matrix/rs-matter:matrix.org?label=join%20matrix&color=BEC5C9&logo=matrix)](https://matrix.to/#/#rs-matter:matrix.org)
 
 ## What is it exactly?
 
