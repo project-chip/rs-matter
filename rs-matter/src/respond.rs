@@ -159,7 +159,10 @@ where
             unwrap!(handlers.push(self.handle(handler_id)).map_err(|_| ())); // Cannot fail because the vector has size N
         }
 
-        select_slice(&mut handlers).await.0
+        let handlers = pin!(handlers);
+        let handlers = unsafe { handlers.map_unchecked_mut(|handlers| handlers.as_mut_slice()) };
+
+        select_slice(handlers).await.0
     }
 
     #[inline(always)]

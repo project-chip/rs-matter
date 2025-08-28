@@ -18,6 +18,7 @@
 //! A `GattPeripheral` implementation using the BlueZ GATT stack via the `bluer` crate.
 
 use core::iter::once;
+use core::pin::pin;
 use core::ptr::addr_of_mut;
 
 use alloc::sync::Arc;
@@ -357,14 +358,20 @@ impl BluerGattPeripheral {
                     .notifiers_listen_allowed
                     .wait(|allowed| (!*allowed).then_some(()));
 
-                let mut closed = notifiers
+                let closed = notifiers
                     .iter()
                     .map(|notifier| notifier.closed())
                     .collect::<heapless::Vec<_, MAX_CONNECTIONS>>();
 
                 // Await until we are no longer allowed to await (future notifiers_listen_allowed)
                 // or until we have a closed notifier
-                let result = select(notifiers_listen_allowed, select_slice(&mut closed)).await;
+                let result = {
+                    let closed = pin!(closed);
+                    let closed =
+                        unsafe { closed.map_unchecked_mut(|closed| closed.as_mut_slice()) };
+
+                    select(notifiers_listen_allowed, select_slice(closed)).await
+                };
 
                 match result {
                     // No longer allowed to await for closed connections, wait until we are allowed again
@@ -373,8 +380,6 @@ impl BluerGattPeripheral {
                         // Remove the closed notifier
 
                         let address = BtAddr(notifiers[index].device_address().0);
-
-                        drop(closed);
 
                         notifiers.swap_remove(index);
 

@@ -44,7 +44,7 @@ safemem = { version = "0.3", default-features = false }
 owo-colors = "4"
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
-embassy-futures = "0.1"
+embassy-futures = "0.1.2"
 embassy-time = "0.4"
 embassy-time-queue-utils = "0.1"
 embassy-sync = "0.7"
