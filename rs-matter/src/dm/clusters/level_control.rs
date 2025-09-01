@@ -88,10 +88,10 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
 
     // Processes the options of commands 'without On/Off'.
     // Returns true if execution of the command should continue, false otherwise.
-    fn should_continue(&self, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> bool {
-        let temporary_options = (options_mask & options_override) | self.handler.raw_get_options();
+    fn should_continue(&self, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<bool, Error> {
+        let temporary_options = (options_mask & options_override) | self.handler.raw_get_options()?;
 
-        temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF)
+        Ok(temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF))
     }
 
     async fn task_manager(&self, task: Task) {
@@ -121,7 +121,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         // - When it changes to 0, or
         // - When it changes from 0 to any value higher than 10, or
         // - When it changes, with a delta larger than 10, caused by the invoke of a command.
-        let previous_remaining_time = self.handler.raw_get_remaining_time();
+        let previous_remaining_time = self.handler.raw_get_remaining_time()?;
         let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
         let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
         let changed_by_gt_10 = remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
@@ -134,7 +134,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
     }
 
     fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
-        let previous_value = self.handler.raw_get_current_level();
+        let previous_value = self.handler.raw_get_current_level()?;
         let last_update = Instant::now() - self.last_current_level_update.get();
         self.last_current_level_update.set(Instant::now());
         self.handler.raw_set_current_level(current_level.clone())?;
@@ -194,7 +194,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             return Err(ErrorCode::InvalidCommand.into())
         }
 
-        if with_on_off && !self.should_continue(options_mask, options_override) {
+        if with_on_off && !self.should_continue(options_mask, options_override)? {
             return Ok(());
         }
 
@@ -226,7 +226,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         // Check if current_level is null. If so, return error.
         //  todo: currently returning an incorrect error.
         //  Equivalent code in cpp impl: https://github.com/project-chip/connectedhomeip/blob/8adaf97c152e478200784629499756e81c53fd15/src/app/clusters/level-control/level-control.cpp#L904
-        let mut current_level = match self.handler.raw_get_current_level().into_option() {
+        let mut current_level = match self.handler.raw_get_current_level()?.into_option() {
             Some(cl) => cl,
             None => return Err(ErrorCode::InvalidState.into()),
         };
@@ -318,7 +318,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             return Err(Error::new(ErrorCode::InvalidCommand));
         }
 
-        if with_on_off && !self.should_continue(options_mask, options_override) {
+        if with_on_off && !self.should_continue(options_mask, options_override)? {
             return Ok(());
         }
 
@@ -392,15 +392,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
         info!("LevelControl: Called current_level()");
-        Ok(self.handler.raw_get_current_level())
-    }
-
-    async fn options(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<OptionsBitmap, Error> {
-        info!("LevelControl: Called options()");
-        Ok(self.handler.raw_get_options())
+        self.handler.raw_get_current_level()
     }
 
     async fn on_level(
@@ -408,19 +400,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
         info!("LevelControl: Called on_level()");
-        Ok(self.handler.raw_get_on_level())
-    }
-
-    async fn set_options(
-        &self,
-        ctx: impl WriteContext,
-        value: OptionsBitmap,
-    ) -> Result<(), Error> {
-        info!("set_options called");
-        self.handler.raw_set_options(value)?;
-        self.dataver_changed();
-        ctx.notify_changed();
-        Ok(())
+        self.handler.raw_get_on_level()
     }
 
     async fn set_on_level(
@@ -442,27 +422,109 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         Ok(())
     }
 
-    async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16,Error> {
-        info!("LevelControl: Called remaining_time()");
-        Ok(self.handler.raw_get_remaining_time())
+    async fn options(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<OptionsBitmap, Error> {
+        info!("LevelControl: Called options()");
+        self.handler.raw_get_options()
     }
 
-    async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8,Error> {
+    async fn set_options(
+        &self,
+        ctx: impl WriteContext,
+        value: OptionsBitmap,
+    ) -> Result<(), Error> {
+        info!("set_options called");
+        self.handler.raw_set_options(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
+    }
+
+    async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        info!("LevelControl: Called remaining_time()");
+        self.handler.raw_get_remaining_time()
+    }
+
+    async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         info!("LevelControl: Called max_level()");
         Ok(T::MAX_LEVEL)
     }
 
-    async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8,Error> {
+    async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         info!("LevelControl: Called min_level()");
         Ok(T::MIN_LEVEL)
     }
 
-    async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8> ,Error> {
-        info!("LevelControl: Called start_up_current_level()");
-        Ok(self.handler.raw_get_startup_current_level())
+    async fn current_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.handler.raw_get_current_frequency()
     }
 
-    async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(),Error> {
+    async fn min_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.handler.raw_get_min_frequency()
+    }
+
+    async fn max_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.handler.raw_get_max_frequency()
+    }
+
+    async fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        self.handler.raw_get_on_off_transition_time()
+    }
+
+    async fn set_on_off_transition_time(&self, ctx: impl WriteContext, value:u16) -> Result<(), Error> {
+        self.handler.raw_set_on_off_transition_time(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
+    }
+
+    async fn on_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+        self.handler.raw_get_on_transition_time()
+    }
+
+    async fn set_on_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
+        self.handler.raw_set_on_transition_time(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
+    }
+
+    async fn off_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+        self.handler.raw_get_off_transition_time()
+    }
+
+    async fn set_off_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
+        self.handler.raw_set_off_transition_time(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
+    }
+
+    async fn default_move_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+        self.handler.raw_get_default_move_rate()
+    }
+
+    async fn set_default_move_rate(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
+        // The spec is not explicit about what should be done if this happens.
+        // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
+        // until spec defines a behaviour.
+        if Some(0) == value.clone().into_option() {
+            return Err(ErrorCode::InvalidData.into());
+        }
+        self.handler.raw_set_default_move_rate(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
+    }
+
+    async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+        info!("LevelControl: Called start_up_current_level()");
+        self.handler.raw_get_startup_current_level()
+    }
+
+    async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
         info!("LevelControl: Called set_start_up_current_level()");
         if let Some(level) = value.clone().into_option() {
             if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
@@ -505,7 +567,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         request: StepRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_step()");
-        if !self.should_continue(request.options_mask()?, request.options_override()?) {
+        if !self.should_continue(request.options_mask()?, request.options_override()?)? {
             // todo Should this return an error?
             info!("Ignoring command due to options settings");
             return Ok(());
@@ -520,7 +582,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         request: StopRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_stop()");
-        if !self.should_continue(request.options_mask()?, request.options_override()?) {
+        if !self.should_continue(request.options_mask()?, request.options_override()?)? {
             // todo Should this return an error?
             info!("Ignoring command due to options settings");
             return Ok(());
@@ -585,23 +647,83 @@ pub trait LevelControlHooks {
     const MAX_LEVEL: u8;
     const FASTEST_RATE: u8;
 
-    // Raw accessors
-    //  These methods should not perform any checks.
-    //  They should simply set of get values.
-    fn raw_get_options(&self) -> OptionsBitmap;
-    fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
-    fn raw_get_on_level(&self) -> Nullable<u8>;
-    fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
-    fn raw_get_current_level(&self) -> Nullable<u8>;
-    fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
-    fn raw_get_startup_current_level(&self) -> Nullable<u8>;
-    fn raw_set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
-    fn raw_get_remaining_time(&self) -> u16;
-    fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
-
-    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error>; // todo should these me Options?
-
     // Implements the business logic for setting the level.
     // Do not update attribute states.
     fn set_level(&self, level: u8) -> Result<(), Error>;
+
+    // Raw accessors
+    //  These methods should not perform any checks.
+    //  They should simply set of get values.
+    fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error>;
+    fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+
+    fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error>;
+    fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+
+    fn raw_get_options(&self) -> Result<OptionsBitmap, Error>;
+    fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
+
+    fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_startup_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_get_remaining_time(&self) -> Result<u16, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
+    
+    fn raw_get_current_frequency(&self) -> Result<u16, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_set_current_frequency(&self, _value: u16) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    
+    fn raw_get_min_frequency(&self) -> Result<u16, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    
+    fn raw_get_max_frequency(&self) -> Result<u16, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_get_on_off_transition_time(&self) -> Result<u16, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_on_off_transition_time(&self, _value: u16) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_get_on_transition_time(&self) -> Result<Nullable<u16>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_get_off_transition_time(&self) -> Result<Nullable<u16>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn raw_get_start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn raw_set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }    
+
 }

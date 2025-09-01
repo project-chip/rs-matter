@@ -294,8 +294,8 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(())
     }
     
-    fn raw_get_options(&self) -> OptionsBitmap {
-        self.options.get()
+    fn raw_get_options(&self) -> Result<OptionsBitmap, Error> {
+        Ok(self.options.get())
     }
     
     fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error> {
@@ -303,11 +303,11 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(())
     }
     
-    fn raw_get_on_level(&self) -> Nullable<u8> {
+    fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error> {
         // todo can we impl Copy for Nullable?
         let val = self.on_level.take();
         self.on_level.set(val.clone());
-        val
+        Ok(val)
     }
     
     fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error> {
@@ -315,8 +315,8 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(())
     }
     
-    fn raw_get_current_level(&self) -> Nullable<u8> {
-        Nullable::some(self.current_level.get())
+    fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error> {
+        Ok(Nullable::some(self.current_level.get()))
     }
     
     fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
@@ -327,10 +327,10 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(())
     }
     
-    fn raw_get_startup_current_level(&self) -> Nullable<u8> {
+    fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error> {
         let val = self.startup_current_level.take();
         self.startup_current_level.set(val.clone());
-        val
+        Ok(val)
     }
     
     fn raw_set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
@@ -338,16 +338,12 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(())
     }
     
-    fn raw_get_remaining_time(&self) -> u16 {
-        self.remaining_time.get()
+    fn raw_get_remaining_time(&self) -> Result<u16, Error> {
+        Ok(self.remaining_time.get())
     }
     
     fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error> {
         self.remaining_time.set(value);
         Ok(())
-    }
-
-    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error> {
-        Err(ErrorCode::AttributeNotFound.into())
     }
 }
