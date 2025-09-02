@@ -7,6 +7,7 @@ use crate::tlv::Nullable;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 pub use crate::dm::clusters::decl::level_control::*;
+use crate::utils::maybe::Maybe;
 use crate::with;
 use crate::error::{Error, ErrorCode};
 
@@ -332,8 +333,44 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
     }
 
     async fn move_transition(&self, with_on_off: bool, move_mode: MoveModeEnum, event_duration: Duration) -> Result<(), Error> {
-        // todo implement
-        Ok(())
+        loop {
+            let event_start_time = Instant::now();
+
+            let current_level = match self.handler.raw_get_current_level()?.into_option() {
+                Some(cl) => cl,
+                None => return Err(ErrorCode::InvalidState.into()),
+            };
+
+            let new_level = match move_mode {
+                MoveModeEnum::Up => current_level.checked_add(1),
+                MoveModeEnum::Down => current_level.checked_sub(1),
+            };
+
+            let new_level = match new_level {
+                Some(nl) => nl,
+                None => return Ok(()),
+            };
+
+            // If we start at min and go up, we need to update the onoff cluster immediately in case this method is halted.
+            if current_level == T::MIN_LEVEL && new_level > T::MAX_LEVEL {
+                self.update_coupled_on_off(new_level, with_on_off)?;
+            }
+
+            let is_end_of_transition = (new_level == T::MAX_LEVEL) || (new_level == T::MIN_LEVEL);
+            self.handler.set_level(new_level)?;
+            self.write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
+
+            if is_end_of_transition {
+                self.update_coupled_on_off(new_level, with_on_off)?;
+                return Ok(());
+            }
+
+            let latency = embassy_time::Instant::now() - event_start_time;
+            match event_duration.checked_sub(latency) {
+                Some(wait_time) => embassy_time::Timer::after(wait_time).await,
+                None => warn!("no wait time. Consider dynamically adjusting the step size?"),
+            }
+        }
     }
 }
 
