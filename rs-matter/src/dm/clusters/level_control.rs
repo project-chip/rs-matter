@@ -318,6 +318,14 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             return Ok(());
         }
 
+        // Exit if we are already at the limit in the direct of movement.
+        if let Some(current_level) = self.handler.raw_get_current_level()?.into_option() {
+            if (current_level == T::MIN_LEVEL && move_mode == MoveModeEnum::Down) ||
+               (current_level == T::MAX_LEVEL && move_mode == MoveModeEnum::Up) {
+                return Ok(());
+            }
+        }
+
         let event_duration = Duration::from_hz(rate as u64);
         
         info!("moving with rate {}", rate);
@@ -368,7 +376,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         }
     }
 
-    fn step(&self, with_on_off: bool,  step_mode: StepModeEnum, step_size: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
+    fn step(&self, with_on_off: bool, step_mode: StepModeEnum, step_size: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
 
         // From section 1.6.7.3.4
         // 
@@ -423,6 +431,15 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         Ok(())
     }
 
+    fn stop(&self, with_on_off: bool, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
+        if with_on_off && !self.should_continue(options_mask, options_override)? {
+            return Ok(());
+        }
+        self.task_signal.signal(Task::Stop);
+        self.write_remaining_time_quietly(Duration::from_millis(0), false)?;
+
+        Ok(())
+    }
 }
 
 impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'lh, 'oc, T> {
@@ -665,13 +682,8 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         request: StopRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_stop()");
-        if !self.should_continue(request.options_mask()?, request.options_override()?)? {
-            // todo Should this return an error?
-            info!("Ignoring command due to options settings");
-            return Ok(());
-        }
 
-        Ok(())
+        self.stop(false, request.options_mask()?, request.options_override()?)
     }
 
     async fn handle_move_to_level_with_on_off(
@@ -708,10 +720,10 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
     async fn handle_stop_with_on_off(
         &self,
         _ctx: impl InvokeContext,
-        _request: StopWithOnOffRequest<'_>,
+        request: StopWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_stop_with_on_off()");
-        Ok(())
+        self.stop(true, request.options_mask()?, request.options_override()?)
     }
 
     async fn handle_move_to_closest_frequency(
