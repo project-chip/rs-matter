@@ -68,6 +68,7 @@ impl OnOffHandler {
 
     // The method that should be used by coupled clusters to update the on_off state.
     pub(crate) fn coupled_cluster_set_on_off(&self, on: bool) {
+        info!("OnOffCluster: coupled_cluster_set_on_off: Setting on_off to {}", on);
         self.on.set(on)
 
         // todo call user logic from OnOffHooks
