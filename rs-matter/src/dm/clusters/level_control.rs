@@ -12,33 +12,28 @@ use crate::utils::maybe::Maybe;
 use crate::with;
 use crate::error::{Error, ErrorCode};
 
+use delegate::delegate;
+
 enum Task {
     MoveToLevel{with_on_off: bool, target: u8, transition_time: u16},
     Move{with_on_off: bool, move_mode: MoveModeEnum, event_duration: Duration},
-    // Step{with_on_off: bool},
     Stop,
 }
 
-pub struct LevelControlCluster<'lh, 'oc, T: LevelControlHooks> {
+pub struct LevelControlCluster<'a, H: LevelControlHooks> {
     dataver: Dataver,
-    handler: &'lh T,
+    state: &'a LevelControlState<'a, H>,
     task_signal: Signal<NoopRawMutex, Task>,
-    last_current_level_notification: Cell<Instant>,
-    // todo uncomment when the FQ feature is no longer provisional
-    // last_current_frequency_notification: Cell<Instant>,
-    on_off: Cell<Option<&'oc OnOffHandler>>,
+    on_off: Cell<Option<&'a OnOffHandler>>, // todo replace with OnOffState
 }
 
-impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
+impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
-    pub fn new(dataver: Dataver, handler: &'lh T) -> Self {
+    pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
         Self {
             dataver,
-            handler,
+            state: handler,
             task_signal: Signal::new(),
-            last_current_level_notification: Cell::new(Instant::from_millis(0)),
-            // todo uncomment when the FQ feature is no longer provisional
-            // last_current_frequency_notification: Cell::new(Instant::from_millis(0)),
             on_off: Cell::new(None),
         }
     }
@@ -48,11 +43,12 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         HandlerAsyncAdaptor(self)
     }
 
-    // Set the OnOff cluster instance that in coupled with this LevelControl cluster, i.e. the OnOff cluster on the same endpoint.
+    // todo update after OnOff update
+    // Set the OnOff cluster instance coupled with this LevelControl cluster, i.e. the OnOff cluster on the same endpoint.
     // Note: The OnOff cluster on the same endpoint SHALL be set if any of the following is true
     //   - The OnOff feature is set
     //   - The `WithOnOff` commands are supported
-    pub fn set_on_off_cluster(&self, cluster: &'oc OnOffHandler) {
+    pub fn set_on_off_cluster(&self, cluster: &'a OnOffHandler) {
         self.on_off.set(Some(cluster))
     }
 
@@ -84,7 +80,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             // A value of 0x00 SHALL NOT be used.
             // A value of 0x01 SHALL indicate the minimum level that can be attained on a device.
             // A value of 0xFE SHALL indicate the maximum level that can be attained on a device.
-            if T::MIN_LEVEL == 0 || T::MAX_LEVEL > 0xFE {
+            if H::MIN_LEVEL == 0 || H::MAX_LEVEL > 0xFE {
                 return Err(ErrorCode::Invalid.into());
             }
         }
@@ -95,7 +91,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
     // Processes the options of commands 'without On/Off'.
     // Returns true if execution of the command should continue, false otherwise.
     fn should_continue(&self, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<bool, Error> {
-        let temporary_options = (options_mask & options_override) | self.handler.raw_get_options()?;
+        let temporary_options = (options_mask & options_override) | self.state.raw_get_options()?;
 
         Ok(temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF))
     }
@@ -118,67 +114,6 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         }
     }
 
-    fn write_remaining_time_quietly(&self, remaining_time: Duration, is_start_of_transition: bool) -> Result<(), Error> {
-        let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
-
-        self.handler.raw_set_remaining_time(remaining_time_ds as u16)?;
-
-        // RemainingTime Quiet report conditions:
-        // - When it changes to 0, or
-        // - When it changes from 0 to any value higher than 10, or
-        // - When it changes, with a delta larger than 10, caused by the invoke of a command.
-        let previous_remaining_time = self.handler.raw_get_remaining_time()?;
-        let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
-        let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
-        let changed_by_gt_10 = remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
-
-        if changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10 {
-            // todo notify.changed();
-        }
-
-        Ok(())
-    }
-
-    fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
-        let previous_value = self.handler.raw_get_current_level()?;
-        let last_notification = Instant::now() - self.last_current_level_notification.get();
-        self.handler.raw_set_current_level(current_level.clone())?;
-
-        // CurrentLevel Quiet report conditions:
-        // - At most once per second, or
-        // - At the end of the movement/transition, or
-        // - When it changes from null to any other value and vice versa.
-        if last_notification.ge(&Duration::from_secs(1)) || is_end_of_transition || previous_value.is_none() || current_level.is_none() {
-            self.last_current_level_notification.set(Instant::now());
-            // todo notify.changed();
-        }
-
-        // todo uncomment when the FQ feature is no longer provisional
-        // // Update the current frequency according to the current level value
-        // if (T::CLUSTER.feature_map & level_control::Feature::FREQUENCY.bits()) != 0 {
-        //     self.write_current_frequency_quietly(self.handler.get_frequency_at_current_level()?, true)?;
-        // }
-
-        Ok(())
-    }
-
-    // todo uncomment when the FQ feature is no longer provisional
-    // fn write_current_frequency_quietly(&self, current_frequency: u16, is_transition_end_start: bool) -> Result<(), Error> {
-    //     let last_notification = Instant::now() - self.last_current_frequency_notification.get();
-    //     self.handler.raw_set_current_frequency(current_frequency)?;
-
-    //     // Changes to this attribute SHALL only be marked as reportable in the following cases:
-    //     // - At most once per second, or
-    //     // - At the start of the movement/transition, or
-    //     // - At the end of the movement/transition.
-    //     if last_notification.ge(&Duration::from_secs(1)) || is_transition_end_start {
-    //         self.last_current_frequency_notification.set(Instant::now());
-    //         // todo notify.changed()
-    //     }
-
-    //     Ok(())
-    // }
-
     // Update the on_off attribute of the OnOff cluster.
     // 
     // From section 1.6.4.1.2
@@ -193,7 +128,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             return Ok(());
         }
 
-        let new_on_off_value = current_level > T::MIN_LEVEL;
+        let new_on_off_value = current_level > H::MIN_LEVEL;
         
         match self.on_off.get() {
             Some(on_off) => {
@@ -215,7 +150,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
     fn move_to_level(&self, with_on_off: bool, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
 
         // todo should this be corrected? Check the cpp impl
-        if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
+        if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
             return Err(ErrorCode::InvalidCommand.into())
         }
 
@@ -228,9 +163,9 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         match transition_time {
             None | Some(0) => {
                 self.task_signal.signal(Task::Stop);
-                self.handler.set_level(level)?;
-                self.write_current_level_quietly(Nullable::some(level), true)?;
-                self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
+                self.state.set_level(level)?;
+                self.state.write_current_level_quietly(Nullable::some(level), true)?;
+                self.state.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
                 self.update_coupled_on_off(level, with_on_off)?;
 
@@ -251,7 +186,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         // Check if current_level is null. If so, return error.
         //  todo: currently returning an incorrect error.
         //  Equivalent code in cpp impl: https://github.com/project-chip/connectedhomeip/blob/8adaf97c152e478200784629499756e81c53fd15/src/app/clusters/level-control/level-control.cpp#L904
-        let mut current_level = match self.handler.raw_get_current_level()?.into_option() {
+        let mut current_level = match self.state.raw_get_current_level()?.into_option() {
             Some(cl) => cl,
             None => return Err(ErrorCode::InvalidState.into()),
         };
@@ -276,8 +211,8 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             let is_transition_end = current_level == target_level;
             
             debug!("move_to_level_transition: Setting current level: {}", current_level);
-            self.handler.set_level(current_level)?;
-            self.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
+            self.state.set_level(current_level)?;
+            self.state.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
 
 
             if is_transition_start || is_transition_end {
@@ -285,7 +220,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             }
 
             if is_transition_end{
-                self.write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)?;
+                self.state.write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)?;
                 return Ok(());
             }
 
@@ -297,7 +232,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
                 },
             }
 
-            self.write_remaining_time_quietly(remaining_time, is_transition_start)?;
+            self.state.write_remaining_time_quietly(remaining_time, is_transition_start)?;
             
             let latency = match is_transition_start {
                 false => embassy_time::Instant::now() - event_start_time,
@@ -321,19 +256,19 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         let rate = match rate {
             Some(val) => val,
             None => {
-                match self.handler.raw_get_default_move_rate() {
+                match self.state.raw_get_default_move_rate() {
                     Ok(default_move_rate) => {
                         match default_move_rate.into_option() {
                             Some(val) => val,
-                            None => T::FASTEST_RATE,
+                            None => H::FASTEST_RATE,
                         }
                     }
-                    Err(_) => T::FASTEST_RATE,
+                    Err(_) => H::FASTEST_RATE,
                 }
             },
         };
 
-        // This will catch the case where T::FASTEST_RATE is 0.
+        // This will catch the case where H::FASTEST_RATE is 0.
         // The spec is not explicit about what should be done if this happens.
         // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
         // until spec defines a behaviour.
@@ -346,9 +281,9 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         }
 
         // Exit if we are already at the limit in the direct of movement.
-        if let Some(current_level) = self.handler.raw_get_current_level()?.into_option() {
-            if (current_level == T::MIN_LEVEL && move_mode == MoveModeEnum::Down) ||
-               (current_level == T::MAX_LEVEL && move_mode == MoveModeEnum::Up) {
+        if let Some(current_level) = self.state.raw_get_current_level()?.into_option() {
+            if (current_level == H::MIN_LEVEL && move_mode == MoveModeEnum::Down) ||
+               (current_level == H::MAX_LEVEL && move_mode == MoveModeEnum::Up) {
                 return Ok(());
             }
         }
@@ -366,7 +301,7 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         loop {
             let event_start_time = Instant::now();
 
-            let current_level = match self.handler.raw_get_current_level()?.into_option() {
+            let current_level = match self.state.raw_get_current_level()?.into_option() {
                 Some(cl) => cl,
                 None => return Err(ErrorCode::InvalidState.into()),
             };
@@ -382,13 +317,13 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             };
 
             // If we start at min and go up, we need to update the onoff cluster immediately in case this method is halted.
-            if current_level == T::MIN_LEVEL && new_level > T::MIN_LEVEL {
+            if current_level == H::MIN_LEVEL && new_level > H::MIN_LEVEL {
                 self.update_coupled_on_off(new_level, with_on_off)?;
             }
 
-            let is_end_of_transition = (new_level == T::MAX_LEVEL) || (new_level == T::MIN_LEVEL);
-            self.handler.set_level(new_level)?;
-            self.write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
+            let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
+            self.state.set_level(new_level)?;
+            self.state.write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
 
             if is_end_of_transition {
                 self.update_coupled_on_off(new_level, with_on_off)?;
@@ -417,14 +352,14 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             return Ok(());
         }
 
-        let current_level = match self.handler.raw_get_current_level()?.into_option() {
+        let current_level = match self.state.raw_get_current_level()?.into_option() {
             Some(val) => val,
             None => return Err(ErrorCode::InvalidState.into()),
         };
 
         let new_level = match step_mode {
-            StepModeEnum::Up => current_level.saturating_add(step_size).min(T::MAX_LEVEL),
-            StepModeEnum::Down => current_level.saturating_sub(step_size).max(T::MIN_LEVEL),
+            StepModeEnum::Up => current_level.saturating_add(step_size).min(H::MAX_LEVEL),
+            StepModeEnum::Down => current_level.saturating_sub(step_size).max(H::MIN_LEVEL),
         };
 
         let transition_time = match transition_time {
@@ -444,9 +379,9 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
         match transition_time {
             0 => {
                 self.task_signal.signal(Task::Stop);
-                self.handler.set_level(new_level)?;
-                self.write_current_level_quietly(Nullable::some(new_level), true)?;
-                self.write_remaining_time_quietly(Duration::from_millis(0), true)?;
+                self.state.set_level(new_level)?;
+                self.state.write_current_level_quietly(Nullable::some(new_level), true)?;
+                self.state.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
                 self.update_coupled_on_off(new_level, with_on_off)?;
             }
@@ -463,13 +398,13 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             return Ok(());
         }
         self.task_signal.signal(Task::Stop);
-        self.write_remaining_time_quietly(Duration::from_millis(0), false)?;
+        self.state.write_remaining_time_quietly(Duration::from_millis(0), false)?;
 
         Ok(())
     }
 }
 
-impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'lh, 'oc, T> {
+impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H> {
     // todo Because this is const, I don't think that we can populated it by `set` methods in LevelControlCluster to ensure the cluster is setup correctly.
     // Hence, we should move this to the LevelControlHooks of take it as an input during initialisation.
     #[doc = "The cluster-metadata corresponding to this handler trait."]
@@ -524,7 +459,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
         info!("LevelControl: Called current_level()");
-        self.handler.raw_get_current_level()
+        self.state.raw_get_current_level()
     }
 
     async fn on_level(
@@ -532,7 +467,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
         info!("LevelControl: Called on_level()");
-        self.handler.raw_get_on_level()
+        self.state.raw_get_on_level()
     }
 
     async fn set_on_level(
@@ -542,13 +477,13 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
     ) -> Result<(), Error> {
         info!("set_on_level called");
         if let Some(level) = value.clone().into_option() {
-            if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
+            if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
                 // todo not sure if this is the correct error
                 return Err(ErrorCode::InvalidData.into())
             }
         }
 
-        self.handler.raw_set_on_level(value)?;
+        self.state.raw_set_on_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -559,7 +494,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         _ctx: impl ReadContext,
     ) -> Result<OptionsBitmap, Error> {
         info!("LevelControl: Called options()");
-        self.handler.raw_get_options()
+        self.state.raw_get_options()
     }
 
     async fn set_options(
@@ -568,7 +503,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         value: OptionsBitmap,
     ) -> Result<(), Error> {
         info!("set_options called");
-        self.handler.raw_set_options(value)?;
+        self.state.raw_set_options(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -576,17 +511,17 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
 
     async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         info!("LevelControl: Called remaining_time()");
-        self.handler.raw_get_remaining_time()
+        self.state.raw_get_remaining_time()
     }
 
     async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         info!("LevelControl: Called max_level()");
-        Ok(T::MAX_LEVEL)
+        Ok(H::MAX_LEVEL)
     }
 
     async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         info!("LevelControl: Called min_level()");
-        Ok(T::MIN_LEVEL)
+        Ok(H::MIN_LEVEL)
     }
 
     // todo uncomment when the FQ feature is no longer provisional
@@ -601,40 +536,40 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
     // }
 
     async fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.handler.raw_get_on_off_transition_time()
+        self.state.raw_get_on_off_transition_time()
     }
 
     async fn set_on_off_transition_time(&self, ctx: impl WriteContext, value:u16) -> Result<(), Error> {
-        self.handler.raw_set_on_off_transition_time(value)?;
+        self.state.raw_set_on_off_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn on_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        self.handler.raw_get_on_transition_time()
+        self.state.raw_get_on_transition_time()
     }
 
     async fn set_on_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
-        self.handler.raw_set_on_transition_time(value)?;
+        self.state.raw_set_on_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn off_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        self.handler.raw_get_off_transition_time()
+        self.state.raw_get_off_transition_time()
     }
 
     async fn set_off_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
-        self.handler.raw_set_off_transition_time(value)?;
+        self.state.raw_set_off_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn default_move_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        self.handler.raw_get_default_move_rate()
+        self.state.raw_get_default_move_rate()
     }
 
     async fn set_default_move_rate(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
@@ -644,7 +579,7 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         if Some(0) == value.clone().into_option() {
             return Err(ErrorCode::InvalidData.into());
         }
-        self.handler.raw_set_default_move_rate(value)?;
+        self.state.raw_set_default_move_rate(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -652,19 +587,19 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
 
     async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         info!("LevelControl: Called start_up_current_level()");
-        self.handler.raw_get_startup_current_level()
+        self.state.raw_get_startup_current_level()
     }
 
     async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
         info!("LevelControl: Called set_start_up_current_level()");
         if let Some(level) = value.clone().into_option() {
-            if level > T::MAX_LEVEL || level < T::MIN_LEVEL {
+            if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
                 // todo not sure if this is the correct error
                 return Err(ErrorCode::InvalidData.into())
             }
         }
 
-        self.handler.raw_set_startup_current_level(value)?;
+        self.state.raw_set_startup_current_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -765,6 +700,125 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         // self.write_current_frequency_quietly(new_frequency, true)
     }
 
+}
+
+
+pub struct LevelControlState<'a, H: LevelControlHooks> {
+    handler: &'a H,
+    last_current_level_notification: Cell<Instant>,
+    // todo uncomment when the FQ feature is no longer provisional
+    // last_current_frequency_notification: Cell<Instant>,
+}
+
+impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
+    pub fn new(handler: &'a H) -> Self {
+        Self {
+            handler,
+            last_current_level_notification: Cell::new(Instant::from_millis(0)),
+            // todo uncomment when the FQ feature is no longer provisional
+            // last_current_frequency_notification: Cell::new(Instant::from_millis(0)),
+        }
+    }
+
+    fn write_remaining_time_quietly(&self, remaining_time: Duration, is_start_of_transition: bool) -> Result<(), Error> {
+        let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
+
+        self.handler.raw_set_remaining_time(remaining_time_ds as u16)?;
+
+        // RemainingTime Quiet report conditions:
+        // - When it changes to 0, or
+        // - When it changes from 0 to any value higher than 10, or
+        // - When it changes, with a delta larger than 10, caused by the invoke of a command.
+        let previous_remaining_time = self.handler.raw_get_remaining_time()?;
+        let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
+        let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
+        let changed_by_gt_10 = remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
+
+        if changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10 {
+            // todo notify.changed();
+        }
+
+        Ok(())
+    }
+
+    fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
+        let previous_value = self.handler.raw_get_current_level()?;
+        let last_notification = Instant::now() - self.last_current_level_notification.get();
+        self.handler.raw_set_current_level(current_level.clone())?;
+
+        // CurrentLevel Quiet report conditions:
+        // - At most once per second, or
+        // - At the end of the movement/transition, or
+        // - When it changes from null to any other value and vice versa.
+        if last_notification.ge(&Duration::from_secs(1)) || is_end_of_transition || previous_value.is_none() || current_level.is_none() {
+            self.last_current_level_notification.set(Instant::now());
+            // todo notify.changed();
+        }
+
+        // todo uncomment when the FQ feature is no longer provisional
+        // // Update the current frequency according to the current level value
+        // if (H::CLUSTER.feature_map & level_control::Feature::FREQUENCY.bits()) != 0 {
+        //     self.write_current_frequency_quietly(self.handler.get_frequency_at_current_level()?, true)?;
+        // }
+
+        Ok(())
+    }
+
+    // todo uncomment when the FQ feature is no longer provisional
+    // fn write_current_frequency_quietly(&self, current_frequency: u16, is_transition_end_start: bool) -> Result<(), Error> {
+    //     let last_notification = Instant::now() - self.last_current_frequency_notification.get();
+    //     self.handler.raw_set_current_frequency(current_frequency)?;
+
+    //     // Changes to this attribute SHALL only be marked as reportable in the following cases:
+    //     // - At most once per second, or
+    //     // - At the start of the movement/transition, or
+    //     // - At the end of the movement/transition.
+    //     if last_notification.ge(&Duration::from_secs(1)) || is_transition_end_start {
+    //         self.last_current_frequency_notification.set(Instant::now());
+    //         // todo notify.changed()
+    //     }
+
+    //     Ok(())
+    // }
+
+}
+
+impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
+    const MIN_LEVEL: u8 = H::MIN_LEVEL;
+    const MAX_LEVEL: u8 = H::MAX_LEVEL;
+    const FASTEST_RATE: u8 = H::FASTEST_RATE;
+
+    delegate!{
+        to self.handler {
+            fn set_level(&self, level: u8) -> Result<(), Error>;
+            // fn set_frequency(&self, frequency: u16) -> Result<u16, Error>;
+            // fn get_frequency_at_current_level(&self) -> Result<u16, Error>;
+            fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error>;
+            fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+            fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error>;
+            fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+            fn raw_get_options(&self) -> Result<OptionsBitmap, Error>;
+            fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
+            fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error>;
+            fn raw_set_startup_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
+            fn raw_get_remaining_time(&self) -> Result<u16, Error>;
+            fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
+            // fn raw_get_current_frequency(&self) -> Result<u16, Error>;
+            // fn raw_set_current_frequency(&self, _value: u16) -> Result<(), Error>;
+            // fn raw_get_min_frequency(&self) -> Result<u16, Error>;
+            // fn raw_get_max_frequency(&self) -> Result<u16, Error>;
+            fn raw_get_on_off_transition_time(&self) -> Result<u16, Error>;
+            fn raw_set_on_off_transition_time(&self, _value: u16) -> Result<(), Error>;
+            fn raw_get_on_transition_time(&self) -> Result<Nullable<u16>, Error>;
+            fn raw_set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error>;
+            fn raw_get_off_transition_time(&self) -> Result<Nullable<u16>, Error>;
+            fn raw_set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error>;
+            fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error>;
+            fn raw_set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error>;
+            fn raw_get_start_up_current_level(&self) -> Result<Nullable<u8>, Error>;
+            fn raw_set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
+        }
+    }
 }
 
 

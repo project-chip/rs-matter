@@ -48,7 +48,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
-use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _};
+use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _, LevelControlState};
 
 use static_cell::StaticCell;
 
@@ -123,7 +123,8 @@ fn run() -> Result<(), Error> {
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
     let level_control_handler = LevelControlHandler::new();
-    let level_control_cluster = level_control::LevelControlCluster::new(Dataver::new_rand(matter.rand()), &level_control_handler);
+    let level_control_state = LevelControlState::new(&level_control_handler);
+    let level_control_cluster = level_control::LevelControlCluster::new(Dataver::new_rand(matter.rand()), &level_control_state);
     level_control_cluster.set_on_off_cluster(&on_off);
     let mut level_control_job = pin!(level_control_cluster.run());
 
@@ -218,10 +219,10 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, 'oc, 'lc>(
+fn dm_handler<'a, 'oc, 'lc, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
     on_off: &'oc on_off::OnOffHandler,
-    level_control: &'lc level_control::LevelControlCluster<'a, 'oc, LevelControlHandler>,
+    level_control: &'lc level_control::LevelControlCluster<'a, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a + 'oc + 'lc
 where
     'oc: 'a,
@@ -247,7 +248,7 @@ where
                         Async(on_off::HandlerAdaptor(on_off)),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(level_control::LevelControlCluster::<'a, 'oc, LevelControlHandler>::CLUSTER.id)),
+                        EpClMatcher::new(Some(1), Some(level_control::LevelControlCluster::<'a, LH>::CLUSTER.id)),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
             ),
