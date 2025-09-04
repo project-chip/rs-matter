@@ -23,7 +23,9 @@ pub struct LevelControlCluster<'lh, 'oc, T: LevelControlHooks> {
     dataver: Dataver,
     handler: &'lh T,
     task_signal: Signal<NoopRawMutex, Task>,
-    last_current_level_update: Cell<Instant>,
+    last_current_level_notification: Cell<Instant>,
+    // todo uncomment when the FQ feature is no longer provisional
+    // last_current_frequency_notification: Cell<Instant>,
     on_off: Cell<Option<&'oc OnOffHandler>>,
 }
 
@@ -34,7 +36,9 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
             dataver,
             handler,
             task_signal: Signal::new(),
-            last_current_level_update: Cell::new(Instant::from_millis(0)),
+            last_current_level_notification: Cell::new(Instant::from_millis(0)),
+            // todo uncomment when the FQ feature is no longer provisional
+            // last_current_frequency_notification: Cell::new(Instant::from_millis(0)),
             on_off: Cell::new(None),
         }
     }
@@ -137,20 +141,43 @@ impl<'lh, 'oc, T: LevelControlHooks> LevelControlCluster<'lh, 'oc, T> {
 
     fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
         let previous_value = self.handler.raw_get_current_level()?;
-        let last_update = Instant::now() - self.last_current_level_update.get();
-        self.last_current_level_update.set(Instant::now());
+        let last_notification = Instant::now() - self.last_current_level_notification.get();
         self.handler.raw_set_current_level(current_level.clone())?;
 
         // CurrentLevel Quiet report conditions:
         // - At most once per second, or
         // - At the end of the movement/transition, or
         // - When it changes from null to any other value and vice versa.
-        if last_update.ge(&Duration::from_secs(1)) || is_end_of_transition || previous_value.is_none() || current_level.is_none() {
+        if last_notification.ge(&Duration::from_secs(1)) || is_end_of_transition || previous_value.is_none() || current_level.is_none() {
+            self.last_current_level_notification.set(Instant::now());
             // todo notify.changed();
         }
 
+        // todo uncomment when the FQ feature is no longer provisional
+        // // Update the current frequency according to the current level value
+        // if (T::CLUSTER.feature_map & level_control::Feature::FREQUENCY.bits()) != 0 {
+        //     self.write_current_frequency_quietly(self.handler.get_frequency_at_current_level()?, true)?;
+        // }
+
         Ok(())
     }
+
+    // todo uncomment when the FQ feature is no longer provisional
+    // fn write_current_frequency_quietly(&self, current_frequency: u16, is_transition_end_start: bool) -> Result<(), Error> {
+    //     let last_notification = Instant::now() - self.last_current_frequency_notification.get();
+    //     self.handler.raw_set_current_frequency(current_frequency)?;
+
+    //     // Changes to this attribute SHALL only be marked as reportable in the following cases:
+    //     // - At most once per second, or
+    //     // - At the start of the movement/transition, or
+    //     // - At the end of the movement/transition.
+    //     if last_notification.ge(&Duration::from_secs(1)) || is_transition_end_start {
+    //         self.last_current_frequency_notification.set(Instant::now());
+    //         // todo notify.changed()
+    //     }
+
+    //     Ok(())
+    // }
 
     // Update the on_off attribute of the OnOff cluster.
     // 
@@ -562,17 +589,16 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         Ok(T::MIN_LEVEL)
     }
 
-    async fn current_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.handler.raw_get_current_frequency()
-    }
-
-    async fn min_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.handler.raw_get_min_frequency()
-    }
-
-    async fn max_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.handler.raw_get_max_frequency()
-    }
+    // todo uncomment when the FQ feature is no longer provisional
+    // async fn current_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    //     self.handler.raw_get_current_frequency()
+    // }
+    // async fn min_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    //     self.handler.raw_get_min_frequency()
+    // }
+    // async fn max_frequency(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    //     self.handler.raw_get_max_frequency()
+    // }
 
     async fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         self.handler.raw_get_on_off_transition_time()
@@ -732,7 +758,11 @@ impl<'lh, 'oc, T: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster
         _request: MoveToClosestFrequencyRequest<'_>,
     ) -> Result<(), Error> {
         info!("LevelControl: Called handle_move_to_closest_frequency()");
-        Ok(())
+        // todo replace the error with the comments when the FQ feature is no longer provisional
+        Err(ErrorCode::InvalidCommand.into())
+
+        // let new_frequency = self.handler.set_frequency(request.frequency()?)?;
+        // self.write_current_frequency_quietly(new_frequency, true)
     }
 
 }
@@ -745,7 +775,19 @@ pub trait LevelControlHooks {
 
     // Implements the business logic for setting the level.
     // Do not update attribute states.
+    // todo return Ok(u8) with the value that was set by the device
     fn set_level(&self, level: u8) -> Result<(), Error>;
+
+    // todo uncomment when the FQ feature is no longer provisional
+    // // If the device cannot approximate the frequency, then it SHALL 
+    // // return a default response with an error code of CONSTRAINT_ERROR.
+    // // If Ok, return the value of the new frequency.
+    // fn set_frequency(&self, frequency: u16) -> Result<u16, Error>;
+    // // If the FREQUENCY feature is supported, this method should return the 
+    // // value of the device frequency at the current level.
+    // fn get_frequency_at_current_level(&self) -> Result<u16, Error> {
+    //     Err(ErrorCode::InvalidAction.into())
+    // }
 
     // Raw accessors
     //  These methods should not perform any checks.
@@ -771,21 +813,19 @@ pub trait LevelControlHooks {
     }
     fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
     
-    fn raw_get_current_frequency(&self) -> Result<u16, Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-
-    fn raw_set_current_frequency(&self, _value: u16) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-    
-    fn raw_get_min_frequency(&self) -> Result<u16, Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-    
-    fn raw_get_max_frequency(&self) -> Result<u16, Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
+    // todo uncomment when the FQ feature is no longer provisional
+    // fn raw_get_current_frequency(&self) -> Result<u16, Error> {
+    //     Err(ErrorCode::InvalidAction.into())
+    // }
+    // fn raw_set_current_frequency(&self, _value: u16) -> Result<(), Error> {
+    //     Err(ErrorCode::InvalidAction.into())
+    // }
+    // fn raw_get_min_frequency(&self) -> Result<u16, Error> {
+    //     Err(ErrorCode::InvalidAction.into())
+    // }    
+    // fn raw_get_max_frequency(&self) -> Result<u16, Error> {
+    //     Err(ErrorCode::InvalidAction.into())
+    // }
 
     fn raw_get_on_off_transition_time(&self) -> Result<u16, Error> {
         Err(ErrorCode::InvalidAction.into())
