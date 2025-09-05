@@ -33,14 +33,14 @@ use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
-use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::DiscoveryCapabilities;
-use rs_matter::persist::Psm;
+use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -60,7 +60,7 @@ mod mdns;
 // as well as just allocating the objects on-stack or on the heap.
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
-static SUBSCRIPTIONS: StaticCell<Subscriptions<3>> = StaticCell::new();
+static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
 fn main() -> Result<(), Error> {
@@ -98,7 +98,7 @@ fn run() -> Result<(), Error> {
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
         core::mem::size_of::<PooledBuffers<10, NoopRawMutex, IMBuffer>>(),
-        core::mem::size_of::<Subscriptions<3>>()
+        core::mem::size_of::<DefaultSubscriptions>()
     );
 
     let matter = MATTER.uninit().init_with(Matter::init(
@@ -117,7 +117,9 @@ fn run() -> Result<(), Error> {
     let buffers = BUFFERS.uninit().init_with(PooledBuffers::init(0));
 
     // Create the subscriptions
-    let subscriptions = SUBSCRIPTIONS.uninit().init_with(Subscriptions::init());
+    let subscriptions = SUBSCRIPTIONS
+        .uninit()
+        .init_with(DefaultSubscriptions::init());
 
     // Our on-off cluster
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
@@ -175,25 +177,24 @@ fn run() -> Result<(), Error> {
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
+    let path = std::env::temp_dir().join("rs-matter");
 
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(std::env::temp_dir().join("rs-matter"), matter))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS))
     );
 
-    let dir = std::env::temp_dir().join("rs-matter");
+    psm.load(&path, matter, NO_NETWORKS)?;
 
-    psm.load(&dir, matter)?;
-
-    let mut persist = pin!(psm.run(dir, matter));
+    let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
 
     // Combine all async tasks in a single one
     let all = select4(
         &mut transport,
         &mut mdns,
         &mut persist,
-        select3(&mut respond,&mut dm_handler_job, &mut level_control_job).coalesce(),
+        select3(&mut respond, &mut dm_handler_job, &mut level_control_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
