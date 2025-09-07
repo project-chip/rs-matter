@@ -98,6 +98,7 @@ impl Command {
                 .setup(Some(&args.gitref), args.force_setup),
             Command::ItestExe(args) => ITests::new(workspace_dir(), print_cmd_output).build(
                 &args.profile,
+                &args.target,
                 &args.features,
                 args.force_rebuild,
             ),
@@ -121,6 +122,7 @@ impl Command {
                     tests,
                     *timeout,
                     &build_args.profile,
+                    &build_args.target,
                 )
             }
             Command::Tlv {
@@ -183,6 +185,9 @@ struct BuildArgs {
     /// Build profile (debug or release)
     #[arg(long, default_value = "debug")]
     profile: String,
+    /// Build target application name
+    #[arg(long, default_value = "chip_tool_tests")]
+    target: String,
     /// Additional cargo features
     #[arg(long)]
     features: Vec<String>,
