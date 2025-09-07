@@ -43,9 +43,6 @@ pub const CHIP_DEFAULT_GITREF: &str = "v1.3.0.0"; //"master";
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
-/// The name of the tested `rs-matter` executable's PICS file
-const TEST_EXE_PICS_NAME: &str = "chip_tool_tests.pics";
-
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
     "bash",
@@ -303,7 +300,13 @@ impl ITests {
         Ok(())
     }
 
-    fn run_test(&self, test_name: &str, timeout_secs: u32, profile: &str, target: &str) -> anyhow::Result<()> {
+    fn run_test(
+        &self,
+        test_name: &str,
+        timeout_secs: u32,
+        profile: &str,
+        target: &str,
+    ) -> anyhow::Result<()> {
         // TODO: Running test-by-test is slow. Turn this into a run-multiple-tests function.
 
         info!("=> Running test `{test_name}` with timeout {timeout_secs}s...");
@@ -313,10 +316,10 @@ impl ITests {
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = chip_dir.join("out/host/chip-tool");
         let test_exe_path = self.test_exe_path(profile, target);
-        let test_pics_path = self.test_pics_path();
+        let test_pics_path = self.test_pics_path(target);
 
         let test_command = format!(
-            "{} --log-level debug --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app {} --pics-file {}",
+            "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app {} --pics-file {}",
             test_suite_path.display(),
             test_name,
             chip_tool_path.display(),
@@ -506,18 +509,15 @@ impl ITests {
     }
 
     fn test_exe_path(&self, profile: &str, target: &str) -> PathBuf {
-        self.workspace_dir
-            .join("target")
-            .join(profile)
-            .join(target)
+        self.workspace_dir.join("target").join(profile).join(target)
     }
 
-    fn test_pics_path(&self) -> PathBuf {
+    fn test_pics_path(&self, target: &str) -> PathBuf {
         self.workspace_dir
             .join("examples")
             .join("src")
             .join("bin")
-            .join(TEST_EXE_PICS_NAME)
+            .join(format!("{target}.pics"))
     }
 
     fn chip_dir(&self) -> PathBuf {
