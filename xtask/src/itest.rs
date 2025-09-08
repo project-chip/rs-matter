@@ -43,12 +43,6 @@ pub const CHIP_DEFAULT_GITREF: &str = "v1.3.0.0"; //"master";
 /// The directory where the Chip repository will be cloned
 const CHIP_DIR: &str = ".build/itest/connectedhomeip";
 
-/// The name of the tested `rs-matter` executable
-const TEST_EXE_NAME: &str = "chip_tool_tests";
-
-/// The name of the tested `rs-matter` executable's PICS file
-const TEST_EXE_PICS_NAME: &str = "chip_tool_tests.pics";
-
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
     "bash",
@@ -147,10 +141,11 @@ impl ITests {
     pub fn build<'a>(
         &self,
         profile: &str,
+        target: &str,
         features: impl IntoIterator<Item = &'a String>,
         force_rebuild: bool,
     ) -> anyhow::Result<()> {
-        self.build_test_exe(profile, features, force_rebuild)
+        self.build_test_exe(profile, target, features, force_rebuild)
     }
 
     /// Run integration tests
@@ -159,8 +154,9 @@ impl ITests {
         tests: impl IntoIterator<Item = &'a String> + Clone,
         test_timeout_secs: u32,
         profile: &str,
+        target: &str,
     ) -> anyhow::Result<()> {
-        self.run_tests(tests, test_timeout_secs, profile)
+        self.run_tests(tests, test_timeout_secs, profile, target)
     }
 
     fn setup_chip_tool(
@@ -262,6 +258,7 @@ impl ITests {
         tests: impl IntoIterator<Item = &'a String> + Clone,
         test_timeout_secs: u32,
         profile: &str,
+        target: &str,
     ) -> anyhow::Result<()> {
         warn!("Running tests...");
 
@@ -295,7 +292,7 @@ impl ITests {
 
         // Run each test
         for test_name in tests {
-            self.run_test(test_name, test_timeout_secs, profile)?;
+            self.run_test(test_name, test_timeout_secs, profile, target)?;
         }
 
         info!("All tests completed successfully.");
@@ -303,7 +300,13 @@ impl ITests {
         Ok(())
     }
 
-    fn run_test(&self, test_name: &str, timeout_secs: u32, profile: &str) -> anyhow::Result<()> {
+    fn run_test(
+        &self,
+        test_name: &str,
+        timeout_secs: u32,
+        profile: &str,
+        target: &str,
+    ) -> anyhow::Result<()> {
         // TODO: Running test-by-test is slow. Turn this into a run-multiple-tests function.
 
         info!("=> Running test `{test_name}` with timeout {timeout_secs}s...");
@@ -312,8 +315,8 @@ impl ITests {
 
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = chip_dir.join("out/host/chip-tool");
-        let test_exe_path = self.test_exe_path(profile);
-        let test_pics_path = self.test_pics_path();
+        let test_exe_path = self.test_exe_path(profile, target);
+        let test_pics_path = self.test_pics_path(target);
 
         let test_command = format!(
             "{} --log-level warn --target {} --runner chip_tool_python --chip-tool {} run --iterations 1 --test-timeout-seconds {} --all-clusters-app {} --pics-file {}",
@@ -342,10 +345,11 @@ impl ITests {
     fn build_test_exe<'a>(
         &self,
         profile: &str,
+        target: &str,
         additional_features: impl IntoIterator<Item = &'a String>,
         force_rebuild: bool,
     ) -> anyhow::Result<()> {
-        warn!("Building test executable `{TEST_EXE_NAME}`...");
+        warn!("Building test executable `{target}`...");
 
         let test_exe_crate_dir = self.workspace_dir.join("examples");
 
@@ -376,7 +380,7 @@ impl ITests {
 
         cmd.arg("build")
             .arg("--bin")
-            .arg(TEST_EXE_NAME)
+            .arg(target)
             .arg("--features")
             .arg(&features)
             .current_dir(&test_exe_crate_dir);
@@ -391,7 +395,7 @@ impl ITests {
 
         self.run_command(&mut cmd)?;
 
-        info!("Test executable `{TEST_EXE_NAME}` built successfully");
+        info!("Test executable `{target}` built successfully");
 
         Ok(())
     }
@@ -504,19 +508,16 @@ impl ITests {
         Ok(())
     }
 
-    fn test_exe_path(&self, profile: &str) -> PathBuf {
-        self.workspace_dir
-            .join("target")
-            .join(profile)
-            .join(TEST_EXE_NAME)
+    fn test_exe_path(&self, profile: &str, target: &str) -> PathBuf {
+        self.workspace_dir.join("target").join(profile).join(target)
     }
 
-    fn test_pics_path(&self) -> PathBuf {
+    fn test_pics_path(&self, target: &str) -> PathBuf {
         self.workspace_dir
             .join("examples")
             .join("src")
             .join("bin")
-            .join(TEST_EXE_PICS_NAME)
+            .join(format!("{target}.pics"))
     }
 
     fn chip_dir(&self) -> PathBuf {
