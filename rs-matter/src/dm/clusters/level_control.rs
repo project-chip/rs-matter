@@ -88,12 +88,46 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         Ok(())
     }
 
-    // Processes the options of commands 'without On/Off'.
+    // Checks if a command should continue beyond the Options processing.
     // Returns true if execution of the command should continue, false otherwise.
-    fn should_continue(&self, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<bool, Error> {
-        let temporary_options = (options_mask & options_override) | self.state.raw_get_options()?;
+    //
+    // From section 1.6.6.9
+    // Command execution SHALL NOT continue beyond the Options processing if all of these criteria are true:
+    // - The command is one of the ‘without On/Off’ commands: Move, Move to Level, Step, or Stop.
+    // - The On/Off cluster exists on the same endpoint as this cluster.
+    // - The OnOff attribute of the On/Off cluster, on this endpoint, is FALSE.
+    // - The value of the ExecuteIfOff bit is 0.
+    fn should_continue(&self, with_on_off: bool, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<bool, Error> {
+        if with_on_off {
+            return Ok(true);
+        }
 
-        Ok(temporary_options.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF))
+        let on_off_state = match self.on_off.get() {
+            Some(on_off_state) => on_off_state,
+            None => {
+                // todo: Is this sufficient to satisfy "The On/Off cluster exists on the same endpoint as this cluster"?
+                // It could exist but the user forgets to link them.
+                return Ok(true)
+            },
+        };
+
+        if on_off_state.raw_get_on_off()? {
+            return Ok(true);
+        }
+
+        // The OptionsMask and OptionsOverride fields SHALL both be present. Default values are provided
+        // to interpret missing fields from legacy devices. A temporary Options bitmap SHALL be created from
+        // the Options attribute, using the OptionsMask and OptionsOverride fields. Each bit of the temporary
+        // Options bitmap SHALL be determined as follows:
+        // Each bit in the Options attribute SHALL determine the corresponding bit in the temporary Options
+        // bitmap, unless the OptionsMask field is present and has the corresponding bit set to 1, in which
+        // case the corresponding bit in the OptionsOverride field SHALL determine the corresponding bit in
+        // the temporary Options bitmap.
+        if options_mask.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF) {
+            return Ok(options_override.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
+        }
+
+        return Ok(self.state.raw_get_options()?.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
     }
 
     async fn task_manager(&self, task: Task) {
@@ -109,7 +143,6 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                 }
 
             }
-            // Task::Step { with_on_off } => return, // todo
             Task::Stop => return,
         }
     }
@@ -154,7 +187,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Err(ErrorCode::InvalidCommand.into())
         }
 
-        if with_on_off && !self.should_continue(options_mask, options_override)? {
+        if !self.should_continue(with_on_off, options_mask, options_override)? {
             return Ok(());
         }
 
@@ -276,7 +309,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Err(Error::new(ErrorCode::InvalidCommand));
         }
 
-        if with_on_off && !self.should_continue(options_mask, options_override)? {
+        if !self.should_continue(with_on_off, options_mask, options_override)? {
             return Ok(());
         }
 
@@ -348,7 +381,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Err(ErrorCode::InvalidCommand.into())
         }
 
-        if with_on_off && !self.should_continue(options_mask, options_override)? {
+        if !self.should_continue(with_on_off, options_mask, options_override)? {
             return Ok(());
         }
 
@@ -394,7 +427,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     }
 
     fn stop(&self, with_on_off: bool, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
-        if with_on_off && !self.should_continue(options_mask, options_override)? {
+        if !self.should_continue(with_on_off, options_mask, options_override)? {
             return Ok(());
         }
         self.task_signal.signal(Task::Stop);
