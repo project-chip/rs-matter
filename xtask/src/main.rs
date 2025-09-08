@@ -185,7 +185,7 @@ struct BuildArgs {
     /// Build profile (debug or release)
     #[arg(long, default_value = "debug")]
     profile: String,
-    /// Build target application name
+    /// Build target application name (`chip_tool_tests` by default)
     #[arg(long, default_value = "chip_tool_tests")]
     target: String,
     /// Additional cargo features
