@@ -1,9 +1,8 @@
 { pkgs ? import <nixpkgs> {} }:
 
-
 (pkgs.buildFHSEnv {
 	name = "rs-matter-test-env";
-	runScript = "zsh";
+    runScript = builtins.getEnv "SHELL";
 
     targetPkgs = pkgs: with pkgs; [
         # rust support
@@ -17,6 +16,7 @@
         iptables
 
         # connectedhomeip requirements
+        bash
         git
         gcc
         glib
@@ -40,7 +40,6 @@
         ## python support
         # Note: python 3.11 is required due to the deprecation of the `imp` module in newer versions of python.
         python311Full
-        python311Packages.pip
-        python311Packages.virtualenv
     ];
+
 }).env
