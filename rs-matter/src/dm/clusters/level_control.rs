@@ -129,7 +129,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
 
         let new_on_off_value = current_level > H::MIN_LEVEL;
-        
+
         match self.on_off.get() {
             Some(on_off) => {
                 let current_on_off = on_off.get();
@@ -145,7 +145,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
         Ok(())
     }
-    
+
     // A single move-to-level command handler for both with and without on off.
     fn move_to_level(&self, with_on_off: bool, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
 
@@ -209,7 +209,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
             let is_transition_start = remaining_time.as_millis() == (transition_time as u64 * 100);
             let is_transition_end = current_level == target_level;
-            
+
             debug!("move_to_level_transition: Setting current level: {}", current_level);
             self.state.set_level(current_level)?;
             self.state.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
@@ -233,7 +233,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
 
             self.state.write_remaining_time_quietly(remaining_time, is_transition_start)?;
-            
+
             let latency = match is_transition_start {
                 false => embassy_time::Instant::now() - event_start_time,
                 true => (embassy_time::Instant::now() - event_start_time) + startup_latency,
@@ -289,7 +289,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
 
         let event_duration = Duration::from_hz(rate as u64);
-        
+
         info!("moving with rate {}", rate);
 
         self.task_signal.signal(Task::Move { with_on_off: with_on_off, move_mode: move_mode, event_duration: event_duration });
@@ -415,12 +415,16 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
             required;
             AttributeId::CurrentLevel 
             | AttributeId::RemainingTime
-            | AttributeId::OnLevel
-            | AttributeId::MaxLevel
             | AttributeId::MinLevel
+            | AttributeId::MaxLevel
+            | AttributeId::OnOffTransitionTime
+            | AttributeId::OnLevel
+            | AttributeId::OnTransitionTime
+            | AttributeId::OffTransitionTime
+            | AttributeId::DefaultMoveRate
             | AttributeId::Options
             | AttributeId::StartUpCurrentLevel
-        )) // todo add missing attributes needed for a dimmable light AttributeId::MinLevel
+        )) 
         .with_cmds(with!(
             CommandId::MoveToLevel
                 | CommandId::Move
@@ -866,7 +870,7 @@ pub trait LevelControlHooks {
         Err(ErrorCode::InvalidAction.into())
     }
     fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
-    
+
     // todo uncomment when the FQ feature is no longer provisional
     // fn raw_get_current_frequency(&self) -> Result<u16, Error> {
     //     Err(ErrorCode::InvalidAction.into())

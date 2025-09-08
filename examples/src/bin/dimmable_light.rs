@@ -16,7 +16,6 @@
  */
 
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
-#![recursion_limit = "4000"]
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -63,6 +62,12 @@ static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCe
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
+// todo only needed for running testes
+#[cfg(feature = "chip-test")]
+use std::path::PathBuf;
+#[cfg(feature = "chip-test")]
+const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
+
 fn main() -> Result<(), Error> {
     let thread = std::thread::Builder::new()
         // Increase the stack size until the example can work without stack blowups.
@@ -80,19 +85,20 @@ fn main() -> Result<(), Error> {
 }
 
 fn run() -> Result<(), Error> {
+    #[cfg(not(feature = "chip-test"))]
     env_logger::init_from_env(
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
-    // NOTE: chip-tool tests need the log to go to `stdout` instead
-    // env_logger::builder()
-    //     .format(|buf, record| {
-    //         use std::io::Write;
-    //         writeln!(buf, "{}: {}", record.level(), record.args())
-    //     })
-    //     .target(env_logger::Target::Stdout)
-    //     .filter_level(::log::LevelFilter::Info)
-    //     .init();
+    #[cfg(feature = "chip-test")]
+    env_logger::builder()
+        .format(|buf, record| {
+            use std::io::Write;
+            writeln!(buf, "{}: {}", record.level(), record.args())
+        })
+        .target(env_logger::Target::Stdout)
+        .filter_level(::log::LevelFilter::Debug)
+        .init();
 
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
@@ -177,7 +183,10 @@ fn run() -> Result<(), Error> {
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
+    #[cfg(not(feature = "chip-test"))]
     let path = std::env::temp_dir().join("rs-matter");
+    #[cfg(feature = "chip-test")]
+    let path = PathBuf::from(PERSIST_FILE_NAME);
 
     info!(
         "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
@@ -270,6 +279,11 @@ pub struct LevelControlHandler {
     current_level: Cell<u8>,
     startup_current_level: Cell<Nullable<u8>>,
     remaining_time: Cell<u16>,
+    on_off_transition_time: Cell<u16>,
+    on_transition_time: Cell<Nullable<u16>>,
+    off_transition_time: Cell<Nullable<u16>>,
+    default_move_rate: Cell<Nullable<u8>>,
+    start_up_current_level: Cell<Nullable<u8>>,
 }
 
 impl LevelControlHandler {
@@ -281,6 +295,11 @@ impl LevelControlHandler {
             current_level: Cell::new(1),
             startup_current_level: Cell::new(Nullable::some(73)),
             remaining_time: Cell::new(0),
+            on_off_transition_time: Cell::new(0),
+            on_transition_time: Cell::new(Nullable::none()),
+            off_transition_time: Cell::new(Nullable::none()),
+            default_move_rate: Cell::new(Nullable::none()),
+            start_up_current_level: Cell::new(Nullable::none()),
         }
     }
 }
@@ -296,32 +315,32 @@ impl LevelControlHooks for LevelControlHandler {
         info!("LevelControlHandler::set_level: setting level to {}", level);
         Ok(())
     }
-    
+
     fn raw_get_options(&self) -> Result<OptionsBitmap, Error> {
         Ok(self.options.get())
     }
-    
+
     fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error> {
         self.options.set(value);
         Ok(())
     }
-    
+
     fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error> {
         // todo can we impl Copy for Nullable?
         let val = self.on_level.take();
         self.on_level.set(val.clone());
         Ok(val)
     }
-    
+
     fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.on_level.set(value);
         Ok(())
     }
-    
+
     fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error> {
         Ok(Nullable::some(self.current_level.get()))
     }
-    
+
     fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         match value.into_option() {
             Some(value) => self.current_level.set(value),
@@ -329,24 +348,78 @@ impl LevelControlHooks for LevelControlHandler {
         }
         Ok(())
     }
-    
+
     fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error> {
         let val = self.startup_current_level.take();
         self.startup_current_level.set(val.clone());
         Ok(val)
     }
-    
+
     fn raw_set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.startup_current_level.set(value);
         Ok(())
     }
-    
+
     fn raw_get_remaining_time(&self) -> Result<u16, Error> {
         Ok(self.remaining_time.get())
     }
-    
+
     fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error> {
         self.remaining_time.set(value);
         Ok(())
     }
+
+    fn raw_get_on_off_transition_time(&self) -> Result<u16, Error> {
+        Ok(self.on_off_transition_time.get())
+    }
+
+    fn raw_set_on_off_transition_time(&self, value: u16) -> Result<(), Error> {
+        self.on_off_transition_time.set(value);
+        Ok(())
+    }
+
+    fn raw_get_on_transition_time(&self) -> Result<Nullable<u16>, Error> {
+        let val = self.on_transition_time.take();
+        self.on_transition_time.set(val.clone());
+        Ok(val)
+    }
+
+    fn raw_set_on_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
+        self.on_transition_time.set(value);
+        Ok(())
+    }
+
+    fn raw_get_off_transition_time(&self) -> Result<Nullable<u16>, Error> {
+        let val = self.off_transition_time.take();
+        self.off_transition_time.set(val.clone());
+        Ok(val)
+    }
+
+    fn raw_set_off_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
+        self.off_transition_time.set(value);
+        Ok(())
+    }
+
+    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error> {
+        let val = self.default_move_rate.take();
+        self.default_move_rate.set(val.clone());
+        Ok(val)
+    }
+
+    fn raw_set_default_move_rate(&self, value: Nullable<u8>) -> Result<(), Error> {
+        self.default_move_rate.set(value);
+        Ok(())
+    }
+
+    fn raw_get_start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+        let val = self.start_up_current_level.take();
+        self.start_up_current_level.set(val.clone());
+        Ok(val)
+    }
+
+    fn raw_set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+        self.start_up_current_level.set(value);
+        Ok(())
+    }
+
 }
