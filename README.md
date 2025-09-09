@@ -64,6 +64,26 @@ Also look at all [open issues](https://github.com/project-chip/rs-matter/issues)
   - Automated nightly CI execution
   - Iterative test enablement workflow for developers
 
+## Nix support
+
+`rs-matter` provides nix files for setting up reproducible shells on systems using the nix package manager.
+There are two different environments for different use-cases.
+
+### `devenv.nix`
+
+This is used for normal development of applications.
+To enter this shell, run `devenv shell` in the project root.
+You can optionally follow this with your preferred shell e.g. `devenv shell zsh`.
+
+This requires [devenv](https://devenv.sh/) to be installed on your system.
+For nix managed systems, add `pkgs.devenv` to `environment.systemPackages`.
+
+### `shell.nix`
+
+This is for cases where tools expect a standard Linux filesystem layout (FHS).
+Use this shell when running `cargo xtask itest` as it sets up `connectedhomeip` which expects a FHS layout.
+To enter this shell, run `nix-shell` in the project root.
+
 ## How does it look like?
 
 See the [examples](examples).
