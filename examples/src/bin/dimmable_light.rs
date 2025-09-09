@@ -310,10 +310,10 @@ impl LevelControlHooks for LevelControlHandler {
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
 
-    fn set_level(&self, level: u8) -> Result<(), Error> {
+    fn set_level(&self, level: u8) -> Result<u8, ()> {
         // This is where business logic is implemented to physically change the level.
         info!("LevelControlHandler::set_level: setting level to {}", level);
-        Ok(())
+        Ok(level)
     }
 
     fn raw_get_options(&self) -> Result<OptionsBitmap, Error> {

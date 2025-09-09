@@ -24,11 +24,14 @@ pub struct LevelControlCluster<'a, H: LevelControlHooks> {
     dataver: Dataver,
     state: &'a LevelControlState<'a, H>,
     task_signal: Signal<NoopRawMutex, Task>,
-    on_off: Cell<Option<&'a OnOffHandler>>, // todo replace with OnOffState
+    // todo: Replace with OnOffState when OnOff in re-implemented.
+    on_off: Cell<Option<&'a OnOffHandler>>,
 }
 
 impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
+    const MAXIMUM_LEVEL: u8 = 254;
 
+    // todo: add `on_off_state: Option<&'a OnOffState>` when OnOff in re-implemented.
     pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
         Self {
             dataver,
@@ -36,6 +39,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             task_signal: Signal::new(),
             on_off: Cell::new(None),
         }
+
+        // todo call self.validate
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -43,7 +48,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         HandlerAsyncAdaptor(self)
     }
 
-    // todo update after OnOff update
+    // todo Remove once OnOff is re-implemented.
     // Set the OnOff cluster instance coupled with this LevelControl cluster, i.e. the OnOff cluster on the same endpoint.
     // Note: The OnOff cluster on the same endpoint SHALL be set if any of the following is true
     //   - The OnOff feature is set
@@ -53,26 +58,34 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     }
 
 
-    // todo Such a method might be useful to inform the user of any misconfigurations at start-up rather than during operation.
-    // Similar checks are carried out by the Matter certification, however, this would also pick up if the on_off cluster was set when needed.
-    // Validate that the LevelControlCluster has been set up correctly for the desired cluster configuration.
-    // todo decide the type of the errors
-    pub fn validate(&self, cluster: Cluster<'static>) -> Result<(), Error> {
-        if cluster.revision != 7 {
-            // "incorrect version number: expected 7 got {}", cluster.revision
-            return Err(ErrorCode::Invalid.into());
+    // Validate that the LevelControlCluster has been set up correctly for given cluster configuration.
+    //
+    // ## Panic
+    //
+    // panics with error message if the cluster setup is not valid according to the given cluster configuration.
+    fn validate(&self, cluster: Cluster<'static>) {
+        if cluster.revision != 5 {
+            panic!("incorrect version number: expected 5 got {}", cluster.revision);
         }
 
-        if cluster.feature_map & level_control::Feature::ON_OFF.bits() != 0 {
-            if let None = self.on_off.get() {
-                // "a reference to the OnOff cluster must be set when the LIGHTING feature is enabled"
-                return Err(ErrorCode::Invalid.into());
-            }
+        // todo check for mandatory Attributes and Commands
 
-            // // This is an example. Needs PartialEq derived on AttributeId
-            // if cluster.attributes.contains(AttributeId::MaxLevel) {
-            //     return Err(ErrorCode::Invalid.into());
-            // }
+        // If the ON_OFF feature in enabled or any of the "WithOnOff" commands are supported,
+        // check that an OnOff cluster exists on the same endpoint.
+        if cluster.feature_map & level_control::Feature::ON_OFF.bits() != 0
+        {
+            match self.on_off.get() {
+                Some(_on_off_state) => {
+                    // todo can we check the endpoint?
+                },
+                None => {
+                    panic!("a reference to the OnOff cluster must be set when the ON_OFF feature is enabled");
+                },
+            }
+        }
+
+        if H::MAX_LEVEL > Self::MAXIMUM_LEVEL {
+            panic!("the MAX_LEVEL cannot be higher than {}", Self::MAXIMUM_LEVEL);
         }
 
         if cluster.feature_map & level_control::Feature::LIGHTING.bits() != 0 {
@@ -80,12 +93,16 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             // A value of 0x00 SHALL NOT be used.
             // A value of 0x01 SHALL indicate the minimum level that can be attained on a device.
             // A value of 0xFE SHALL indicate the maximum level that can be attained on a device.
-            if H::MIN_LEVEL == 0 || H::MAX_LEVEL > 0xFE {
-                return Err(ErrorCode::Invalid.into());
+            if H::MIN_LEVEL == 0 {
+                panic!("the MIN_LEVEL cannot be 0 when the LIGHTING feature is enabled");
             }
-        }
 
-        Ok(())
+            // Check for required attributes when using this feature
+            // if !cluster.attributes.contains(AttributeId::RemainingTime)
+            // || !cluster.attributes.contains(AttributeId::StartUpCurrentLevel) {
+            //     panic!("the RemainingTime and StartUpCurrentLevel attributes are required by the LIGHTING feature");
+            // }
+        }
     }
 
     // Checks if a command should continue beyond the Options processing.
@@ -105,8 +122,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         let on_off_state = match self.on_off.get() {
             Some(on_off_state) => on_off_state,
             None => {
-                // todo: Is this sufficient to satisfy "The On/Off cluster exists on the same endpoint as this cluster"?
-                // It could exist but the user forgets to link them.
+                // This should be sufficient to satisfy "The On/Off cluster exists on the same endpoint as this cluster" 
+                // if we can check the NODE configuration in validate.
                 return Ok(true)
             },
         };
@@ -182,8 +199,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     // A single move-to-level command handler for both with and without on off.
     fn move_to_level(&self, with_on_off: bool, level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
 
-        // todo should this be corrected? Check the cpp impl
-        if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
+        if level > Self::MAXIMUM_LEVEL {
             return Err(ErrorCode::InvalidCommand.into())
         }
 
@@ -196,7 +212,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         match transition_time {
             None | Some(0) => {
                 self.task_signal.signal(Task::Stop);
-                self.state.set_level(level)?;
+                // todo find suitable error.
+                let level = self.state.set_level(level).map_err(|_| ErrorCode::Invalid)?;
                 self.state.write_current_level_quietly(Nullable::some(level), true)?;
                 self.state.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
@@ -217,7 +234,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         let event_start_time = Instant::now();
 
         // Check if current_level is null. If so, return error.
-        //  todo: currently returning an incorrect error.
+        //  todo: currently returning an incorrect error. `Failure` is used in the cpp impl
         //  Equivalent code in cpp impl: https://github.com/project-chip/connectedhomeip/blob/8adaf97c152e478200784629499756e81c53fd15/src/app/clusters/level-control/level-control.cpp#L904
         let mut current_level = match self.state.raw_get_current_level()?.into_option() {
             Some(cl) => cl,
@@ -244,7 +261,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             let is_transition_end = current_level == target_level;
 
             debug!("move_to_level_transition: Setting current level: {}", current_level);
-            self.state.set_level(current_level)?;
+            // todo find suitable error.
+            let current_level = self.state.set_level(current_level).map_err(|_| ErrorCode::Invalid)?;
             self.state.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
 
 
@@ -287,6 +305,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         // the Rate field is null and the DefaultMoveRate attribute is either not supported or set to null, then
         // the device SHOULD move as fast as it is able.
         let rate = match rate {
+            // Move at a rate of zero is no move at all. Immediately succeed without touching anything.
+            Some(0) => return Ok(()),
             Some(val) => val,
             None => {
                 match self.state.raw_get_default_move_rate() {
@@ -355,7 +375,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
 
             let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
-            self.state.set_level(new_level)?;
+            // todo find suitable error.
+            let new_level = self.state.set_level(new_level).map_err(|_| ErrorCode::Invalid)?;
             self.state.write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
 
             if is_end_of_transition {
@@ -412,7 +433,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         match transition_time {
             0 => {
                 self.task_signal.signal(Task::Stop);
-                self.state.set_level(new_level)?;
+                // todo find suitable error.
+                let new_level = self.state.set_level(new_level).map_err(|_| ErrorCode::Invalid)?;
                 self.state.write_current_level_quietly(Nullable::some(new_level), true)?;
                 self.state.write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
@@ -438,11 +460,11 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 }
 
 impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H> {
-    // todo Because this is const, I don't think that we can populated it by `set` methods in LevelControlCluster to ensure the cluster is setup correctly.
-    // Hence, we should move this to the LevelControlHooks of take it as an input during initialisation.
+    // todo Because this is const, we can't populated it by `set` methods in LevelControlCluster to ensure the cluster is setup correctly.
+    // Hence, we should move this to the LevelControlHooks or take it as an input during initialisation.
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_revision(7)
+        .with_revision(5)
         .with_features(level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits())
         .with_attrs(with!(
             required;
@@ -495,7 +517,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
-        info!("LevelControl: Called current_level()");
         self.state.raw_get_current_level()
     }
 
@@ -503,7 +524,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
-        info!("LevelControl: Called on_level()");
         self.state.raw_get_on_level()
     }
 
@@ -512,7 +532,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
-        info!("set_on_level called");
         if let Some(level) = value.clone().into_option() {
             if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
                 // todo not sure if this is the correct error
@@ -530,7 +549,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         &self,
         _ctx: impl ReadContext,
     ) -> Result<OptionsBitmap, Error> {
-        info!("LevelControl: Called options()");
         self.state.raw_get_options()
     }
 
@@ -539,7 +557,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         ctx: impl WriteContext,
         value: OptionsBitmap,
     ) -> Result<(), Error> {
-        info!("set_options called");
         self.state.raw_set_options(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -547,17 +564,14 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
     }
 
     async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        info!("LevelControl: Called remaining_time()");
         self.state.raw_get_remaining_time()
     }
 
     async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        info!("LevelControl: Called max_level()");
         Ok(H::MAX_LEVEL)
     }
 
     async fn min_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        info!("LevelControl: Called min_level()");
         Ok(H::MIN_LEVEL)
     }
 
@@ -623,12 +637,10 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
     }
 
     async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        info!("LevelControl: Called start_up_current_level()");
         self.state.raw_get_startup_current_level()
     }
 
     async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
-        info!("LevelControl: Called set_start_up_current_level()");
         if let Some(level) = value.clone().into_option() {
             if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
                 // todo not sure if this is the correct error
@@ -647,7 +659,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_move_to_level()");
 
         self.move_to_level(false, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
 
@@ -658,7 +669,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_move()");
 
         self.move_command(false, request.move_mode()?, request.rate()?.into_option(), request.options_mask()?, request.options_override()?)
 
@@ -669,7 +679,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StepRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_step()");
 
         self.step(false, request.step_mode()?, request.step_size()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
     }
@@ -679,7 +688,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StopRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_stop()");
 
         self.stop(false, request.options_mask()?, request.options_override()?)
     }
@@ -689,7 +697,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_move_to_level_with_on_off()");
 
         self.move_to_level(true, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
 
@@ -700,7 +707,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_move_with_on_off()");
 
         self.move_command(true, request.move_mode()?, request.rate()?.into_option(), request.options_mask()?, request.options_override()?)
     }
@@ -710,7 +716,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StepWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_step_with_on_off()");
 
         self.step(true, request.step_mode()?, request.step_size()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
     }
@@ -720,7 +725,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StopWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_stop_with_on_off()");
         self.stop(true, request.options_mask()?, request.options_override()?)
     }
 
@@ -729,7 +733,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         _request: MoveToClosestFrequencyRequest<'_>,
     ) -> Result<(), Error> {
-        info!("LevelControl: Called handle_move_to_closest_frequency()");
         // todo replace the error with the comments when the FQ feature is no longer provisional
         Err(ErrorCode::InvalidCommand.into())
 
@@ -827,7 +830,7 @@ impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
 
     delegate!{
         to self.handler {
-            fn set_level(&self, level: u8) -> Result<(), Error>;
+            fn set_level(&self, level: u8) -> Result<u8, ()>;
             // fn set_frequency(&self, frequency: u16) -> Result<u16, Error>;
             // fn get_frequency_at_current_level(&self) -> Result<u16, Error>;
             fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error>;
@@ -865,9 +868,12 @@ pub trait LevelControlHooks {
     const FASTEST_RATE: u8;
 
     // Implements the business logic for setting the level.
-    // Do not update attribute states.
-    // todo return Ok(u8) with the value that was set by the device
-    fn set_level(&self, level: u8) -> Result<(), Error>;
+    // DO NOT update attribute states.
+    // Returns the value to which the device was set.
+    //
+    // todo Should this be allowed to error? 
+    // If so, the error could be `()` and the SDK maps it to a suitable error signifying that something went wrong with the device.
+    fn set_level(&self, level: u8) -> Result<u8, ()>;
 
     // todo uncomment when the FQ feature is no longer provisional
     // // If the device cannot approximate the frequency, then it SHALL 
@@ -882,7 +888,7 @@ pub trait LevelControlHooks {
 
     // Raw accessors
     //  These methods should not perform any checks.
-    //  They should simply set of get values.
+    //  They should simply set or get values.
     fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error>;
     fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
 
