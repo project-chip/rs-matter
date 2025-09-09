@@ -155,19 +155,6 @@ fn run() -> Result<(), Error> {
     // Run the background job the handler might be having
     let mut dm_handler_job = pin!(dm_handler.run());
 
-    // This is a sample code that simulates state changes triggered by the HAL
-    // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
-    // let mut device = pin!(async {
-    //     loop {
-    //         Timer::after(Duration::from_secs(5)).await;
-
-    //         on_off.set(!on_off.get());
-    //         subscriptions.notify_changed();
-
-    //         info!("Lamp toggled");
-    //     }
-    // });
-
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -272,6 +259,9 @@ use core::cell::Cell;
 use rs_matter::tlv::Nullable;
 use rs_matter::dm::clusters::decl::level_control::OptionsBitmap;
 use rs_matter::dm::clusters::level_control::{LevelControlHooks};
+use rs_matter::dm::Cluster;
+use rs_matter::dm::clusters::decl::level_control::{FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER, AttributeId, CommandId};
+use rs_matter::with;
 
 pub struct LevelControlHandler {
     options: Cell<OptionsBitmap>,
@@ -309,6 +299,33 @@ impl LevelControlHooks for LevelControlHandler {
     const MIN_LEVEL: u8 = 1;
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
+    const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
+    .with_revision(5)
+    .with_features(level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits())
+    .with_attrs(with!(
+        required;
+        AttributeId::CurrentLevel
+        | AttributeId::RemainingTime
+        | AttributeId::MinLevel
+        | AttributeId::MaxLevel
+        | AttributeId::OnOffTransitionTime
+        | AttributeId::OnLevel
+        | AttributeId::OnTransitionTime
+        | AttributeId::OffTransitionTime
+        | AttributeId::DefaultMoveRate
+        | AttributeId::Options
+        | AttributeId::StartUpCurrentLevel
+    ))
+    .with_cmds(with!(
+        CommandId::MoveToLevel
+            | CommandId::Move
+            | CommandId::Step
+            | CommandId::Stop
+            | CommandId::MoveToLevelWithOnOff
+            | CommandId::MoveWithOnOff
+            | CommandId::StepWithOnOff
+            | CommandId::StopWithOnOff
+    ));
 
     fn set_level(&self, level: u8) -> Result<u8, ()> {
         // This is where business logic is implemented to physically change the level.

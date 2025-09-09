@@ -9,7 +9,6 @@ use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 pub use crate::dm::clusters::decl::level_control::*;
 use crate::utils::maybe::Maybe;
-use crate::with;
 use crate::error::{Error, ErrorCode};
 
 use delegate::delegate;
@@ -32,15 +31,96 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     const MAXIMUM_LEVEL: u8 = 254;
 
     // todo: add `on_off_state: Option<&'a OnOffState>` when OnOff in re-implemented.
-    pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
-        Self {
+    pub fn new(dataver: Dataver,handler: &'a LevelControlState<'a, H>) -> Self {
+        let cluster = Self {
             dataver,
             state: handler,
             task_signal: Signal::new(),
             on_off: Cell::new(None),
+        };
+
+        cluster.validate();
+
+        cluster
+    }
+
+    // Validate that the LevelControlCluster has been set up correctly for given cluster configuration.
+    //
+    // ## Panic
+    //
+    // panics with error message if the cluster setup is not valid according to the given cluster configuration.
+    fn validate(&self) {
+        if H::CLUSTER.revision != 5 {
+            panic!("LevelControl validation: incorrect version number: expected 5 got {}", H::CLUSTER.revision);
         }
 
-        // todo call self.validate
+        // Check for mandatory attributes
+        if H::CLUSTER.attribute(AttributeId::CurrentLevel as _).is_none()
+        || H::CLUSTER.attribute(AttributeId::OnLevel as _).is_none()
+        || H::CLUSTER.attribute(AttributeId::Options as _).is_none()
+        {
+            panic!("LevelControl validation: one or more of the following required attributes are missing:
+            - CurrentLevel
+            - OnLevel
+            - Options");
+        }
+
+        // Check for mandatory commands
+        if H::CLUSTER.command(CommandId::MoveToLevel as _).is_none()
+        || H::CLUSTER.command(CommandId::Move as _).is_none()
+        || H::CLUSTER.command(CommandId::Step as _).is_none()
+        || H::CLUSTER.command(CommandId::Stop as _).is_none()
+        || H::CLUSTER.command(CommandId::MoveToLevelWithOnOff as _).is_none()
+        || H::CLUSTER.command(CommandId::MoveWithOnOff as _).is_none()
+        || H::CLUSTER.command(CommandId::StepWithOnOff as _).is_none()
+        || H::CLUSTER.command(CommandId::StopWithOnOff as _).is_none()
+        {
+            panic!("LevelControl validation: one or more of the following required commands are missing:
+            - MoveToLevel
+            - Move
+            - Step
+            - Stop
+            - MoveToLevelWithOnOff
+            - MoveWithOnOff
+            - StepWithOnOff
+            - StopWithOnOff")
+        }
+
+        // todo: uncomment after implementing the OnOff cluster.
+        // If the ON_OFF feature in enabled or any of the "WithOnOff" commands are supported,
+        // check that an OnOff cluster exists on the same endpoint.
+        // if H::CLUSTER.feature_map & level_control::Feature::ON_OFF.bits() != 0
+        // {
+        //     match self.on_off.get() {
+        //         Some(_on_off_state) => {
+        //             // todo can we check the endpoint?
+        //         },
+        //         None => {
+        //             panic!("LevelControl validation: a reference to the OnOff cluster must be set when the ON_OFF feature is enabled");
+        //         },
+        //     }
+        // }
+
+        if H::MAX_LEVEL > Self::MAXIMUM_LEVEL {
+            panic!("LevelControl validation: the MAX_LEVEL cannot be higher than {}", Self::MAXIMUM_LEVEL);
+        }
+
+        if H::CLUSTER.feature_map & level_control::Feature::LIGHTING.bits() != 0 {
+            // From section 1.6.4.2
+            // A value of 0x00 SHALL NOT be used.
+            // A value of 0x01 SHALL indicate the minimum level that can be attained on a device.
+            // A value of 0xFE SHALL indicate the maximum level that can be attained on a device.
+            if H::MIN_LEVEL == 0 {
+                panic!("LevelControl validation: MIN_LEVEL cannot be 0 when the LIGHTING feature is enabled");
+            }
+
+            // Check for required attributes when using this feature
+            if H::CLUSTER.attribute(AttributeId::RemainingTime as _).is_none()
+            || H::CLUSTER.attribute(AttributeId::StartUpCurrentLevel as _).is_none()
+            {
+                panic!("LevelControl validation: the RemainingTime and StartUpCurrentLevel attributes are required by the LIGHTING feature");
+            }
+        }
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
@@ -55,54 +135,6 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     //   - The `WithOnOff` commands are supported
     pub fn set_on_off_cluster(&self, cluster: &'a OnOffHandler) {
         self.on_off.set(Some(cluster))
-    }
-
-
-    // Validate that the LevelControlCluster has been set up correctly for given cluster configuration.
-    //
-    // ## Panic
-    //
-    // panics with error message if the cluster setup is not valid according to the given cluster configuration.
-    fn validate(&self, cluster: Cluster<'static>) {
-        if cluster.revision != 5 {
-            panic!("incorrect version number: expected 5 got {}", cluster.revision);
-        }
-
-        // todo check for mandatory Attributes and Commands
-
-        // If the ON_OFF feature in enabled or any of the "WithOnOff" commands are supported,
-        // check that an OnOff cluster exists on the same endpoint.
-        if cluster.feature_map & level_control::Feature::ON_OFF.bits() != 0
-        {
-            match self.on_off.get() {
-                Some(_on_off_state) => {
-                    // todo can we check the endpoint?
-                },
-                None => {
-                    panic!("a reference to the OnOff cluster must be set when the ON_OFF feature is enabled");
-                },
-            }
-        }
-
-        if H::MAX_LEVEL > Self::MAXIMUM_LEVEL {
-            panic!("the MAX_LEVEL cannot be higher than {}", Self::MAXIMUM_LEVEL);
-        }
-
-        if cluster.feature_map & level_control::Feature::LIGHTING.bits() != 0 {
-            // From section 1.6.4.2
-            // A value of 0x00 SHALL NOT be used.
-            // A value of 0x01 SHALL indicate the minimum level that can be attained on a device.
-            // A value of 0xFE SHALL indicate the maximum level that can be attained on a device.
-            if H::MIN_LEVEL == 0 {
-                panic!("the MIN_LEVEL cannot be 0 when the LIGHTING feature is enabled");
-            }
-
-            // Check for required attributes when using this feature
-            // if !cluster.attributes.contains(AttributeId::RemainingTime)
-            // || !cluster.attributes.contains(AttributeId::StartUpCurrentLevel) {
-            //     panic!("the RemainingTime and StartUpCurrentLevel attributes are required by the LIGHTING feature");
-            // }
-        }
     }
 
     // Checks if a command should continue beyond the Options processing.
@@ -460,36 +492,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 }
 
 impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H> {
-    // todo Because this is const, we can't populated it by `set` methods in LevelControlCluster to ensure the cluster is setup correctly.
-    // Hence, we should move this to the LevelControlHooks or take it as an input during initialisation.
-    #[doc = "The cluster-metadata corresponding to this handler trait."]
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_revision(5)
-        .with_features(level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits())
-        .with_attrs(with!(
-            required;
-            AttributeId::CurrentLevel 
-            | AttributeId::RemainingTime
-            | AttributeId::MinLevel
-            | AttributeId::MaxLevel
-            | AttributeId::OnOffTransitionTime
-            | AttributeId::OnLevel
-            | AttributeId::OnTransitionTime
-            | AttributeId::OffTransitionTime
-            | AttributeId::DefaultMoveRate
-            | AttributeId::Options
-            | AttributeId::StartUpCurrentLevel
-        )) 
-        .with_cmds(with!(
-            CommandId::MoveToLevel
-                | CommandId::Move
-                | CommandId::Step
-                | CommandId::Stop
-                | CommandId::MoveToLevelWithOnOff
-                | CommandId::MoveWithOnOff
-                | CommandId::StepWithOnOff
-                | CommandId::StopWithOnOff
-        ));
+    const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     // Runs an async task manager for the cluster.
     async fn run(&self) -> Result<(), Error> {
@@ -785,6 +788,7 @@ impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
     const MIN_LEVEL: u8 = H::MIN_LEVEL;
     const MAX_LEVEL: u8 = H::MAX_LEVEL;
     const FASTEST_RATE: u8 = H::FASTEST_RATE;
+    const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     delegate!{
         to self.handler {
@@ -818,6 +822,7 @@ pub trait LevelControlHooks {
     const MIN_LEVEL: u8;
     const MAX_LEVEL: u8;
     const FASTEST_RATE: u8;
+    const CLUSTER: Cluster<'static>;
 
     // Implements the business logic for setting the level.
     // DO NOT update attribute states.
