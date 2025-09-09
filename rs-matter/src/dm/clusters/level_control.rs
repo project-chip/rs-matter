@@ -128,7 +128,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             },
         };
 
-        if on_off_state.raw_get_on_off()? {
+        if on_off_state.on_off()? {
             return Ok(true);
         }
 
@@ -144,7 +144,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Ok(options_override.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
         }
 
-        return Ok(self.state.raw_get_options()?.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
+        return Ok(self.state.options()?.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
     }
 
     async fn task_manager(&self, task: Task) {
@@ -236,7 +236,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         // Check if current_level is null. If so, return error.
         //  todo: currently returning an incorrect error. `Failure` is used in the cpp impl
         //  Equivalent code in cpp impl: https://github.com/project-chip/connectedhomeip/blob/8adaf97c152e478200784629499756e81c53fd15/src/app/clusters/level-control/level-control.cpp#L904
-        let mut current_level = match self.state.raw_get_current_level()?.into_option() {
+        let mut current_level = match self.state.current_level()?.into_option() {
             Some(cl) => cl,
             None => return Err(ErrorCode::InvalidState.into()),
         };
@@ -309,7 +309,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             Some(0) => return Ok(()),
             Some(val) => val,
             None => {
-                match self.state.raw_get_default_move_rate() {
+                match self.state.default_move_rate() {
                     Ok(default_move_rate) => {
                         match default_move_rate.into_option() {
                             Some(val) => val,
@@ -334,7 +334,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
 
         // Exit if we are already at the limit in the direct of movement.
-        if let Some(current_level) = self.state.raw_get_current_level()?.into_option() {
+        if let Some(current_level) = self.state.current_level()?.into_option() {
             if (current_level == H::MIN_LEVEL && move_mode == MoveModeEnum::Down) ||
                (current_level == H::MAX_LEVEL && move_mode == MoveModeEnum::Up) {
                 return Ok(());
@@ -354,7 +354,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         loop {
             let event_start_time = Instant::now();
 
-            let current_level = match self.state.raw_get_current_level()?.into_option() {
+            let current_level = match self.state.current_level()?.into_option() {
                 Some(cl) => cl,
                 None => return Err(ErrorCode::InvalidState.into()),
             };
@@ -406,7 +406,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Ok(());
         }
 
-        let current_level = match self.state.raw_get_current_level()?.into_option() {
+        let current_level = match self.state.current_level()?.into_option() {
             Some(val) => val,
             None => return Err(ErrorCode::InvalidState.into()),
         };
@@ -517,14 +517,14 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
-        self.state.raw_get_current_level()
+        self.state.current_level()
     }
 
     async fn on_level(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<Nullable<u8>, Error> {
-        self.state.raw_get_on_level()
+        self.state.on_level()
     }
 
     async fn set_on_level(
@@ -539,7 +539,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
             }
         }
 
-        self.state.raw_set_on_level(value)?;
+        self.state.set_on_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -549,7 +549,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         &self,
         _ctx: impl ReadContext,
     ) -> Result<OptionsBitmap, Error> {
-        self.state.raw_get_options()
+        self.state.options()
     }
 
     async fn set_options(
@@ -557,14 +557,14 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         ctx: impl WriteContext,
         value: OptionsBitmap,
     ) -> Result<(), Error> {
-        self.state.raw_set_options(value)?;
+        self.state.set_options(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn remaining_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.state.raw_get_remaining_time()
+        self.state.remaining_time()
     }
 
     async fn max_level(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
@@ -576,40 +576,40 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
     }
 
     async fn on_off_transition_time(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        self.state.raw_get_on_off_transition_time()
+        self.state.on_off_transition_time()
     }
 
     async fn set_on_off_transition_time(&self, ctx: impl WriteContext, value:u16) -> Result<(), Error> {
-        self.state.raw_set_on_off_transition_time(value)?;
+        self.state.set_on_off_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn on_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        self.state.raw_get_on_transition_time()
+        self.state.on_transition_time()
     }
 
     async fn set_on_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
-        self.state.raw_set_on_transition_time(value)?;
+        self.state.set_on_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn off_transition_time(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
-        self.state.raw_get_off_transition_time()
+        self.state.off_transition_time()
     }
 
     async fn set_off_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
-        self.state.raw_set_off_transition_time(value)?;
+        self.state.set_off_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn default_move_rate(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        self.state.raw_get_default_move_rate()
+        self.state.default_move_rate()
     }
 
     async fn set_default_move_rate(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
@@ -619,14 +619,14 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         if Some(0) == value.clone().into_option() {
             return Err(ErrorCode::InvalidData.into());
         }
-        self.state.raw_set_default_move_rate(value)?;
+        self.state.set_default_move_rate(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
     }
 
     async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        self.state.raw_get_startup_current_level()
+        self.state.startup_current_level()
     }
 
     async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
@@ -637,7 +637,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
             }
         }
 
-        self.state.raw_set_startup_current_level(value)?;
+        self.state.set_startup_current_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -744,13 +744,13 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
     fn write_remaining_time_quietly(&self, remaining_time: Duration, is_start_of_transition: bool) -> Result<(), Error> {
         let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
 
-        self.handler.raw_set_remaining_time(remaining_time_ds as u16)?;
+        self.handler.set_remaining_time(remaining_time_ds as u16)?;
 
         // RemainingTime Quiet report conditions:
         // - When it changes to 0, or
         // - When it changes from 0 to any value higher than 10, or
         // - When it changes, with a delta larger than 10, caused by the invoke of a command.
-        let previous_remaining_time = self.handler.raw_get_remaining_time()?;
+        let previous_remaining_time = self.handler.remaining_time()?;
         let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
         let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
         let changed_by_gt_10 = remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
@@ -763,9 +763,9 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
     }
 
     fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
-        let previous_value = self.handler.raw_get_current_level()?;
+        let previous_value = self.handler.current_level()?;
         let last_notification = Instant::now() - self.last_current_level_notification.get();
-        self.handler.raw_set_current_level(current_level.clone())?;
+        self.handler.set_current_level(current_level.clone())?;
 
         // CurrentLevel Quiet report conditions:
         // - At most once per second, or
@@ -789,26 +789,26 @@ impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
     delegate!{
         to self.handler {
             fn set_level(&self, level: u8) -> Result<u8, ()>;
-            fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error>;
-            fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
-            fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error>;
-            fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
-            fn raw_get_options(&self) -> Result<OptionsBitmap, Error>;
-            fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
-            fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error>;
-            fn raw_set_startup_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
-            fn raw_get_remaining_time(&self) -> Result<u16, Error>;
-            fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
-            fn raw_get_on_off_transition_time(&self) -> Result<u16, Error>;
-            fn raw_set_on_off_transition_time(&self, _value: u16) -> Result<(), Error>;
-            fn raw_get_on_transition_time(&self) -> Result<Nullable<u16>, Error>;
-            fn raw_set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error>;
-            fn raw_get_off_transition_time(&self) -> Result<Nullable<u16>, Error>;
-            fn raw_set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error>;
-            fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error>;
-            fn raw_set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error>;
-            fn raw_get_start_up_current_level(&self) -> Result<Nullable<u8>, Error>;
-            fn raw_set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
+            fn current_level(&self) -> Result<Nullable<u8>, Error>;
+            fn set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+            fn on_level(&self) -> Result<Nullable<u8>, Error>;
+            fn set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+            fn options(&self) -> Result<OptionsBitmap, Error>;
+            fn set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
+            fn startup_current_level(&self) -> Result<Nullable<u8>, Error>;
+            fn set_startup_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
+            fn remaining_time(&self) -> Result<u16, Error>;
+            fn set_remaining_time(&self, value: u16) -> Result<(), Error>;
+            fn on_off_transition_time(&self) -> Result<u16, Error>;
+            fn set_on_off_transition_time(&self, _value: u16) -> Result<(), Error>;
+            fn on_transition_time(&self) -> Result<Nullable<u16>, Error>;
+            fn set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error>;
+            fn off_transition_time(&self) -> Result<Nullable<u16>, Error>;
+            fn set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error>;
+            fn default_move_rate(&self) -> Result<Nullable<u8>, Error>;
+            fn set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error>;
+            fn start_up_current_level(&self) -> Result<Nullable<u8>, Error>;
+            fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
         }
     }
 }
@@ -830,59 +830,59 @@ pub trait LevelControlHooks {
     // Raw accessors
     //  These methods should not perform any checks.
     //  They should simply set or get values.
-    fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error>;
-    fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+    fn current_level(&self) -> Result<Nullable<u8>, Error>;
+    fn set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
 
-    fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error>;
-    fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
+    fn on_level(&self) -> Result<Nullable<u8>, Error>;
+    fn set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
 
-    fn raw_get_options(&self) -> Result<OptionsBitmap, Error>;
-    fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
+    fn options(&self) -> Result<OptionsBitmap, Error>;
+    fn set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
 
-    fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error> {
+    fn startup_current_level(&self) -> Result<Nullable<u8>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
-    fn raw_set_startup_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-
-    fn raw_get_remaining_time(&self) -> Result<u16, Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-    fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error>;
-
-    fn raw_get_on_off_transition_time(&self) -> Result<u16, Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-    fn raw_set_on_off_transition_time(&self, _value: u16) -> Result<(), Error> {
+    fn set_startup_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
-    fn raw_get_on_transition_time(&self) -> Result<Nullable<u16>, Error> {
+    fn remaining_time(&self) -> Result<u16, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
-    fn raw_set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
+    fn set_remaining_time(&self, value: u16) -> Result<(), Error>;
+
+    fn on_off_transition_time(&self) -> Result<u16, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn set_on_off_transition_time(&self, _value: u16) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
-    fn raw_get_off_transition_time(&self) -> Result<Nullable<u16>, Error> {
+    fn on_transition_time(&self) -> Result<Nullable<u16>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
-    fn raw_set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-
-    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error> {
-        Err(ErrorCode::InvalidAction.into())
-    }
-    fn raw_set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error> {
+    fn set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
-    fn raw_get_start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+    fn off_transition_time(&self) -> Result<Nullable<u16>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
-    fn raw_set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
+    fn set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn default_move_rate(&self) -> Result<Nullable<u8>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+        Err(ErrorCode::InvalidAction.into())
+    }
+    fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }    
 

@@ -316,32 +316,32 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(level)
     }
 
-    fn raw_get_options(&self) -> Result<OptionsBitmap, Error> {
+    fn options(&self) -> Result<OptionsBitmap, Error> {
         Ok(self.options.get())
     }
 
-    fn raw_set_options(&self, value: OptionsBitmap) -> Result<(), Error> {
+    fn set_options(&self, value: OptionsBitmap) -> Result<(), Error> {
         self.options.set(value);
         Ok(())
     }
 
-    fn raw_get_on_level(&self) -> Result<Nullable<u8>, Error> {
+    fn on_level(&self) -> Result<Nullable<u8>, Error> {
         // todo can we impl Copy for Nullable?
         let val = self.on_level.take();
         self.on_level.set(val.clone());
         Ok(val)
     }
 
-    fn raw_set_on_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_on_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.on_level.set(value);
         Ok(())
     }
 
-    fn raw_get_current_level(&self) -> Result<Nullable<u8>, Error> {
+    fn current_level(&self) -> Result<Nullable<u8>, Error> {
         Ok(Nullable::some(self.current_level.get()))
     }
 
-    fn raw_set_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         match value.into_option() {
             Some(value) => self.current_level.set(value),
             None => return Err(ErrorCode::InvalidData.into()),
@@ -349,75 +349,75 @@ impl LevelControlHooks for LevelControlHandler {
         Ok(())
     }
 
-    fn raw_get_startup_current_level(&self) -> Result<Nullable<u8>, Error> {
+    fn startup_current_level(&self) -> Result<Nullable<u8>, Error> {
         let val = self.startup_current_level.take();
         self.startup_current_level.set(val.clone());
         Ok(val)
     }
 
-    fn raw_set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.startup_current_level.set(value);
         Ok(())
     }
 
-    fn raw_get_remaining_time(&self) -> Result<u16, Error> {
+    fn remaining_time(&self) -> Result<u16, Error> {
         Ok(self.remaining_time.get())
     }
 
-    fn raw_set_remaining_time(&self, value: u16) -> Result<(), Error> {
+    fn set_remaining_time(&self, value: u16) -> Result<(), Error> {
         self.remaining_time.set(value);
         Ok(())
     }
 
-    fn raw_get_on_off_transition_time(&self) -> Result<u16, Error> {
+    fn on_off_transition_time(&self) -> Result<u16, Error> {
         Ok(self.on_off_transition_time.get())
     }
 
-    fn raw_set_on_off_transition_time(&self, value: u16) -> Result<(), Error> {
+    fn set_on_off_transition_time(&self, value: u16) -> Result<(), Error> {
         self.on_off_transition_time.set(value);
         Ok(())
     }
 
-    fn raw_get_on_transition_time(&self) -> Result<Nullable<u16>, Error> {
+    fn on_transition_time(&self) -> Result<Nullable<u16>, Error> {
         let val = self.on_transition_time.take();
         self.on_transition_time.set(val.clone());
         Ok(val)
     }
 
-    fn raw_set_on_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
+    fn set_on_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
         self.on_transition_time.set(value);
         Ok(())
     }
 
-    fn raw_get_off_transition_time(&self) -> Result<Nullable<u16>, Error> {
+    fn off_transition_time(&self) -> Result<Nullable<u16>, Error> {
         let val = self.off_transition_time.take();
         self.off_transition_time.set(val.clone());
         Ok(val)
     }
 
-    fn raw_set_off_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
+    fn set_off_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
         self.off_transition_time.set(value);
         Ok(())
     }
 
-    fn raw_get_default_move_rate(&self) -> Result<Nullable<u8>, Error> {
+    fn default_move_rate(&self) -> Result<Nullable<u8>, Error> {
         let val = self.default_move_rate.take();
         self.default_move_rate.set(val.clone());
         Ok(val)
     }
 
-    fn raw_set_default_move_rate(&self, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_default_move_rate(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.default_move_rate.set(value);
         Ok(())
     }
 
-    fn raw_get_start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+    fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
         let val = self.start_up_current_level.take();
         self.start_up_current_level.set(val.clone());
         Ok(val)
     }
 
-    fn raw_set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.start_up_current_level.set(value);
         Ok(())
     }

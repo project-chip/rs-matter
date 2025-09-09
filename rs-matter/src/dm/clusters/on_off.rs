@@ -66,7 +66,7 @@ impl OnOffHandler {
         }
     }
 
-    pub fn raw_get_on_off(&self) -> Result<bool, Error> {
+    pub fn on_off(&self) -> Result<bool, Error> {
         Ok(self.on.get())
     }
 
