@@ -246,10 +246,10 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Ok(options_override.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
         }
 
-        return Ok(self
+        Ok(self
             .state
             .options()?
-            .contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
+            .contains(level_control::OptionsBitmap::EXECUTE_IF_OFF))
     }
 
     async fn task_manager(&self, task: Task) {
@@ -278,7 +278,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                     error!("{}", e.to_string());
                 }
             }
-            Task::Stop => return,
+            Task::Stop => (),
         }
     }
 
@@ -451,7 +451,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
             Some(t_time) => {
                 self.task_signal.signal(Task::MoveToLevel {
-                    with_on_off: with_on_off,
+                    with_on_off,
                     target: level,
                     transition_time: t_time,
                 });
@@ -592,9 +592,9 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         info!("moving with rate {}", rate);
 
         self.task_signal.signal(Task::Move {
-            with_on_off: with_on_off,
-            move_mode: move_mode,
-            event_duration: event_duration,
+            with_on_off,
+            move_mode,
+            event_duration,
         });
 
         Ok(())
@@ -711,7 +711,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
             t_time => {
                 self.task_signal.signal(Task::MoveToLevel {
-                    with_on_off: with_on_off,
+                    with_on_off,
                     target: new_level,
                     transition_time: t_time,
                 });
@@ -1032,7 +1032,7 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
     ) -> Result<(), Error> {
         let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
 
-        self.handler.set_remaining_time(remaining_time_ds as u16)?;
+        self.handler.set_remaining_time(remaining_time_ds)?;
 
         // RemainingTime Quiet report conditions:
         // - When it changes to 0, or

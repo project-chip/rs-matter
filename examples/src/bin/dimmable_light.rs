@@ -223,7 +223,7 @@ fn dm_handler<'a, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
     on_off: &'a on_off::OnOffHandler,
     level_control: &'a level_control::LevelControlCluster<'a, LH>,
-) -> impl AsyncMetadata + AsyncHandler + 'a + 'a + 'a {
+) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
         endpoints::with_eth(
@@ -279,11 +279,17 @@ pub struct LevelControlHandler {
     start_up_current_level: Cell<Nullable<u8>>,
 }
 
+impl Default for LevelControlHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LevelControlHandler {
     pub const fn new() -> Self {
         Self {
             options: Cell::new(
-                OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits() as u8).unwrap(),
+                OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
             ),
             on_level: Cell::new(Nullable::some(42)),
             current_level: Cell::new(1),

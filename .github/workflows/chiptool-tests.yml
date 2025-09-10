@@ -70,7 +70,7 @@ jobs:
 
       - name: Run LevelControl YAML Integration Tests
         run: |
-          cargo xtask itest --target dimmable_light --features chip-test Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1
+          cargo xtask itest --target dimmable_light --features chip-test Test_TC_LVL_1_1 Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_4_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1
 
       - name: Upload test results on failure
         if: failure()
