@@ -4,18 +4,26 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
-use crate::tlv::Nullable;
-use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
-use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 pub use crate::dm::clusters::decl::level_control::*;
-use crate::utils::maybe::Maybe;
+use crate::dm::clusters::{level_control, on_off::OnOffHandler};
+use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
+use crate::tlv::Nullable;
+use crate::utils::maybe::Maybe;
 
 use delegate::delegate;
 
 enum Task {
-    MoveToLevel{with_on_off: bool, target: u8, transition_time: u16},
-    Move{with_on_off: bool, move_mode: MoveModeEnum, event_duration: Duration},
+    MoveToLevel {
+        with_on_off: bool,
+        target: u8,
+        transition_time: u16,
+    },
+    Move {
+        with_on_off: bool,
+        move_mode: MoveModeEnum,
+        event_duration: Duration,
+    },
     Stop,
 }
 
@@ -36,7 +44,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     // ## Panic
     //
     // panics if the `handler`'s `CLUSTER`` is misconfigured.
-    pub fn new(dataver: Dataver,handler: &'a LevelControlState<'a, H>) -> Self {
+    pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
         let cluster = Self {
             dataver,
             state: handler,
@@ -61,13 +69,18 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     // panics with error message if the `handler`'s `CLUSTER` is misconfigured.
     fn validate(&self) {
         if H::CLUSTER.revision != 5 {
-            panic!("LevelControl validation: incorrect version number: expected 5 got {}", H::CLUSTER.revision);
+            panic!(
+                "LevelControl validation: incorrect version number: expected 5 got {}",
+                H::CLUSTER.revision
+            );
         }
 
         // Check for mandatory attributes
-        if H::CLUSTER.attribute(AttributeId::CurrentLevel as _).is_none()
-        || H::CLUSTER.attribute(AttributeId::OnLevel as _).is_none()
-        || H::CLUSTER.attribute(AttributeId::Options as _).is_none()
+        if H::CLUSTER
+            .attribute(AttributeId::CurrentLevel as _)
+            .is_none()
+            || H::CLUSTER.attribute(AttributeId::OnLevel as _).is_none()
+            || H::CLUSTER.attribute(AttributeId::Options as _).is_none()
         {
             panic!("LevelControl validation: one or more of the following required attributes are missing:
             - CurrentLevel
@@ -77,13 +90,15 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
         // Check for mandatory commands
         if H::CLUSTER.command(CommandId::MoveToLevel as _).is_none()
-        || H::CLUSTER.command(CommandId::Move as _).is_none()
-        || H::CLUSTER.command(CommandId::Step as _).is_none()
-        || H::CLUSTER.command(CommandId::Stop as _).is_none()
-        || H::CLUSTER.command(CommandId::MoveToLevelWithOnOff as _).is_none()
-        || H::CLUSTER.command(CommandId::MoveWithOnOff as _).is_none()
-        || H::CLUSTER.command(CommandId::StepWithOnOff as _).is_none()
-        || H::CLUSTER.command(CommandId::StopWithOnOff as _).is_none()
+            || H::CLUSTER.command(CommandId::Move as _).is_none()
+            || H::CLUSTER.command(CommandId::Step as _).is_none()
+            || H::CLUSTER.command(CommandId::Stop as _).is_none()
+            || H::CLUSTER
+                .command(CommandId::MoveToLevelWithOnOff as _)
+                .is_none()
+            || H::CLUSTER.command(CommandId::MoveWithOnOff as _).is_none()
+            || H::CLUSTER.command(CommandId::StepWithOnOff as _).is_none()
+            || H::CLUSTER.command(CommandId::StopWithOnOff as _).is_none()
         {
             panic!("LevelControl validation: one or more of the following required commands are missing:
             - MoveToLevel
@@ -112,7 +127,10 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         // }
 
         if H::MAX_LEVEL > Self::MAXIMUM_LEVEL {
-            panic!("LevelControl validation: the MAX_LEVEL cannot be higher than {}", Self::MAXIMUM_LEVEL);
+            panic!(
+                "LevelControl validation: the MAX_LEVEL cannot be higher than {}",
+                Self::MAXIMUM_LEVEL
+            );
         }
 
         if H::CLUSTER.feature_map & level_control::Feature::LIGHTING.bits() != 0 {
@@ -125,8 +143,12 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
 
             // Check for required attributes when using this feature
-            if H::CLUSTER.attribute(AttributeId::RemainingTime as _).is_none()
-            || H::CLUSTER.attribute(AttributeId::StartUpCurrentLevel as _).is_none()
+            if H::CLUSTER
+                .attribute(AttributeId::RemainingTime as _)
+                .is_none()
+                || H::CLUSTER
+                    .attribute(AttributeId::StartUpCurrentLevel as _)
+                    .is_none()
             {
                 panic!("LevelControl validation: the RemainingTime and StartUpCurrentLevel attributes are required by the LIGHTING feature");
             }
@@ -165,7 +187,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
         }
     }
-    
+
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
     pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
         HandlerAsyncAdaptor(self)
@@ -189,7 +211,12 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     // - The On/Off cluster exists on the same endpoint as this cluster.
     // - The OnOff attribute of the On/Off cluster, on this endpoint, is FALSE.
     // - The value of the ExecuteIfOff bit is 0.
-    fn should_continue(&self, with_on_off: bool, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<bool, Error> {
+    fn should_continue(
+        &self,
+        with_on_off: bool,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<bool, Error> {
         if with_on_off {
             return Ok(true);
         }
@@ -197,10 +224,10 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         let on_off_state = match self.on_off.get() {
             Some(on_off_state) => on_off_state,
             None => {
-                // This should be sufficient to satisfy "The On/Off cluster exists on the same endpoint as this cluster" 
+                // This should be sufficient to satisfy "The On/Off cluster exists on the same endpoint as this cluster"
                 // if we can check the NODE configuration in validate.
-                return Ok(true)
-            },
+                return Ok(true);
+            }
         };
 
         if on_off_state.on_off()? {
@@ -219,21 +246,37 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             return Ok(options_override.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
         }
 
-        return Ok(self.state.options()?.contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
+        return Ok(self
+            .state
+            .options()?
+            .contains(level_control::OptionsBitmap::EXECUTE_IF_OFF));
     }
 
     async fn task_manager(&self, task: Task) {
         match task {
-            Task::MoveToLevel{with_on_off, target, transition_time} => {
-                if let Err(e) = self.move_to_level_transition(with_on_off, target, transition_time).await {
+            Task::MoveToLevel {
+                with_on_off,
+                target,
+                transition_time,
+            } => {
+                if let Err(e) = self
+                    .move_to_level_transition(with_on_off, target, transition_time)
+                    .await
+                {
                     error!("{}", e.to_string());
                 }
-            },
-            Task::Move { with_on_off, move_mode, event_duration } => {
-                if let Err(e) = self.move_transition(with_on_off, move_mode, event_duration).await {
+            }
+            Task::Move {
+                with_on_off,
+                move_mode,
+                event_duration,
+            } => {
+                if let Err(e) = self
+                    .move_transition(with_on_off, move_mode, event_duration)
+                    .await
+                {
                     error!("{}", e.to_string());
                 }
-
             }
             Task::Stop => return,
         }
@@ -275,8 +318,12 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
         match on {
             true => {
-                let level = self.state.set_level(H::MIN_LEVEL).map_err(|_| ErrorCode::Failure)?;
-                self.state.write_current_level_quietly(Nullable::some(level), false)?;
+                let level = self
+                    .state
+                    .set_level(H::MIN_LEVEL)
+                    .map_err(|_| ErrorCode::Failure)?;
+                self.state
+                    .write_current_level_quietly(Nullable::some(level), false)?;
 
                 let on_level = match self.state.on_level()?.into_option() {
                     Some(on_level) => on_level,
@@ -294,9 +341,9 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                         transition_time = tt
                     }
                 };
-                
+
                 self.move_to_level(false, on_level, Some(transition_time), bitmap, bitmap)?;
-            },
+            }
             false => {
                 // 1.6.6.13. OffTransitionTime Attribute
                 // This attribute SHALL indicate the time taken to move the current level from the maximum level to
@@ -317,20 +364,21 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                 self.move_to_level(false, H::MIN_LEVEL, Some(transition_time), bitmap, bitmap)?;
 
                 if self.state.on_level()?.is_none() {
-                    self.state.set_current_level(Nullable::some(temp_current_level))?;
+                    self.state
+                        .set_current_level(Nullable::some(temp_current_level))?;
                 }
-            },
+            }
         };
 
         Ok(())
     }
 
     // Update the on_off attribute of the OnOff cluster.
-    // 
+    //
     // From section 1.6.4.1.2
-    // When the level is reduced to its minimum the OnOff attribute is automatically turned to FALSE, 
+    // When the level is reduced to its minimum the OnOff attribute is automatically turned to FALSE,
     // and when the level is increased above its minimum the OnOff attribute is automatically turned to TRUE.
-    fn update_coupled_on_off(&self, current_level: u8, with_on_off: bool) -> Result<(), Error>{
+    fn update_coupled_on_off(&self, current_level: u8, with_on_off: bool) -> Result<(), Error> {
         // From section 1.6.4.1.2.
         // There are two sets of commands provided in the Level Control cluster. These are identical, except
         // that the first set (MoveToLevel, Move and Step commands) SHALL NOT affect the OnOff attribute,
@@ -347,21 +395,27 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                 if current_on_off != new_on_off_value {
                     on_off.coupled_cluster_set_on_off(new_on_off_value);
                 }
-            },
+            }
             None => {
                 error!("LevelControlCluster: expected OnOffCluster is missing.\n
                 help: use set_on_off_cluster() to couple the OnOffCluster on the same endpoint with this LevelControlCluster")
-            },
+            }
         }
 
         Ok(())
     }
 
     // A single move-to-level command handler for both with and without on off.
-    fn move_to_level(&self, with_on_off: bool,mut level: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
-
+    fn move_to_level(
+        &self,
+        with_on_off: bool,
+        mut level: u8,
+        transition_time: Option<u16>,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
         if level > Self::MAXIMUM_LEVEL {
-            return Err(ErrorCode::InvalidCommand.into())
+            return Err(ErrorCode::InvalidCommand.into());
         }
 
         if !self.should_continue(with_on_off, options_mask, options_override)? {
@@ -371,35 +425,49 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         if level > H::MAX_LEVEL {
             level = H::MAX_LEVEL;
             debug!("target level > MAX_LEVEL. level set to MAX_LEVEL")
-        }
-        else if level < H::MIN_LEVEL {
+        } else if level < H::MIN_LEVEL {
             level = H::MIN_LEVEL;
             debug!("target level < MIN_LEVEL. level set to MIN_LEVEL")
         }
 
-        info!("setting level to {} with transition time {:?}", level, transition_time);
+        info!(
+            "setting level to {} with transition time {:?}",
+            level, transition_time
+        );
 
         match transition_time {
             None | Some(0) => {
                 self.task_signal.signal(Task::Stop);
-                let level = self.state.set_level(level).map_err(|_| ErrorCode::Failure)?;
-                self.state.write_current_level_quietly(Nullable::some(level), true)?;
-                self.state.write_remaining_time_quietly(Duration::from_millis(0), true)?;
+                let level = self
+                    .state
+                    .set_level(level)
+                    .map_err(|_| ErrorCode::Failure)?;
+                self.state
+                    .write_current_level_quietly(Nullable::some(level), true)?;
+                self.state
+                    .write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
                 self.update_coupled_on_off(level, with_on_off)?;
-
             }
             Some(t_time) => {
-                self.task_signal.signal(Task::MoveToLevel { with_on_off: with_on_off, target: level, transition_time: t_time});
+                self.task_signal.signal(Task::MoveToLevel {
+                    with_on_off: with_on_off,
+                    target: level,
+                    transition_time: t_time,
+                });
             }
         }
 
         Ok(())
-
     }
 
     // Transition the current_level to target_level in the transition_time.
-    async fn move_to_level_transition(&self, with_on_off: bool, target_level: u8, transition_time: u16) -> Result<(), Error> {
+    async fn move_to_level_transition(
+        &self,
+        with_on_off: bool,
+        target_level: u8,
+        transition_time: u16,
+    ) -> Result<(), Error> {
         let event_start_time = Instant::now();
 
         // Check if current_level is null. If so, return error.
@@ -427,17 +495,24 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             let is_transition_start = remaining_time.as_millis() == (transition_time as u64 * 100);
             let is_transition_end = current_level == target_level;
 
-            debug!("move_to_level_transition: Setting current level: {}", current_level);
-            let current_level = self.state.set_level(current_level).map_err(|_| ErrorCode::Failure)?;
-            self.state.write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
-
+            debug!(
+                "move_to_level_transition: Setting current level: {}",
+                current_level
+            );
+            let current_level = self
+                .state
+                .set_level(current_level)
+                .map_err(|_| ErrorCode::Failure)?;
+            self.state
+                .write_current_level_quietly(Nullable::some(current_level), is_transition_end)?;
 
             if is_transition_start || is_transition_end {
                 self.update_coupled_on_off(current_level, with_on_off)?;
             }
 
-            if is_transition_end{
-                self.state.write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)?;
+            if is_transition_end {
+                self.state
+                    .write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)?;
                 return Ok(());
             }
 
@@ -446,15 +521,16 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                 false => {
                     warn!("remaining time is 0 before level reached target");
                     remaining_time = Duration::from_millis(0)
-                },
+                }
             }
 
-            self.state.write_remaining_time_quietly(remaining_time, is_transition_start)?;
+            self.state
+                .write_remaining_time_quietly(remaining_time, is_transition_start)?;
 
             let latency = match is_transition_start {
                 false => embassy_time::Instant::now() - event_start_time,
                 true => (embassy_time::Instant::now() - event_start_time) + startup_latency,
-            };            
+            };
             match event_duration.checked_sub(latency) {
                 Some(wait_time) => embassy_time::Timer::after(wait_time).await,
                 None => warn!("no wait time. Consider dynamically adjusting the step size?"),
@@ -463,9 +539,16 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     }
 
     // A single move command handler for both with and without on off.
-    fn move_command(&self, with_on_off: bool, move_mode: MoveModeEnum, rate: Option<u8>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
+    fn move_command(
+        &self,
+        with_on_off: bool,
+        move_mode: MoveModeEnum,
+        rate: Option<u8>,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
         // From Section 1.6.7.2.2
-        // 
+        //
         // If the Rate field is null, then the value of the
         // DefaultMoveRate attribute SHALL be used if that attribute is supported and its value is not null. If
         // the Rate field is null and the DefaultMoveRate attribute is either not supported or set to null, then
@@ -474,16 +557,12 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             // Move at a rate of zero is no move at all. Immediately succeed without touching anything.
             Some(0) => return Ok(()),
             Some(val) => val,
-            None => {
-                match self.state.default_move_rate() {
-                    Ok(default_move_rate) => {
-                        match default_move_rate.into_option() {
-                            Some(val) => val,
-                            None => H::FASTEST_RATE,
-                        }
-                    }
-                    Err(_) => H::FASTEST_RATE,
-                }
+            None => match self.state.default_move_rate() {
+                Ok(default_move_rate) => match default_move_rate.into_option() {
+                    Some(val) => val,
+                    None => H::FASTEST_RATE,
+                },
+                Err(_) => H::FASTEST_RATE,
             },
         };
 
@@ -501,8 +580,9 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
         // Exit if we are already at the limit in the direct of movement.
         if let Some(current_level) = self.state.current_level()?.into_option() {
-            if (current_level == H::MIN_LEVEL && move_mode == MoveModeEnum::Down) ||
-               (current_level == H::MAX_LEVEL && move_mode == MoveModeEnum::Up) {
+            if (current_level == H::MIN_LEVEL && move_mode == MoveModeEnum::Down)
+                || (current_level == H::MAX_LEVEL && move_mode == MoveModeEnum::Up)
+            {
                 return Ok(());
             }
         }
@@ -511,12 +591,21 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
         info!("moving with rate {}", rate);
 
-        self.task_signal.signal(Task::Move { with_on_off: with_on_off, move_mode: move_mode, event_duration: event_duration });
+        self.task_signal.signal(Task::Move {
+            with_on_off: with_on_off,
+            move_mode: move_mode,
+            event_duration: event_duration,
+        });
 
         Ok(())
     }
 
-    async fn move_transition(&self, with_on_off: bool, move_mode: MoveModeEnum, event_duration: Duration) -> Result<(), Error> {
+    async fn move_transition(
+        &self,
+        with_on_off: bool,
+        move_mode: MoveModeEnum,
+        event_duration: Duration,
+    ) -> Result<(), Error> {
         loop {
             let event_start_time = Instant::now();
 
@@ -541,8 +630,12 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
 
             let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
-            let new_level = self.state.set_level(new_level).map_err(|_| ErrorCode::Failure)?;
-            self.state.write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
+            let new_level = self
+                .state
+                .set_level(new_level)
+                .map_err(|_| ErrorCode::Failure)?;
+            self.state
+                .write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
 
             if is_end_of_transition {
                 self.update_coupled_on_off(new_level, with_on_off)?;
@@ -557,14 +650,21 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
     }
 
-    fn step(&self, with_on_off: bool, step_mode: StepModeEnum, step_size: u8, transition_time: Option<u16>, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
-
+    fn step(
+        &self,
+        with_on_off: bool,
+        step_mode: StepModeEnum,
+        step_size: u8,
+        transition_time: Option<u16>,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
         // From section 1.6.7.3.4
-        // 
-        // if the StepSize field has a value of zero, the command has no effect and 
+        //
+        // if the StepSize field has a value of zero, the command has no effect and
         // a response SHALL be returned with the status code set to INVALID_COMMAND.
         if step_size == 0 {
-            return Err(ErrorCode::InvalidCommand.into())
+            return Err(ErrorCode::InvalidCommand.into());
         }
 
         if !self.should_continue(with_on_off, options_mask, options_override)? {
@@ -588,8 +688,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
                     val.mul(new_step_size as u16).div_euclid(step_size as u16)
                 } else {
                     val
-                }              
-            },
+                }
+            }
             None => 0,
         };
 
@@ -598,26 +698,41 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         match transition_time {
             0 => {
                 self.task_signal.signal(Task::Stop);
-                let new_level = self.state.set_level(new_level).map_err(|_| ErrorCode::Failure)?;
-                self.state.write_current_level_quietly(Nullable::some(new_level), true)?;
-                self.state.write_remaining_time_quietly(Duration::from_millis(0), true)?;
+                let new_level = self
+                    .state
+                    .set_level(new_level)
+                    .map_err(|_| ErrorCode::Failure)?;
+                self.state
+                    .write_current_level_quietly(Nullable::some(new_level), true)?;
+                self.state
+                    .write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
                 self.update_coupled_on_off(new_level, with_on_off)?;
             }
             t_time => {
-                self.task_signal.signal(Task::MoveToLevel { with_on_off: with_on_off, target: new_level, transition_time: t_time});
+                self.task_signal.signal(Task::MoveToLevel {
+                    with_on_off: with_on_off,
+                    target: new_level,
+                    transition_time: t_time,
+                });
             }
         }
 
         Ok(())
     }
 
-    fn stop(&self, with_on_off: bool, options_mask: OptionsBitmap, options_override: OptionsBitmap) -> Result<(), Error> {
+    fn stop(
+        &self,
+        with_on_off: bool,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<(), Error> {
         if !self.should_continue(with_on_off, options_mask, options_override)? {
             return Ok(());
         }
         self.task_signal.signal(Task::Stop);
-        self.state.write_remaining_time_quietly(Duration::from_millis(0), false)?;
+        self.state
+            .write_remaining_time_quietly(Duration::from_millis(0), false)?;
 
         Ok(())
     }
@@ -632,7 +747,12 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
             let mut task = self.task_signal.wait().await;
 
             loop {
-                match embassy_futures::select::select(self.task_manager(task), self.task_signal.wait()).await {
+                match embassy_futures::select::select(
+                    self.task_manager(task),
+                    self.task_signal.wait(),
+                )
+                .await
+                {
                     embassy_futures::select::Either::First(_) => break,
                     embassy_futures::select::Either::Second(new_task) => task = new_task,
                 };
@@ -648,28 +768,18 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         self.dataver.changed();
     }
 
-    async fn current_level(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<u8>, Error> {
+    async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         self.state.current_level()
     }
 
-    async fn on_level(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<u8>, Error> {
+    async fn on_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         self.state.on_level()
     }
 
-    async fn set_on_level(
-        &self,
-        ctx: impl WriteContext,
-        value: Nullable<u8>,
-    ) -> Result<(), Error> {
+    async fn set_on_level(&self, ctx: impl WriteContext, value: Nullable<u8>) -> Result<(), Error> {
         if let Some(level) = value.clone().into_option() {
             if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
-                return Err(ErrorCode::ConstraintError.into())
+                return Err(ErrorCode::ConstraintError.into());
             }
         }
 
@@ -679,18 +789,11 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         Ok(())
     }
 
-    async fn options(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<OptionsBitmap, Error> {
+    async fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
         self.state.options()
     }
 
-    async fn set_options(
-        &self,
-        ctx: impl WriteContext,
-        value: OptionsBitmap,
-    ) -> Result<(), Error> {
+    async fn set_options(&self, ctx: impl WriteContext, value: OptionsBitmap) -> Result<(), Error> {
         self.state.set_options(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -713,7 +816,11 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         self.state.on_off_transition_time()
     }
 
-    async fn set_on_off_transition_time(&self, ctx: impl WriteContext, value:u16) -> Result<(), Error> {
+    async fn set_on_off_transition_time(
+        &self,
+        ctx: impl WriteContext,
+        value: u16,
+    ) -> Result<(), Error> {
         self.state.set_on_off_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -724,7 +831,11 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         self.state.on_transition_time()
     }
 
-    async fn set_on_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
+    async fn set_on_transition_time(
+        &self,
+        ctx: impl WriteContext,
+        value: Nullable<u16>,
+    ) -> Result<(), Error> {
         self.state.set_on_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -735,7 +846,11 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         self.state.off_transition_time()
     }
 
-    async fn set_off_transition_time(&self, ctx: impl WriteContext, value:Nullable<u16>) -> Result<(), Error> {
+    async fn set_off_transition_time(
+        &self,
+        ctx: impl WriteContext,
+        value: Nullable<u16>,
+    ) -> Result<(), Error> {
         self.state.set_off_transition_time(value)?;
         self.dataver_changed();
         ctx.notify_changed();
@@ -746,7 +861,11 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         self.state.default_move_rate()
     }
 
-    async fn set_default_move_rate(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
+    async fn set_default_move_rate(
+        &self,
+        ctx: impl WriteContext,
+        value: Nullable<u8>,
+    ) -> Result<(), Error> {
         // The spec is not explicit about what should be done if this happens.
         // For now we error out if DefaultMoveRate is equal to 0 as this is invalid
         // until spec defines a behaviour.
@@ -763,12 +882,16 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         self.state.startup_current_level()
     }
 
-    async fn set_start_up_current_level(&self, ctx: impl WriteContext, value:Nullable<u8>) -> Result<(), Error> {
+    async fn set_start_up_current_level(
+        &self,
+        ctx: impl WriteContext,
+        value: Nullable<u8>,
+    ) -> Result<(), Error> {
         // According to the current spec, this attribute dose not have any constraints at this stage.
         // However, it's usage is bounded by min/max hence it makes sense to restrict the settable values to this range.
         if let Some(level) = value.clone().into_option() {
             if level > H::MAX_LEVEL || level < H::MIN_LEVEL {
-                return Err(ErrorCode::ConstraintError.into())
+                return Err(ErrorCode::ConstraintError.into());
             }
         }
 
@@ -783,9 +906,13 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveToLevelRequest<'_>,
     ) -> Result<(), Error> {
-
-        self.move_to_level(false, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
-
+        self.move_to_level(
+            false,
+            request.level()?,
+            request.transition_time()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move(
@@ -793,9 +920,13 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveRequest<'_>,
     ) -> Result<(), Error> {
-
-        self.move_command(false, request.move_mode()?, request.rate()?.into_option(), request.options_mask()?, request.options_override()?)
-
+        self.move_command(
+            false,
+            request.move_mode()?,
+            request.rate()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_step(
@@ -803,8 +934,14 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StepRequest<'_>,
     ) -> Result<(), Error> {
-
-        self.step(false, request.step_mode()?, request.step_size()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
+        self.step(
+            false,
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_stop(
@@ -812,7 +949,6 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StopRequest<'_>,
     ) -> Result<(), Error> {
-
         self.stop(false, request.options_mask()?, request.options_override()?)
     }
 
@@ -821,9 +957,13 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveToLevelWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-
-        self.move_to_level(true, request.level()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
-
+        self.move_to_level(
+            true,
+            request.level()?,
+            request.transition_time()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_move_with_on_off(
@@ -831,8 +971,13 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: MoveWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-
-        self.move_command(true, request.move_mode()?, request.rate()?.into_option(), request.options_mask()?, request.options_override()?)
+        self.move_command(
+            true,
+            request.move_mode()?,
+            request.rate()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_step_with_on_off(
@@ -840,8 +985,14 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         _ctx: impl InvokeContext,
         request: StepWithOnOffRequest<'_>,
     ) -> Result<(), Error> {
-
-        self.step(true, request.step_mode()?, request.step_size()?, request.transition_time()?.into_option(), request.options_mask()?, request.options_override()?)
+        self.step(
+            true,
+            request.step_mode()?,
+            request.step_size()?,
+            request.transition_time()?.into_option(),
+            request.options_mask()?,
+            request.options_override()?,
+        )
     }
 
     async fn handle_stop_with_on_off(
@@ -859,9 +1010,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
     ) -> Result<(), Error> {
         Err(ErrorCode::InvalidCommand.into())
     }
-
 }
-
 
 pub struct LevelControlState<'a, H: LevelControlHooks> {
     handler: &'a H,
@@ -876,7 +1025,11 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         }
     }
 
-    fn write_remaining_time_quietly(&self, remaining_time: Duration, is_start_of_transition: bool) -> Result<(), Error> {
+    fn write_remaining_time_quietly(
+        &self,
+        remaining_time: Duration,
+        is_start_of_transition: bool,
+    ) -> Result<(), Error> {
         let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
 
         self.handler.set_remaining_time(remaining_time_ds as u16)?;
@@ -888,7 +1041,8 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         let previous_remaining_time = self.handler.remaining_time()?;
         let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
         let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
-        let changed_by_gt_10 = remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
+        let changed_by_gt_10 =
+            remaining_time_ds.abs_diff(previous_remaining_time) > 10 && is_start_of_transition;
 
         if changed_to_zero || changed_from_zero_gt_10 || changed_by_gt_10 {
             // todo notify.changed();
@@ -897,7 +1051,11 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         Ok(())
     }
 
-    fn write_current_level_quietly(&self, current_level: Nullable<u8>, is_end_of_transition: bool) -> Result<(), Error> {
+    fn write_current_level_quietly(
+        &self,
+        current_level: Nullable<u8>,
+        is_end_of_transition: bool,
+    ) -> Result<(), Error> {
         let previous_value = self.handler.current_level()?;
         let last_notification = Instant::now() - self.last_current_level_notification.get();
         self.handler.set_current_level(current_level.clone())?;
@@ -906,14 +1064,17 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         // - At most once per second, or
         // - At the end of the movement/transition, or
         // - When it changes from null to any other value and vice versa.
-        if last_notification.ge(&Duration::from_secs(1)) || is_end_of_transition || previous_value.is_none() || current_level.is_none() {
+        if last_notification.ge(&Duration::from_secs(1))
+            || is_end_of_transition
+            || previous_value.is_none()
+            || current_level.is_none()
+        {
             self.last_current_level_notification.set(Instant::now());
             // todo notify.changed();
         }
 
         Ok(())
     }
-
 }
 
 impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
@@ -922,7 +1083,7 @@ impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
     const FASTEST_RATE: u8 = H::FASTEST_RATE;
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
-    delegate!{
+    delegate! {
         to self.handler {
             fn set_level(&self, level: u8) -> Result<u8, ()>;
             fn current_level(&self) -> Result<Nullable<u8>, Error>;
@@ -948,7 +1109,6 @@ impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
         }
     }
 }
-
 
 pub trait LevelControlHooks {
     const MIN_LEVEL: u8;
@@ -1022,6 +1182,5 @@ pub trait LevelControlHooks {
     }
     fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
-    }    
-
+    }
 }

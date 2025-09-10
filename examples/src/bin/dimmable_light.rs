@@ -132,7 +132,10 @@ fn run() -> Result<(), Error> {
 
     let level_control_handler = LevelControlHandler::new();
     let level_control_state = LevelControlState::new(&level_control_handler);
-    let level_control_cluster = level_control::LevelControlCluster::new(Dataver::new_rand(matter.rand()), &level_control_state);
+    let level_control_cluster = level_control::LevelControlCluster::new(
+        Dataver::new_rand(matter.rand()),
+        &level_control_state,
+    );
     level_control_cluster.set_on_off_cluster(&on_off);
     let mut level_control_job = pin!(level_control_cluster.run());
 
@@ -206,7 +209,7 @@ const NODE: Node<'static> = Node {
             id: 1,
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
             clusters: clusters!(
-                desc::DescHandler::CLUSTER, 
+                desc::DescHandler::CLUSTER,
                 on_off::OnOffHandler::CLUSTER,
                 level_control::LevelControlCluster::<LevelControlHandler>::CLUSTER,
             ),
@@ -216,16 +219,11 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, 'oc, 'lc, LH: LevelControlHooks>(
+fn dm_handler<'a, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
-    on_off: &'oc on_off::OnOffHandler,
-    level_control: &'lc level_control::LevelControlCluster<'a, LH>,
-) -> impl AsyncMetadata + AsyncHandler + 'a + 'oc + 'lc
-where
-    'oc: 'a,
-    'a: 'oc,
-    'lc: 'a
-{
+    on_off: &'a on_off::OnOffHandler,
+    level_control: &'a level_control::LevelControlCluster<'a, LH>,
+) -> impl AsyncMetadata + AsyncHandler + 'a + 'a + 'a {
     (
         NODE,
         endpoints::with_eth(
@@ -245,7 +243,10 @@ where
                         Async(on_off::HandlerAdaptor(on_off)),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(level_control::LevelControlCluster::<'a, LH>::CLUSTER.id)),
+                        EpClMatcher::new(
+                            Some(1),
+                            Some(level_control::LevelControlCluster::<'a, LH>::CLUSTER.id),
+                        ),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
             ),
@@ -256,11 +257,13 @@ where
 // Implementing the LevelControl business logic
 
 use core::cell::Cell;
-use rs_matter::tlv::Nullable;
 use rs_matter::dm::clusters::decl::level_control::OptionsBitmap;
-use rs_matter::dm::clusters::level_control::{LevelControlHooks};
+use rs_matter::dm::clusters::decl::level_control::{
+    AttributeId, CommandId, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
+};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::Cluster;
-use rs_matter::dm::clusters::decl::level_control::{FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER, AttributeId, CommandId};
+use rs_matter::tlv::Nullable;
 use rs_matter::with;
 
 pub struct LevelControlHandler {
@@ -279,8 +282,9 @@ pub struct LevelControlHandler {
 impl LevelControlHandler {
     pub const fn new() -> Self {
         Self {
-            options: Cell::new(OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits() as u8)
-                .unwrap()),
+            options: Cell::new(
+                OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits() as u8).unwrap(),
+            ),
             on_level: Cell::new(Nullable::some(42)),
             current_level: Cell::new(1),
             startup_current_level: Cell::new(Nullable::some(73)),
@@ -294,38 +298,39 @@ impl LevelControlHandler {
     }
 }
 
-
 impl LevelControlHooks for LevelControlHandler {
     const MIN_LEVEL: u8 = 1;
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
     const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
-    .with_revision(5)
-    .with_features(level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits())
-    .with_attrs(with!(
-        required;
-        AttributeId::CurrentLevel
-        | AttributeId::RemainingTime
-        | AttributeId::MinLevel
-        | AttributeId::MaxLevel
-        | AttributeId::OnOffTransitionTime
-        | AttributeId::OnLevel
-        | AttributeId::OnTransitionTime
-        | AttributeId::OffTransitionTime
-        | AttributeId::DefaultMoveRate
-        | AttributeId::Options
-        | AttributeId::StartUpCurrentLevel
-    ))
-    .with_cmds(with!(
-        CommandId::MoveToLevel
-            | CommandId::Move
-            | CommandId::Step
-            | CommandId::Stop
-            | CommandId::MoveToLevelWithOnOff
-            | CommandId::MoveWithOnOff
-            | CommandId::StepWithOnOff
-            | CommandId::StopWithOnOff
-    ));
+        .with_revision(5)
+        .with_features(
+            level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
+        )
+        .with_attrs(with!(
+            required;
+            AttributeId::CurrentLevel
+            | AttributeId::RemainingTime
+            | AttributeId::MinLevel
+            | AttributeId::MaxLevel
+            | AttributeId::OnOffTransitionTime
+            | AttributeId::OnLevel
+            | AttributeId::OnTransitionTime
+            | AttributeId::OffTransitionTime
+            | AttributeId::DefaultMoveRate
+            | AttributeId::Options
+            | AttributeId::StartUpCurrentLevel
+        ))
+        .with_cmds(with!(
+            CommandId::MoveToLevel
+                | CommandId::Move
+                | CommandId::Step
+                | CommandId::Stop
+                | CommandId::MoveToLevelWithOnOff
+                | CommandId::MoveWithOnOff
+                | CommandId::StepWithOnOff
+                | CommandId::StopWithOnOff
+        ));
 
     fn set_level(&self, level: u8) -> Result<u8, ()> {
         // This is where business logic is implemented to physically change the level.
@@ -438,5 +443,4 @@ impl LevelControlHooks for LevelControlHandler {
         self.start_up_current_level.set(value);
         Ok(())
     }
-
 }
