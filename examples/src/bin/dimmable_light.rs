@@ -270,7 +270,6 @@ pub struct LevelControlHandler {
     options: Cell<OptionsBitmap>,
     on_level: Cell<Nullable<u8>>,
     current_level: Cell<u8>,
-    startup_current_level: Cell<Nullable<u8>>,
     remaining_time: Cell<u16>,
     on_off_transition_time: Cell<u16>,
     on_transition_time: Cell<Nullable<u16>>,
@@ -293,7 +292,6 @@ impl LevelControlHandler {
             ),
             on_level: Cell::new(Nullable::some(42)),
             current_level: Cell::new(1),
-            startup_current_level: Cell::new(Nullable::some(73)),
             remaining_time: Cell::new(0),
             on_off_transition_time: Cell::new(0),
             on_transition_time: Cell::new(Nullable::none()),
@@ -354,7 +352,6 @@ impl LevelControlHooks for LevelControlHandler {
     }
 
     fn on_level(&self) -> Result<Nullable<u8>, Error> {
-        // todo can we impl Copy for Nullable?
         let val = self.on_level.take();
         self.on_level.set(val.clone());
         Ok(val)
@@ -374,17 +371,6 @@ impl LevelControlHooks for LevelControlHandler {
             Some(value) => self.current_level.set(value),
             None => return Err(ErrorCode::InvalidData.into()),
         }
-        Ok(())
-    }
-
-    fn startup_current_level(&self) -> Result<Nullable<u8>, Error> {
-        let val = self.startup_current_level.take();
-        self.startup_current_level.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_startup_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
-        self.startup_current_level.set(value);
         Ok(())
     }
 
