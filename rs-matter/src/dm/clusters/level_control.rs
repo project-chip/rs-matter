@@ -58,7 +58,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     ///
     /// # Panics
     ///
-    /// panics if the `handler`'s `CLUSTER`` is misconfigured.
+    /// panics if the `handler`'s `CLUSTER` is misconfigured.
     pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
         let cluster = Self {
             dataver,
@@ -892,7 +892,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
         ctx: impl WriteContext,
         value: Nullable<u8>,
     ) -> Result<(), Error> {
-        // According to the current spec, this attribute dose not have any constraints at this stage.
+        // According to the current spec, this attribute does not have any constraints at this stage.
         // However, it's usage is bounded by min/max hence it makes sense to restrict the settable values to this range.
         if let Some(level) = value.clone().into_option() {
             if level > H::MAX_LEVEL || level < H::MIN_LEVEL {

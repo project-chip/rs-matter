@@ -76,7 +76,7 @@ impl OnOffHandler {
             "OnOffCluster: coupled_cluster_set_on_off: Setting on_off to {}",
             on
         );
-        self.on.set(on)
+        self.on.set(on);
 
         // todo call user logic from OnOffHooks
     }
