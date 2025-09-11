@@ -35,15 +35,30 @@ pub struct LevelControlCluster<'a, H: LevelControlHooks> {
     on_off: Cell<Option<&'a OnOffHandler>>,
 }
 
+/// Implementation of the LevelControlCluster, providing functionality for the Matter Level Control cluster.
+///
+/// # Type Parameters
+/// - `'a`: Lifetime for references held by the cluster.
+/// - `H`: Handler implementing the LevelControlHooks trait, providing cluster-specific configuration and logic.
+///
+/// # Constants
+/// - `MAXIMUM_LEVEL`: The maximum allowed level value (254).
+///
+/// # Panics
+/// - Initialisation panics if the cluster configuration is invalid or required attributes/commands are missing.
+///
+/// # Notes
+/// - This implementation follows version 1.3 of the Matter specification.
+/// - Some features (such as OnOff cluster integration) are marked as TODO and may require further implementation.
 impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     const MAXIMUM_LEVEL: u8 = 254;
 
     // todo: add `on_off_state: Option<&'a OnOffState>` when OnOff in re-implemented.
-    // Creates a new instance of the LevelControlCluster.
-    //
-    // ## Panic
-    //
-    // panics if the `handler`'s `CLUSTER`` is misconfigured.
+    /// Creates a new instance of the LevelControlCluster.
+    ///
+    /// # Panics
+    ///
+    /// panics if the `handler`'s `CLUSTER`` is misconfigured.
     pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
         let cluster = Self {
             dataver,
@@ -62,11 +77,11 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         cluster
     }
 
-    // Validate that the LevelControlCluster has been set up correctly for given cluster configuration.
-    //
-    // ## Panic
-    //
-    // panics with error message if the `handler`'s `CLUSTER` is misconfigured.
+    /// Checks that the cluster is correctly configured, including required attributes, commands, and feature dependencies.
+    ///
+    /// # Panics
+    ///
+    /// panics with error message if the `handler`'s `CLUSTER` is misconfigured.
     fn validate(&self) {
         if H::CLUSTER.revision != 5 {
             panic!(
@@ -144,7 +159,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
     }
 
-    // Initialise the cluster on startup
+    /// Initializes the cluster on startup, setting the CurrentLevel attribute according to the StartUpCurrentLevel attribute and other rules.
     fn init(&self) {
         // 1.6.6.15. StartUpCurrentLevel Attribute
         // This attribute SHALL indicate the desired startup level for a device when it is supplied with power
@@ -191,8 +206,8 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         self.on_off.set(Some(cluster))
     }
 
-    // Checks if a command should continue beyond the Options processing.
-    // Returns true if execution of the command should continue, false otherwise.
+    /// Checks if a command should proceed beyond the Options processing.
+    /// Returns true if execution of the command should continue, false otherwise.
     //
     // From section 1.6.6.9
     // Command execution SHALL NOT continue beyond the Options processing if all of these criteria are true:
@@ -241,6 +256,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             .contains(level_control::OptionsBitmap::EXECUTE_IF_OFF))
     }
 
+    /// Handles asynchronous tasks for level transitions and moves.
     async fn task_manager(&self, task: Task) {
         match task {
             Task::MoveToLevel {
@@ -365,7 +381,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     //     Ok(())
     // }
 
-    // Update the on_off attribute of the OnOff cluster.
+    /// Updates the OnOff attribute of the coupled OnOff cluster based on the current level and command type.
     //
     // From section 1.6.4.1.2
     // When the level is reduced to its minimum the OnOff attribute is automatically turned to FALSE,
@@ -397,7 +413,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         Ok(())
     }
 
-    // A single move-to-level command handler for both with and without on off.
+    /// Handles MoveToLevel commands, including validation, bounding, and transition logic.
     fn move_to_level(
         &self,
         with_on_off: bool,
@@ -436,10 +452,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
 
         match transition_time {
             None | Some(0) => {
-                let level = self
-                    .state
-                    .set_level(level)
-                    .ok_or(ErrorCode::Failure)?;
+                let level = self.state.set_level(level).ok_or(ErrorCode::Failure)?;
                 self.state
                     .write_current_level_quietly(Nullable::some(level), true)?;
                 self.state
@@ -459,7 +472,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         Ok(())
     }
 
-    // Transition the current_level to target_level in the transition_time.
+    /// Asynchronously transitions the current level to a target level over a specified time.
     async fn move_to_level_transition(
         &self,
         with_on_off: bool,
@@ -540,7 +553,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
     }
 
-    // A single move command handler for both with and without on off.
+    /// Handles Move commands, determining the rate and initiating transitions.
     fn move_command(
         &self,
         with_on_off: bool,
@@ -602,6 +615,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         Ok(())
     }
 
+    /// Asynchronously moves the current level up or down at a specified rate.
     async fn move_transition(
         &self,
         with_on_off: bool,
@@ -632,10 +646,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
 
             let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
-            let new_level = self
-                .state
-                .set_level(new_level)
-                .ok_or(ErrorCode::Failure)?;
+            let new_level = self.state.set_level(new_level).ok_or(ErrorCode::Failure)?;
             self.state
                 .write_current_level_quietly(Maybe::some(new_level), is_end_of_transition)?;
 
@@ -652,6 +663,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         }
     }
 
+    /// Handles Step commands, adjusting the level by a step size and managing transition time proportionally.
     fn step(
         &self,
         with_on_off: bool,
@@ -713,6 +725,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
         )
     }
 
+    /// Stops any ongoing transitions and resets the remaining time.
     fn stop(
         &self,
         with_on_off: bool,
@@ -1009,7 +1022,14 @@ pub struct LevelControlState<'a, H: LevelControlHooks> {
     last_current_level_notification: Cell<Instant>,
 }
 
+/// Implementation of `LevelControlState` providing methods for managing level control state transitions
+/// and quiet reporting of attribute changes according to Matter specification.
+///
+/// # Type Parameters
+/// - `'a`: Lifetime of the handler reference.
+/// - `H`: Type implementing `LevelControlHooks`.
 impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
+    /// Creates a new `LevelControlState` with the given handler.
     pub fn new(handler: &'a H) -> Self {
         Self {
             handler,
@@ -1017,6 +1037,11 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         }
     }
 
+    /// Updates the RemainingTime attribute quietly, reporting changes only under specific conditions.
+    ///
+    /// # Arguments
+    /// - `remaining_time` - The new remaining time.
+    /// - `is_start_of_transition` - Indicates if this is the start of a transition.
     fn write_remaining_time_quietly(
         &self,
         remaining_time: Duration,
@@ -1043,6 +1068,11 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         Ok(())
     }
 
+    /// Updates the CurrentLevel attribute quietly, reporting changes only under specific conditions
+    ///
+    /// # Arguments
+    /// - `current_level` - The new current level.
+    /// - `is_end_of_transition` - Indicates if this is the end of a transition.
     fn write_current_level_quietly(
         &self,
         current_level: Nullable<u8>,
@@ -1106,63 +1136,82 @@ pub trait LevelControlHooks {
     const FASTEST_RATE: u8;
     const CLUSTER: Cluster<'static>;
 
-    // Implements the business logic for setting the level of the device.
-    // Returns the new level of the device.
-    // If this method returns None, the `LevelControlCluster` will represent this as an error with `ImStatusCode` of `Failure`.
-    //
-    // ## Implementation notes
-    //
-    // - DO NOT update attribute states, this is handled by the `LevelControlCluster`.
+    /// Implements the business logic for setting the level of the device.
+    /// Returns the new level of the device.
+    /// If this method returns None, the `LevelControlCluster` will represent this as an error with `ImStatusCode` of `Failure`.
+    ///
+    /// # Implementation notes
+    ///
+    /// - DO NOT update attribute states, this is handled by the `LevelControlCluster`.
     fn set_level(&self, level: u8) -> Option<u8>;
 
     // Raw accessors
     //  These methods should not perform any checks.
-    //  They should simply set or get values.
+    //  They should simply get or set values.
+
+    /// Raw current_level getter.
     fn current_level(&self) -> Result<Nullable<u8>, Error>;
+    /// Raw current_level setter.
     fn set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
 
+    /// Raw on_level getter.
     fn on_level(&self) -> Result<Nullable<u8>, Error>;
+    /// Raw on_level setter.
     fn set_on_level(&self, value: Nullable<u8>) -> Result<(), Error>;
 
+    /// Raw options getter.
     fn options(&self) -> Result<OptionsBitmap, Error>;
+    /// Raw options setter.
     fn set_options(&self, value: OptionsBitmap) -> Result<(), Error>;
 
+    /// Raw remaining_time getter.
     fn remaining_time(&self) -> Result<u16, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
+    /// Raw remaining_time setter.
     fn set_remaining_time(&self, value: u16) -> Result<(), Error>;
 
+    /// Raw on_off_transition_time getter.
     fn on_off_transition_time(&self) -> Result<u16, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
+    /// Raw on_off_transition_time setter.
     fn set_on_off_transition_time(&self, _value: u16) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
+    /// Raw on_transition_time getter.
     fn on_transition_time(&self) -> Result<Nullable<u16>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
+    /// Raw on_transition_time setter.
     fn set_on_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
+    /// Raw off_transition_time getter.
     fn off_transition_time(&self) -> Result<Nullable<u16>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
+    /// Raw off_transition_time setter.
     fn set_off_transition_time(&self, _value: Nullable<u16>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
+    /// Raw default_move_rate getter.
     fn default_move_rate(&self) -> Result<Nullable<u8>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
+    /// Raw default_move_rate setter.
     fn set_default_move_rate(&self, _value: Nullable<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
+    /// Raw start_up_current_level getter.
     fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
+    /// Raw start_up_current_level setter.
     fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
