@@ -336,10 +336,10 @@ impl LevelControlHooks for LevelControlHandler {
                 | CommandId::StopWithOnOff
         ));
 
-    fn set_level(&self, level: u8) -> Result<u8, ()> {
+    fn set_level(&self, level: u8) -> Option<u8> {
         // This is where business logic is implemented to physically change the level.
         info!("LevelControlHandler::set_level: setting level to {}", level);
-        Ok(level)
+        Some(level)
     }
 
     fn options(&self) -> Result<OptionsBitmap, Error> {
