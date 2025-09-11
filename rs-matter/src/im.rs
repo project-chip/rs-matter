@@ -90,6 +90,7 @@ impl From<ErrorCode> for IMStatusCode {
             ErrorCode::ResourceExhausted => IMStatusCode::ResourceExhausted,
             ErrorCode::FailSafeRequired => IMStatusCode::FailSafeRequired,
             ErrorCode::ConstraintError => IMStatusCode::ConstraintError,
+            ErrorCode::Failure => IMStatusCode::Failure,
             _ => IMStatusCode::Failure,
         }
     }

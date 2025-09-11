@@ -23,6 +23,9 @@ name = "bridge"
 [[bin]]
 name = "chip_tool_tests"
 
+[[bin]]
+name = "dimmable_light"
+
 [features]
 default = ["log"]
 log = []
@@ -31,6 +34,7 @@ astro-dnssd = ["rs-matter/astro-dnssd"]
 zeroconf = ["rs-matter/zeroconf"]
 avahi = ["rs-matter/zbus"]
 resolve = ["rs-matter/zbus"]
+chip-test = []
 
 [dependencies]
 log = "0.4"

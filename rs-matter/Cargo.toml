@@ -54,6 +54,7 @@ portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
 scopeguard = { version = "1", default-features = false }
 pinned-init = { version = "0.0.8", default-features = false }
+delegate = "0.13.4"
 
 # crypto
 openssl = { version = "0.10", optional = true }
