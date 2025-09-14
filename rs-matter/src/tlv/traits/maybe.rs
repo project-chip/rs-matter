@@ -65,7 +65,7 @@ pub struct AsNullable;
 /// - Both optional and fabric-sensitive values apply only to struct members (modulo fabric-sensitive Events);
 /// - Both optional and fabric-sensitive values might simply not be present in the stream.
 ///
-/// An optional, a fabric-sensitive, and an optional _AND_ fabric-sensitive struct member are all modeleed
+/// An optional, a fabric-sensitive, and an optional _AND_ fabric-sensitive struct member are all modeled
 /// with a single representation: `Option<T>` or `Optional<T>`.
 ///
 /// Note that `Option<T>` also represents an optional and/or a fabric-sensitive struct field, but `Option<T>`
