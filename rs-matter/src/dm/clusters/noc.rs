@@ -470,13 +470,38 @@ impl ClusterHandler for NocHandler {
 
     fn handle_update_noc<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
-        _request: UpdateNOCRequest<'_>,
-        _response: NOCResponseBuilder<P>,
+        ctx: impl InvokeContext,
+        request: UpdateNOCRequest<'_>,
+        mut response: NOCResponseBuilder<P>,
     ) -> Result<P, Error> {
         info!("Got Update NOC Request");
 
-        Err(ErrorCode::InvalidAction.into()) // TODO: Implement this
+        let icac = request
+            .icac_value()?
+            .as_ref()
+            .map(|icac| icac.0)
+            .filter(|icac| !icac.is_empty());
+
+        let buf = response.writer().available_space();
+
+        let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
+            ctx.exchange().matter().failsafe.borrow_mut().update_noc(
+                &ctx.exchange().matter().fabric_mgr,
+                sess.get_session_mode(),
+                icac,
+                request.noc_value()?.0,
+                buf,
+                &mut || ctx.exchange().matter().notify_mdns(),
+            )?;
+
+            Ok(())
+        }))?;
+
+        response
+            .status_code(status)?
+            .fabric_index(Some(ctx.cmd().fab_idx))?
+            .debug_text(None)?
+            .end()
     }
 
     fn handle_update_fabric_label<P: TLVBuilderParent>(
