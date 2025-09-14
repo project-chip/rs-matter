@@ -1795,9 +1795,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 .push((fab_idx, Vec::new()))
                 .map_err(|_| ErrorCode::ResourceExhausted)?;
 
-            let last = data.list_fabric_scoped.len() - 1;
-
-            &mut data.list_fabric_scoped[last].1
+            &mut data.list_fabric_scoped.last_mut().unwrap().1
         };
 
         match value {
@@ -1811,8 +1809,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         ErrorCode::ResourceExhausted
                     })?;
 
-                    let last = list.len() - 1;
-                    list[last].update(&s)?;
+                    list.last_mut().unwrap().update(&s)?;
                 }
             }
             ArrayAttributeWrite::Add(s) => {
@@ -1820,8 +1817,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     ErrorCode::ResourceExhausted
                 })?;
 
-                let last = list.len() - 1;
-                list[last].update(&s)?;
+                list.last_mut().unwrap().update(&s)?;
             }
             ArrayAttributeWrite::Update(index, s) => {
                 if index as usize >= list.len() {
