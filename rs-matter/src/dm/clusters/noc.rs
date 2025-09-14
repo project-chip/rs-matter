@@ -116,15 +116,18 @@ impl ClusterHandler for NocHandler {
         builder: ArrayAttributeRead<NOCStructArrayBuilder<P>, NOCStructBuilder<P>>,
     ) -> Result<P, Error> {
         fn read_into<P: TLVBuilderParent>(
+            accessing_fab_idx: u8,
             fabric: &Fabric,
             builder: NOCStructBuilder<P>,
         ) -> Result<P, Error> {
+            let same_fab_idx = accessing_fab_idx == fabric.fab_idx().get();
+
             builder
-                .noc(Octets::new(fabric.noc()))?
-                .icac(Nullable::new(
-                    (!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())),
-                ))?
-                .fabric_index(fabric.fab_idx().get())?
+                .noc(same_fab_idx.then(|| Octets::new(fabric.noc())))?
+                .icac(same_fab_idx.then(|| {
+                    Nullable::new((!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())))
+                }))?
+                .fabric_index(Some(fabric.fab_idx().get()))?
                 .end()
         }
 
@@ -138,7 +141,7 @@ impl ClusterHandler for NocHandler {
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
                 for fabric in fabrics {
-                    builder = read_into(fabric, builder.push()?)?;
+                    builder = read_into(attr.fab_idx, fabric, builder.push()?)?;
                 }
 
                 builder.end()
@@ -147,7 +150,7 @@ impl ClusterHandler for NocHandler {
                 let fabric = fabrics.nth(index as _);
 
                 if let Some(fabric) = fabric {
-                    read_into(fabric, builder)
+                    read_into(attr.fab_idx, fabric, builder)
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
@@ -177,7 +180,7 @@ impl ClusterHandler for NocHandler {
                 .fabric_id(fabric.fabric_id())?
                 .node_id(fabric.node_id())?
                 .label(fabric.label())?
-                .fabric_index(fabric.fab_idx().get())?
+                .fabric_index(Some(fabric.fab_idx().get()))?
                 .end()
         }
 
@@ -417,7 +420,7 @@ impl ClusterHandler for NocHandler {
             .map(|icac| icac.0)
             .filter(|icac| !icac.is_empty());
 
-        let mut added_fab_idx = 0;
+        let mut added_fab_idx = None;
 
         let buf = response.writer().available_space();
 
@@ -456,14 +459,14 @@ impl ClusterHandler for NocHandler {
 
             succeeded.set(true);
 
-            added_fab_idx = fab_idx.get();
+            added_fab_idx = Some(fab_idx.get());
 
             Ok(())
         }))?;
 
         response
             .status_code(status)?
-            .fabric_index(Some(added_fab_idx))?
+            .fabric_index(added_fab_idx)?
             .debug_text(None)?
             .end()
     }
@@ -512,14 +515,14 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Update Fabric Label Request: {:?}", request.label());
 
-        let mut updated_fab_idx = 0;
+        let mut updated_fab_idx = None;
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
             let SessionMode::Case { fab_idx, .. } = sess.get_session_mode() else {
                 return Err(ErrorCode::GennCommInvalidAuthentication.into());
             };
 
-            updated_fab_idx = fab_idx.get();
+            updated_fab_idx = Some(fab_idx.get());
 
             ctx.exchange()
                 .matter()
@@ -537,7 +540,7 @@ impl ClusterHandler for NocHandler {
 
         response
             .status_code(status)?
-            .fabric_index(Some(updated_fab_idx))?
+            .fabric_index(updated_fab_idx)?
             .debug_text(None)?
             .end()
     }
@@ -550,7 +553,7 @@ impl ClusterHandler for NocHandler {
     ) -> Result<P, Error> {
         info!("Got Remove Fabric Request");
 
-        let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::InvalidAction)?;
+        let fab_idx = NonZeroU8::new(request.fabric_index()?).ok_or(ErrorCode::ConstraintError)?;
 
         let status = if ctx
             .exchange()

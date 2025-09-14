@@ -155,13 +155,13 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
     let field_type = field_type(
         &f.field.data_type,
         f.is_nullable,
-        f.is_optional,
+        f.is_optional(),
         cluster,
         &krate,
     );
     let name = ident(&idl_field_name_to_rs_name(&f.field.id));
 
-    if f.is_optional {
+    if f.is_optional() {
         quote!(
             #doc_comment
             pub fn #name(&self) -> Result<#field_type, #krate::error::Error> {
@@ -195,7 +195,7 @@ fn struct_field_debug(f: &StructField, defmt: bool, krate: &Ident) -> TokenStrea
     };
     let write_suffix = if defmt { quote!() } else { quote!(?) };
 
-    if f.is_optional {
+    if f.is_optional() {
         quote!(
             match self.#name() {
                 Ok(Some(value)) => #write(f, "{}: Some({:?}),", #name_str, value)#write_suffix,

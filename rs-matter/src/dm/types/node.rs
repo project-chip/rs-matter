@@ -317,7 +317,9 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
                 list_index: self.path.list_index.clone(),
                 list_chunked: false,
                 fab_idx: accessor.fab_idx,
-                fab_filter: false,
+                // As per the Matter Core spec, Attribute Write requests
+                // are assumed to be always fabric-filtered
+                fab_filter: true,
                 dataver: self.data_ver,
             },
             self.data.clone(),

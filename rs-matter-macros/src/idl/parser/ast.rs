@@ -121,6 +121,18 @@ pub struct StructField {
     pub is_fabric_sensitive: bool,
 }
 
+impl StructField {
+    /// Return `true` if this struct field is optional in any way
+    pub fn is_optional(&self) -> bool {
+        self.is_optional || self.is_fabric_sensitive || self.is_global_fabric_idx()
+    }
+
+    /// Return `true` if this struct field is the global fabric index field
+    pub fn is_global_fabric_idx(&self) -> bool {
+        self.field.code == 254 && self.field.data_type.name == "fabric_idx"
+    }
+}
+
 /// Defines the type of a structure.
 ///
 /// Response structures contain the underlying code used to send

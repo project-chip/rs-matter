@@ -893,6 +893,19 @@ where
         T::new(self.parent, &self.tag)
     }
 
+    /// If `condition` is `true`, call the closure with the non-null builder.
+    /// If `condition` is `false`, write null and return the parent.
+    pub fn with_non_null_if<F>(self, condition: bool, f: F) -> Result<P, Error>
+    where
+        F: FnOnce(T) -> Result<P, Error>,
+    {
+        if condition {
+            f(self.non_null()?)
+        } else {
+            self.null()
+        }
+    }
+
     /// If the input is non-null, call the closure with the non-null builder and the input.
     /// If the input is null, write null and return the parent.
     pub fn with_non_null<I, F>(self, input: Nullable<I>, f: F) -> Result<P, Error>
@@ -990,6 +1003,19 @@ where
         ::log::debug!("{:?}::optional -> (some) +", self);
 
         T::new(self.parent, &self.tag)
+    }
+
+    /// If `condition` is `true`, call the closure with the non-optional builder.
+    /// If `condition` is `false`, return the parent.
+    pub fn with_some_if<F>(self, condition: bool, f: F) -> Result<P, Error>
+    where
+        F: FnOnce(T) -> Result<P, Error>,
+    {
+        if condition {
+            f(self.some()?)
+        } else {
+            Ok(self.none())
+        }
     }
 
     /// If the input is `Some`, call the closure with the non-optional builder and the input.

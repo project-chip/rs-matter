@@ -68,7 +68,8 @@ impl AclHandler {
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
                 for (fab_idx, entry) in acls {
-                    builder = entry.read_into(fab_idx, builder.push()?)?;
+                    builder =
+                        entry.read_into(attr.fab_idx, Some(fab_idx.get()), builder.push()?)?;
                 }
 
                 builder.end()
@@ -78,7 +79,7 @@ impl AclHandler {
                     return Err(ErrorCode::ConstraintError.into());
                 };
 
-                entry.read_into(fab_idx, builder)
+                entry.read_into(attr.fab_idx, Some(fab_idx.get()), builder)
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
@@ -401,12 +402,7 @@ mod tests {
 
             acl_read(&acl, &fab_mgr, &attr, &mut writebuf);
             assert_eq!(
-                &[
-                    21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1,
-                    1, 36, 2, 2, 52, 3, 52, 4, 36, 254, 1, 24, 21, 36, 1, 1, 36, 2, 2, 52, 3, 52,
-                    4, 36, 254, 2, 24, 21, 36, 1, 5, 36, 2, 2, 52, 3, 52, 4, 36, 254, 2, 24, 24,
-                    24, 24
-                ],
+                &[21, 53, 1, 36, 0, 0, 55, 1, 36, 2, 0, 36, 3, 0, 36, 4, 0, 24, 54, 2, 21, 36, 1, 1, 36, 2, 2, 52, 3, 52, 4, 36, 254, 1, 24, 21, 36, 254, 2, 24, 21, 36, 254, 2, 24, 24, 24, 24],
                 writebuf.as_slice()
             );
         }

@@ -438,17 +438,22 @@ impl AclEntry {
         Self::init(Some(fab_idx), Privilege::empty(), AuthMode::Pase)
             .into_fallible()
             .chain(|e| {
+                let auth_mode = entry.auth_mode()?.ok_or(ErrorCode::ConstraintError)?;
+                let privilege = entry.privilege()?.ok_or(ErrorCode::ConstraintError)?;
+                let subjects = entry.subjects()?.ok_or(ErrorCode::ConstraintError)?;
+                let targets = entry.targets()?.ok_or(ErrorCode::ConstraintError)?;
+
                 if
                     // As per spec, PASE auth mode is reserved for future use
-                    matches!(entry.auth_mode()?, AccessControlEntryAuthModeEnum::PASE)
+                    matches!(auth_mode, AccessControlEntryAuthModeEnum::PASE)
                     // As per spec, Group auth mode cannot have Admin privilege
-                    || matches!(entry.auth_mode()?, AccessControlEntryAuthModeEnum::Group) && matches!(entry.privilege()?, AccessControlEntryPrivilegeEnum::Administer)
+                    || matches!(auth_mode, AccessControlEntryAuthModeEnum::Group) && matches!(privilege, AccessControlEntryPrivilegeEnum::Administer)
                 {
                     Err(ErrorCode::ConstraintError)?;
                 }
 
-                e.privilege = entry.privilege()?.into();
-                e.auth_mode = entry.auth_mode()?.into();
+                e.privilege = privilege.into();
+                e.auth_mode = auth_mode.into();
 
                 // Start with null subjects and targets
                 // so that we can keep those to null if we receive empty subjects' array or empty targets' array
@@ -456,7 +461,7 @@ impl AclEntry {
                 e.subjects.clear();
                 e.targets.clear();
 
-                if let Some(subjects) = entry.subjects()?.into_option() {
+                if let Some(subjects) = subjects.into_option() {
                     for subject in subjects {
                         if e.subjects.is_none() {
                             // Initialize our subjects to non-null lazily, only if we have at least one incoming subject
@@ -469,7 +474,7 @@ impl AclEntry {
 
                         let subject = subject?;
 
-                        if matches!(entry.auth_mode()?, AccessControlEntryAuthModeEnum::CASE) && !is_node(subject) && !is_noc_cat(subject) {
+                        if matches!(auth_mode, AccessControlEntryAuthModeEnum::CASE) && !is_node(subject) && !is_noc_cat(subject) {
                             // As per spec, CASE auth mode only allows node ids and NOC CATs as subjects
                             Err(ErrorCode::ConstraintError)?;
                         }
@@ -482,7 +487,7 @@ impl AclEntry {
                     }
                 }
 
-                if let Some(targets) = entry.targets()?.into_option() {
+                if let Some(targets) = targets.into_option() {
                     for target in targets {
                         if e.targets.is_none() {
                             // Initialize our targets to non-null lazily, only if we have at least one incoming target
@@ -524,34 +529,41 @@ impl AclEntry {
     /// into the provided TLV builder
     pub fn read_into<P: TLVBuilderParent>(
         &self,
-        fab_idx: NonZeroU8,
+        accessing_fab_idx: u8,
+        fab_idx: Option<u8>,
         builder: AccessControlEntryStructBuilder<P>,
     ) -> Result<P, Error> {
-        builder
-            .privilege(self.privilege.into())?
-            .auth_mode(self.auth_mode.into())?
-            .subjects()?
-            .with_non_null(self.subjects(), |subjects, mut builder| {
-                for subject in *subjects {
-                    builder = builder.push(subject)?;
-                }
+        let same_fab_idx = Some(accessing_fab_idx) == fab_idx;
 
-                builder.end()
+        builder
+            .privilege(same_fab_idx.then(|| self.privilege.into()))?
+            .auth_mode(same_fab_idx.then(|| self.auth_mode.into()))?
+            .subjects()?
+            .with_some_if(same_fab_idx, |builder| {
+                builder.with_non_null(self.subjects(), |subjects, mut builder| {
+                    for subject in *subjects {
+                        builder = builder.push(subject)?;
+                    }
+
+                    builder.end()
+                })
             })?
             .targets()?
-            .with_non_null(self.targets(), |targets, mut builder| {
-                for target in *targets {
-                    builder = builder
-                        .push()?
-                        .cluster(Nullable::new(target.cluster))?
-                        .endpoint(Nullable::new(target.endpoint))?
-                        .device_type(Nullable::new(target.device_type))?
-                        .end()?;
-                }
+            .with_some_if(same_fab_idx, |builder| {
+                builder.with_non_null(self.targets(), |targets, mut builder| {
+                    for target in *targets {
+                        builder = builder
+                            .push()?
+                            .cluster(Nullable::new(target.cluster))?
+                            .endpoint(Nullable::new(target.endpoint))?
+                            .device_type(Nullable::new(target.device_type))?
+                            .end()?;
+                    }
 
-                builder.end()
+                    builder.end()
+                })
             })?
-            .fabric_index(fab_idx.get())?
+            .fabric_index(fab_idx)?
             .end()
     }
 
