@@ -460,6 +460,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.password,
             self.dev_comm.discriminator,
             timeout_secs,
+            None,
             &mut || self.notify_mdns(),
         )?;
 
