@@ -37,7 +37,7 @@ use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
@@ -129,8 +129,16 @@ fn run() -> Result<(), Error> {
     // Our on-off cluster
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
-    let level_control_handler = LevelControlHandler::new();
-    let level_control_state = LevelControlState::new(&level_control_handler);
+    let level_control_device_logic = LevelControlDeviceLogic::new();
+    let level_control_state = LevelControlState::new(
+        &level_control_device_logic,
+        Nullable::some(42),
+        OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+        0,
+        Nullable::none(),
+        Nullable::none(),
+        Nullable::none(),
+    );
     let level_control_cluster = level_control::LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
         &level_control_state,
@@ -210,7 +218,7 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 on_off::OnOffHandler::CLUSTER,
-                level_control::LevelControlHandler::<LevelControlHandler>::CLUSTER,
+                level_control::LevelControlHandler::<LevelControlDeviceLogic>::CLUSTER,
             ),
         },
     ],
@@ -265,43 +273,27 @@ use rs_matter::dm::Cluster;
 use rs_matter::tlv::Nullable;
 use rs_matter::with;
 
-pub struct LevelControlHandler {
-    options: Cell<OptionsBitmap>,
-    on_level: Cell<Nullable<u8>>,
+pub struct LevelControlDeviceLogic {
     current_level: Cell<u8>,
-    remaining_time: Cell<u16>,
-    on_off_transition_time: Cell<u16>,
-    on_transition_time: Cell<Nullable<u16>>,
-    off_transition_time: Cell<Nullable<u16>>,
-    default_move_rate: Cell<Nullable<u8>>,
     start_up_current_level: Cell<Nullable<u8>>,
 }
 
-impl Default for LevelControlHandler {
+impl Default for LevelControlDeviceLogic {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl LevelControlHandler {
+impl LevelControlDeviceLogic {
     pub const fn new() -> Self {
         Self {
-            options: Cell::new(
-                OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-            ),
-            on_level: Cell::new(Nullable::some(42)),
             current_level: Cell::new(1),
-            remaining_time: Cell::new(0),
-            on_off_transition_time: Cell::new(0),
-            on_transition_time: Cell::new(Nullable::none()),
-            off_transition_time: Cell::new(Nullable::none()),
-            default_move_rate: Cell::new(Nullable::none()),
             start_up_current_level: Cell::new(Nullable::none()),
         }
     }
 }
 
-impl LevelControlHooks for LevelControlHandler {
+impl LevelControlHooks for LevelControlDeviceLogic {
     const MIN_LEVEL: u8 = 1;
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
@@ -338,90 +330,12 @@ impl LevelControlHooks for LevelControlHandler {
     fn set_level(&self, level: u8) -> Option<u8> {
         // This is where business logic is implemented to physically change the level.
         info!("LevelControlHandler::set_level: setting level to {}", level);
+        self.current_level.set(level);
         Some(level)
     }
 
-    fn options(&self) -> Result<OptionsBitmap, Error> {
-        Ok(self.options.get())
-    }
-
-    fn set_options(&self, value: OptionsBitmap) -> Result<(), Error> {
-        self.options.set(value);
-        Ok(())
-    }
-
-    fn on_level(&self) -> Result<Nullable<u8>, Error> {
-        let val = self.on_level.take();
-        self.on_level.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_on_level(&self, value: Nullable<u8>) -> Result<(), Error> {
-        self.on_level.set(value);
-        Ok(())
-    }
-
-    fn current_level(&self) -> Result<Nullable<u8>, Error> {
-        Ok(Nullable::some(self.current_level.get()))
-    }
-
-    fn set_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
-        match value.into_option() {
-            Some(value) => self.current_level.set(value),
-            None => return Err(ErrorCode::InvalidData.into()),
-        }
-        Ok(())
-    }
-
-    fn remaining_time(&self) -> Result<u16, Error> {
-        Ok(self.remaining_time.get())
-    }
-
-    fn set_remaining_time(&self, value: u16) -> Result<(), Error> {
-        self.remaining_time.set(value);
-        Ok(())
-    }
-
-    fn on_off_transition_time(&self) -> Result<u16, Error> {
-        Ok(self.on_off_transition_time.get())
-    }
-
-    fn set_on_off_transition_time(&self, value: u16) -> Result<(), Error> {
-        self.on_off_transition_time.set(value);
-        Ok(())
-    }
-
-    fn on_transition_time(&self) -> Result<Nullable<u16>, Error> {
-        let val = self.on_transition_time.take();
-        self.on_transition_time.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_on_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
-        self.on_transition_time.set(value);
-        Ok(())
-    }
-
-    fn off_transition_time(&self) -> Result<Nullable<u16>, Error> {
-        let val = self.off_transition_time.take();
-        self.off_transition_time.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_off_transition_time(&self, value: Nullable<u16>) -> Result<(), Error> {
-        self.off_transition_time.set(value);
-        Ok(())
-    }
-
-    fn default_move_rate(&self) -> Result<Nullable<u8>, Error> {
-        let val = self.default_move_rate.take();
-        self.default_move_rate.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_default_move_rate(&self, value: Nullable<u8>) -> Result<(), Error> {
-        self.default_move_rate.set(value);
-        Ok(())
+    fn get_level(&self) -> Option<u8> {
+        Some(self.current_level.get())
     }
 
     fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
