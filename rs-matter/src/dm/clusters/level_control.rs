@@ -57,7 +57,7 @@ enum Task {
     Stop,
 }
 
-/// Implementation of the LevelControlCluster, providing functionality for the Matter Level Control cluster.
+/// Implementation of the LevelControlHandler, providing functionality for the Matter Level Control cluster.
 ///
 /// # Type Parameters
 /// - `'a`: Lifetime for references held by the cluster.
@@ -72,7 +72,7 @@ enum Task {
 /// # Notes
 /// - This implementation follows version 1.3 of the Matter specification.
 /// - Some features (such as OnOff cluster integration) are marked as TODO and may require further implementation.
-pub struct LevelControlCluster<'a, H: LevelControlHooks> {
+pub struct LevelControlHandler<'a, H: LevelControlHooks> {
     dataver: Dataver,
     state: &'a LevelControlState<'a, H>,
     task_signal: Signal<NoopRawMutex, Task>,
@@ -80,38 +80,38 @@ pub struct LevelControlCluster<'a, H: LevelControlHooks> {
     on_off: Cell<Option<&'a OnOffHandler>>,
 }
 
-impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
+impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
     const MAXIMUM_LEVEL: u8 = 254;
 
     // todo: add `on_off_state: Option<&'a OnOffState>` when OnOff in re-implemented.
-    /// Creates a new instance of the LevelControlCluster.
+    /// Creates a new instance of the LevelControlHandler.
     ///
     /// # Panics
     ///
-    /// panics if the `handler`'s `CLUSTER` is misconfigured.
-    pub fn new(dataver: Dataver, handler: &'a LevelControlState<'a, H>) -> Self {
-        let cluster = Self {
+    /// panics if the `state`'s `CLUSTER` is misconfigured.
+    pub fn new(dataver: Dataver, state: &'a LevelControlState<'a, H>) -> Self {
+        let this = Self {
             dataver,
-            state: handler,
+            state,
             task_signal: Signal::new(),
             on_off: Cell::new(None),
         };
 
-        cluster.validate();
+        this.validate();
 
-        // todo: call a pub(crate) method in OnOffCluster setting up `&cluster` as a LevelControlCluster
+        // todo: call a pub(crate) method in OnOffCluster setting up `&cluster` as a LevelControlHandler
         // accessor so it can call `coupled_on_off_cluster_on_off_state_change`
 
-        cluster.init();
+        this.init();
 
-        cluster
+        this
     }
 
     /// Checks that the cluster is correctly configured, including required attributes, commands, and feature dependencies.
     ///
     /// # Panics
     ///
-    /// panics with error message if the `handler`'s `CLUSTER` is misconfigured.
+    /// panics with error message if the `state`'s `CLUSTER` is misconfigured.
     fn validate(&self) {
         if H::CLUSTER.revision != 5 {
             panic!(
@@ -228,12 +228,12 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     }
 
     // todo Remove once OnOff is re-implemented.
-    // Set the OnOff cluster instance coupled with this LevelControl cluster, i.e. the OnOff cluster on the same endpoint.
+    // Set the OnOffHandler instance coupled with this LevelControlHandler, i.e. the OnOff cluster on the same endpoint.
     // Note: The OnOff cluster on the same endpoint SHALL be set if any of the following is true
     //   - The OnOff feature is set
     //   - The `WithOnOff` commands are supported
-    pub fn set_on_off_cluster(&self, cluster: &'a OnOffHandler) {
-        self.on_off.set(Some(cluster))
+    pub fn set_on_off_handler(&self, on_off_handler: &'a OnOffHandler) {
+        self.on_off.set(Some(on_off_handler))
     }
 
     /// Checks if a command should proceed beyond the Options processing.
@@ -436,7 +436,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
             }
             None => {
                 // todo: remove this message once OnOff is implemented.
-                error!("LevelControlCluster: expected OnOffCluster is missing.\nhelp: use set_on_off_cluster() to couple the OnOffCluster on the same endpoint with this LevelControlCluster")
+                error!("LevelControlHandler: expected OnOffCluster is missing.\nhelp: use set_on_off_cluster() to couple the OnOffCluster on the same endpoint with this LevelControlHandler")
             }
         }
 
@@ -773,10 +773,10 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     }
 }
 
-impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H> {
+impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlHandler<'a, H> {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
-    // Runs an async task manager for the cluster.
+    // Runs an async task manager for the cluster handler.
     async fn run(&self) -> Result<(), Error> {
         loop {
             let mut task = self.task_signal.wait().await;
@@ -1048,7 +1048,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlCluster<'a, H
 }
 
 pub struct LevelControlState<'a, H: LevelControlHooks> {
-    handler: &'a H,
+    hooks: &'a H,
     last_current_level_notification: Cell<Instant>,
 }
 
@@ -1056,13 +1056,13 @@ pub struct LevelControlState<'a, H: LevelControlHooks> {
 /// and quiet reporting of attribute changes according to Matter specification.
 ///
 /// # Type Parameters
-/// - `'a`: Lifetime of the handler reference.
+/// - `'a`: Lifetime of the hooks reference.
 /// - `H`: Type implementing `LevelControlHooks`.
 impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
-    /// Creates a new `LevelControlState` with the given handler.
-    pub fn new(handler: &'a H) -> Self {
+    /// Creates a new `LevelControlState` with the given hooks.
+    pub fn new(hooks: &'a H) -> Self {
         Self {
-            handler,
+            hooks,
             last_current_level_notification: Cell::new(Instant::from_millis(0)),
         }
     }
@@ -1079,13 +1079,13 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
     ) -> Result<(), Error> {
         let remaining_time_ds = remaining_time.as_millis().div_ceil(100) as u16;
 
-        self.handler.set_remaining_time(remaining_time_ds)?;
+        self.hooks.set_remaining_time(remaining_time_ds)?;
 
         // RemainingTime Quiet report conditions:
         // - When it changes to 0, or
         // - When it changes from 0 to any value higher than 10, or
         // - When it changes, with a delta larger than 10, caused by the invoke of a command.
-        let previous_remaining_time = self.handler.remaining_time()?;
+        let previous_remaining_time = self.hooks.remaining_time()?;
         let changed_to_zero = remaining_time_ds == 0 && previous_remaining_time != 0;
         let changed_from_zero_gt_10 = previous_remaining_time == 0 && remaining_time_ds > 10;
         let changed_by_gt_10 =
@@ -1108,9 +1108,9 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
         current_level: Nullable<u8>,
         is_end_of_transition: bool,
     ) -> Result<(), Error> {
-        let previous_value = self.handler.current_level()?;
+        let previous_value = self.hooks.current_level()?;
         let last_notification = Instant::now() - self.last_current_level_notification.get();
-        self.handler.set_current_level(current_level.clone())?;
+        self.hooks.set_current_level(current_level.clone())?;
 
         // CurrentLevel Quiet report conditions:
         // - At most once per second, or
@@ -1136,7 +1136,7 @@ impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     delegate! {
-        to self.handler {
+        to self.hooks {
             fn set_level(&self, level: u8) -> Option<u8>;
             fn current_level(&self) -> Result<Nullable<u8>, Error>;
             fn set_current_level(&self, value: Nullable<u8>) -> Result<(), Error>;
@@ -1168,11 +1168,11 @@ pub trait LevelControlHooks {
 
     /// Implements the business logic for setting the level of the device.
     /// Returns the new level of the device.
-    /// If this method returns None, the `LevelControlCluster` will represent this as an error with `ImStatusCode` of `Failure`.
+    /// If this method returns None, the `LevelControlHandler` will represent this as an error with `ImStatusCode` of `Failure`.
     ///
     /// # Implementation notes
     ///
-    /// - DO NOT update attribute states, this is handled by the `LevelControlCluster`.
+    /// - DO NOT update attribute states, this is handled by the `LevelControlHandler`.
     fn set_level(&self, level: u8) -> Option<u8>;
 
     // Raw accessors

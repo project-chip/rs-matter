@@ -131,11 +131,11 @@ fn run() -> Result<(), Error> {
 
     let level_control_handler = LevelControlHandler::new();
     let level_control_state = LevelControlState::new(&level_control_handler);
-    let level_control_cluster = level_control::LevelControlCluster::new(
+    let level_control_cluster = level_control::LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
         &level_control_state,
     );
-    level_control_cluster.set_on_off_cluster(&on_off);
+    level_control_cluster.set_on_off_handler(&on_off);
     let mut level_control_job = pin!(level_control_cluster.run());
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
@@ -210,7 +210,7 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 on_off::OnOffHandler::CLUSTER,
-                level_control::LevelControlCluster::<LevelControlHandler>::CLUSTER,
+                level_control::LevelControlHandler::<LevelControlHandler>::CLUSTER,
             ),
         },
     ],
@@ -221,7 +221,7 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
     on_off: &'a on_off::OnOffHandler,
-    level_control: &'a level_control::LevelControlCluster<'a, LH>,
+    level_control: &'a level_control::LevelControlHandler<'a, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -244,7 +244,7 @@ fn dm_handler<'a, LH: LevelControlHooks>(
                     .chain(
                         EpClMatcher::new(
                             Some(1),
-                            Some(level_control::LevelControlCluster::<'a, LH>::CLUSTER.id),
+                            Some(level_control::LevelControlHandler::<'a, LH>::CLUSTER.id),
                         ),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
