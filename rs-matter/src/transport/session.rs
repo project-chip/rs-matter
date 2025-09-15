@@ -19,6 +19,8 @@ use core::fmt;
 use core::num::NonZeroU8;
 use core::time::Duration;
 
+use cfg_if::cfg_if;
+
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
@@ -559,8 +561,67 @@ impl Drop for ReservedSession<'_> {
     }
 }
 
-const MAX_SESSIONS: usize = 16;
-const MAX_EXCHANGES: usize = 5;
+cfg_if! {
+    if #[cfg(feature = "max-sessions-64")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 64;
+    } else if #[cfg(feature = "max-sessions-32")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 32;
+    } else if #[cfg(feature = "max-sessions-16")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 16;
+    } else if #[cfg(feature = "max-sessions-8")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 8;
+    } else if #[cfg(feature = "max-sessions-7")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 7;
+    } else if #[cfg(feature = "max-sessions-6")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 6;
+    } else if #[cfg(feature = "max-sessions-5")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 5;
+    } else if #[cfg(feature = "max-sessions-4")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 4;
+    } else if #[cfg(feature = "max-sessions-3")] {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 3;
+    } else {
+        /// Max number of supported sessions
+        pub const MAX_SESSIONS: usize = 16;
+    }
+}
+
+cfg_if! {
+    if #[cfg(feature = "max-exchanges-per-session-16")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 16;
+    } else if #[cfg(feature = "max-exchanges-per-session-8")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 8;
+    } else if #[cfg(feature = "max-exchanges-per-session-7")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 7;
+    } else if #[cfg(feature = "max-exchanges-per-session-6")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 6;
+    } else if #[cfg(feature = "max-exchanges-per-session-5")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 5;
+    } else if #[cfg(feature = "max-exchanges-per-session-4")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 4;
+    } else if #[cfg(feature = "max-exchanges-per-session-3")] {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 3;
+    } else {
+        /// Max number of supported exchanges per session
+        pub const MAX_EXCHANGES: usize = 5;
+    }
+}
 
 const MATTER_MSG_CTR_RANGE: u32 = 0x0fffffff;
 

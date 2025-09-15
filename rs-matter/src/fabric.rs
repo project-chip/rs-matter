@@ -18,6 +18,7 @@
 use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
+use cfg_if::cfg_if;
 use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
@@ -67,7 +68,7 @@ pub struct Fabric {
     /// Fabric label; unique accross all fabrics on the device
     label: String<32>,
     /// Access Control List
-    acl: Vec<AclEntry, { acl::ENTRIES_PER_FABRIC }>,
+    acl: Vec<AclEntry, { acl::MAX_ACL_ENTRIES_PER_FABRIC }>,
 }
 
 impl Fabric {
@@ -394,13 +395,46 @@ impl Fabric {
     }
 }
 
-/// Max number of supported fabrics
-// TODO: Make this configurable via a cargo feature
-pub const MAX_SUPPORTED_FABRICS: usize = 3;
+cfg_if! {
+    if #[cfg(feature = "max-fabrics-32")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 32;
+    } else if #[cfg(feature = "max-fabrics-16")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 16;
+    } else if #[cfg(feature = "max-fabrics-8")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 8;
+    } else if #[cfg(feature = "max-fabrics-7")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 7;
+    } else if #[cfg(feature = "max-fabrics-6")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 6;
+    } else if #[cfg(feature = "max-fabrics-5")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 5;
+    } else if #[cfg(feature = "max-fabrics-4")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 4;
+    } else if #[cfg(feature = "max-fabrics-3")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 3;
+    } else if #[cfg(feature = "max-fabrics-2")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 2;
+    } else if #[cfg(feature = "max-fabrics-1")] {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 1;
+    } else {
+        /// Max number of supported fabrics
+        pub const MAX_FABRICS: usize = 3;
+    }
+}
 
 /// Fabric manager type
 pub struct FabricMgr {
-    fabrics: Vec<Fabric, MAX_SUPPORTED_FABRICS>,
+    fabrics: Vec<Fabric, MAX_FABRICS>,
     changed: bool,
 }
 
