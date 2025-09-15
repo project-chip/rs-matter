@@ -101,6 +101,7 @@ pub enum ErrorCode {
     NocFabricConflict,
     NocLabelConflict,
     NocInvalidFabricIndex,
+    Failure,
 }
 
 impl From<ErrorCode> for Error {

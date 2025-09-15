@@ -30,6 +30,7 @@ pub mod eth_diag;
 pub mod gen_comm;
 pub mod gen_diag;
 pub mod grp_key_mgmt;
+pub mod level_control;
 pub mod net_comm;
 pub mod noc;
 pub mod on_off;
@@ -48,6 +49,7 @@ pub mod decl {
         GeneralDiagnostics,
         GeneralCommissioning,
         GroupKeyManagement,
+        LevelControl,
         NetworkCommissioning,
         OnOff,
         OperationalCredentials,
