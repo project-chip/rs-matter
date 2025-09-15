@@ -57,9 +57,18 @@ pub type AsOptional = ();
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AsNullable;
 
-/// Represents optional values as per the TLV spec.
+/// Represents optional and/or fabric-sensitive values as per the TLV spec
+/// and the Matter Core spec.
 ///
-/// Note that `Option<T>` also represents optional values, but `Option<T>`
+/// A common representation for optional and fabric-sensitive values was chosen, because
+/// optional and fabric-sensitive values are very similar in the TLV/Matter spec:
+/// - Both optional and fabric-sensitive values apply only to struct members (modulo fabric-sensitive Events);
+/// - Both optional and fabric-sensitive values might simply not be present in the stream.
+///
+/// An optional, a fabric-sensitive, and an optional _AND_ fabric-sensitive struct member are all modeled
+/// with a single representation: `Option<T>` or `Optional<T>`.
+///
+/// Note that `Option<T>` also represents an optional and/or a fabric-sensitive struct field, but `Option<T>`
 /// cannot be created in-place, which is necessary when large values are involved.
 ///
 /// Therefore, using `Optional<T>` is recommended over `Option<T>` when the optional value is large.

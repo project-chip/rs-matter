@@ -36,6 +36,11 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestClusterComplexTypes",
     "TestBasicInformation",
     "TestAccessControlCluster",
+    "TestArmFailSafe",
+    "TestSelfFabricRemoval",
+    "TestClusterMultiFabric",
+    "TestCommissionerNodeId",
+    "TestCommissioningWindow",
 ];
 
 /// The default Git reference to use for the Chip repository

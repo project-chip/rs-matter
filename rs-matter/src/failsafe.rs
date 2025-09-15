@@ -231,12 +231,10 @@ impl FailSafe {
     #[allow(clippy::too_many_arguments)]
     pub fn update_noc(
         &mut self,
-        session_mode: &SessionMode,
         fabric_mgr: &RefCell<FabricMgr>,
-        vendor_id: u16,
+        session_mode: &SessionMode,
         icac: Option<&[u8]>,
         noc: &[u8],
-        ipk: &[u8],
         buf: &mut [u8],
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
@@ -265,12 +263,10 @@ impl FailSafe {
             &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
-            ipk,
-            vendor_id,
             mdns_notif,
         )?;
 
-        self.add_flags(NocFlags::ADD_NOC_RECVD);
+        self.add_flags(NocFlags::UPDATE_NOC_RECVD);
 
         Ok(())
     }
@@ -375,6 +371,12 @@ impl FailSafe {
         if let State::Armed(ctx) = &self.state {
             if matches!(session_mode, SessionMode::PlainText) {
                 // Session is plain text
+                Err(ErrorCode::GennCommInvalidAuthentication)?;
+            }
+
+            if op == NocFlags::UPDATE_NOC_RECVD && !matches!(session_mode, SessionMode::Case { .. })
+            {
+                // Update NOC requires a CASE session
                 Err(ErrorCode::GennCommInvalidAuthentication)?;
             }
 

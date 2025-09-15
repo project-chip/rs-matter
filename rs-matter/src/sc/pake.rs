@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::num::NonZeroU8;
 use core::time::Duration;
 
 use crate::error::{Error, ErrorCode};
@@ -38,18 +39,33 @@ pub enum PaseSessionType {
     Enhanced,
 }
 
+/// The fabric index of the fabric administrator that opened the commissioning window
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PaseSessionOpener {
+    pub fab_idx: NonZeroU8,
+    pub vendor_id: u16,
+}
+
 struct PaseSession {
     mdns_id: u64,
     discriminator: u16,
     verifier: VerifierData,
+    opener: Option<PaseSessionOpener>,
 }
 
 impl PaseSession {
-    fn init_with_pw(password: u32, discriminator: u16, rand: Rand) -> impl Init<Self> {
+    fn init_with_pw(
+        password: u32,
+        discriminator: u16,
+        opener: Option<PaseSessionOpener>,
+        rand: Rand,
+    ) -> impl Init<Self> {
         init!(Self {
             mdns_id: Self::mdns_id(rand),
             discriminator,
             verifier <- VerifierData::init_with_pw(password, rand),
+            opener,
         })
     }
 
@@ -58,12 +74,14 @@ impl PaseSession {
         salt: &'a [u8],
         count: u32,
         discriminator: u16,
+        opener: Option<PaseSessionOpener>,
         rand: Rand,
     ) -> impl Init<Self, Error> + 'a {
         try_init!(Self {
             mdns_id: Self::mdns_id(rand),
             discriminator,
             verifier <- VerifierData::init(verifier, salt, count),
+            opener,
         }? Error)
     }
 
@@ -73,6 +91,10 @@ impl PaseSession {
         } else {
             PaseSessionType::Enhanced
         }
+    }
+
+    fn opener(&self) -> Option<PaseSessionOpener> {
+        self.opener
     }
 
     fn mdns_service(&self) -> MatterMdnsService {
@@ -122,6 +144,12 @@ impl PaseMgr {
             .map(|session| session.session_type())
     }
 
+    pub fn opener(&self) -> Option<PaseSessionOpener> {
+        self.session
+            .as_opt_ref()
+            .and_then(|session| session.opener())
+    }
+
     pub fn mdns_service(&self) -> Option<MatterMdnsService> {
         self.session
             .as_opt_ref()
@@ -133,6 +161,7 @@ impl PaseMgr {
         password: u32,
         discriminator: u16,
         _timeout_secs: u16,
+        opener: Option<PaseSessionOpener>,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         if self.session.is_some() {
@@ -143,6 +172,7 @@ impl PaseMgr {
             .reinit(Maybe::init_some(PaseSession::init_with_pw(
                 password,
                 discriminator,
+                opener,
                 self.rand,
             )));
 
@@ -151,6 +181,7 @@ impl PaseMgr {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn enable_pase_session(
         &mut self,
         verifier: &[u8],
@@ -158,6 +189,7 @@ impl PaseMgr {
         count: u32,
         discriminator: u16,
         _timeout_secs: u16,
+        opener: Option<PaseSessionOpener>,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         if self.session.is_some() {
@@ -169,6 +201,7 @@ impl PaseMgr {
             salt,
             count,
             discriminator,
+            opener,
             self.rand,
         )))?;
 

@@ -106,8 +106,8 @@ impl Fabric {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: &[u8],
-        vendor_id: u16,
+        ipk: Option<&[u8]>,
+        vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
@@ -125,13 +125,19 @@ impl Fabric {
 
         self.node_id = noc_p.get_node_id()?;
         self.fabric_id = noc_p.get_fabric_id()?;
-        self.vendor_id = vendor_id;
+
+        if let Some(vendor_id) = vendor_id {
+            self.vendor_id = vendor_id;
+        }
 
         let root_ca_p = CertRef::new(TLVElement::new(root_ca));
 
         self.compressed_fabric_id =
             Self::compute_compressed_fabric_id(root_ca_p.pubkey()?, self.fabric_id);
-        self.ipk = KeySet::new(ipk, &self.compressed_fabric_id.to_be_bytes())?;
+
+        if let Some(ipk) = ipk {
+            self.ipk = KeySet::new(ipk, &self.compressed_fabric_id.to_be_bytes())?;
+        }
 
         if let Some(case_admin_subject) = case_admin_subject {
             self.acl.clear();
@@ -548,8 +554,8 @@ impl FabricMgr {
                 root_ca,
                 noc,
                 icac,
-                ipk,
-                vendor_id,
+                Some(ipk),
+                Some(vendor_id),
                 Some(case_admin_subject),
                 mdns_notif,
             )
@@ -569,8 +575,6 @@ impl FabricMgr {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: &[u8],
-        vendor_id: u16,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
         let Some(fabric) = self
@@ -583,7 +587,7 @@ impl FabricMgr {
 
         fabric.key_pair = key_pair;
 
-        fabric.update(root_ca, noc, icac, ipk, vendor_id, None, mdns_notif)?;
+        fabric.update(root_ca, noc, icac, None, None, None, mdns_notif)?;
 
         self.changed = true;
 

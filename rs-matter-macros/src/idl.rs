@@ -753,8 +753,15 @@ pub mod unit_testing {
         pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> {
             &self.0
         }
-        pub fn fabric_sensitive_int_8_u(&self) -> Result<u8, rs_matter_crate::error::Error> {
-            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?)
+        pub fn fabric_sensitive_int_8_u(
+            &self,
+        ) -> Result<Option<u8>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(1)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
         }
         pub fn optional_fabric_sensitive_int_8_u(
             &self,
@@ -768,8 +775,14 @@ pub mod unit_testing {
         }
         pub fn nullable_fabric_sensitive_int_8_u(
             &self,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
-            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(3)?)
+        ) -> Result<Option<rs_matter_crate::tlv::Nullable<u8>>, rs_matter_crate::error::Error>
+        {
+            let element = self.0.structure()?.find_ctx(3)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
         }
         pub fn nullable_optional_fabric_sensitive_int_8_u(
             &self,
@@ -784,21 +797,43 @@ pub mod unit_testing {
         }
         pub fn fabric_sensitive_char_string(
             &self,
-        ) -> Result<rs_matter_crate::tlv::Utf8Str<'_>, rs_matter_crate::error::Error> {
-            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(5)?)
+        ) -> Result<Option<rs_matter_crate::tlv::Utf8Str<'_>>, rs_matter_crate::error::Error>
+        {
+            let element = self.0.structure()?.find_ctx(5)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
         }
         pub fn fabric_sensitive_struct(
             &self,
-        ) -> Result<SimpleStruct<'_>, rs_matter_crate::error::Error> {
-            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(6)?)
+        ) -> Result<Option<SimpleStruct<'_>>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(6)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
         }
         pub fn fabric_sensitive_int_8_u_list(
             &self,
-        ) -> Result<rs_matter_crate::tlv::TLVArray<'_, u8>, rs_matter_crate::error::Error> {
-            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(7)?)
+        ) -> Result<Option<rs_matter_crate::tlv::TLVArray<'_, u8>>, rs_matter_crate::error::Error>
+        {
+            let element = self.0.structure()?.find_ctx(7)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
         }
-        pub fn fabric_index(&self) -> Result<u8, rs_matter_crate::error::Error> {
-            rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(254)?)
+        pub fn fabric_index(&self) -> Result<Option<u8>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(254)?;
+            if element.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
+            }
         }
     }
     impl<'a> rs_matter_crate::tlv::FromTLV<'a> for TestFabricScoped<'a> {
@@ -828,7 +863,8 @@ pub mod unit_testing {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(f, "{} {{", "TestFabricScoped")?;
             match self.fabric_sensitive_int_8_u() {
-                Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_int_8_u", value)?,
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fabric_sensitive_int_8_u", value)?,
+                Ok(None) => write!(f, "{}: None,", "fabric_sensitive_int_8_u")?,
                 Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_int_8_u", e.code())?,
             }
             match self.optional_fabric_sensitive_int_8_u() {
@@ -846,7 +882,12 @@ pub mod unit_testing {
                 )?,
             }
             match self.nullable_fabric_sensitive_int_8_u() {
-                Ok(value) => write!(f, "{}: {:?},", "nullable_fabric_sensitive_int_8_u", value)?,
+                Ok(Some(value)) => write!(
+                    f,
+                    "{}: Some({:?}),",
+                    "nullable_fabric_sensitive_int_8_u", value
+                )?,
+                Ok(None) => write!(f, "{}: None,", "nullable_fabric_sensitive_int_8_u")?,
                 Err(e) => write!(
                     f,
                     "{}: ??? {:?},",
@@ -869,15 +910,22 @@ pub mod unit_testing {
                 )?,
             }
             match self.fabric_sensitive_char_string() {
-                Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_char_string", value)?,
+                Ok(Some(value)) => {
+                    write!(f, "{}: Some({:?}),", "fabric_sensitive_char_string", value)?
+                }
+                Ok(None) => write!(f, "{}: None,", "fabric_sensitive_char_string")?,
                 Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_char_string", e.code())?,
             }
             match self.fabric_sensitive_struct() {
-                Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_struct", value)?,
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fabric_sensitive_struct", value)?,
+                Ok(None) => write!(f, "{}: None,", "fabric_sensitive_struct")?,
                 Err(e) => write!(f, "{}: ??? {:?},", "fabric_sensitive_struct", e.code())?,
             }
             match self.fabric_sensitive_int_8_u_list() {
-                Ok(value) => write!(f, "{}: {:?},", "fabric_sensitive_int_8_u_list", value)?,
+                Ok(Some(value)) => {
+                    write!(f, "{}: Some({:?}),", "fabric_sensitive_int_8_u_list", value)?
+                }
+                Ok(None) => write!(f, "{}: None,", "fabric_sensitive_int_8_u_list")?,
                 Err(e) => write!(
                     f,
                     "{}: ??? {:?},",
@@ -886,7 +934,8 @@ pub mod unit_testing {
                 )?,
             }
             match self.fabric_index() {
-                Ok(value) => write!(f, "{}: {:?},", "fabric_index", value)?,
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fabric_index", value)?,
+                Ok(None) => write!(f, "{}: None,", "fabric_index")?,
                 Err(e) => write!(f, "{}: ??? {:?},", "fabric_index", e.code())?,
             }
             write!(f, "}}")
@@ -897,11 +946,16 @@ pub mod unit_testing {
         fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
             rs_matter_crate::reexport::defmt::write!(f, "{} {{", "TestFabricScoped");
             match self.fabric_sensitive_int_8_u() {
-                Ok(value) => rs_matter_crate::reexport::defmt::write!(
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
                     f,
-                    "{}: {:?},",
+                    "{}: Some({:?}),",
                     "fabric_sensitive_int_8_u",
                     value
+                ),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: None,",
+                    "fabric_sensitive_int_8_u"
                 ),
                 Err(e) => rs_matter_crate::reexport::defmt::write!(
                     f,
@@ -930,11 +984,16 @@ pub mod unit_testing {
                 ),
             }
             match self.nullable_fabric_sensitive_int_8_u() {
-                Ok(value) => rs_matter_crate::reexport::defmt::write!(
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
                     f,
-                    "{}: {:?},",
+                    "{}: Some({:?}),",
                     "nullable_fabric_sensitive_int_8_u",
                     value
+                ),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: None,",
+                    "nullable_fabric_sensitive_int_8_u"
                 ),
                 Err(e) => rs_matter_crate::reexport::defmt::write!(
                     f,
@@ -963,11 +1022,16 @@ pub mod unit_testing {
                 ),
             }
             match self.fabric_sensitive_char_string() {
-                Ok(value) => rs_matter_crate::reexport::defmt::write!(
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
                     f,
-                    "{}: {:?},",
+                    "{}: Some({:?}),",
                     "fabric_sensitive_char_string",
                     value
+                ),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: None,",
+                    "fabric_sensitive_char_string"
                 ),
                 Err(e) => rs_matter_crate::reexport::defmt::write!(
                     f,
@@ -977,11 +1041,16 @@ pub mod unit_testing {
                 ),
             }
             match self.fabric_sensitive_struct() {
-                Ok(value) => rs_matter_crate::reexport::defmt::write!(
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
                     f,
-                    "{}: {:?},",
+                    "{}: Some({:?}),",
                     "fabric_sensitive_struct",
                     value
+                ),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: None,",
+                    "fabric_sensitive_struct"
                 ),
                 Err(e) => rs_matter_crate::reexport::defmt::write!(
                     f,
@@ -991,11 +1060,16 @@ pub mod unit_testing {
                 ),
             }
             match self.fabric_sensitive_int_8_u_list() {
-                Ok(value) => rs_matter_crate::reexport::defmt::write!(
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
                     f,
-                    "{}: {:?},",
+                    "{}: Some({:?}),",
                     "fabric_sensitive_int_8_u_list",
                     value
+                ),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: None,",
+                    "fabric_sensitive_int_8_u_list"
                 ),
                 Err(e) => rs_matter_crate::reexport::defmt::write!(
                     f,
@@ -1005,8 +1079,14 @@ pub mod unit_testing {
                 ),
             }
             match self.fabric_index() {
-                Ok(value) => {
-                    rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "fabric_index", value)
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(
+                    f,
+                    "{}: Some({:?}),",
+                    "fabric_index",
+                    value
+                ),
+                Ok(None) => {
+                    rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "fabric_index")
                 }
                 Err(e) => rs_matter_crate::reexport::defmt::write!(
                     f,
@@ -6281,7 +6361,7 @@ pub mod unit_testing {
     {
         pub fn fabric_sensitive_int_8_u(
             mut self,
-            value: u8,
+            value: Option<u8>,
         ) -> Result<TestFabricScopedBuilder<P, 2usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")]
             rs_matter_crate::reexport::defmt::debug!(
@@ -6312,7 +6392,7 @@ pub mod unit_testing {
     {
         pub fn fabric_sensitive_int_8_u(
             mut self,
-            value: u8,
+            value: Option<u8>,
         ) -> Result<TestFabricScopedBuilder<P, 2usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")]
             rs_matter_crate::reexport::log::debug!(
@@ -6395,7 +6475,7 @@ pub mod unit_testing {
     {
         pub fn nullable_fabric_sensitive_int_8_u(
             mut self,
-            value: rs_matter_crate::tlv::Nullable<u8>,
+            value: Option<rs_matter_crate::tlv::Nullable<u8>>,
         ) -> Result<TestFabricScopedBuilder<P, 4usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")]
             rs_matter_crate::reexport::defmt::debug!(
@@ -6426,7 +6506,7 @@ pub mod unit_testing {
     {
         pub fn nullable_fabric_sensitive_int_8_u(
             mut self,
-            value: rs_matter_crate::tlv::Nullable<u8>,
+            value: Option<rs_matter_crate::tlv::Nullable<u8>>,
         ) -> Result<TestFabricScopedBuilder<P, 4usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")]
             rs_matter_crate::reexport::log::debug!(
@@ -6509,7 +6589,7 @@ pub mod unit_testing {
     {
         pub fn fabric_sensitive_char_string(
             mut self,
-            value: rs_matter_crate::tlv::Utf8Str<'_>,
+            value: Option<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<TestFabricScopedBuilder<P, 6usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")]
             rs_matter_crate::reexport::defmt::debug!(
@@ -6540,7 +6620,7 @@ pub mod unit_testing {
     {
         pub fn fabric_sensitive_char_string(
             mut self,
-            value: rs_matter_crate::tlv::Utf8Str<'_>,
+            value: Option<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> Result<TestFabricScopedBuilder<P, 6usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")]
             rs_matter_crate::reexport::log::debug!(
@@ -6564,7 +6644,10 @@ pub mod unit_testing {
         pub fn fabric_sensitive_struct(
             self,
         ) -> Result<
-            SimpleStructBuilder<TestFabricScopedBuilder<P, 7usize>>,
+            rs_matter_crate::tlv::OptionalBuilder<
+                TestFabricScopedBuilder<P, 7usize>,
+                SimpleStructBuilder<TestFabricScopedBuilder<P, 7usize>>,
+            >,
             rs_matter_crate::error::Error,
         > {
             rs_matter_crate::tlv::TLVBuilder::new(
@@ -6580,7 +6663,10 @@ pub mod unit_testing {
         pub fn fabric_sensitive_int_8_u_list(
             self,
         ) -> Result<
-            rs_matter_crate::tlv::ToTLVArrayBuilder<TestFabricScopedBuilder<P, 254usize>, u8>,
+            rs_matter_crate::tlv::OptionalBuilder<
+                TestFabricScopedBuilder<P, 254usize>,
+                rs_matter_crate::tlv::ToTLVArrayBuilder<TestFabricScopedBuilder<P, 254usize>, u8>,
+            >,
             rs_matter_crate::error::Error,
         > {
             rs_matter_crate::tlv::TLVBuilder::new(
@@ -6598,7 +6684,7 @@ pub mod unit_testing {
     {
         pub fn fabric_index(
             mut self,
-            value: u8,
+            value: Option<u8>,
         ) -> Result<TestFabricScopedBuilder<P, 255usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")]
             rs_matter_crate::reexport::defmt::debug!(
@@ -6629,7 +6715,7 @@ pub mod unit_testing {
     {
         pub fn fabric_index(
             mut self,
-            value: u8,
+            value: Option<u8>,
         ) -> Result<TestFabricScopedBuilder<P, 255usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")]
             rs_matter_crate::reexport::log::debug!(

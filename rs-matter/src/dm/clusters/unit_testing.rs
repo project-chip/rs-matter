@@ -17,6 +17,8 @@
 
 //! This module contains the implementation of the Unit Testing cluster and its handler.
 
+use core::num::NonZeroU8;
+
 use crate::dm::{
     ArrayAttributeRead, ArrayAttributeWrite, Cluster, Dataver, InvokeContext, ReadContext,
     WriteContext,
@@ -208,6 +210,78 @@ impl NullablesAndOptionalsStructOwned {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct TestFabricScopedOwned {
+    fabric_sensitive_int8u: u8,
+    optional_fabric_sensitive_int8u: Option<u8>,
+    nullable_fabric_sensitive_int8u: Nullable<u8>,
+    optional_nullable_fabric_sensitive_int8u: Option<Nullable<u8>>,
+    fabric_sensitive_char_string: heapless::String<32>,
+    fabric_sensitive_struct: SimpleStructOwned,
+    fabric_sensitive_int8u_list: heapless::Vec<u8, 32>,
+}
+
+impl TestFabricScopedOwned {
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            fabric_sensitive_int8u: 0,
+            optional_fabric_sensitive_int8u: None,
+            nullable_fabric_sensitive_int8u <- Nullable::init_none(),
+            optional_nullable_fabric_sensitive_int8u: None,
+            fabric_sensitive_char_string: heapless::String::new(),
+            fabric_sensitive_struct <- SimpleStructOwned::init(),
+            fabric_sensitive_int8u_list: heapless::Vec::new(),
+        })
+    }
+
+    pub fn update(&mut self, s: &TestFabricScoped) -> Result<(), crate::error::Error> {
+        self.fabric_sensitive_int8u = s
+            .fabric_sensitive_int_8_u()?
+            .ok_or(ErrorCode::ConstraintError)?;
+        self.optional_fabric_sensitive_int8u = s.optional_fabric_sensitive_int_8_u()?;
+        self.nullable_fabric_sensitive_int8u = s
+            .nullable_fabric_sensitive_int_8_u()?
+            .ok_or(ErrorCode::ConstraintError)?
+            .clone();
+        self.optional_nullable_fabric_sensitive_int8u =
+            s.nullable_optional_fabric_sensitive_int_8_u()?.clone();
+        self.fabric_sensitive_char_string = s
+            .fabric_sensitive_char_string()?
+            .ok_or(ErrorCode::ConstraintError)?
+            .try_into()
+            .map_err(|_| ErrorCode::ConstraintError)?;
+        let ss = s
+            .fabric_sensitive_struct()?
+            .ok_or(ErrorCode::ConstraintError)?;
+        self.fabric_sensitive_struct.a = ss.a()?;
+        self.fabric_sensitive_struct.b = ss.b()?;
+        self.fabric_sensitive_struct.c = ss.c()?;
+        self.fabric_sensitive_struct.d = ss
+            .d()?
+            .0
+            .try_into()
+            .map_err(|_| ErrorCode::ConstraintError)?;
+        self.fabric_sensitive_struct.e =
+            ss.e()?.try_into().map_err(|_| ErrorCode::ConstraintError)?;
+        self.fabric_sensitive_struct.f = ss.f()?;
+        self.fabric_sensitive_struct.g = ss.g()?;
+        self.fabric_sensitive_struct.h = ss.h()?;
+        self.fabric_sensitive_int8u_list.clear();
+        for i in s
+            .fabric_sensitive_int_8_u_list()?
+            .ok_or(ErrorCode::ConstraintError)?
+            .iter()
+        {
+            self.fabric_sensitive_int8u_list
+                .push(i?)
+                .map_err(|_| ErrorCode::ConstraintError)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct UnitTestingHandlerData {
     boolean: bool,
     bitmap_8: Bitmap8MaskMap,
@@ -252,7 +326,7 @@ pub struct UnitTestingHandlerData {
     range_restricted_int_16_u: u16,
     range_restricted_int_16_s: i16,
     list_long_octet_string: Vec<Vec<u8, 1000>, 16>,
-    list_fabric_scoped: Vec<TestFabricScoped<'static>, 16>,
+    list_fabric_scoped: Vec<(NonZeroU8, Vec<TestFabricScopedOwned, 16>), 16>,
     timed_write_boolean: bool,
     nullable_boolean: Nullable<bool>,
     nullable_bitmap_8: Nullable<Bitmap8MaskMap>,
@@ -846,10 +920,82 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn list_fabric_scoped<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
-        _builder: ArrayAttributeRead<TestFabricScopedArrayBuilder<P>, TestFabricScopedBuilder<P>>,
+        ctx: impl ReadContext,
+        builder: ArrayAttributeRead<TestFabricScopedArrayBuilder<P>, TestFabricScopedBuilder<P>>,
     ) -> Result<P, Error> {
-        todo!()
+        fn read_into<P: TLVBuilderParent>(
+            accessing_fab_idx: u8,
+            fabric_idx: NonZeroU8,
+            s: &TestFabricScopedOwned,
+            builder: TestFabricScopedBuilder<P>,
+        ) -> Result<P, Error> {
+            let same_fab_idx = accessing_fab_idx == fabric_idx.get();
+
+            builder
+                .fabric_sensitive_int_8_u(same_fab_idx.then_some(s.fabric_sensitive_int8u))?
+                .optional_fabric_sensitive_int_8_u(
+                    same_fab_idx
+                        .then_some(s.optional_fabric_sensitive_int8u)
+                        .flatten(),
+                )?
+                .nullable_fabric_sensitive_int_8_u(
+                    same_fab_idx.then_some(s.nullable_fabric_sensitive_int8u.clone()),
+                )?
+                .nullable_optional_fabric_sensitive_int_8_u(
+                    same_fab_idx
+                        .then_some(s.optional_nullable_fabric_sensitive_int8u.clone())
+                        .flatten(),
+                )?
+                .fabric_sensitive_char_string(
+                    same_fab_idx.then_some(s.fabric_sensitive_char_string.as_str()),
+                )?
+                .fabric_sensitive_struct()?
+                .with_some_if(same_fab_idx, |builder| {
+                    builder
+                        .a(s.fabric_sensitive_struct.a)?
+                        .b(s.fabric_sensitive_struct.b)?
+                        .c(s.fabric_sensitive_struct.c)?
+                        .d(Octets(&s.fabric_sensitive_struct.d))?
+                        .e(s.fabric_sensitive_struct.e.as_str())?
+                        .f(s.fabric_sensitive_struct.f)?
+                        .g(s.fabric_sensitive_struct.g)?
+                        .h(s.fabric_sensitive_struct.h)?
+                        .end()
+                })?
+                .fabric_sensitive_int_8_u_list()?
+                .with_some_if(same_fab_idx, |mut builder| {
+                    for i in &s.fabric_sensitive_int8u_list {
+                        builder = builder.push(i)?;
+                    }
+                    builder.end()
+                })?
+                .fabric_index(Some(fabric_idx.get()))?
+                .end()
+        }
+
+        let attr = ctx.attr();
+
+        let data = self.data.borrow();
+        let mut list = data
+            .list_fabric_scoped
+            .iter()
+            .flat_map(|(fab_idx, fab_items)| fab_items.iter().map(move |item| (fab_idx, item)))
+            .filter(|s| !attr.fab_filter || s.0.get() == attr.fab_idx);
+
+        match builder {
+            ArrayAttributeRead::ReadOne(index, builder) => {
+                let item = list.nth(index as _).ok_or(ErrorCode::ConstraintError)?;
+                read_into(attr.fab_idx, *item.0, item.1, builder)
+            }
+            ArrayAttributeRead::ReadAll(mut builder) => {
+                for s in list {
+                    builder = read_into(attr.fab_idx, *s.0, s.1, builder.push()?)?;
+                }
+
+                builder.end()
+            }
+            ArrayAttributeRead::ReadNone(builder) => builder.end(),
+        }
     }
 
     fn timed_write_boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
@@ -1427,7 +1573,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 .chain(|o| o.update(s))
         }
 
-        let no_space = || ErrorCode::NoSpace.into();
+        let no_space = || ErrorCode::ResourceExhausted.into();
 
         match value {
             ArrayAttributeWrite::Replace(arr) => {
@@ -1630,10 +1776,66 @@ impl ClusterHandler for UnitTestingHandler<'_> {
 
     fn set_list_fabric_scoped(
         &self,
-        _ctx: impl WriteContext,
-        _value: ArrayAttributeWrite<TLVArray<'_, TestFabricScoped<'_>>, TestFabricScoped<'_>>,
+        ctx: impl WriteContext,
+        value: ArrayAttributeWrite<TLVArray<'_, TestFabricScoped<'_>>, TestFabricScoped<'_>>,
     ) -> Result<(), Error> {
-        todo!()
+        let fab_idx = NonZeroU8::new(ctx.attr().fab_idx).ok_or(ErrorCode::ConstraintError)?;
+
+        let mut data = self.data.borrow_mut();
+        let list = data
+            .list_fabric_scoped
+            .iter_mut()
+            .find(|(idx, _)| *idx == fab_idx)
+            .map(|(_, items)| items);
+
+        let list = if let Some(list) = list {
+            list
+        } else {
+            data.list_fabric_scoped
+                .push((fab_idx, Vec::new()))
+                .map_err(|_| ErrorCode::ResourceExhausted)?;
+
+            &mut data.list_fabric_scoped.last_mut().unwrap().1
+        };
+
+        match value {
+            ArrayAttributeWrite::Replace(array) => {
+                list.clear();
+
+                for i in array {
+                    let s = i?;
+
+                    list.push_init(TestFabricScopedOwned::init().into_fallible(), || {
+                        ErrorCode::ResourceExhausted
+                    })?;
+
+                    list.last_mut().unwrap().update(&s)?;
+                }
+            }
+            ArrayAttributeWrite::Add(s) => {
+                list.push_init(TestFabricScopedOwned::init().into_fallible(), || {
+                    ErrorCode::ResourceExhausted
+                })?;
+
+                list.last_mut().unwrap().update(&s)?;
+            }
+            ArrayAttributeWrite::Update(index, s) => {
+                if index as usize >= list.len() {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+
+                list[index as usize].update(&s)?;
+            }
+            ArrayAttributeWrite::Remove(index) => {
+                if index as usize >= list.len() {
+                    Err(ErrorCode::ConstraintError)?;
+                }
+
+                let _ = list.remove(index as usize);
+            }
+        }
+
+        Ok(())
     }
 
     fn set_timed_write_boolean(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {

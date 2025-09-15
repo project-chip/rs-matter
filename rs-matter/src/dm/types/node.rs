@@ -317,7 +317,9 @@ impl<'a> PathExpansionItem<'a> for AttrData<'a> {
                 list_index: self.path.list_index.clone(),
                 list_chunked: false,
                 fab_idx: accessor.fab_idx,
-                fab_filter: false,
+                // As per the Matter Core spec, Attribute Write requests
+                // are assumed to be always fabric-filtered
+                fab_filter: true,
                 dataver: self.data_ver,
             },
             self.data.clone(),
@@ -345,7 +347,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
     fn expand(
         &self,
         node: &'a Node<'a>,
-        _accessor: &'a Accessor<'a>,
+        accessor: &'a Accessor<'a>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         leaf_id: u32,
@@ -356,6 +358,7 @@ impl<'a> PathExpansionItem<'a> for CmdData<'a> {
                 endpoint_id,
                 cluster_id,
                 cmd_id: leaf_id,
+                fab_idx: accessor.fab_idx,
                 wildcard: false,
             },
             self.data.clone(),

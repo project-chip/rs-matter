@@ -263,7 +263,7 @@ fn struct_field_builder(
     let (field_type, builder) = field_type_builder(
         &f.field.data_type,
         f.is_nullable,
-        f.is_optional,
+        f.is_optional(),
         BuilderPolicy::NonCopy,
         next_parent.clone(),
         cluster,

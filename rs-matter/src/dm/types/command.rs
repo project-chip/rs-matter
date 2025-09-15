@@ -73,6 +73,8 @@ pub struct CmdDetails<'a> {
     pub cluster_id: ClusterId,
     /// The concrete (expanded) command ID
     pub cmd_id: CmdId,
+    /// The fabric index associated with this request
+    pub fab_idx: u8,
     /// Whether the original command was a wildcard one
     pub wildcard: bool,
 }
