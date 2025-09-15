@@ -62,7 +62,6 @@ static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCe
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
-// todo only needed for running testes
 #[cfg(feature = "chip-test")]
 use std::path::PathBuf;
 #[cfg(feature = "chip-test")]

@@ -1,3 +1,33 @@
+/*
+ *
+ *    Copyright (c) 2020-2022 Project CHIP Authors
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
+
+//! Implementation of the Matter Level Control cluster.
+//!
+//! This module provides the core logic and state management for the LevelControl cluster as defined by the Matter specification v1.3.
+//! It handles commands and attributes related to device level control, such as dimming lights or adjusting motor positions.
+//! The implementation supports asynchronous transitions, step and move operations, and integration with the OnOff cluster.
+//!
+//! Key features:
+//! - Validates cluster configuration and feature dependencies.
+//! - Manages level transitions with optional timing and rate control.
+//! - Supports quiet reporting of attribute changes according to specification rules.
+//! - Provides hooks for device-specific logic via the `LevelControlHooks` trait.
+//! - Designed for extensibility and integration with other clusters (e.g., OnOff).
+
 use core::cell::Cell;
 use core::ops::Mul;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -27,14 +57,6 @@ enum Task {
     Stop,
 }
 
-pub struct LevelControlCluster<'a, H: LevelControlHooks> {
-    dataver: Dataver,
-    state: &'a LevelControlState<'a, H>,
-    task_signal: Signal<NoopRawMutex, Task>,
-    // todo: Replace with OnOffState when OnOff in re-implemented.
-    on_off: Cell<Option<&'a OnOffHandler>>,
-}
-
 /// Implementation of the LevelControlCluster, providing functionality for the Matter Level Control cluster.
 ///
 /// # Type Parameters
@@ -50,6 +72,14 @@ pub struct LevelControlCluster<'a, H: LevelControlHooks> {
 /// # Notes
 /// - This implementation follows version 1.3 of the Matter specification.
 /// - Some features (such as OnOff cluster integration) are marked as TODO and may require further implementation.
+pub struct LevelControlCluster<'a, H: LevelControlHooks> {
+    dataver: Dataver,
+    state: &'a LevelControlState<'a, H>,
+    task_signal: Signal<NoopRawMutex, Task>,
+    // todo: Replace with OnOffState when OnOff in re-implemented.
+    on_off: Cell<Option<&'a OnOffHandler>>,
+}
+
 impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     const MAXIMUM_LEVEL: u8 = 254;
 
@@ -305,7 +335,7 @@ impl<'a, H: LevelControlHooks> LevelControlCluster<'a, H> {
     // OnOffTransitionTime.
     // If OnLevel is not defined, set the CurrentLevel to
     // the stored level.
-    // todo comment in when the OnOff cluster is implemnted.
+    // todo comment in when the OnOff cluster is implemented.
     // pub(crate) fn coupled_on_off_cluster_on_off_state_change(&self, on: bool) -> Result<(), Error> {
     //     self.task_signal.signal(Task::Stop);
 
