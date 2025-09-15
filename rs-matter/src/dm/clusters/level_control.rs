@@ -40,8 +40,6 @@ use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 
-use delegate::delegate;
-
 enum Task {
     MoveToLevel {
         with_on_off: bool,
@@ -205,7 +203,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
 
         // `self.state` holds the previous current level as supplied by the SDK consumer.
         // Hence, if this process errors, we quietly abort resulting in the previous current level.
-        if let Ok(startup_current_level) = self.state.start_up_current_level() {
+        if let Ok(startup_current_level) = self.state.hooks.start_up_current_level() {
             if let Some(startup_current_level) = startup_current_level.into_option() {
                 // The spec fails to mention the need for this bounding.
                 let level = if startup_current_level < H::MIN_LEVEL {
@@ -216,7 +214,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
                     startup_current_level
                 };
 
-                let _ = self.state.set_level(level);
+                let _ = self.state.hooks.set_level(level);
             }
         }
     }
@@ -494,15 +492,16 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         // Stop any ongoing transitions and check if we happen to be where we need to be.
         // If so, there is nothing to do.
         self.task_signal.signal(Task::Stop);
-        if self.state.get_level() == Some(level) {
+        if self.state.hooks.get_level() == Some(level) {
             return Ok(());
         }
 
         match transition_time {
             None | Some(0) => {
-                let level = self.state.set_level(level).ok_or(ErrorCode::Failure)?;
-                self.state
-                    .notify_current_level_change_quietly(Some(level), true);
+                let level = self
+                    .state
+                    .set_level_and_notify(level, true)
+                    .ok_or(ErrorCode::Failure)?;
                 self.state
                     .write_remaining_time_quietly(Duration::from_millis(0), true)?;
 
@@ -530,7 +529,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         let event_start_time = Instant::now();
 
         // Check if current_level is null. If so, return error.
-        let mut current_level = match self.state.get_level() {
+        let mut current_level = match self.state.hooks.get_level() {
             Some(cl) => cl,
             None => return Err(ErrorCode::Failure.into()),
         };
@@ -564,10 +563,8 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
             );
             let current_level = self
                 .state
-                .set_level(current_level)
+                .set_level_and_notify(current_level, is_transition_end)
                 .ok_or(ErrorCode::Failure)?;
-            self.state
-                .notify_current_level_change_quietly(Some(current_level), is_transition_end);
 
             if is_transition_start || is_transition_end {
                 self.update_coupled_on_off(current_level, with_on_off)?;
@@ -639,7 +636,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         }
 
         // Exit if we are already at the limit in the direct of movement.
-        if let Some(current_level) = self.state.get_level() {
+        if let Some(current_level) = self.state.hooks.get_level() {
             if (current_level == H::MIN_LEVEL && move_mode == MoveModeEnum::Down)
                 || (current_level == H::MAX_LEVEL && move_mode == MoveModeEnum::Up)
             {
@@ -670,7 +667,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         loop {
             let event_start_time = Instant::now();
 
-            let current_level = match self.state.get_level() {
+            let current_level = match self.state.hooks.get_level() {
                 Some(cl) => cl,
                 None => return Err(ErrorCode::InvalidState.into()),
             };
@@ -691,9 +688,10 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
             }
 
             let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
-            let new_level = self.state.set_level(new_level).ok_or(ErrorCode::Failure)?;
-            self.state
-                .notify_current_level_change_quietly(Some(new_level), is_end_of_transition);
+            let new_level = self
+                .state
+                .set_level_and_notify(new_level, is_end_of_transition)
+                .ok_or(ErrorCode::Failure)?;
 
             if is_end_of_transition {
                 self.update_coupled_on_off(new_level, with_on_off)?;
@@ -730,7 +728,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
             return Ok(());
         }
 
-        let current_level = match self.state.get_level() {
+        let current_level = match self.state.hooks.get_level() {
             Some(val) => val,
             None => return Err(ErrorCode::InvalidState.into()),
         };
@@ -819,7 +817,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlHandler<'a, H
     }
 
     async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        match self.state.get_level() {
+        match self.state.hooks.get_level() {
             Some(level) => Ok(Nullable::some(level)),
             None => Ok(Nullable::none()),
         }
@@ -932,7 +930,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlHandler<'a, H
     }
 
     async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        self.state.start_up_current_level()
+        self.state.hooks.start_up_current_level()
     }
 
     async fn set_start_up_current_level(
@@ -948,7 +946,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlHandler<'a, H
             }
         }
 
-        self.state.set_start_up_current_level(value)?;
+        self.state.hooks.set_start_up_current_level(value)?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -1215,26 +1213,16 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
             // todo notify.changed();
         }
     }
-}
 
-impl<'a, H: LevelControlHooks> LevelControlHooks for LevelControlState<'a, H> {
-    const MIN_LEVEL: u8 = H::MIN_LEVEL;
-    const MAX_LEVEL: u8 = H::MAX_LEVEL;
-    const FASTEST_RATE: u8 = H::FASTEST_RATE;
-    const CLUSTER: Cluster<'static> = H::CLUSTER;
-
-    fn set_level(&self, level: u8) -> Option<u8> {
+    /// Sets the level of the device, via the `set_level` hook, and notifies the change accordingly.
+    fn set_level_and_notify(&self, level: u8, is_end_of_transition: bool) -> Option<u8> {
         self.previous_current_level.set(self.hooks.get_level());
 
-        self.hooks.set_level(level)
-    }
+        let current_level = self.hooks.set_level(level);
 
-    delegate! {
-        to self.hooks {
-            fn get_level(&self) -> Option<u8>;
-            fn start_up_current_level(&self) -> Result<Nullable<u8>, Error>;
-            fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error>;
-        }
+        self.notify_current_level_change_quietly(current_level, is_end_of_transition);
+
+        current_level
     }
 }
 
