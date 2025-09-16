@@ -21,6 +21,7 @@ use core::fmt::Display;
 use core::num::NonZeroU8;
 use core::ops::RangeInclusive;
 
+use cfg_if::cfg_if;
 use num_derive::FromPrimitive;
 
 use crate::dm::clusters::acl::{
@@ -37,17 +38,116 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
-/// Max subjects per ACL entry
-// TODO: Make this configurable via a cargo feature
-pub const SUBJECTS_PER_ENTRY: usize = 4;
+cfg_if! {
+    if #[cfg(feature = "max-subjects-per-acl-32")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 32;
+    } else if #[cfg(feature = "max-subjects-per-acl-16")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 16;
+    } else if #[cfg(feature = "max-subjects-per-acl-8")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 8;
+    } else if #[cfg(feature = "max-subjects-per-acl-7")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 7;
+    } else if #[cfg(feature = "max-subjects-per-acl-6")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 6;
+    } else if #[cfg(feature = "max-subjects-per-acl-5")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 5;
+    } else if #[cfg(feature = "max-subjects-per-acl-4")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 4;
+    } else if #[cfg(feature = "max-subjects-per-acl-3")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 3;
+    } else if #[cfg(feature = "max-subjects-per-acl-2")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 2;
+    } else if #[cfg(feature = "max-subjects-per-acl-1")] {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 1;
+    } else {
+        /// Max subjects per ACL entry
+        pub const MAX_SUBJECTS_PER_ACL_ENTRY: usize = 4;
+    }
+}
 
-/// Max targets per ACL entry
-// TODO: Make this configurable via a cargo feature
-pub const TARGETS_PER_ENTRY: usize = 3;
+cfg_if! {
+    if #[cfg(feature = "max-targets-per-acl-32")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 32;
+    } else if #[cfg(feature = "max-targets-per-acl-16")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 16;
+    } else if #[cfg(feature = "max-targets-per-acl-8")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 8;
+    } else if #[cfg(feature = "max-targets-per-acl-7")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 7;
+    } else if #[cfg(feature = "max-targets-per-acl-6")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 6;
+    } else if #[cfg(feature = "max-targets-per-acl-5")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 5;
+    } else if #[cfg(feature = "max-targets-per-acl-4")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 4;
+    } else if #[cfg(feature = "max-targets-per-acl-3")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 3;
+    } else if #[cfg(feature = "max-targets-per-acl-2")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 2;
+    } else if #[cfg(feature = "max-targets-per-acl-1")] {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 1;
+    } else {
+        /// Max targets per ACL entry
+        pub const MAX_TARGETS_PER_ACL_ENTRY: usize = 3;
+    }
+}
 
-/// Max ACL entries per fabric
-// TODO: Make this configurable via a cargo feature
-pub const ENTRIES_PER_FABRIC: usize = 4;
+cfg_if! {
+    if #[cfg(feature = "max-acls-per-fabric-32")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 32;
+    } else if #[cfg(feature = "max-acls-per-fabric-16")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 16;
+    } else if #[cfg(feature = "max-acls-per-fabric-8")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 8;
+    } else if #[cfg(feature = "max-acls-per-fabric-7")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 7;
+    } else if #[cfg(feature = "max-acls-per-fabric-6")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 6;
+    } else if #[cfg(feature = "max-acls-per-fabric-5")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 5;
+    } else if #[cfg(feature = "max-acls-per-fabric-4")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 4;
+    } else if #[cfg(feature = "max-acls-per-fabric-3")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 3;
+    } else if #[cfg(feature = "max-acls-per-fabric-2")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 2;
+    } else if #[cfg(feature = "max-acls-per-fabric-1")] {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 1;
+    } else {
+        /// Max ACL entries per fabric
+        pub const MAX_ACL_ENTRIES_PER_FABRIC: usize = 4;
+    }
+}
 
 /// An enum modeling the different authentication modes
 // TODO: Check if this and the SessionMode can be combined into some generic data structure
@@ -387,9 +487,9 @@ pub struct AclEntry {
     /// The auth mode of the entry
     auth_mode: AuthMode,
     /// The subjects of the entry
-    subjects: Nullable<Vec<u64, SUBJECTS_PER_ENTRY>>,
+    subjects: Nullable<Vec<u64, MAX_SUBJECTS_PER_ACL_ENTRY>>,
     /// The targets of the entry
-    targets: Nullable<Vec<Target, TARGETS_PER_ENTRY>>,
+    targets: Nullable<Vec<Target, MAX_TARGETS_PER_ACL_ENTRY>>,
     // TODO: Instead of the direct value, we should consider GlobalElements::FabricIndex
     // Note that this field will always be `Some(NN)` when the entry is persisted in storage,
     // however, it will be `None` when the entry is coming from the other peer
