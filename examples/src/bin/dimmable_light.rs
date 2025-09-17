@@ -16,6 +16,8 @@
  */
 
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
+#![allow(clippy::uninlined_format_args)]
+
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -298,7 +300,6 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     const MAX_LEVEL: u8 = 254;
     const FASTEST_RATE: u8 = 50;
     const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
-        .with_revision(5)
         .with_features(
             level_control::Feature::LIGHTING.bits() | level_control::Feature::ON_OFF.bits(),
         )

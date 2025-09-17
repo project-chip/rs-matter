@@ -208,7 +208,6 @@ impl LevelControlHandler {
 impl level_control::ClusterAsyncHandler for LevelControlHandler {
     /// The metadata cluster definition corresponding to the handler
     const CLUSTER: Cluster<'static> = level_control::FULL_CLUSTER
-        .with_revision(1)
         .with_attrs(with!(required))
         .with_cmds(with!(
             level_control::CommandId::MoveToLevel

@@ -245,7 +245,6 @@ impl BridgedHandler {
 
 impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
     const CLUSTER: Cluster<'static> = bridged_device_basic_information::FULL_CLUSTER
-        .with_revision(1)
         .with_features(0)
         .with_attrs(with!(required))
         .with_cmds(with!());

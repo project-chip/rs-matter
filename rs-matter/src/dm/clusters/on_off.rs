@@ -84,7 +84,6 @@ impl OnOffHandler {
 
 impl ClusterHandler for OnOffHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_revision(1)
         .with_attrs(with!(required))
         .with_cmds(with!(CommandId::On | CommandId::Off | CommandId::Toggle));
 

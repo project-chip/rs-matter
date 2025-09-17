@@ -273,8 +273,8 @@ impl<'a> Cluster<'a> {
         mut tw: W,
     ) -> Result<(), Error> {
         debug!(
-            "Endpt(0x??)::Cluster(:04x)::Attr::AttributeIDs(0xNN)::Read{{{:?}}} -> Ok([",
-            index
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AttributeIDs(0xffffb)::Read{{{:?}}} -> Ok([",
+            self.id, index
         );
 
         if let Some(Some(index)) = index {
