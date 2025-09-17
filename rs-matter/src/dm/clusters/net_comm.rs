@@ -44,17 +44,14 @@ impl NetworkType {
     pub const fn cluster(&self) -> Cluster<'static> {
         match self {
             Self::Ethernet => FULL_CLUSTER
-                .with_revision(1)
                 .with_features(Feature::ETHERNET_NETWORK_INTERFACE.bits())
                 .with_attrs(with!(required))
                 .with_cmds(with!()),
             Self::Wifi => FULL_CLUSTER
-                .with_revision(1)
                 .with_features(Feature::WI_FI_NETWORK_INTERFACE.bits())
                 .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::SupportedWiFiBands))
                 .with_cmds(with!(CommandId::AddOrUpdateWiFiNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),
             Self::Thread => FULL_CLUSTER
-                .with_revision(1)
                 .with_features(Feature::THREAD_NETWORK_INTERFACE.bits())
                 .with_attrs(with!(required; AttributeId::ScanMaxTimeSeconds | AttributeId::ConnectMaxTimeSeconds | AttributeId::ThreadVersion | AttributeId::SupportedThreadFeatures))
                 .with_cmds(with!(CommandId::AddOrUpdateThreadNetwork | CommandId::ScanNetworks | CommandId::RemoveNetwork | CommandId::ConnectNetwork | CommandId::ReorderNetwork)),

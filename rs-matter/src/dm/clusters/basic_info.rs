@@ -22,8 +22,10 @@ use core::str::FromStr;
 use crate::dm::subscriptions::DEFAULT_MAX_SUBSCRIPTIONS;
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
+use crate::fabric::MAX_FABRICS;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
+use crate::transport::session::MAX_SESSIONS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
@@ -35,6 +37,11 @@ pub use crate::dm::clusters::decl::basic_information::*;
 ///
 /// Currently set to V1.3.0.0
 pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01030000;
+
+/// The default Matter Data Model revision
+///
+/// Currently set to V16, which was released with Matter Core spec V1.3
+pub const DEFAULT_DATA_MODEL_REVISION: u16 = 16;
 
 /// The default maximum number of paths that can be included in an Invoke request
 ///
@@ -84,6 +91,8 @@ pub struct BasicInfoConfig<'a> {
     pub product_appearance: ProductAppearance,
     /// Specification Version
     pub specification_version: u32,
+    /// Data Model Revision
+    pub data_model_revision: u16,
     /// Max Paths Per Invoke
     pub max_paths_per_invoke: u16,
     /// Device Name
@@ -122,6 +131,7 @@ impl BasicInfoConfig<'_> {
             capability_minima: CapabilityMinima::new(),
             product_appearance: ProductAppearance::new(),
             specification_version: DEFAULT_MATTER_SPEC_VERSION,
+            data_model_revision: DEFAULT_DATA_MODEL_REVISION,
             max_paths_per_invoke: DEFAULT_MAX_PATHS_PER_INVOKE,
             device_name: "Matter Device",
             sai: None,
@@ -147,10 +157,10 @@ pub struct CapabilityMinima {
 
 impl CapabilityMinima {
     /// Create a default instance of `CapabilityMinima`,
-    /// with 3 CASE sessions and `DEFAULT_MAX_SUBSCRIPTIONS` subscriptions per fabric.
+    /// with CASE sessions per fabric and `DEFAULT_MAX_SUBSCRIPTIONS` subscriptions per fabric.
     pub const fn new() -> Self {
         Self {
-            case_sessions_per_fabric: 3,
+            case_sessions_per_fabric: (MAX_SESSIONS / MAX_FABRICS) as _,
             subscriptions_per_fabric: DEFAULT_MAX_SUBSCRIPTIONS as _,
         }
     }
@@ -284,7 +294,6 @@ impl BasicInfoHandler {
 
 impl ClusterHandler for BasicInfoHandler {
     const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_revision(1)
         .with_attrs(except!(AttributeId::Reachable))
         .with_cmds(with!());
 
@@ -296,8 +305,8 @@ impl ClusterHandler for BasicInfoHandler {
         self.0.changed();
     }
 
-    fn data_model_revision(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(0) // TODO
+    fn data_model_revision(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(Self::config(ctx.exchange()).data_model_revision)
     }
 
     fn vendor_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
@@ -405,10 +414,10 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn capability_minima<P: TLVBuilderParent>(
         &self,
-        _ctx: impl ReadContext,
+        ctx: impl ReadContext,
         builder: CapabilityMinimaStructBuilder<P>,
     ) -> Result<P, Error> {
-        let cm = Self::config(_ctx.exchange()).capability_minima;
+        let cm = Self::config(ctx.exchange()).capability_minima;
 
         builder
             .case_sessions_per_fabric(cm.case_sessions_per_fabric)?

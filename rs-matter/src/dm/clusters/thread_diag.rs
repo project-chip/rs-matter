@@ -376,10 +376,8 @@ impl<'a> ThreadDiagHandler<'a> {
 }
 
 impl ClusterHandler for ThreadDiagHandler<'_> {
-    const CLUSTER: crate::dm::Cluster<'static> = FULL_CLUSTER
-        .with_revision(1)
-        .with_attrs(with!(required))
-        .with_cmds(with!());
+    const CLUSTER: crate::dm::Cluster<'static> =
+        FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
