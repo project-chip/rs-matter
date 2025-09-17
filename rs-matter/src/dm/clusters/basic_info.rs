@@ -157,11 +157,11 @@ pub struct CapabilityMinima {
 
 impl CapabilityMinima {
     /// Create a default instance of `CapabilityMinima`,
-    /// with CASE sessions per fabric and `DEFAULT_MAX_SUBSCRIPTIONS` subscriptions per fabric.
+    /// with actual CASE sessions per fabric and subscriptions per fabric based on `DEFAULT_MAX_SUBSCRIPTIONS`.
     pub const fn new() -> Self {
         Self {
             case_sessions_per_fabric: (MAX_SESSIONS / MAX_FABRICS) as _,
-            subscriptions_per_fabric: DEFAULT_MAX_SUBSCRIPTIONS as _,
+            subscriptions_per_fabric: (DEFAULT_MAX_SUBSCRIPTIONS / MAX_FABRICS) as _,
         }
     }
 }
