@@ -602,6 +602,16 @@ impl TransportMgr {
                         if new_exchange { " (new exchange)" } else { "" }
                     );
 
+                    #[cfg(feature = "debug-tlv-payload")]
+                    debug!(
+                        "{}",
+                        Packet::<0>::display_payload(
+                            &packet.header.proto,
+                            &packet.buf[core::cmp::min(packet.payload_start, packet.buf.len())..]
+                        )
+                    );
+
+                    #[cfg(not(feature = "debug-tlv-payload"))]
                     trace!(
                         "{}",
                         Packet::<0>::display_payload(
@@ -646,7 +656,7 @@ impl TransportMgr {
         }
 
         warn!(
-            "\n----- {}\n => Accept timeout, marking exchange as dropped",
+            "\n>>RCV {}\n => Accept timeout, marking exchange as dropped",
             packet
         );
 
@@ -665,14 +675,14 @@ impl TransportMgr {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
         let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) else {
-            warn!("\n----- {}\n => No session, dropping", packet);
+            warn!("\n>>RCV {}\n => No session, dropping", packet);
 
             packet.buf.clear();
             return true;
         };
 
         let Some(exch_index) = session.get_exch_for_rx(&packet.header.proto) else {
-            warn!("\n----- {}\n => No exchange, dropping", packet);
+            warn!("\n>>RCV {}\n => No exchange, dropping", packet);
 
             packet.buf.clear();
             return true;
@@ -683,7 +693,7 @@ impl TransportMgr {
 
         if exchange.role.is_dropped_state() {
             warn!(
-                "\n----- {}\n => Owned by orphaned dropped {}, dropping packet",
+                "\n>>RCV {}\n => Owned by orphaned dropped {}, dropping packet",
                 packet,
                 ExchangeId::new(session.id, exch_index)
             );
@@ -890,6 +900,13 @@ impl TransportMgr {
             }
         );
 
+        #[cfg(feature = "debug-tlv-payload")]
+        debug!(
+            "{}",
+            Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
+        );
+
+        #[cfg(not(feature = "debug-tlv-payload"))]
         trace!(
             "{}",
             Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())

@@ -273,7 +273,7 @@ impl<'a> Cluster<'a> {
         mut tw: W,
     ) -> Result<(), Error> {
         debug!(
-            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AttributeIDs(0xffffb)::Read{{{:?}}} -> Ok([",
+            "Endpt(0x??)::Cluster(0x{:04x})::Attr::AttributeIDs(0xfffb)::Read{{{:?}}} -> Ok([",
             self.id, index
         );
 
