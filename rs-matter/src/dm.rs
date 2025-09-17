@@ -855,7 +855,15 @@ where
                                     .endpoint(attr.endpoint_id)
                                     .and_then(|e| e.cluster(attr.cluster_id))
                                     .and_then(|c| c.attribute(attr.attr_id))
-                                    .map(|a| a.quality.contains(Quality::ARRAY))
+                                    .map(|a| {
+                                        a.quality.contains(Quality::ARRAY)
+                                        // Google Home (or maybe the Matter SDK itself?) chokes when we send a system array attribute as individual items
+                                        // If we do that, we receive an InvalidAction
+                                        // 
+                                        // Reason is yet unknown, but sending system array attributes as a whole is a valid workaround,
+                                        // because we do know that every system array attribute fits in single Matter message
+                                        && !a.is_system()
+                                    })
                                     .unwrap_or(false)
                         });
 
@@ -865,8 +873,11 @@ where
                             } else {
                                 return Ok(false);
                             }
-                        } else if !self.send(true, false, wb).await? {
-                            return Ok(false);
+                        } else {
+                            debug!("<<< No TX space, chunking >>>");
+                            if !self.send(true, false, wb).await? {
+                                return Ok(false);
+                            }
                         }
                     }
                     Err(err) => Err(err)?,
@@ -922,6 +933,7 @@ where
                     attr.list_index = Some(Nullable::some(new_list_index));
                 }
                 Err(err) if err.code() == ErrorCode::NoSpace => {
+                    debug!("<<< No TX space, chunking >>>");
                     if !self.send(true, false, wb).await? {
                         return Ok(false);
                     }
