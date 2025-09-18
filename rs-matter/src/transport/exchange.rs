@@ -680,6 +680,17 @@ impl TxMessage<'_> {
             },
         );
 
+        #[cfg(feature = "debug-tlv-payload")]
+        debug!(
+            "{}",
+            Packet::<0>::display_payload(
+                &self.packet.header.proto,
+                &self.packet.buf
+                    [PacketHdr::HDR_RESERVE + payload_start..PacketHdr::HDR_RESERVE + payload_end]
+            )
+        );
+
+        #[cfg(not(feature = "debug-tlv-payload"))]
         trace!(
             "{}",
             Packet::<0>::display_payload(
