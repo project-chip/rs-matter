@@ -283,7 +283,7 @@ impl<'a> Cluster<'a> {
                 .nth(index)
                 .ok_or(ErrorCode::ConstraintError)?;
 
-            tw.u32(&TLVTag::Anonymous, attr.id)?;
+            tw.u32(tag, attr.id)?;
             debug!("    Attr: 0x{:02x},", attr.id);
         } else {
             tw.start_array(tag)?;
@@ -320,7 +320,7 @@ impl<'a> Cluster<'a> {
                 .nth(index)
                 .ok_or(ErrorCode::ConstraintError)?;
 
-            tw.u32(&TLVTag::Anonymous, cmd.id)?;
+            tw.u32(tag, cmd.id)?;
             debug!("    Cmd: 0x{:02x}, ", cmd.id);
         } else {
             tw.start_array(tag)?;
@@ -371,7 +371,10 @@ impl<'a> Cluster<'a> {
             })
             .min()
         {
-            if index == Some(Some(count)) || index.is_none() {
+            if index == Some(Some(count)) {
+                tw.u32(tag, next_cmd)?;
+                debug!("    Cmd: 0x{:02x}, ", next_cmd);
+            } else if index.is_none() {
                 tw.u32(&TLVTag::Anonymous, next_cmd)?;
                 debug!("    Cmd: 0x{:02x}, ", next_cmd);
             }

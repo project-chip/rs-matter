@@ -24,7 +24,6 @@ use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{StatusResp, SubscribeResp};
 
-use crate::attr_data;
 use crate::common::e2e::im::attributes::TestAttrResp;
 use crate::common::e2e::im::{echo_cluster as echo, ReplyProcessor, TestSubscribeReq};
 use crate::common::e2e::im::{TestReadReq, TestReportDataMsg};
@@ -32,6 +31,7 @@ use crate::common::e2e::test::E2eTest;
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
+use crate::{attr_data, attr_data_lel};
 
 static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 29, desc::AttributeId::DeviceTypeList, None),
@@ -114,6 +114,15 @@ static ATTR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 60, GlobalElements::AcceptedCmdList, None),
     attr_data!(0, 60, GlobalElements::EventList, None),
     attr_data!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
     attr_data!(0, 60, GlobalElements::FeatureMap, None),
     attr_data!(0, 60, GlobalElements::ClusterRevision, None),
     attr_data!(0, 62, noc::AttributeId::NOCs, None),
@@ -279,6 +288,15 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(0, 60, GlobalElements::AcceptedCmdList, None),
     attr_data!(0, 60, GlobalElements::EventList, None),
     attr_data!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
+    attr_data_lel!(0, 60, GlobalElements::AttributeList, None),
     attr_data!(0, 60, GlobalElements::FeatureMap, None),
     attr_data!(0, 60, GlobalElements::ClusterRevision, None),
     attr_data!(0, 62, noc::AttributeId::NOCs, None),
@@ -350,6 +368,13 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
     attr_data!(1, 6, GlobalElements::AcceptedCmdList, None),
     attr_data!(1, 6, GlobalElements::EventList, None),
     attr_data!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
+    attr_data_lel!(1, 6, GlobalElements::AttributeList, None),
     attr_data!(1, 6, GlobalElements::FeatureMap, None),
     attr_data!(1, 6, GlobalElements::ClusterRevision, None),
     attr_data!(1, echo::ID, echo::AttributesDiscriminants::Att1, None),
@@ -366,8 +391,8 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
 #[test]
 fn test_long_read_success() {
     const PART_1: usize = 38;
-    const PART_2: usize = 36;
-    const PART_3: usize = 37;
+    const PART_2: usize = 37;
+    const PART_3: usize = 38;
     const PART_4: usize = 37;
 
     // Read the entire attribute database, which requires multiple reads to complete
@@ -441,8 +466,8 @@ fn test_long_read_success() {
 #[test]
 fn test_long_read_subscription_success() {
     const PART_1: usize = 38;
-    const PART_2: usize = 36;
-    const PART_3: usize = 37;
+    const PART_2: usize = 37;
+    const PART_3: usize = 38;
     const PART_4: usize = 37;
 
     // Subscribe to the entire attribute database, which requires multiple reads to complete

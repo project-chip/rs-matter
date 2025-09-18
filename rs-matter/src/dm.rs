@@ -855,15 +855,7 @@ where
                                     .endpoint(attr.endpoint_id)
                                     .and_then(|e| e.cluster(attr.cluster_id))
                                     .and_then(|c| c.attribute(attr.attr_id))
-                                    .map(|a| {
-                                        a.quality.contains(Quality::ARRAY)
-                                        // Google Home (or maybe the Matter SDK itself?) chokes when we send a system array attribute as individual items
-                                        // If we do that, we receive an InvalidAction
-                                        // 
-                                        // Reason is yet unknown, but sending system array attributes as a whole is a valid workaround,
-                                        // because we do know that every system array attribute fits in single Matter message
-                                        && !a.is_system()
-                                    })
+                                    .map(|a| a.quality.contains(Quality::ARRAY))
                                     .unwrap_or(false)
                         });
 
