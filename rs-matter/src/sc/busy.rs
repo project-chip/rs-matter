@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+
 use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::transport::exchange::Exchange;
@@ -79,7 +81,7 @@ impl BusySecureChannel {
 }
 
 impl ExchangeHandler for BusySecureChannel {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        BusySecureChannel::handle(self, exchange).await
+    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        BusySecureChannel::handle(self, exchange)
     }
 }

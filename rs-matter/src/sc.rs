@@ -16,6 +16,7 @@
  */
 
 use core::borrow::Borrow;
+use core::future::Future;
 use core::mem::MaybeUninit;
 
 use num_derive::FromPrimitive;
@@ -266,8 +267,8 @@ impl Default for SecureChannel {
 }
 
 impl ExchangeHandler for SecureChannel {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        SecureChannel::handle(self, exchange).await
+    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        SecureChannel::handle(self, exchange)
     }
 }
 

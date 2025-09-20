@@ -75,6 +75,8 @@
 #![allow(clippy::uninlined_format_args)]
 #![recursion_limit = "1024"]
 
+use core::future::Future;
+
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
@@ -513,12 +515,16 @@ impl<'a> Matter<'a> {
     }
 
     /// Run the transport layer
-    pub async fn run_transport<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    pub fn run_transport<'t, S, R>(
+        &'t self,
+        send: S,
+        recv: R,
+    ) -> impl Future<Output = Result<(), Error>> + 't
     where
-        S: NetworkSend,
-        R: NetworkReceive,
+        S: NetworkSend + 't,
+        R: NetworkReceive + 't,
     {
-        self.transport_mgr.run(send, recv).await
+        self.transport_mgr.run(send, recv)
     }
 
     /// Notify that the ACLs, Fabrics or Basic Info _might_ have changed
@@ -585,8 +591,8 @@ impl<'a> Matter<'a> {
     /// if there are changes, persist them.
     ///
     /// TODO: Fix the method name as it is not clear enough. Potentially revamp the whole persistence notification logic
-    pub async fn wait_persist(&self) {
-        self.persist_notification.wait().await
+    pub fn wait_persist(&self) -> impl Future<Output = ()> + '_ {
+        self.persist_notification.wait()
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
@@ -631,7 +637,7 @@ impl<'a> Matter<'a> {
     ///
     /// Once this future resolves, user code is supposed to inspect the mDNS services for changes, and
     /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
-    pub async fn wait_mdns(&self) {
-        self.mdns_notification.wait().await
+    pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
+        self.mdns_notification.wait()
     }
 }

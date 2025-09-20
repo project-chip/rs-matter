@@ -16,6 +16,7 @@
  */
 
 use core::fmt::Display;
+use core::future::Future;
 use core::pin::pin;
 
 use embassy_futures::select::{select3, select_slice};
@@ -46,8 +47,8 @@ impl<T> ExchangeHandler for &T
 where
     T: ExchangeHandler,
 {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        (*self).handle(exchange).await
+    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        (*self).handle(exchange)
     }
 }
 
