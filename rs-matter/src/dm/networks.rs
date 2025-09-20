@@ -17,6 +17,8 @@
 
 //! A module containing various types for managing Ethernet, Thread and Wifi networks.
 
+use core::future::Future;
+
 pub mod eth;
 #[cfg(all(unix, feature = "os", not(target_os = "espidf")))]
 pub mod unix;
@@ -32,7 +34,7 @@ impl<T> NetChangeNotif for &T
 where
     T: NetChangeNotif,
 {
-    async fn wait_changed(&self) {
-        (*self).wait_changed().await
+    fn wait_changed(&self) -> impl Future<Output = ()> {
+        (*self).wait_changed()
     }
 }

@@ -16,6 +16,7 @@
  */
 
 use core::fmt::{self, Debug, Display};
+use core::future::Future;
 use core::pin::pin;
 
 pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -177,8 +178,8 @@ impl<T> NetworkSend for &mut T
 where
     T: NetworkSend,
 {
-    async fn send_to(&mut self, data: &[u8], addr: Address) -> Result<(), Error> {
-        (*self).send_to(data, addr).await
+    fn send_to(&mut self, data: &[u8], addr: Address) -> impl Future<Output = Result<(), Error>> {
+        (*self).send_to(data, addr)
     }
 }
 
@@ -207,12 +208,15 @@ impl<T> NetworkReceive for &mut T
 where
     T: NetworkReceive,
 {
-    async fn wait_available(&mut self) -> Result<(), Error> {
-        (*self).wait_available().await
+    fn wait_available(&mut self) -> impl Future<Output = Result<(), Error>> {
+        (*self).wait_available()
     }
 
-    async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
-        (*self).recv_from(buffer).await
+    fn recv_from(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> impl Future<Output = Result<(usize, Address), Error>> {
+        (*self).recv_from(buffer)
     }
 }
 

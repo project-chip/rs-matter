@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
 use core::iter::{empty, once};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
@@ -221,15 +222,15 @@ where
         service_name: &str,
         adv_data: &AdvData,
         callback: F,
-    ) -> impl core::future::Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>>
     where
         F: Fn(GattPeripheralEvent) + Send + Sync + Clone + 'static,
     {
         (*self).run(service_name, adv_data, callback)
     }
 
-    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), Error> {
-        (*self).indicate(data, address).await
+    fn indicate(&self, data: &[u8], address: BtAddr) -> impl Future<Output = Result<(), Error>> {
+        (*self).indicate(data, address)
     }
 }
 
@@ -242,14 +243,14 @@ where
         service_name: &str,
         adv_data: &AdvData,
         callback: F,
-    ) -> impl core::future::Future<Output = Result<(), Error>>
+    ) -> impl Future<Output = Result<(), Error>>
     where
         F: Fn(GattPeripheralEvent) + Send + Sync + Clone + 'static,
     {
         (**self).run(service_name, adv_data, callback)
     }
 
-    async fn indicate(&self, data: &[u8], address: BtAddr) -> Result<(), Error> {
-        (**self).indicate(data, address).await
+    fn indicate(&self, data: &[u8], address: BtAddr) -> impl Future<Output = Result<(), Error>> {
+        (**self).indicate(data, address)
     }
 }

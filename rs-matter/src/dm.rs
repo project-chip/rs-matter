@@ -16,6 +16,7 @@
  */
 
 use core::cell::{Cell, RefCell};
+use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 use core::time::Duration;
@@ -765,8 +766,8 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        DataModel::handle(self, exchange).await
+    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        DataModel::handle(self, exchange)
     }
 }
 

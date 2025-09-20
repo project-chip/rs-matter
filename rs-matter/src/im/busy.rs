@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+
 use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::transport::exchange::Exchange;
@@ -75,7 +77,7 @@ impl BusyInteractionModel {
 }
 
 impl ExchangeHandler for BusyInteractionModel {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        BusyInteractionModel::handle(self, exchange).await
+    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        BusyInteractionModel::handle(self, exchange)
     }
 }
