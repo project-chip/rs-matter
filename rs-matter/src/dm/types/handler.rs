@@ -710,6 +710,7 @@ mod asynch {
     use core::future::Future;
     use core::pin::pin;
 
+    use either::Either;
     use embassy_futures::select::select;
 
     use crate::dm::{InvokeReply, Matcher, ReadReply};
@@ -1000,31 +1001,35 @@ mod asynch {
             }
         }
 
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
             if self.matcher.matches(&ctx) {
-                self.handler.read(ctx, reply).await
+                Either::Left(self.handler.read(ctx, reply))
             } else {
-                self.next.read(ctx, reply).await
+                Either::Right(self.next.read(ctx, reply))
             }
         }
 
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
+        fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
             if self.matcher.matches(&ctx) {
-                self.handler.write(ctx).await
+                Either::Left(self.handler.write(ctx))
             } else {
-                self.next.write(ctx).await
+                Either::Right(self.next.write(ctx))
             }
         }
 
-        async fn invoke(
+        fn invoke(
             &self,
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
-        ) -> Result<(), Error> {
+        ) -> impl Future<Output = Result<(), Error>> {
             if self.matcher.matches(&ctx) {
-                self.handler.invoke(ctx, reply).await
+                Either::Left(self.handler.invoke(ctx, reply))
             } else {
-                self.next.invoke(ctx, reply).await
+                Either::Right(self.next.invoke(ctx, reply))
             }
         }
 
