@@ -140,6 +140,11 @@ where
         }
     }
 
+    /// Get the name of this responder
+    pub const fn name(&self) -> &str {
+        self.name
+    }
+
     /// Get a reference to the `ExchangeHandler` instance used by this responder
     pub fn handler(&self) -> &T {
         &self.handler
@@ -166,8 +171,9 @@ where
         select_slice(handlers).await.0
     }
 
+    /// A handler for one exchange.
     #[inline(always)]
-    async fn handle(&self, handler_id: impl Display) -> Result<(), Error> {
+    pub async fn handle(&self, handler_id: impl Display) -> Result<(), Error> {
         loop {
             // Ignore the error as it had been logged already
             let _ = self.respond_once(&handler_id).await;
@@ -314,12 +320,39 @@ where
     pub async fn run<const A: usize, const O: usize>(&self) -> Result<(), Error> {
         let mut actual = pin!(self.responder.run::<A>());
         let mut busy = pin!(self.busy_responder.run::<O>());
-        let mut sub = pin!(self
+        let mut sub = pin!(self.process_subscriptions());
+
+        select3(&mut actual, &mut busy, &mut sub).coalesce().await
+    }
+
+    /// Get a reference to the main responder.
+    ///
+    /// Useful when the user would like to organize its own herd of responders rather than using the `run` method.
+    pub const fn responder(
+        &self,
+    ) -> &Responder<'a, ChainedExchangeHandler<DataModel<'a, N, B, T>, SecureChannel>> {
+        &self.responder
+    }
+
+    /// Get a reference to the busy responder.
+    ///
+    /// Useful when the user would like to organize its own herd of busy responders rather than using the `run` method.
+    pub const fn busy_responder(
+        &self,
+    ) -> &Responder<'a, ChainedExchangeHandler<BusyInteractionModel, BusySecureChannel>> {
+        &self.busy_responder
+    }
+
+    /// Process subscriptions.
+    ///
+    /// Useful when the user would like to call `process_subscriptions` manually rather than using the `run` method.
+    pub async fn process_subscriptions(&self) -> Result<(), Error> {
+        let mut process = pin!(self
             .responder
             .handler()
             .handler
             .process_subscriptions(self.responder.matter));
 
-        select3(&mut actual, &mut busy, &mut sub).coalesce().await
+        (&mut process).await
     }
 }
