@@ -363,7 +363,7 @@ impl RecvWindow {
     }
 }
 
-/// Represents a BTP Session, as per the MAtter Core spec.
+/// Represents a BTP Session, as per the Matter Core spec.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Session {

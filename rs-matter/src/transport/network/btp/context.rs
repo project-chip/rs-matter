@@ -17,7 +17,10 @@
 
 use core::sync::atomic::Ordering;
 
+use cfg_if::cfg_if;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
+
 use portable_atomic::AtomicUsize;
 
 use crate::error::{Error, ErrorCode};
@@ -30,12 +33,44 @@ use crate::utils::sync::Notification;
 
 use super::{session::Session, GattPeripheralEvent};
 
-/// The maximum number of BTP sessions that can be active at any given time.
-/// This is an `rs-matter` specific limit, and is not a requirement of the Matter BTP spec, and which in future should be configurable.
-///
-/// The `GattPeripheral` implementation is expected to enforce this limit as well,
-/// i.e. it should not allow more than `MAX_BTP_SESSIONS` active subscriptions to characteristic `C2`.
-pub const MAX_BTP_SESSIONS: usize = 2;
+cfg_if! {
+    if #[cfg(feature = "max-btp-sessions-8")] {
+        /// The maximum number of BTP sessions that can be active at any given time.
+        /// This is an `rs-matter` specific limit, and is not a requirement of the Matter BTP spec.
+        ///
+        /// The `GattPeripheral` implementation is expected to enforce this limit as well,
+        /// i.e. it should not allow more than `MAX_BTP_SESSIONS` active subscriptions to characteristic `C2`.
+        pub const MAX_BTP_SESSIONS: usize = 8;
+    } else if #[cfg(feature = "max-btp-sessions-4")] {
+        /// The maximum number of BTP sessions that can be active at any given time.
+        /// This is an `rs-matter` specific limit, and is not a requirement of the Matter BTP spec.
+        ///
+        /// The `GattPeripheral` implementation is expected to enforce this limit as well,
+        /// i.e. it should not allow more than `MAX_BTP_SESSIONS` active subscriptions to characteristic `C2`.
+        pub const MAX_BTP_SESSIONS: usize = 4;
+    } else if #[cfg(feature = "max-btp-sessions-2")] {
+        /// The maximum number of BTP sessions that can be active at any given time.
+        /// This is an `rs-matter` specific limit, and is not a requirement of the Matter BTP spec.
+        ///
+        /// The `GattPeripheral` implementation is expected to enforce this limit as well,
+        /// i.e. it should not allow more than `MAX_BTP_SESSIONS` active subscriptions to characteristic `C2`.
+        pub const MAX_BTP_SESSIONS: usize = 2;
+    } else if #[cfg(feature = "max-btp-sessions-1")] {
+        /// The maximum number of BTP sessions that can be active at any given time.
+        /// This is an `rs-matter` specific limit, and is not a requirement of the Matter BTP spec.
+        ///
+        /// The `GattPeripheral` implementation is expected to enforce this limit as well,
+        /// i.e. it should not allow more than `MAX_BTP_SESSIONS` active subscriptions to characteristic `C2`.
+        pub const MAX_BTP_SESSIONS: usize = 1;
+    } else {
+        /// The maximum number of BTP sessions that can be active at any given time.
+        /// This is an `rs-matter` specific limit, and is not a requirement of the Matter BTP spec.
+        ///
+        /// The `GattPeripheral` implementation is expected to enforce this limit as well,
+        /// i.e. it should not allow more than `MAX_BTP_SESSIONS` active subscriptions to characteristic `C2`.
+        pub const MAX_BTP_SESSIONS: usize = 1;
+    }
+}
 
 /// Represents an error that occurred while trying to lock a session for sending.
 #[derive(Debug)]

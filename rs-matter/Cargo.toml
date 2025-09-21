@@ -85,6 +85,12 @@ max-exchanges-per-session-5 = [] # default
 max-exchanges-per-session-4 = []
 max-exchanges-per-session-3 = []
 
+# Number of BTP sessions
+max-btp-sessions-8 = []
+max-btp-sessions-4 = []
+max-btp-sessions-2 = []
+max-btp-sessions-1 = [] # default
+
 # General
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
