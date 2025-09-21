@@ -122,6 +122,7 @@ embassy-futures = "0.1.2"
 embassy-time = "0.4"
 embassy-time-queue-utils = "0.1"
 embassy-sync = "0.7"
+either = "1"
 critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"
