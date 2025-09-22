@@ -27,7 +27,7 @@ use log::info;
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{self, ClusterAsyncHandler as _, OnOffHooks, OnOffState, StartUpOnOffEnum};
+use rs_matter::dm::clusters::on_off::{self, ClusterAsyncHandler as _, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
@@ -128,8 +128,7 @@ fn run() -> Result<(), Error> {
 
     // OnOff cluster setup
     let on_off_device_logic = OnOffDeviceLogic::new();
-    let on_off_state = OnOffState::new(&on_off_device_logic, Nullable::none());
-    let on_off_handler = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_state);
+    let on_off_handler = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
 
     // LevelControl cluster setup
     let level_control_device_logic = LevelControlDeviceLogic::new();
