@@ -186,15 +186,6 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         Ok(self.hooks.on_off())
     }
 
-    /// This methods handles changing the OnOff value.
-    /// It ensure that the right attributes are updated and calls the necessary hook logic.
-    fn set_on_off(&self, on: bool, level_control_initiated: bool) {
-        match on {
-            true => self.set_on(level_control_initiated),
-            false => self.set_off(level_control_initiated),
-        }
-    }
-
     fn set_on(&self, level_control_initiated: bool) {
         if self.hooks.on_off() == true {
             return;

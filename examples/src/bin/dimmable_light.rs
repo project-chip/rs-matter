@@ -20,7 +20,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -47,7 +47,7 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
-use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _, LevelControlState};
+use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _};
 
 use static_cell::StaticCell;
 
@@ -132,7 +132,8 @@ fn run() -> Result<(), Error> {
 
     // LevelControl cluster setup
     let level_control_device_logic = LevelControlDeviceLogic::new();
-    let level_control_state = LevelControlState::new(
+    let level_control_handler = level_control::LevelControlHandler::new(
+        Dataver::new_rand(matter.rand()),
         &level_control_device_logic,
         Nullable::some(42),
         OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
@@ -140,10 +141,6 @@ fn run() -> Result<(), Error> {
         Nullable::none(),
         Nullable::none(),
         Nullable::none(),
-    );
-    let level_control_handler = level_control::LevelControlHandler::new(
-        Dataver::new_rand(matter.rand()),
-        &level_control_state,
     );
 
     // Cluster wiring and initialisation
@@ -427,7 +424,7 @@ impl OnOffHooks for OnOffDeviceLogic {
         Ok(())
     }
 
-    async fn handle_off_with_effect(&self, effect: on_off::EffectVariantEnum) {
+    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
         todo!()
     }
 }
