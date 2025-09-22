@@ -26,7 +26,8 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 
-use crate::dm::clusters::decl::on_off;
+use crate::dm::clusters::decl::{level_control, on_off};
+use crate::dm::clusters::level_control::{LevelControlHandler, LevelControlHooks};
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 
@@ -34,24 +35,27 @@ pub use crate::dm::clusters::decl::on_off::*;
 
 use crate::tlv::Nullable;
 
-pub struct OnOffHandler<'a, H: OnOffHooks> {
+pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     dataver: Dataver,
     state: &'a OnOffState<'a, H>,
+    level_control_handler: Cell<Option<&'a LevelControlHandler<'a, LH, H>>>
 }
 
-impl<'a, H: OnOffHooks> OnOffHandler<'a, H> {
+impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// Creates a new instance of `OnOffHandler` with the given `Dataver`.
     pub fn new(dataver: Dataver, on_off_state: &'a OnOffState<'a, H>) -> Self {
-        let this = Self {
+        Self {
             dataver,
             state: on_off_state,
-        };
-
-        this.validate();
-
-        this
+            level_control_handler: Cell::new(None),
+        }
     }
 
+    /// Checks that the cluster is correctly configured, including required attributes, commands, and feature dependencies.
+    ///
+    /// # Panics
+    ///
+    /// panics with error message if the `state`'s `CLUSTER` is misconfigured.
     fn validate(&self) {
         if Self::CLUSTER.revision != 6 {
             panic!("OnOff validation: incorrect version number: expected 6 got {}", Self::CLUSTER.revision);
@@ -95,7 +99,23 @@ impl<'a, H: OnOffHooks> OnOffHandler<'a, H> {
     }
 
     /// Initialise the cluster on startup.
-    fn init(&self) {
+    /// - wire coupled handlers
+    /// - validate the handler setup with the configuration
+    /// - update the OnOff state based on the StartUpOnOff attribute
+    /// 
+    /// # Parameters
+    /// *level_control_handler: the LevelControlHandler instance coupled with this OnOffHandler, i.e. the LevelControl cluster on the same endpoint.
+    ///
+    /// # Panics
+    ///
+    /// panics if the `state`'s `CLUSTER` is misconfigured.
+    pub fn init(&self, level_control_handler: Option<&'a LevelControlHandler<'a, LH, H>>) {
+
+        // Wire any coupled clusters
+        self.level_control_handler.set(level_control_handler);
+
+        self.validate();
+
         // 1.5.6.6. StartUpOnOff Attribute
         // This attribute SHALL define the desired startup behavior of a device when it is supplied with power
         // and this state SHALL be reflected in the OnOff attribute. If the value is null, the OnOff attribute is
@@ -120,7 +140,11 @@ impl<'a, H: OnOffHooks> OnOffHandler<'a, H> {
         HandlerAdaptor(self)
     }
 
-    // todo Move into OnOffState?
+    // todo Do we need similar accessors for all the attributes the user might want to access?
+    pub(crate) fn on_off(&self) -> Result<bool, Error> {
+        Ok(self.state.hooks.on_off())
+    }
+
     // The method that should be used by coupled clusters to update the on_off state.
     pub(crate) fn coupled_cluster_set_on_off(&self, on: bool) {
         trace!(
@@ -142,7 +166,7 @@ impl<'a, H: OnOffHooks> OnOffHandler<'a, H> {
     }
 }
 
-impl<'a, H: OnOffHooks> ClusterAsyncHandler for OnOffHandler<'a, H> {
+impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<'a, H, LH> {
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
@@ -155,7 +179,7 @@ impl<'a, H: OnOffHooks> ClusterAsyncHandler for OnOffHandler<'a, H> {
     }
 
     async fn run(&self) -> Result<(), Error>{
-        core::future::pending:: <Result:: <(), Error>>().await
+        self.state.run().await
     }
     
     // Attribute accessors
@@ -441,7 +465,7 @@ impl<'a, H: OnOffHooks> OnOffState<'a, H> {
         self.set_off( false);
     }
 
-    async fn run(&self) {
+    async fn run(&self) -> Result<(), Error> {
         loop {
             let mut command = self.state_change_signal.wait().await;
 
@@ -466,6 +490,11 @@ impl<'a, H: OnOffHooks> OnOffState<'a, H> {
                         | OnOffCommand::Toggle => {
                             self.set_off(false);
                             self.state.set(OnOffClusterState::Off);
+
+                            // if let Some(level_control_handler) = self.level_control_handler.get() {
+                            //     level_control_handler.coupled_on_off_cluster_on_off_state_change(false)?
+                            // }
+
                             break;
                         },
                         OnOffCommand::On => break,
@@ -507,8 +536,7 @@ impl<'a, H: OnOffHooks> OnOffState<'a, H> {
                         // the OnTime attribute reaches 0, the server SHALL set the OffWaitTime and OnOff attributes to 0
                         // and FALSE, respectively.
                         OnOffCommand::On 
-                        | OnOffCommand::OnWithTimedOff 
-                        | OnOffCommand::LevelControlOn => {
+                        | OnOffCommand::OnWithTimedOff => {
                             // todo account for processing latency?
                             while self.on_time.get() > 0 {
                                 embassy_time::Timer::after(Duration::from_millis(100)).await;

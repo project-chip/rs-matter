@@ -35,6 +35,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
 pub use crate::dm::clusters::decl::level_control::*;
+use crate::dm::clusters::on_off::OnOffHooks;
 use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
@@ -69,39 +70,24 @@ enum Task {
 /// # Notes
 /// - This implementation follows version 1.3 of the Matter specification.
 /// - Some features (such as OnOff cluster integration) are marked as TODO and may require further implementation.
-pub struct LevelControlHandler<'a, H: LevelControlHooks> {
+pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     dataver: Dataver,
     state: &'a LevelControlState<'a, H>,
     task_signal: Signal<NoopRawMutex, Task>,
-    // todo: Replace with OnOffState when OnOff in re-implemented.
-    on_off: Cell<Option<&'a OnOffHandler>>,
+    on_off: Cell<Option<&'a OnOffHandler<'a, OH, H>>>,
 }
 
-impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
+impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     const MAXIMUM_LEVEL: u8 = 254;
 
-    // todo: add `on_off_state: Option<&'a OnOffState>` when OnOff in re-implemented.
     /// Creates a new instance of the LevelControlHandler.
-    ///
-    /// # Panics
-    ///
-    /// panics if the `state`'s `CLUSTER` is misconfigured.
     pub fn new(dataver: Dataver, state: &'a LevelControlState<'a, H>) -> Self {
-        let this = Self {
+        Self {
             dataver,
             state,
             task_signal: Signal::new(),
             on_off: Cell::new(None),
-        };
-
-        this.validate();
-
-        // todo: call a pub(crate) method in OnOffCluster setting up `&cluster` as a LevelControlHandler
-        // accessor so it can call `coupled_on_off_cluster_on_off_state_change`
-
-        this.init();
-
-        this
+        }
     }
 
     /// Checks that the cluster is correctly configured, including required attributes, commands, and feature dependencies.
@@ -186,8 +172,18 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         }
     }
 
-    /// Initializes the cluster on startup, setting the CurrentLevel attribute according to the StartUpCurrentLevel attribute and other rules.
-    fn init(&self) {
+    /// Initializes the cluster on startup; 
+    /// - wire coupled handlers
+    /// - validate the handler setup with the configuration
+    /// - set the CurrentLevel attribute according to the StartUpCurrentLevel attribute.
+    /// 
+    /// # Parameters
+    /// *on_off_handler: the OnOffHandler instance coupled with this LevelControlHandler, i.e. the OnOff cluster on the same endpoint. This should be set if the OnOff feature is set.
+    ///
+    /// # Panics
+    ///
+    /// panics if the `state`'s `CLUSTER` is misconfigured.
+    pub fn init(&self, on_off_handler: Option<&'a OnOffHandler<'a, OH, H>>) {
         // 1.6.6.15. StartUpCurrentLevel Attribute
         // This attribute SHALL indicate the desired startup level for a device when it is supplied with power
         // and this level SHALL be reflected in the CurrentLevel attribute. The values of the
@@ -200,6 +196,11 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         // todo: Implement checking the reason for reboot.
         // This behavior does not apply to reboots associated with OTA. After an OTA restart, the CurrentLevel
         // attribute SHALL return to its value prior to the restart.
+
+        // Wire any coupled clusters
+        self.on_off.set(on_off_handler);
+
+        self.validate();
 
         // `self.state` holds the previous current level as supplied by the SDK consumer.
         // Hence, if this process errors, we quietly abort resulting in the previous current level.
@@ -240,15 +241,6 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         self.state.previous_current_level.set(previous_level);
         self.state
             .notify_current_level_change_quietly(current_level, is_end_of_transition)
-    }
-
-    // todo Remove once OnOff is re-implemented.
-    // Set the OnOffHandler instance coupled with this LevelControlHandler, i.e. the OnOff cluster on the same endpoint.
-    // Note: The OnOff cluster on the same endpoint SHALL be set if any of the following is true
-    //   - The OnOff feature is set
-    //   - The `WithOnOff` commands are supported
-    pub fn set_on_off_handler(&self, on_off_handler: &'a OnOffHandler) {
-        self.on_off.set(Some(on_off_handler))
     }
 
     /// Checks if a command should proceed beyond the Options processing.
@@ -333,8 +325,8 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
         }
     }
 
-    // This method is called by an OnOff cluster that is coupled with this LevelControl cluster.
-    // This method updates the CurrentLevel of the device when the state of the OnOff cluster changes.
+    /// This method is called by an OnOff cluster that is coupled with this LevelControl cluster.
+    /// This method updates the CurrentLevel of the device when the state of the OnOff cluster changes.
     //
     // From section 1.6.4.1.1
     // ## On
@@ -352,80 +344,74 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
     // If OnLevel is not defined, set the CurrentLevel to
     // the stored level.
     // todo comment in when the OnOff cluster is implemented.
-    // pub(crate) fn coupled_on_off_cluster_on_off_state_change(&self, on: bool) -> Result<(), Error> {
-    //     self.task_signal.signal(Task::Stop);
+    pub(crate) fn coupled_on_off_cluster_on_off_state_change(&self, on: bool) -> Result<(), Error> {
+        self.task_signal.signal(Task::Stop);
 
-    //     let temp_current_level = match self.state.current_level()?.into_option() {
-    //         Some(current_level) => current_level,
-    //         None => return Err(ErrorCode::Failure.into()),
-    //     };
+        let temp_current_level = match self.state.hooks.get_level() {
+            Some(current_level) => current_level,
+            None => return Err(ErrorCode::Failure.into()),
+        };
 
-    //     // use of unwrap is justified since this will option is always valid.
-    //     let bitmap = OptionsBitmap::from_bits(0).unwrap();
+        // use of unwrap is justified since this will option is always valid.
+        let bitmap = OptionsBitmap::from_bits(0).unwrap();
 
-    //     // 1.6.6.10. OnOffTransitionTime Attribute
-    //     // This attribute SHALL indicate the time taken to move to or from the target level when On or Off
-    //     // commands are received by an On/Off cluster on the same endpoint.
-    //     let mut transition_time = self.state.on_off_transition_time().unwrap_or(0);
+        // 1.6.6.10. OnOffTransitionTime Attribute
+        // This attribute SHALL indicate the time taken to move to or from the target level when On or Off
+        // commands are received by an On/Off cluster on the same endpoint.
+        let mut transition_time = self.state.on_off_transition_time();
 
-    //     match on {
-    //         true => {
-    //             let level = self
-    //                 .state
-    //                 .set_level(H::MIN_LEVEL)
-    //                 .ok_or(ErrorCode::Failure)?;
-    //             self.state
-    //                 .write_current_level_quietly(Nullable::some(level), false)?;
+        match on {
+            true => {
+                let _ = self.state.set_level_and_notify(H::MIN_LEVEL, false)
+                .ok_or(ErrorCode::Failure)?;
 
-    //             let on_level = match self.state.on_level()?.into_option() {
-    //                 Some(on_level) => on_level,
-    //                 None => temp_current_level,
-    //             };
+                let on_level = match self.state.hooks.get_level() {
+                    Some(on_level) => on_level,
+                    None => temp_current_level,
+                };
 
-    //             // 1.6.6.12. OnTransitionTime Attribute
-    //             // This attribute SHALL indicate the time taken to move the current level from the minimum level to
-    //             // the maximum level when an On command is received by an On/Off cluster on the same endpoint.
-    //             // If this attribute is not implemented, or contains a null value, the
-    //             // OnOffTransitionTime SHALL be used instead.
-    //             if let Some(tt) = self
-    //                 .state
-    //                 .on_transition_time()
-    //                 .ok()
-    //                 .and_then(|v| v.into_option())
-    //             {
-    //                 // todo I'm unsure from the reading of the spec if this time should be proportional
-    //                 transition_time = tt;
-    //             }
+                // 1.6.6.12. OnTransitionTime Attribute
+                // This attribute SHALL indicate the time taken to move the current level from the minimum level to
+                // the maximum level when an On command is received by an On/Off cluster on the same endpoint.
+                // If this attribute is not implemented, or contains a null value, the
+                // OnOffTransitionTime SHALL be used instead.
+                if let Some(tt) = self
+                    .state
+                    .on_transition_time()
+                    .into_option()
+                {
+                    transition_time = tt;
+                }
 
-    //             self.move_to_level(false, on_level, Some(transition_time), bitmap, bitmap)?;
-    //         }
-    //         false => {
-    //             // 1.6.6.13. OffTransitionTime Attribute
-    //             // This attribute SHALL indicate the time taken to move the current level from the maximum level to
-    //             // the minimum level when an Off command is received by an On/Off cluster on the same endpoint.
-    //             // If this attribute is not implemented, or contains a null value, the
-    //             // OnOffTransitionTime SHALL be used instead.
-    //             if let Some(tt) = self
-    //                 .state
-    //                 .off_transition_time()
-    //                 .ok()
-    //                 .and_then(|v| v.into_option())
-    //             {
-    //                 // todo I'm unsure from the reading of the spec if this time should be proportional
-    //                 transition_time = tt;
-    //             }
+                self.move_to_level(false, on_level, Some(transition_time), bitmap, bitmap)?;
+            }
+            false => {
+                // 1.6.6.13. OffTransitionTime Attribute
+                // This attribute SHALL indicate the time taken to move the current level from the maximum level to
+                // the minimum level when an Off command is received by an On/Off cluster on the same endpoint.
+                // If this attribute is not implemented, or contains a null value, the
+                // OnOffTransitionTime SHALL be used instead.
+                if let Some(tt) = self
+                    .state
+                    .off_transition_time()
+                    .into_option()
+                {
+                    transition_time = tt;
+                }
 
-    //             self.move_to_level(false, H::MIN_LEVEL, Some(transition_time), bitmap, bitmap)?;
+                self.move_to_level(false, H::MIN_LEVEL, Some(transition_time), bitmap, bitmap)?;
 
-    //             if self.state.on_level()?.is_none() {
-    //                 self.state
-    //                     .set_current_level(Nullable::some(temp_current_level))?;
-    //             }
-    //         }
-    //     };
+                // todo This needs to happen after the transition or we have to separate out the action of changing the
+                // level from the storage of the level itself.
+                // if self.state.on_level().is_none() {
+                //     self.state
+                //         .set_current_level(Nullable::some(temp_current_level))?;
+                // }
+            }
+        };
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     /// Updates the OnOff attribute of the coupled OnOff cluster based on the current level and command type.
     //
@@ -445,7 +431,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
 
         match self.on_off.get() {
             Some(on_off) => {
-                let current_on_off = on_off.get();
+                let current_on_off = on_off.on_off()?;
                 if current_on_off != new_on_off_value {
                     on_off.coupled_cluster_set_on_off(new_on_off_value);
                 }
@@ -786,7 +772,7 @@ impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H> {
     }
 }
 
-impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlHandler<'a, H> {
+impl<'a, H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlHandler<'a, H, OH> {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     // Runs an async task manager for the cluster handler.
@@ -1124,6 +1110,14 @@ impl<'a, H: LevelControlHooks> LevelControlState<'a, H> {
 
     fn set_on_level(&self, value: Nullable<u8>) {
         self.on_level.set(value)
+    }
+
+    fn on_off_transition_time(&self) -> u16 {
+        self.on_off_transition_time.get()
+    }
+
+    fn set_on_off_transition_time(&self, value: u16) {
+        self.on_off_transition_time.set(value)
     }
 
     fn on_transition_time(&self) -> Nullable<u16> {
