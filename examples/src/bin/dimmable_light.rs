@@ -384,6 +384,7 @@ impl Default for OnOffDeviceLogic {
 impl OnOffHooks for OnOffDeviceLogic {
     const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
     .with_revision(6)
+    .with_features(on_off_cluster::Feature::LIGHTING.bits())
     .with_attrs(
         with!(
             required;
@@ -425,6 +426,6 @@ impl OnOffHooks for OnOffDeviceLogic {
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
-        todo!()
+        // todo!()
     }
 }

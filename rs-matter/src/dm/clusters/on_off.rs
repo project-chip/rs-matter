@@ -129,7 +129,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
 
         // Check OFFONLY feature requirements
-        if self.supports_feature(on_off::Feature::LIGHTING.bits()) {
+        if self.supports_feature(on_off::Feature::OFF_ONLY.bits()) {
             if Self::CLUSTER.command(CommandId::On as _).is_some()
             || Self::CLUSTER.command(CommandId::Toggle as _).is_some()
             {
@@ -191,6 +191,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             return;
         }
 
+        // 1.5.7.2. On Command
+        // ... on receipt of the On command, a server SHALL set the OnOff attribute to TRUE.
+        self.hooks.set_on_off(true);
+
         // Note: The OnTime, OffWaitTime and GlobalScenesControl attributes are only supported and must 
         // be supported when the LIGHTING feature is enabled.
         // This configuration is ensured by the validate method upon initialisation.
@@ -206,26 +210,26 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             // This attribute SHALL be set to TRUE after the reception of a command which causes the OnOff
             // attribute to be set to TRUE, such as a standard On command, a MoveToLevel(WithOnOff) command,
             // a RecallScene command or a OnWithRecallGlobalScene command.
-            self.global_scene_control.set(false)
+            self.global_scene_control.set(true)
         }
-
-        // 1.5.7.2. On Command
-        // ... on receipt of the On command, a server SHALL set the OnOff attribute to TRUE.
-        self.hooks.set_on_off(true);
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if !level_control_initiated {
             if let Some(level_control_handler) = self.level_control_handler.get() {
-                if let Err(e) = level_control_handler.coupled_on_off_cluster_on_off_state_change(true) {
-                    warn!("OnOff state machine error updating coupled level control cluster: {}", e);
-                }
+                level_control_handler.coupled_on_off_cluster_on_off_state_change(true);
             }
         }
     }
 
-    fn set_off(&self, level_control_initiated: bool) {
+    // Sets the on_off state to false.
+    // If a LevelControl cluster is coupled with this OnOff cluster and this command was not initiated by the 
+    // LevelControl cluster, the coupled flow is initiated.
+    // In this case, the method will not set the on_off state to false and returns false.
+    // Otherwise, we set the on_off state to false and return true.
+    // The return boolean indicates if the on_off state has been set.
+    fn set_off(&self, level_control_initiated: bool) -> bool {
         if self.hooks.on_off() == false {
-            return;
+            return true;
         }
 
         if self.supports_feature(on_off::Feature::LIGHTING.bits()) {
@@ -235,17 +239,20 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
-        if !level_control_initiated {
-            if let Some(level_control_handler) = self.level_control_handler.get() {
-                if let Err(e) = level_control_handler.coupled_on_off_cluster_on_off_state_change(false) {
-                    warn!("OnOff state machine error updating coupled level control cluster: {}", e);
-                }
-            }
+        if self.level_control_handler.get().is_some() & !level_control_initiated {
+            // Use of unwrap is safe due to the previous check.
+            self.level_control_handler.get().unwrap().coupled_on_off_cluster_on_off_state_change(false);
+            // When calling the LevelControl with false (off), the levelControl cluster will call
+            // back into the OnOff cluster to set the OnOff attribute to false when it is done.
+            // Hence, we return without setting the on_off attribute.
+            return false;
         }
 
         // 1.5.7.1. Off Command
         // On receipt of the Off command, a server SHALL set the OnOff attribute to FALSE.
         self.hooks.set_on_off(false);
+
+        true
     }
 
     fn supports_feature(&self, features: u32) -> bool {
@@ -266,23 +273,31 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         
         self.hooks.handle_off_with_effect(effect_variant).await;
 
-        self.set_off( false);
+        // This is set to true because in this case we do not want to also run the effects from the LevelControl cluster.
+        let _ = self.set_off(true);
     }
 
     async fn state_machine(&self, command: OnOffCommand) {
+        // todo we should probably call Stop on the LevelControl cluster ??and similar from LevelControl to OnOff??.
+        // if let Some(level_control_handler) = self.level_control_handler.get() {
+        //     level_control_handler.stop();
+        // }
+
         loop {
             match self.state.get() {
                 OnOffClusterState::On => {
                     match command {
                         OnOffCommand::Off 
                         | OnOffCommand::Toggle => {
-                            self.set_off(false);
-                            self.state.set(OnOffClusterState::Off);
+                            if self.set_off(false) {
+                                self.state.set(OnOffClusterState::Off);
+                            }
                             break;
                         },
                         OnOffCommand::CoupledClusterOff => {
-                            self.set_off(true);
-                            self.state.set(OnOffClusterState::Off);
+                            if self.set_off(true) {
+                                self.state.set(OnOffClusterState::Off);
+                            }
                             break;
                         }
                         OnOffCommand::On | OnOffCommand::CoupledClusterOn => break,
@@ -301,13 +316,13 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         | OnOffCommand::CoupledClusterOff => break,
                         OnOffCommand::On 
                         | OnOffCommand::Toggle => {
-                            self.set_on(false);
                             self.state.set(OnOffClusterState::On);
+                            self.set_on(false);
                             break;
                         },
                         OnOffCommand::CoupledClusterOn => {
-                            self.set_on(true);
                             self.state.set(OnOffClusterState::On);
+                            self.set_on(true);
                             break;
                         }
                         OnOffCommand::OnWithTimedOff => self.state.set(OnOffClusterState::TimedOn),
@@ -317,12 +332,14 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                     match command {
                         OnOffCommand::Off 
                         | OnOffCommand::Toggle => {
-                            self.set_off(false);
-                            self.state.set(OnOffClusterState::DelayedOff);
+                            if self.set_off(false) {
+                                self.state.set(OnOffClusterState::DelayedOff);
+                            }
                         },
                         OnOffCommand::CoupledClusterOff => {
-                            self.set_off(true);
-                            self.state.set(OnOffClusterState::DelayedOff);
+                            if self.set_off(true) {
+                                self.state.set(OnOffClusterState::DelayedOff);
+                            }
                         }
                         OnOffCommand::OffWithEffect(effect) => {
                             self.handle_off_with_effect(effect).await;
@@ -342,8 +359,9 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                             }
 
                             self.off_wait_time.set(0);
-                            self.set_off(false);
-                            self.state.set(OnOffClusterState::Off);
+                            if self.set_off(false) {
+                                self.state.set(OnOffClusterState::Off);
+                            }
                             break;
                         },
                         OnOffCommand::CoupledClusterOn => {
@@ -374,7 +392,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
     // The method that should be used by coupled clusters to update the on_off state.
     pub(crate) fn coupled_cluster_set_on_off(&self, on: bool) {
-        trace!(
+        info!(
             "OnOffCluster: coupled_cluster_set_on_off: Setting on_off to {}",
             on
         );
@@ -503,7 +521,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
             },
         };
 
-        // todo pass effect_variant
+        // todo pass effect_variant 
         self.state_change_signal.signal(OnOffCommand::OffWithEffect(effect_variant));
 
         Ok(())
