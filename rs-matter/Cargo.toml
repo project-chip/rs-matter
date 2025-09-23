@@ -121,7 +121,6 @@ log = { version = "0.4", optional = true }
 defmt = { version = "0.3", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
 safemem = { version = "0.3", default-features = false }
-owo-colors = "4"
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1.2"
