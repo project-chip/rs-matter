@@ -29,6 +29,9 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy, rust-src
 
+      - name: Setup | Rust no-std target
+        run: rustup target add riscv32imac-unknown-none-elf
+
       - name: Install libdbus
         run: sudo apt-get install -y libdbus-1-dev
 
@@ -42,6 +45,10 @@ jobs:
       - name: Clippy - All
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cargo clippy --no-deps -- -Dwarnings
+
+      - name: Clippy - baremetal
+        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
+        run: cd rs-matter; cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},defmt --target riscv32imac-unknown-none-elf -- -Dwarnings
 
       - name: Clippy
         run: cd rs-matter; cargo clippy --no-deps --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log -- -Dwarnings
