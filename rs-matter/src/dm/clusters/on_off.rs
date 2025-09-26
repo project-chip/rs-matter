@@ -221,12 +221,12 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
     }
 
-    // Sets the on_off state to false.
-    // If a LevelControl cluster is coupled with this OnOff cluster and this command was not initiated by the 
-    // LevelControl cluster, the coupled flow is initiated.
-    // In this case, the method will not set the on_off state to false and returns false.
-    // Otherwise, we set the on_off state to false and return true.
-    // The return boolean indicates if the on_off state has been set.
+    /// Sets the on_off state to false.
+    /// If a LevelControl cluster is coupled with this OnOff cluster and this command was not initiated by the 
+    /// LevelControl cluster, the coupled flow is initiated.
+    /// In this case, the method will not set the on_off state to false and returns false.
+    /// Otherwise, we set the on_off state to false and return true.
+    /// The return boolean indicates if the on_off state has been set.
     fn set_off(&self, level_control_initiated: bool) -> bool {
         if self.hooks.on_off() == false {
             return true;
@@ -278,6 +278,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     }
 
     async fn state_machine(&self, command: OnOffCommand) {
+        let start_time = embassy_time::Instant::now();
+
         // todo we should probably call Stop on the LevelControl cluster ??and similar from LevelControl to OnOff??.
         // if let Some(level_control_handler) = self.level_control_handler.get() {
         //     level_control_handler.stop();
@@ -295,12 +297,12 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                             break;
                         },
                         OnOffCommand::CoupledClusterOff => {
-                            if self.set_off(true) {
-                                self.state.set(OnOffClusterState::Off);
-                            }
+                            self.set_off(true);
+                            self.state.set(OnOffClusterState::Off);
                             break;
                         }
-                        OnOffCommand::On | OnOffCommand::CoupledClusterOn => break,
+                        OnOffCommand::On
+                        | OnOffCommand::CoupledClusterOn => break,
                         OnOffCommand::OffWithEffect(effect) => {
                             self.handle_off_with_effect(effect).await;
                             self.state.set(OnOffClusterState::Off);
@@ -332,14 +334,17 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                     match command {
                         OnOffCommand::Off 
                         | OnOffCommand::Toggle => {
+                            info!("Got Off command from TimedOn state");
                             if self.set_off(false) {
                                 self.state.set(OnOffClusterState::DelayedOff);
+                            } else {
+                                // If set_off returns false, we brake and expect to be called again by the CoupledClusterOff command.
+                                break;
                             }
                         },
                         OnOffCommand::CoupledClusterOff => {
-                            if self.set_off(true) {
-                                self.state.set(OnOffClusterState::DelayedOff);
-                            }
+                            self.set_off(true);
+                            self.state.set(OnOffClusterState::DelayedOff);
                         }
                         OnOffCommand::OffWithEffect(effect) => {
                             self.handle_off_with_effect(effect).await;
@@ -352,10 +357,14 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         // and FALSE, respectively.
                         OnOffCommand::On 
                         | OnOffCommand::OnWithTimedOff => {
-                            // todo account for processing latency?
+                            let mut next_tick = start_time + Duration::from_millis(100);
                             while self.on_time.get() > 0 {
-                                embassy_time::Timer::after(Duration::from_millis(100)).await;
+                                let now = embassy_time::Instant::now();
+                                if next_tick > now {
+                                    embassy_time::Timer::after(next_tick - now).await;
+                                }
                                 self.on_time.set(self.on_time.get() - 1);
+                                next_tick += Duration::from_millis(100);
                             }
 
                             self.off_wait_time.set(0);
@@ -370,17 +379,39 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                     }
                 },
                 OnOffClusterState::DelayedOff => {
-                    // The device is now off and no commands can change it's state until off_wait_time == 0.
+                    match command {
+                        // 1.5.6.5. OffWaitTime Attribute
+                        // This attribute specifies the length of time (in 1/10ths second) that the Off state SHALL be guarded to
+                        // prevent another OnWithTimedOff command turning the server back to its On state.
+                        OnOffCommand::On
+                        | OnOffCommand::Toggle => {
+                            self.state.set(OnOffClusterState::On);
+                            self.set_on(false);
+                            break;
+                        },
+                        OnOffCommand::CoupledClusterOn => {
+                            self.state.set(OnOffClusterState::On);
+                            self.set_on(true);
+                            break;
+                        },
+                        OnOffCommand::Off
+                        | OnOffCommand::OffWithEffect(_)
+                        | OnOffCommand::OnWithTimedOff
+                        | OnOffCommand::CoupledClusterOff => (),
+                    }
 
                     // 1.5.7.6.4. Effect on Receipt
                     // If the value of the OnOff attribute is equal to FALSE and the value of the OffWaitTime attribute
                     // is greater than zero, the server SHALL decrement the value of the OffWaitTime attribute. If the
                     // value of the OffWaitTime attribute reaches 0, the server SHALL terminate the update.
-
-                    // todo account for processing latency?
+                    let mut next_tick = embassy_time::Instant::now() + Duration::from_millis(100);
                     while self.off_wait_time.get() > 0 {
-                        embassy_time::Timer::after(Duration::from_millis(100)).await;
+                        let now = embassy_time::Instant::now();
+                        if next_tick > now {
+                            embassy_time::Timer::after(next_tick - now).await;
+                        }
                         self.off_wait_time.set(self.off_wait_time.get() - 1);
+                        next_tick += Duration::from_millis(100);
                     }
 
                     self.state.set(OnOffClusterState::Off);
