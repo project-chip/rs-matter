@@ -1,3 +1,4 @@
+PICS_SDK_CI_ONLY=1
 # PICS values to be used when running the `dimmable_light` executable
 
 # Level Control Cluster

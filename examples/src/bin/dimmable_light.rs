@@ -18,12 +18,14 @@
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
 use core::pin::pin;
 
+use std::fs;
+use std::io::{Read, Write};
 use std::net::UdpSocket;
 
 use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use log::info;
+use log::{info, error};
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
@@ -37,7 +39,7 @@ use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
@@ -62,8 +64,9 @@ static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCe
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
-#[cfg(feature = "chip-test")]
+// todo
 use std::path::PathBuf;
+// #[cfg(feature = "chip-test")]
 #[cfg(feature = "chip-test")]
 const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
 
@@ -169,7 +172,6 @@ fn run() -> Result<(), Error> {
     // Run the background job the handler might be having
     let mut dm_handler_job = pin!(dm_handler.run());
 
-    // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     info!(
@@ -180,6 +182,22 @@ fn run() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
+    #[cfg(feature="chip-test")]
+    let mut transport = pin!(async {
+        // Unconditionally enable basic commissioning because the `chip-tool` tests
+        // expect that - even if the device is already commissioned,
+        // as the code path always unconditionally scans for the QR code.
+        //
+        // TODO: Figure out why the test suite has this expectation and also whether
+        // to instead just always enable printing the QR code to the console at startup
+        // rather than to enable basic commissioning.
+        matter
+            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
+            .await?;
+
+        matter.run_transport(&socket, &socket).await
+    });
+    #[cfg(not(feature="chip-test"))]
     let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
 
     // Create, load and run the persister
@@ -360,18 +378,96 @@ impl LevelControlHooks for LevelControlDeviceLogic {
 // Implementing the OnOff business logic
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 
+struct OnOffPersistentState {
+    on_off: bool,
+    start_up_on_off: Option<StartUpOnOffEnum>,
+}
+
+impl Default for OnOffPersistentState {
+    fn default() -> Self {
+        Self { on_off: false, start_up_on_off: None }
+    }
+}
+
+impl OnOffPersistentState {
+    fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
+        info!("to_bytes_from_values: got on_off: {} | start_up_on_off: {:?}", on_off, start_up_on_off);
+        let on_off = on_off as u8;
+        let start_up_on_off: u8 = match start_up_on_off {
+            Some(StartUpOnOffEnum::Off) => 0,
+            Some(StartUpOnOffEnum::On) => 1,
+            Some(StartUpOnOffEnum::Toggle) => 2,
+            None => 3,
+        };
+        info!("to_bytes_from_values: vals before writing on_off: {} | start_up_on_off: {}", on_off, start_up_on_off);
+        info!("final val: {}", on_off + (start_up_on_off << 1));
+        return on_off + (start_up_on_off << 1);
+    }
+
+    fn to_bytes(&self) -> u8 {
+        OnOffPersistentState::to_bytes_from_values(self.on_off, self.start_up_on_off)
+    }
+
+    fn from_bytes(data: u8) -> Result<Self, Error> {
+        Ok(Self {
+            on_off: data & 1 != 0,
+            start_up_on_off: match data >> 1 {
+                0 => Some(StartUpOnOffEnum::Off),
+                1 => Some(StartUpOnOffEnum::On),
+                2 => Some(StartUpOnOffEnum::Toggle),
+                3 => None,
+                _ => return Err(ErrorCode::Failure.into()),
+            },
+        })
+    }
+
+}
+
 pub struct OnOffDeviceLogic{
     on_off: Cell<bool>,
-    start_up_on_off: Cell<Nullable<StartUpOnOffEnum>>,
+    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+    storage_path: PathBuf,
 }
+
+const STORAGE_FILE_NAME: &str = "OnOffState.bin";
 
 impl OnOffDeviceLogic {
     pub fn new() -> Self {
+        let storage_path = std::env::current_dir().unwrap().join(STORAGE_FILE_NAME);
+        info!("OnOffDeviceLogic using storage path: {}", storage_path.as_path().to_str().unwrap_or("none"));
+
+        let persisted_state = match fs::File::open(storage_path.as_path()) {
+            Ok(mut file) => {
+                let mut buf: [u8; 1] = [0];
+                file.read(&mut buf).unwrap();
+
+                info!("new: read {:0x} | {:0b}", buf[0], buf[0]);
+
+                OnOffPersistentState::from_bytes(buf[0]).unwrap()
+            },
+            Err(_) => OnOffPersistentState::default(),
+        };
+
         Self{
-            // Should retrieve values from persistent storage
-            on_off: Cell::new(false),
-            start_up_on_off: Cell::new(Nullable::none()),
+            on_off: Cell::new(persisted_state.on_off),
+            start_up_on_off: Cell::new(persisted_state.start_up_on_off),
+            storage_path: storage_path,
         }
+    }
+
+    fn save_state(&self) -> Result<(), Error> {
+        let mut file = fs::File::create(self.storage_path.as_path())?;
+
+
+        let value = OnOffPersistentState::to_bytes_from_values(self.on_off.get(), self.start_up_on_off.get());
+
+        let buf = &[value];
+
+        info!("save_storage: wrote {:0x} | {:0b}", value, value);
+
+        file.write(buf)?;
+
+        Ok(())
     }
 }
 
@@ -410,19 +506,24 @@ impl OnOffHooks for OnOffDeviceLogic {
         self.on_off.get()
     }
 
+    // todo should this return Result?
     fn set_on_off(&self, on: bool) {
-        self.on_off.set(on)
+        self.on_off.set(on);
+        if let Err(err) = self.save_state() {
+            error!("Error saving state: {}", err);
+        }
     }
 
     fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
-        let temp = self.start_up_on_off.take();
-        self.start_up_on_off.set(temp.clone());
-        temp
+        match self.start_up_on_off.get() {
+            Some(value) => Nullable::some(value),
+            None => Nullable::none(),
+        }
     }
 
     fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
-        self.start_up_on_off.set(value);
-        Ok(())
+        self.start_up_on_off.set(value.into_option());
+        self.save_state()
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
