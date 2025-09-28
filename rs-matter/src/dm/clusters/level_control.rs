@@ -35,7 +35,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 
 pub use crate::dm::clusters::decl::level_control::*;
-use crate::dm::clusters::on_off::OnOffHooks;
+use crate::dm::clusters::on_off::{OnOffHooks, FULL_CLUSTER as ON_OFF_FULL_CLUSTER};
 use crate::dm::clusters::{level_control, on_off::OnOffHandler};
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
@@ -1203,5 +1203,32 @@ pub trait LevelControlHooks {
     /// This value should persist across reboots.
     fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
+    }
+}
+
+/// A phantom type for when the LevelControl cluster is not coupled with an OnOff cluster.
+pub struct NoOnOff;
+
+impl OnOffHooks for NoOnOff {
+    const CLUSTER: Cluster<'static> = ON_OFF_FULL_CLUSTER;
+
+    fn on_off(&self) -> bool {
+        todo!()
+    }
+
+    fn set_on_off(&self, _on: bool) {
+        todo!()
+    }
+
+    fn start_up_on_off(&self) -> Nullable<super::on_off::StartUpOnOffEnum> {
+        todo!()
+    }
+
+    fn set_start_up_on_off(&self, _value: Nullable<super::on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn handle_off_with_effect(&self, _effect: super::on_off::EffectVariantEnum) {
+        todo!()
     }
 }

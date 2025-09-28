@@ -34,7 +34,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
 
-use crate::dm::clusters::decl::on_off;
+use crate::dm::clusters::decl::{level_control, on_off};
 use crate::dm::clusters::level_control::{LevelControlHandler, LevelControlHooks};
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
@@ -222,8 +222,19 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         HandlerAsyncAdaptor(self)
     }
 
-    // todo We need to allow for out-of-band setting of the OnOff state.
-    // For example physically interactions or the device autonomously decides to change its state.
+    /// Request an out-of-band change to the OnOff state.
+    /// This method can be used, for example, when the device state changes due to physical interactions
+    /// or when the device autonomously decides to change its state.
+    /// 
+    /// This method behaves the same as the OnOff cluster's On or Off commands. 
+    /// I.e, This method will trigger the appropriate state change logic, including any coupled cluster interactions,
+    /// feature-dependent attribute updates and device-specific update logic.
+    pub fn set_on_off(&self, on: bool) {
+        match on {
+            true => self.state_change_signal.signal(OnOffCommand::On),
+            false => self.state_change_signal.signal(OnOffCommand::Off),
+        }
+    }
 
     // Allows coupled clusters to get the on_off state.
     pub(crate) fn on_off(&self) -> Result<bool, Error> {
@@ -695,4 +706,22 @@ pub trait OnOffHooks {
     fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error>;
 
     async fn handle_off_with_effect(&self, effect: EffectVariantEnum);
+}
+
+/// A phantom type for when the OnOff cluster is not coupled with a LevelControl cluster.
+pub struct NoLevelControl;
+
+impl LevelControlHooks for NoLevelControl {
+    const MIN_LEVEL: u8 = 1;
+    const MAX_LEVEL: u8 = 1;
+    const FASTEST_RATE: u8 = 1;
+    const CLUSTER: Cluster<'static> = level_control::FULL_CLUSTER;
+
+    fn set_level(&self, _level: u8) -> Option<u8> {
+        todo!()
+    }
+
+    fn get_level(&self) -> Option<u8> {
+        todo!()
+    }
 }

@@ -249,11 +249,8 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
             clusters: clusters!(
                         desc::DescHandler::CLUSTER,
-                        on_off::OnOffHandler::<OnOffDeviceLogic, LevelControlDeviceLogic>::CLUSTER,
-                        level_control::LevelControlHandler::<
-                            LevelControlDeviceLogic,
-                            OnOffDeviceLogic,
-                        >::CLUSTER,
+                        OnOffDeviceLogic::CLUSTER,
+                        LevelControlDeviceLogic::CLUSTER,
                     ),
         },
     ],
@@ -283,14 +280,14 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                     .chain(
                         EpClMatcher::new(
                             Some(1),
-                            Some(on_off::OnOffHandler::<'a, OH, LH>::CLUSTER.id),
+                            Some(OnOffDeviceLogic::CLUSTER.id),
                         ),
                         on_off::HandlerAsyncAdaptor(on_off),
                     )
                     .chain(
                         EpClMatcher::new(
                             Some(1),
-                            Some(level_control::LevelControlHandler::<'a, LH, OH>::CLUSTER.id),
+                            Some(LevelControlDeviceLogic::CLUSTER.id),
                         ),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
