@@ -135,15 +135,18 @@ fn run() -> Result<(), Error> {
 
     // LevelControl cluster setup
     let level_control_device_logic = LevelControlDeviceLogic::new();
+    let level_control_defaults = level_control::AttributeDefaults {
+        on_level: Nullable::some(42),
+        options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+        on_off_transition_time: 0,
+        on_transition_time: Nullable::none(),
+        off_transition_time: Nullable::none(),
+        default_move_rate: Nullable::none(),
+    };
     let level_control_handler = level_control::LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
         &level_control_device_logic,
-        Nullable::some(42),
-        OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-        0,
-        Nullable::none(),
-        Nullable::none(),
-        Nullable::none(),
+        level_control_defaults,
     );
 
     // Cluster wiring, validation and initialisation
@@ -239,14 +242,12 @@ fn run() -> Result<(), Error> {
 /// The Node meta-data describing our Matter device.
 const NODE: Node<'static> = Node {
     id: 0,
-    endpoints:
-        &[
-            endpoints::root_endpoint(NetworkType::Ethernet),
-            Endpoint {
-                id: 1,
-                device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
-                clusters:
-                    clusters!(
+    endpoints: &[
+        endpoints::root_endpoint(NetworkType::Ethernet),
+        Endpoint {
+            id: 1,
+            device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
+            clusters: clusters!(
                         desc::DescHandler::CLUSTER,
                         on_off::OnOffHandler::<OnOffDeviceLogic, LevelControlDeviceLogic>::CLUSTER,
                         level_control::LevelControlHandler::<
@@ -254,8 +255,8 @@ const NODE: Node<'static> = Node {
                             OnOffDeviceLogic,
                         >::CLUSTER,
                     ),
-            },
-        ],
+        },
+    ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
@@ -473,7 +474,7 @@ impl OnOffDeviceLogic {
         Self {
             on_off: Cell::new(persisted_state.on_off),
             start_up_on_off: Cell::new(persisted_state.start_up_on_off),
-            storage_path: storage_path,
+            storage_path,
         }
     }
 

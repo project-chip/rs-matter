@@ -89,6 +89,16 @@ pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     last_current_level_notification: Cell<Instant>,
 }
 
+/// Default values for the attributes with manufacturer specific defaults.
+pub struct AttributeDefaults {
+    pub on_level: Nullable<u8>,
+    pub options: OptionsBitmap,
+    pub on_off_transition_time: u16,
+    pub on_transition_time: Nullable<u16>,
+    pub off_transition_time: Nullable<u16>,
+    pub default_move_rate: Nullable<u8>,
+}
+
 impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     const MAXIMUM_LEVEL: u8 = 254;
 
@@ -96,34 +106,23 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     ///
     /// # Arguments
     /// - `level_control_hooks` - A reference to the struct implementing the device-specific level control logic.
-    /// - `on_level` - The default setting for the on_level attribute.
-    /// - `options` - The default setting for the options attribute.
-    /// - `on_off_transition_time` - The default setting for the on_off_transition_time attribute.
-    /// - `on_transition_time` - The default setting for the on_transition_time attribute.
-    /// - `off_transition_time` - The default setting for the off_transition_time attribute.
-    /// - `default_move_rate` - The default setting for the default_move_rate attribute.
     pub fn new(
         dataver: Dataver,
         level_control_hooks: &'a H,
-        on_level: Nullable<u8>,
-        options: OptionsBitmap,
-        on_off_transition_time: u16,
-        on_transition_time: Nullable<u16>,
-        off_transition_time: Nullable<u16>,
-        default_move_rate: Nullable<u8>,
+        attribute_defaults: AttributeDefaults,
     ) -> Self {
         Self {
             dataver,
             hooks: level_control_hooks,
             on_off_handler: Cell::new(None),
             task_signal: Signal::new(),
-            on_level: Cell::new(on_level),
-            options: Cell::new(options),
+            on_level: Cell::new(attribute_defaults.on_level),
+            options: Cell::new(attribute_defaults.options),
             remaining_time: Cell::new(0),
-            on_off_transition_time: Cell::new(on_off_transition_time),
-            on_transition_time: Cell::new(on_transition_time),
-            off_transition_time: Cell::new(off_transition_time),
-            default_move_rate: Cell::new(default_move_rate),
+            on_off_transition_time: Cell::new(attribute_defaults.on_off_transition_time),
+            on_transition_time: Cell::new(attribute_defaults.on_transition_time),
+            off_transition_time: Cell::new(attribute_defaults.off_transition_time),
+            default_move_rate: Cell::new(attribute_defaults.default_move_rate),
             previous_current_level: Cell::new(None),
             last_current_level_notification: Cell::new(Instant::from_millis(0)),
         }

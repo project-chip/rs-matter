@@ -173,12 +173,11 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
 
         // Check OFFONLY feature requirements
-        if self.supports_feature(on_off::Feature::OFF_ONLY.bits()) {
-            if Self::CLUSTER.command(CommandId::On as _).is_some()
-                || Self::CLUSTER.command(CommandId::Toggle as _).is_some()
-            {
-                panic!("OnOff validation: extra commands while using OFFONLY feature: On, Toggle")
-            }
+        if self.supports_feature(on_off::Feature::OFF_ONLY.bits())
+            && (Self::CLUSTER.command(CommandId::On as _).is_some()
+                || Self::CLUSTER.command(CommandId::Toggle as _).is_some())
+        {
+            panic!("OnOff validation: extra commands while using OFFONLY feature: On, Toggle")
         }
     }
 
@@ -234,7 +233,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// Sets the on_off state to true and updates the off_wait_time and global_scene_control accordingly.
     /// If not initiated by LevelControl and LevelControl cluster is coupled, call the LevelControl coupling logic.
     fn set_on(&self, level_control_initiated: bool) {
-        if self.hooks.on_off() == true {
+        if self.hooks.on_off() {
             return;
         }
 
@@ -275,7 +274,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// Otherwise, we set the on_off state to false and return true.
     /// The return boolean indicates if the on_off state has been set.
     fn set_off(&self, level_control_initiated: bool) -> bool {
-        if self.hooks.on_off() == false {
+        if !self.hooks.on_off() {
             return true;
         }
 
@@ -619,7 +618,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
         // 1.5.7.5.1. Effect on Receipt
         // On receipt of the OnWithRecallGlobalScene command, if the GlobalSceneControl attribute is equal
         // to TRUE, the server SHALL discard the command.
-        if self.global_scene_control.get() == true {
+        if self.global_scene_control.get() {
             return Ok(());
         }
 
@@ -646,7 +645,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
         if request
             .on_off_control()?
             .contains(OnOffControlBitmap::ACCEPT_ONLY_WHEN_ON)
-            && self.hooks.on_off() == false
+            && !self.hooks.on_off()
         {
             return Ok(());
         }
@@ -654,7 +653,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
         // If the value of the OffWaitTime attribute is greater than zero and the value of the OnOff attribute is
         // equal to FALSE, then the server SHALL set the OffWaitTime attribute to the minimum of the
         // OffWaitTime attribute and the value specified in the OffWaitTime field.
-        if self.off_wait_time.get() > 0 && self.hooks.on_off() == false {
+        if self.off_wait_time.get() > 0 && !self.hooks.on_off() {
             self.off_wait_time
                 .set(self.off_wait_time.get().min(request.off_wait_time()?));
         }
