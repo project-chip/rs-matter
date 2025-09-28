@@ -21,15 +21,17 @@ use core::pin::pin;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::UdpSocket;
+use std::path::PathBuf;
 
 use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use log::{info, error};
+use log::{info, error, trace};
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, ClusterAsyncHandler as _, OnOffHooks, StartUpOnOffEnum};
+use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
@@ -49,8 +51,6 @@ use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
-use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _};
-
 use static_cell::StaticCell;
 
 #[path = "../common/mdns.rs"]
@@ -64,9 +64,6 @@ static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCe
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
-// todo
-use std::path::PathBuf;
-// #[cfg(feature = "chip-test")]
 #[cfg(feature = "chip-test")]
 const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
 
@@ -146,7 +143,7 @@ fn run() -> Result<(), Error> {
         Nullable::none(),
     );
 
-    // Cluster wiring and initialisation
+    // Cluster wiring, validation and initialisation
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
 
@@ -182,6 +179,8 @@ fn run() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
+    #[cfg(not(feature="chip-test"))]
+    let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
     #[cfg(feature="chip-test")]
     let mut transport = pin!(async {
         // Unconditionally enable basic commissioning because the `chip-tool` tests
@@ -197,8 +196,6 @@ fn run() -> Result<(), Error> {
 
         matter.run_transport(&socket, &socket).await
     });
-    #[cfg(not(feature="chip-test"))]
-    let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -208,9 +205,10 @@ fn run() -> Result<(), Error> {
     let path = PathBuf::from(PERSIST_FILE_NAME);
 
     info!(
-        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
+        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B, Persist path={}",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS)),
+        path.as_path().to_str().unwrap_or("none")
     );
 
     psm.load(&path, matter, NO_NETWORKS)?;
@@ -378,6 +376,9 @@ impl LevelControlHooks for LevelControlDeviceLogic {
 // Implementing the OnOff business logic
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 
+// A simple serializer and deserializer for persisting the OnOff state in a single byte.
+// Stores the on_off state in the first bit.
+// Stores the start_up_on_off state in the remaining bits.
 struct OnOffPersistentState {
     on_off: bool,
     start_up_on_off: Option<StartUpOnOffEnum>,
@@ -404,10 +405,6 @@ impl OnOffPersistentState {
         return on_off + (start_up_on_off << 1);
     }
 
-    fn to_bytes(&self) -> u8 {
-        OnOffPersistentState::to_bytes_from_values(self.on_off, self.start_up_on_off)
-    }
-
     fn from_bytes(data: u8) -> Result<Self, Error> {
         Ok(Self {
             on_off: data & 1 != 0,
@@ -429,11 +426,11 @@ pub struct OnOffDeviceLogic{
     storage_path: PathBuf,
 }
 
-const STORAGE_FILE_NAME: &str = "OnOffState.bin";
+const STORAGE_FILE_NAME: &str = "rs-matter-on-off-state";
 
 impl OnOffDeviceLogic {
     pub fn new() -> Self {
-        let storage_path = std::env::current_dir().unwrap().join(STORAGE_FILE_NAME);
+        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
         info!("OnOffDeviceLogic using storage path: {}", storage_path.as_path().to_str().unwrap_or("none"));
 
         let persisted_state = match fs::File::open(storage_path.as_path()) {
@@ -441,7 +438,7 @@ impl OnOffDeviceLogic {
                 let mut buf: [u8; 1] = [0];
                 file.read(&mut buf).unwrap();
 
-                info!("new: read {:0x} | {:0b}", buf[0], buf[0]);
+                trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
 
                 OnOffPersistentState::from_bytes(buf[0]).unwrap()
             },
@@ -458,12 +455,11 @@ impl OnOffDeviceLogic {
     fn save_state(&self) -> Result<(), Error> {
         let mut file = fs::File::create(self.storage_path.as_path())?;
 
-
         let value = OnOffPersistentState::to_bytes_from_values(self.on_off.get(), self.start_up_on_off.get());
 
         let buf = &[value];
 
-        info!("save_storage: wrote {:0x} | {:0b}", value, value);
+        trace!("save_storage: wrote {:0x}", value);
 
         file.write(buf)?;
 
@@ -506,7 +502,6 @@ impl OnOffHooks for OnOffDeviceLogic {
         self.on_off.get()
     }
 
-    // todo should this return Result?
     fn set_on_off(&self, on: bool) {
         self.on_off.set(on);
         if let Err(err) = self.save_state() {

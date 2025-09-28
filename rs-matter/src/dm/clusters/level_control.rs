@@ -63,6 +63,7 @@ enum Task {
 /// # Type Parameters
 /// - `'a`: Lifetime for references held by the cluster.
 /// - `H`: Handler implementing the LevelControlHooks trait, providing cluster-specific configuration and logic.
+/// - `OH` : Handler implementing the OnOffHooks trait.
 ///
 /// # Constants
 /// - `MAXIMUM_LEVEL`: The maximum allowed level value (254).
@@ -72,7 +73,6 @@ enum Task {
 ///
 /// # Notes
 /// - This implementation follows version 1.3 of the Matter specification.
-/// - Some features (such as OnOff cluster integration) are marked as TODO and may require further implementation.
 pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     dataver: Dataver,
     hooks: &'a H,
@@ -167,20 +167,14 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             panic!("LevelControl validation: missing required commands: MoveToLevel, Move, Step, Stop, MoveToLevelWithOnOff, MoveWithOnOff, StepWithOnOff or StopWithOnOff");
         }
 
-        // todo: uncomment after implementing the OnOff cluster.
-        // If the ON_OFF feature in enabled or any of the "WithOnOff" commands are supported,
-        // check that an OnOff cluster exists on the same endpoint.
-        // if H::CLUSTER.feature_map & level_control::Feature::ON_OFF.bits() != 0
-        // {
-        //     match self.on_off.get() {
-        //         Some(_on_off_state) => {
-        //             // todo can we check the endpoint?
-        //         },
-        //         None => {
-        //             panic!("LevelControl validation: a reference to the OnOff cluster must be set when the ON_OFF feature is enabled");
-        //         },
-        //     }
-        // }
+        // If the ON_OFF feature in enabled, check that an OnOff cluster is coupled.
+        if H::CLUSTER.feature_map & level_control::Feature::ON_OFF.bits() != 0
+        {
+            // Ideally we should confirm that they are on the same endpoint. 
+            if self.on_off_handler.get().is_none() {
+                panic!("LevelControl validation: a reference to the OnOff cluster must be set when the ON_OFF feature is enabled");
+            }
+        }
 
         if H::MAX_LEVEL > Self::MAXIMUM_LEVEL {
             panic!(
@@ -452,7 +446,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     // ## off
     // Temporarily store CurrentLevel.
     // Change CurrentLevel to the minimum level allowed for the device over the time period OnOffTransitionTime.
-    // todo to do the following we have to separate out the level setting of the device from the attribute in the hooks.
     // If OnLevel is not defined, set the CurrentLevel to the stored level.
     async fn handle_on_off_state_change(&self, on: bool) -> Result<(), Error> {
         info!("handle_on_off_state_change");
@@ -506,7 +499,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
                 self.move_to_level(true, H::MIN_LEVEL, Some(transition_time), bitmap, bitmap, true).await?;
 
-                // todo we need to separate the device logic from attribute storage.
+                // todo we may need to separate the device logic from attribute storage as users will implement the set_level to both set and store the level. Hence, calling `set_level` here will probably switch the device on again.
                 if self.on_level().is_none() {
                     let _ = self.hooks.set_level(temp_current_level);
                 }
@@ -532,17 +525,12 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
         let new_on_off_value = current_level > H::MIN_LEVEL;
 
-        match self.on_off_handler.get() {
-            Some(on_off) => {
-                let current_on_off = on_off.on_off()?;
-                if current_on_off != new_on_off_value {
-                    info!("Updating the OnOff cluster with on_off = {}", new_on_off_value);
-                    on_off.coupled_cluster_set_on_off(new_on_off_value);
-                }
-            }
-            None => {
-                // todo: remove this message once OnOff is implemented.
-                error!("LevelControlHandler: expected OnOffCluster is missing.\nhelp: use set_on_off_cluster() to couple the OnOffCluster on the same endpoint with this LevelControlHandler")
+        // The `validate` method ensures that the on_off_handler is set if this function is called.
+        if let Some(on_off) = self.on_off_handler.get() {
+            let current_on_off = on_off.on_off()?;
+            if current_on_off != new_on_off_value {
+                info!("Updating the OnOff cluster with on_off = {}", new_on_off_value);
+                on_off.coupled_cluster_set_on_off(new_on_off_value);
             }
         }
 
@@ -602,7 +590,6 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         }
 
         match transition_time {
-            // todo do we need this? Can this be handled by move_to_level_transition as a special case?
             None | Some(0) => {
                 let level = self
                     .set_level_and_notify(level, true)

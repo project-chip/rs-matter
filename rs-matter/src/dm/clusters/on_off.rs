@@ -15,10 +15,18 @@
  *    limitations under the License.
  */
 
-//! This module contains the implementation of the On/Off cluster and its handler.
+//! Implementation of the Matter On/Off cluster.
 //!
-//! While this cluster is not necessary for the operation of `rs-matter`, this
-//! implementation is useful in examples and tests.
+//! This module provides the core logic and state management for the OnOff cluster as defined by the Matter specification v1.3.
+//!
+//! Key features:
+//! - Provides hooks for device-specific logic via the `OnOffHooks` trait.
+//! - Validates cluster configuration and feature dependencies.
+//! - Manages OnWithTimedOff guards and OffWithEffect transitions.
+//! - Provides coupling with a LevelControl cluster on the same endpoint.
+//!
+//! Unsupported features:
+//! - The attribute and logic related to the Scenes cluster are not fully implemented since the Scenes cluster is not yet implemented.
 
 use core::cell::Cell;
 
@@ -35,18 +43,20 @@ pub use crate::dm::clusters::decl::on_off::*;
 
 use crate::tlv::Nullable;
 
+/// A rust friendly combined enum that groups the effect and its variant.
+#[derive(Clone, Copy)]
+pub enum EffectVariantEnum {
+    DelayedAllOff(DelayedAllOffEffectVariantEnum),
+    DyingLight(DyingLightEffectVariantEnum),
+}
+
+// The state of the internal OnOff state machine.
 #[derive(Clone, Copy, PartialEq)]
 enum OnOffClusterState {
     On,
     Off,
     TimedOn,
     DelayedOff,
-}
-
-#[derive(Clone, Copy)]
-pub enum EffectVariantEnum {
-    DelayedAllOff(DelayedAllOffEffectVariantEnum),
-    DyingLight(DyingLightEffectVariantEnum),
 }
 
 // Internal enum for managing sending commands to the state machine.
@@ -60,6 +70,22 @@ enum OnOffCommand {
     CoupledClusterOff,
 }
 
+
+/// Implementation of the Matter On/Off cluster handler.
+///
+/// This struct provides the logic for managing the On/Off cluster state machine, handling commands,
+/// attributes, and feature dependencies as specified by the Matter specification. It supports coupling
+/// with a LevelControl cluster, manages timed transitions, and enforces feature-specific requirements.
+///
+/// # Usage
+/// - Implement the `OnOffHooks` trait to provide device-specific persistence and effect handling.
+/// - Instantiate with a `Dataver` and user-provided `OnOffHooks` implementation.
+/// - Initialise and optionally couple with a LevelControl cluster via `init`.
+/// - Use the async `run` method to process incoming commands and manage state transitions.
+///
+/// # Panics
+/// - The handler will panic during initialisation if the cluster configuration is invalid or missing required
+///   attributes/commands for enabled features.
 pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     dataver: Dataver,
     hooks: &'a H,
@@ -72,7 +98,10 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
 }
 
 impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
-    /// Creates a new instance of `OnOffHandler` with the given `Dataver`.
+    /// Creates a new `OnOffHandler` with the given hooks.
+    /// 
+    /// # Arguments
+    /// - `on_off_hooks` - A reference to the struct implementing the device-specific on/off logic.
     pub fn new(dataver: Dataver, on_off_hooks: &'a H) -> Self {
         let state = match on_off_hooks.on_off() {
             true => OnOffClusterState::On,
@@ -175,17 +204,21 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
     }
 
-    // todo is this needed given that this is Async?
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAdaptor<Self> {
-        HandlerAdaptor(self)
+    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
+        HandlerAsyncAdaptor(self)
     }
 
-    // todo Do we need similar accessors for all the attributes the user might want to access?
+    // todo We need to allow for out-of-band setting of the OnOff state.
+    // For example physically interactions or the device autonomously decides to change its state.
+
+    // Allows coupled clusters to get the on_off state.
     pub(crate) fn on_off(&self) -> Result<bool, Error> {
         Ok(self.hooks.on_off())
     }
 
+    /// Sets the on_off state to true and updates the off_wait_time and global_scene_control accordingly.
+    /// If not initiated by LevelControl and LevelControl cluster is coupled, call the LevelControl coupling logic.
     fn set_on(&self, level_control_initiated: bool) {
         if self.hooks.on_off() == true {
             return;
@@ -279,11 +312,6 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
     async fn state_machine(&self, command: OnOffCommand) {
         let start_time = embassy_time::Instant::now();
-
-        // todo we should probably call Stop on the LevelControl cluster ??and similar from LevelControl to OnOff??.
-        // if let Some(level_control_handler) = self.level_control_handler.get() {
-        //     level_control_handler.stop();
-        // }
 
         loop {
             match self.state.get() {
@@ -492,19 +520,16 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
     }
 
     async fn set_on_time(&self, _ctx:impl WriteContext, value:u16) -> Result<(), Error>{
-        // todo check the spec for any required checks/error states
         self.on_time.set(value);
         Ok(())
     }
     
     async fn set_off_wait_time(&self, _ctx:impl WriteContext, value:u16) -> Result<(), Error>{
-        // todo check the spec for any required checks/error states
         self.off_wait_time.set(value);
         Ok(())
     }
     
     async fn set_start_up_on_off(&self, _ctx:impl WriteContext, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error>{
-        // todo check the spec for any required checks/error states
         self.hooks.set_start_up_on_off(value)
     }
     
@@ -552,7 +577,6 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
             },
         };
 
-        // todo pass effect_variant 
         self.state_change_signal.signal(OnOffCommand::OffWithEffect(effect_variant));
 
         Ok(())
@@ -582,13 +606,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
         // 1.5.7.6.4. Effect on Receipt
         // On receipt of this command, if the AcceptOnlyWhenOn sub-field of the OnOffControl field is set to 1,
         // and the value of the OnOff attribute is equal to FALSE, the command SHALL be discarded.
-        // todo It's unclear if this command should be ignored if the OnOff attribute is FALSE or if the state,
-        // according to section 1.5.8, is "Off". It is possible for the device to get the OnWithTimedOff command 
-        // while it is in the "delayed Off" state. In this case, should the OffWaitTime be update as describe below,
-        // or should it be ignored? If it should be ignored, do we remain in the "Delayed Off" state, decrementing
-        // the OffWaitTime?
         if request.on_off_control()?.contains(OnOffControlBitmap::ACCEPT_ONLY_WHEN_ON) 
-        && self.state.get() == OnOffClusterState::Off
+        && self.hooks.on_off() == false
         {
             return Ok(());
         }
@@ -626,6 +645,7 @@ pub trait OnOffHooks {
 
     // Get the current device on/off state. This value SHALL be persisted across reboots.
     fn on_off(&self) -> bool;
+    // todo should we allow this to return an error? If so, we'd need to know if the state has changed even if error occurs.
     // Switch the device to the `on`` value and persist this setting.
     fn set_on_off(&self, on: bool);
 
