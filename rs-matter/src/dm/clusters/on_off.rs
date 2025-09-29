@@ -101,6 +101,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     ///
     /// # Arguments
     /// - `on_off_hooks` - A reference to the struct implementing the device-specific on/off logic.
+    ///
+    /// # Usage
+    /// - Initialise and optionally couple with a LevelControl cluster via `init`.
+    /// - Use the async `run` method to run the OnOff server.
     pub fn new(dataver: Dataver, on_off_hooks: &'a H) -> Self {
         let state = match on_off_hooks.on_off() {
             true => OnOffClusterState::On,
@@ -225,8 +229,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// Request an out-of-band change to the OnOff state.
     /// This method can be used, for example, when the device state changes due to physical interactions
     /// or when the device autonomously decides to change its state.
-    /// 
-    /// This method behaves the same as the OnOff cluster's On or Off commands. 
+    ///
+    /// This method behaves the same as the OnOff cluster's On or Off commands.
     /// I.e, This method will trigger the appropriate state change logic, including any coupled cluster interactions,
     /// feature-dependent attribute updates and device-specific update logic.
     pub fn set_on_off(&self, on: bool) {

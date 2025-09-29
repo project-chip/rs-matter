@@ -17,19 +17,24 @@
 
 //! An example Matter device that implements the On/Off Light cluster over Ethernet.
 
+use core::cell::Cell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select3, select4};
+use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 
 use log::info;
 
+use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{
+    self, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
+};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
@@ -37,17 +42,18 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -121,10 +127,14 @@ fn run() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Our on-off cluster
-    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
+    let on_off_device_logic = OnOffDeviceLogic::new();
+    let on_off_handler: OnOffHandler<OnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
+    on_off_handler.init(None);
+    let mut on_off_job = pin!(on_off_handler.run());
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = dm_handler(matter, &on_off);
+    let dm_handler = dm_handler(matter, &on_off_handler);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -148,7 +158,8 @@ fn run() -> Result<(), Error> {
         loop {
             Timer::after(Duration::from_secs(5)).await;
 
-            on_off.set(!on_off.get());
+            // todo should we add an on_off accessor to the handler that dose not require a context?
+            on_off_handler.set_on_off(!on_off_device_logic.on_off());
             subscriptions.notify_changed();
 
             info!("Lamp toggled");
@@ -187,7 +198,13 @@ fn run() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select3(&mut respond, &mut device, &mut dm_handler_job).coalesce(),
+        select4(
+            &mut respond,
+            &mut device,
+            &mut dm_handler_job,
+            &mut on_off_job,
+        )
+        .coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -202,16 +219,16 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, on_off::OnOffHandler::CLUSTER),
+            clusters: clusters!(desc::DescHandler::CLUSTER, OnOffDeviceLogic::CLUSTER),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
-    on_off: &'a on_off::OnOffHandler,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -228,10 +245,65 @@ fn dm_handler<'a>(
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(on_off::OnOffHandler::CLUSTER.id)),
-                        Async(on_off::HandlerAdaptor(on_off)),
+                        EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     ),
             ),
         ),
     )
+}
+
+// Implementing the OnOff business logic
+
+#[derive(Default)]
+pub struct OnOffDeviceLogic {
+    on_off: Cell<bool>,
+    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+}
+
+impl OnOffDeviceLogic {
+    pub fn new() -> Self {
+        Self {
+            on_off: Cell::new(false),
+            start_up_on_off: Cell::new(None),
+        }
+    }
+}
+
+impl OnOffHooks for OnOffDeviceLogic {
+    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+        .with_revision(6)
+        .with_attrs(with!(
+            required;
+            on_off_cluster::AttributeId::OnOff
+        ))
+        .with_cmds(with!(
+            on_off_cluster::CommandId::Off
+                | on_off_cluster::CommandId::On
+                | on_off_cluster::CommandId::Toggle
+        ));
+
+    fn on_off(&self) -> bool {
+        self.on_off.get()
+    }
+
+    fn set_on_off(&self, on: bool) {
+        self.on_off.set(on);
+    }
+
+    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
+        match self.start_up_on_off.get() {
+            Some(value) => Nullable::some(value),
+            None => Nullable::none(),
+        }
+    }
+
+    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+        self.start_up_on_off.set(value.into_option());
+        Ok(())
+    }
+
+    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
+        // no effect
+    }
 }

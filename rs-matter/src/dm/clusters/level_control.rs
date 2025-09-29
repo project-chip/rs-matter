@@ -1224,7 +1224,10 @@ impl OnOffHooks for NoOnOff {
         todo!()
     }
 
-    fn set_start_up_on_off(&self, _value: Nullable<super::on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+    fn set_start_up_on_off(
+        &self,
+        _value: Nullable<super::on_off::StartUpOnOffEnum>,
+    ) -> Result<(), Error> {
         todo!()
     }
 

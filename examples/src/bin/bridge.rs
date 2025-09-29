@@ -19,16 +19,21 @@
 //! The example operates over Ethernet for simplicity, but the concrete network protocol is orthogonal to
 //! the notion of a Matter bridge anyway.
 
+use core::cell::Cell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::clusters::on_off::{
+    self, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
+};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
 use rs_matter::dm::endpoints;
@@ -42,6 +47,7 @@ use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
@@ -71,8 +77,22 @@ fn main() -> Result<(), Error> {
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Our on-off clusters
+    let on_off_device_logic_ep2 = OnOffDeviceLogic::new();
+    let on_off_handler_ep2: OnOffHandler<OnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic_ep2);
+    on_off_handler_ep2.init(None);
+
+    let on_off_device_logic_ep3 = OnOffDeviceLogic::new();
+    let on_off_handler_ep3: OnOffHandler<OnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic_ep3);
+    on_off_handler_ep3.init(None);
+
+    let mut on_off_ep2_job = pin!(on_off_handler_ep2.run());
+    let mut on_off_ep3_job = pin!(on_off_handler_ep3.run());
+
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
-    let dm_handler = dm_handler(&matter);
+    let dm_handler = dm_handler(&matter, &on_off_handler_ep2, &on_off_handler_ep3);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -105,7 +125,13 @@ fn main() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select(&mut respond, &mut dm_handler_job).coalesce(),
+        select4(
+            &mut respond,
+            &mut dm_handler_job,
+            &mut on_off_ep2_job,
+            &mut on_off_ep3_job,
+        )
+        .coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -142,7 +168,7 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
-                OnOffHandler::CLUSTER
+                OnOffDeviceLogic::CLUSTER
             ),
         },
         // This is the second bridged device.
@@ -155,14 +181,18 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
-                OnOffHandler::CLUSTER
+                OnOffDeviceLogic::CLUSTER
             ),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter Bridge.
-fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    matter: &Matter<'_>,
+    on_off_ep2: &'a on_off::OnOffHandler<'a, OH, LH>,
+    on_off_ep3: &'a on_off::OnOffHandler<'a, OH, LH>,
+) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
         endpoints::with_eth(
@@ -204,8 +234,8 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(2), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(2), Some(OnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off_ep2),
                     )
                     .chain(
                         EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
@@ -216,8 +246,8 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(3), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(3), Some(OnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off_ep3),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),
@@ -269,4 +299,59 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
 
     // Note that at least the `node_label` optional attribute is also good to implement,
     // so that way users can name the bridged devices their own way, using the Matter controller.
+}
+
+// Implementing the OnOff business logic
+
+#[derive(Default)]
+pub struct OnOffDeviceLogic {
+    on_off: Cell<bool>,
+    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+}
+
+impl OnOffDeviceLogic {
+    pub fn new() -> Self {
+        Self {
+            on_off: Cell::new(false),
+            start_up_on_off: Cell::new(None),
+        }
+    }
+}
+
+impl OnOffHooks for OnOffDeviceLogic {
+    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+        .with_revision(6)
+        .with_attrs(with!(
+            required;
+            on_off_cluster::AttributeId::OnOff
+        ))
+        .with_cmds(with!(
+            on_off_cluster::CommandId::Off
+                | on_off_cluster::CommandId::On
+                | on_off_cluster::CommandId::Toggle
+        ));
+
+    fn on_off(&self) -> bool {
+        self.on_off.get()
+    }
+
+    fn set_on_off(&self, on: bool) {
+        self.on_off.set(on);
+    }
+
+    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
+        match self.start_up_on_off.get() {
+            Some(value) => Nullable::some(value),
+            None => Nullable::none(),
+        }
+    }
+
+    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+        self.start_up_on_off.set(value.into_option());
+        Ok(())
+    }
+
+    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
+        // no effect
+    }
 }

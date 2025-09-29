@@ -16,6 +16,7 @@
  */
 
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
+use core::cell::Cell;
 use core::pin::pin;
 
 use std::fs;
@@ -28,7 +29,12 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::{error, info, trace};
 
+use rs_matter::dm::clusters::decl::level_control::{
+    AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
+};
+use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _};
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{
@@ -41,17 +47,18 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -248,10 +255,10 @@ const NODE: Node<'static> = Node {
             id: 1,
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
             clusters: clusters!(
-                        desc::DescHandler::CLUSTER,
-                        OnOffDeviceLogic::CLUSTER,
-                        LevelControlDeviceLogic::CLUSTER,
-                    ),
+                desc::DescHandler::CLUSTER,
+                OnOffDeviceLogic::CLUSTER,
+                LevelControlDeviceLogic::CLUSTER,
+            ),
         },
     ],
 };
@@ -278,17 +285,11 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(
-                            Some(1),
-                            Some(OnOffDeviceLogic::CLUSTER.id),
-                        ),
+                        EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
                         on_off::HandlerAsyncAdaptor(on_off),
                     )
                     .chain(
-                        EpClMatcher::new(
-                            Some(1),
-                            Some(LevelControlDeviceLogic::CLUSTER.id),
-                        ),
+                        EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
             ),
@@ -297,17 +298,6 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 }
 
 // Implementing the LevelControl business logic
-
-use core::cell::Cell;
-use rs_matter::dm::clusters::decl::level_control::OptionsBitmap;
-use rs_matter::dm::clusters::decl::level_control::{
-    AttributeId, CommandId, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
-};
-use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::Cluster;
-use rs_matter::tlv::Nullable;
-use rs_matter::with;
-
 pub struct LevelControlDeviceLogic {
     current_level: Cell<u8>,
     start_up_current_level: Cell<Nullable<u8>>,
@@ -386,23 +376,14 @@ impl LevelControlHooks for LevelControlDeviceLogic {
 }
 
 // Implementing the OnOff business logic
-use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 
 // A simple serializer and deserializer for persisting the OnOff state in a single byte.
 // Stores the on_off state in the first bit.
 // Stores the start_up_on_off state in the remaining bits.
+#[derive(Default)]
 struct OnOffPersistentState {
     on_off: bool,
     start_up_on_off: Option<StartUpOnOffEnum>,
-}
-
-impl Default for OnOffPersistentState {
-    fn default() -> Self {
-        Self {
-            on_off: false,
-            start_up_on_off: None,
-        }
-    }
 }
 
 impl OnOffPersistentState {
@@ -423,7 +404,7 @@ impl OnOffPersistentState {
             on_off, start_up_on_off
         );
         info!("final val: {}", on_off + (start_up_on_off << 1));
-        return on_off + (start_up_on_off << 1);
+        on_off + (start_up_on_off << 1)
     }
 
     fn from_bytes(data: u8) -> Result<Self, Error> {
@@ -440,6 +421,7 @@ impl OnOffPersistentState {
     }
 }
 
+#[derive(Default)]
 pub struct OnOffDeviceLogic {
     on_off: Cell<bool>,
     start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
@@ -459,7 +441,7 @@ impl OnOffDeviceLogic {
         let persisted_state = match fs::File::open(storage_path.as_path()) {
             Ok(mut file) => {
                 let mut buf: [u8; 1] = [0];
-                file.read(&mut buf).unwrap();
+                file.read_exact(&mut buf).unwrap();
 
                 trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
 
@@ -487,15 +469,9 @@ impl OnOffDeviceLogic {
 
         trace!("save_storage: wrote {:0x}", value);
 
-        file.write(buf)?;
+        file.write_all(buf)?;
 
         Ok(())
-    }
-}
-
-impl Default for OnOffDeviceLogic {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -544,6 +520,6 @@ impl OnOffHooks for OnOffDeviceLogic {
     }
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
-        // todo!()
+        // no effect
     }
 }
