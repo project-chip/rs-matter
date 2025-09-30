@@ -16,8 +16,9 @@
  */
 
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
-use core::cell::Cell;
 #![allow(clippy::uninlined_format_args)]
+
+use core::cell::Cell;
 use core::pin::pin;
 
 use std::fs;
