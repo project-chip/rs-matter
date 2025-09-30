@@ -103,7 +103,7 @@ impl AclHandler {
                     let entry = entry?;
                     entry.check()?;
                 }
-                if list.iter().count() > acl::ENTRIES_PER_FABRIC {
+                if list.iter().count() > acl::MAX_ACL_ENTRIES_PER_FABRIC {
                     Err(ErrorCode::ConstraintError)?;
                 }
 
@@ -136,10 +136,7 @@ impl AclHandler {
 }
 
 impl ClusterHandler for AclHandler {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_revision(1)
-        .with_attrs(with!(required))
-        .with_cmds(with!());
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
@@ -165,15 +162,15 @@ impl ClusterHandler for AclHandler {
     }
 
     fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(acl::SUBJECTS_PER_ENTRY as _)
+        Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _)
     }
 
     fn targets_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(acl::TARGETS_PER_ENTRY as _)
+        Ok(acl::MAX_TARGETS_PER_ACL_ENTRY as _)
     }
 
     fn access_control_entries_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(acl::ENTRIES_PER_FABRIC as _)
+        Ok(acl::MAX_ACL_ENTRIES_PER_FABRIC as _)
     }
 
     fn set_acl(

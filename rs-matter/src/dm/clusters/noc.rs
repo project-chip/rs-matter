@@ -26,7 +26,7 @@ use crate::crypto::{self, KeyPair};
 use crate::dm::clusters::dev_att;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
-use crate::fabric::{Fabric, MAX_SUPPORTED_FABRICS};
+use crate::fabric::{Fabric, MAX_FABRICS};
 use crate::tlv::{
     Nullable, Octets, OctetsArrayBuilder, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVElement,
     TLVTag, TLVWrite,
@@ -213,7 +213,7 @@ impl ClusterHandler for NocHandler {
     }
 
     fn supported_fabrics(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(MAX_SUPPORTED_FABRICS as u8)
+        Ok(MAX_FABRICS as u8)
     }
 
     fn commissioned_fabrics(&self, ctx: impl ReadContext) -> Result<u8, Error> {

@@ -22,14 +22,15 @@ use embassy_time::Instant;
 
 use portable_atomic::{AtomicU32, Ordering};
 
+use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::Notification;
 
 /// The maximum number of subscriptions that can be tracked at the same time by default.
 ///
-/// Currently set to 3.
-pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = 3;
+/// According to the Matter spec, at least 3 subscriptions per fabric should be supported.
+pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = MAX_FABRICS * 3;
 
 /// A type alias for `Subscriptions` with the default maximum number of subscriptions.
 pub type DefaultSubscriptions = Subscriptions<DEFAULT_MAX_SUBSCRIPTIONS>;

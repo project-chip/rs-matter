@@ -16,6 +16,7 @@
  */
 
 use core::cell::UnsafeCell;
+use core::future::Future;
 use core::ops::{Deref, DerefMut};
 use core::pin::pin;
 
@@ -54,8 +55,8 @@ where
     where
         Self: 'a;
 
-    async fn get(&self) -> Option<Self::Buffer<'_>> {
-        (*self).get().await
+    fn get(&self) -> impl Future<Output = Option<Self::Buffer<'_>>> {
+        (*self).get()
     }
 }
 

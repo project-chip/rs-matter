@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+use core::future::Future;
+
 use crate::dm::{AsyncHandler, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
@@ -144,13 +146,15 @@ where
         }
     }
 
-    pub async fn read<T: TLVWrite>(&mut self, attr: &AttrDetails<'_>, tw: T) -> Result<(), Error> {
-        self.handler
-            .read(
-                ReadContextInstance::new(self.exchange, &self.handler, &self.buffers, attr),
-                ReadReplyInstance::new(attr, tw),
-            )
-            .await
+    pub fn read<'t, T: TLVWrite + 't>(
+        &'t mut self,
+        attr: &'t AttrDetails<'_>,
+        tw: T,
+    ) -> impl Future<Output = Result<(), Error>> + 't {
+        self.handler.read(
+            ReadContextInstance::new(self.exchange, &self.handler, &self.buffers, attr),
+            ReadReplyInstance::new(attr, tw),
+        )
     }
 
     pub async fn process_write<T: TLVWrite>(
@@ -208,22 +212,20 @@ where
         }
     }
 
-    pub async fn write(
-        &mut self,
-        attr: &AttrDetails<'_>,
-        data: &TLVElement<'_>,
-        notify: &dyn ChangeNotify,
-    ) -> Result<(), Error> {
-        self.handler
-            .write(WriteContextInstance::new(
-                self.exchange,
-                &self.handler,
-                &self.buffers,
-                attr,
-                data,
-                notify,
-            ))
-            .await
+    pub fn write<'t>(
+        &'t mut self,
+        attr: &'t AttrDetails<'_>,
+        data: &'t TLVElement<'_>,
+        notify: &'t dyn ChangeNotify,
+    ) -> impl Future<Output = Result<(), Error>> + 't {
+        self.handler.write(WriteContextInstance::new(
+            self.exchange,
+            &self.handler,
+            &self.buffers,
+            attr,
+            data,
+            notify,
+        ))
     }
 
     pub async fn process_invoke<T: TLVWrite>(
@@ -287,26 +289,24 @@ where
         }
     }
 
-    pub async fn invoke<T: TLVWrite>(
-        &mut self,
-        cmd: &CmdDetails<'_>,
-        data: &TLVElement<'_>,
+    pub fn invoke<'t, T: TLVWrite + 't>(
+        &'t mut self,
+        cmd: &'t CmdDetails<'_>,
+        data: &'t TLVElement<'_>,
         tw: T,
-        notify: &dyn ChangeNotify,
-    ) -> Result<(), Error> {
-        self.handler
-            .invoke(
-                InvokeContextInstance::new(
-                    self.exchange,
-                    &self.handler,
-                    &self.buffers,
-                    cmd,
-                    data,
-                    notify,
-                ),
-                InvokeReplyInstance::new(cmd, tw),
-            )
-            .await
+        notify: &'t dyn ChangeNotify,
+    ) -> impl Future<Output = Result<(), Error>> + 't {
+        self.handler.invoke(
+            InvokeContextInstance::new(
+                self.exchange,
+                &self.handler,
+                &self.buffers,
+                cmd,
+                data,
+                notify,
+            ),
+            InvokeReplyInstance::new(cmd, tw),
+        )
     }
 }
 

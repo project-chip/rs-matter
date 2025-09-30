@@ -131,6 +131,8 @@ where
 }
 
 mod asynch {
+    use core::future::Future;
+
     use crate::dm::{Async, Node};
 
     use super::{Metadata, MetadataGuard};
@@ -152,8 +154,8 @@ mod asynch {
         where
             Self: 'a;
 
-        async fn lock(&self) -> Self::MetadataGuard<'_> {
-            (**self).lock().await
+        fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
+            (**self).lock()
         }
     }
 
@@ -166,8 +168,8 @@ mod asynch {
         where
             Self: 'a;
 
-        async fn lock(&self) -> Self::MetadataGuard<'_> {
-            (**self).lock().await
+        fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
+            (**self).lock()
         }
     }
 
@@ -194,8 +196,8 @@ mod asynch {
         where
             Self: 'a;
 
-        async fn lock(&self) -> Self::MetadataGuard<'_> {
-            self.0.lock().await
+        fn lock(&self) -> impl Future<Output = Self::MetadataGuard<'_>> {
+            self.0.lock()
         }
     }
 

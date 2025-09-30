@@ -129,10 +129,7 @@ impl<'a> DescHandler<'a> {
 }
 
 impl ClusterHandler for DescHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER
-        .with_revision(1)
-        .with_attrs(with!(required))
-        .with_cmds(with!());
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required)).with_cmds(with!());
 
     fn dataver(&self) -> u32 {
         self.dataver.get()

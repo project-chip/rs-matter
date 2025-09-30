@@ -16,6 +16,7 @@
  */
 
 use core::fmt::Write;
+use core::future::Future;
 use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 
 use crate::dm::clusters::basic_info::BasicInfoConfig;
@@ -63,12 +64,12 @@ impl<T> MdnsResolver for &mut T
 where
     T: MdnsResolver,
 {
-    async fn resolve(
+    fn resolve(
         &mut self,
         compressed_fabric_id: u64,
         node_id: u64,
-    ) -> Result<SocketAddr, Error> {
-        (*self).resolve(compressed_fabric_id, node_id).await
+    ) -> impl Future<Output = Result<SocketAddr, Error>> {
+        (*self).resolve(compressed_fabric_id, node_id)
     }
 }
 

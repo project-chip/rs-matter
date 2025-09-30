@@ -392,8 +392,8 @@ static ATTR_SUBSCR_RESPS: &[TestAttrResp<'static>] = &[
 fn test_long_read_success() {
     const PART_1: usize = 38;
     const PART_2: usize = 37;
-    const PART_3: usize = 39;
-    const PART_4: usize = 36;
+    const PART_3: usize = 38;
+    const PART_4: usize = 37;
 
     // Read the entire attribute database, which requires multiple reads to complete
     init_env_logger();

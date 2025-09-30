@@ -14,6 +14,84 @@ rust-version = "1.83"
 [features]
 default = ["os", "rustcrypto", "log"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
+
+# Sizing
+
+# Number of fabrics
+max-fabrics-32 = []
+max-fabrics-16 = []
+max-fabrics-8 = []
+max-fabrics-7 = []
+max-fabrics-6 = []
+max-fabrics-5 = []
+max-fabrics-4 = []
+max-fabrics-3 = [] # default
+max-fabrics-2 = []
+max-fabrics-1 = []
+
+# Number of ACL entries per fabric
+max-acls-per-fabric-32 = []
+max-acls-per-fabric-16 = []
+max-acls-per-fabric-8 = []
+max-acls-per-fabric-7 = []
+max-acls-per-fabric-6 = []
+max-acls-per-fabric-5 = []
+max-acls-per-fabric-4 = [] # default
+max-acls-per-fabric-3 = []
+max-acls-per-fabric-2 = []
+max-acls-per-fabric-1 = []
+
+# Number of subjects per ACL entry
+max-subjects-per-acl-32 = []
+max-subjects-per-acl-16 = []
+max-subjects-per-acl-8 = []
+max-subjects-per-acl-7 = []
+max-subjects-per-acl-6 = []
+max-subjects-per-acl-5 = []
+max-subjects-per-acl-4 = [] # default
+max-subjects-per-acl-3 = []
+max-subjects-per-acl-2 = []
+max-subjects-per-acl-1 = []
+
+# Number of targets per ACL entry
+max-targets-per-acl-32 = []
+max-targets-per-acl-16 = []
+max-targets-per-acl-8 = []
+max-targets-per-acl-7 = []
+max-targets-per-acl-6 = []
+max-targets-per-acl-5 = []
+max-targets-per-acl-4 = []
+max-targets-per-acl-3 = [] # default
+max-targets-per-acl-2 = []
+max-targets-per-acl-1 = []
+
+# Number of sessions
+max-sessions-64 = []
+max-sessions-32 = []
+max-sessions-16 = [] # default
+max-sessions-8 = []
+max-sessions-7 = []
+max-sessions-6 = []
+max-sessions-5 = []
+max-sessions-4 = []
+max-sessions-3 = []
+
+# Number of exchanges per session
+max-exchanges-per-session-16 = []
+max-exchanges-per-session-8 = []
+max-exchanges-per-session-7 = []
+max-exchanges-per-session-6 = []
+max-exchanges-per-session-5 = [] # default
+max-exchanges-per-session-4 = []
+max-exchanges-per-session-3 = []
+
+# Number of BTP sessions
+max-btp-sessions-8 = []
+max-btp-sessions-4 = []
+max-btp-sessions-2 = []
+max-btp-sessions-1 = [] # default
+
+# General
 astro-dnssd = ["os", "dep:astro-dnssd"]
 zeroconf = ["os", "dep:zeroconf"]
 zbus = ["dep:zbus", "os", "futures-lite", "libc", "uuid", "async-io"]
@@ -26,10 +104,12 @@ mbedtls = ["alloc", "dep:mbedtls"]
 rustcrypto = ["alloc", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "sec1", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
 defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt"]
 log = ["dep:log", "embassy-time/log"]
+debug-tlv-payload = []
 large-buffers = [] # TCP support
 
 [dependencies]
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
+cfg-if = "1"
 bitflags = { version =  "2.5", default-features = false }
 byteorder = { version = "1.5", default-features = false }
 heapless = "0.8"
@@ -41,13 +121,13 @@ log = { version = "0.4", optional = true }
 defmt = { version = "0.3", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
 safemem = { version = "0.3", default-features = false }
-owo-colors = "4"
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1.2"
 embassy-time = "0.4"
 embassy-time-queue-utils = "0.1"
 embassy-sync = "0.7"
+either = { version = "1", default-features = false }
 critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
 portable-atomic = "1"

@@ -19,6 +19,7 @@ use core::borrow::Borrow;
 use core::future::Future;
 use core::marker::PhantomData;
 use core::ops::DerefMut;
+use core::pin::pin;
 
 use embassy_futures::select::select4;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
@@ -138,16 +139,17 @@ where
         let context = self.context.clone();
 
         async move {
-            select4(
-                self.gatt.run(service_name, &adv_data, move |event| {
-                    context.borrow().on_event(event)
-                }),
-                self.handshake(),
-                self.ack(),
-                self.remove_expired(),
-            )
-            .coalesce()
-            .await
+            let mut gatt = pin!(self.gatt.run(service_name, &adv_data, move |event| {
+                context.borrow().on_event(event)
+            }));
+
+            let mut handshake = pin!(self.handshake());
+            let mut ack = pin!(self.ack());
+            let mut remove_expired = pin!(self.remove_expired());
+
+            select4(&mut gatt, &mut handshake, &mut ack, &mut remove_expired)
+                .coalesce()
+                .await
         }
     }
 
@@ -332,8 +334,8 @@ where
     M: RawMutex + Send + Sync,
     T: GattPeripheral,
 {
-    async fn wait_available(&mut self) -> Result<(), Error> {
-        (*self).wait_available().await
+    fn wait_available(&mut self) -> impl Future<Output = Result<(), Error>> {
+        (*self).wait_available()
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {
@@ -361,8 +363,8 @@ where
     M: RawMutex + Send + Sync,
     T: GattPeripheral,
 {
-    async fn wait_available(&mut self) -> Result<(), Error> {
-        (*self).wait_available().await
+    fn wait_available(&mut self) -> impl Future<Output = Result<(), Error>> {
+        (*self).wait_available()
     }
 
     async fn recv_from(&mut self, buffer: &mut [u8]) -> Result<(usize, Address), Error> {

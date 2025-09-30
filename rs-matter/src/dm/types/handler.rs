@@ -707,6 +707,10 @@ macro_rules! handler_chain_type {
 }
 
 mod asynch {
+    use core::future::Future;
+    use core::pin::pin;
+
+    use either::Either;
     use embassy_futures::select::select;
 
     use crate::dm::{InvokeReply, Matcher, ReadReply};
@@ -790,10 +794,10 @@ mod asynch {
 
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
-        async fn run(&self) -> Result<(), Error> {
+        fn run(&self) -> impl Future<Output = Result<(), Error>> {
             // Default implementation pends forever.
             // This is useful for handlers that do not need to run any async operations in the background.
-            core::future::pending::<Result<(), Error>>().await
+            core::future::pending::<Result<(), Error>>()
         }
     }
 
@@ -813,24 +817,28 @@ mod asynch {
             (**self).invoke_awaits(ctx)
         }
 
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-            (**self).read(ctx, reply).await
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            (**self).read(ctx, reply)
         }
 
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-            (**self).write(ctx).await
+        fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            (**self).write(ctx)
         }
 
-        async fn invoke(
+        fn invoke(
             &self,
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
-        ) -> Result<(), Error> {
-            (**self).invoke(ctx, reply).await
+        ) -> impl Future<Output = Result<(), Error>> {
+            (**self).invoke(ctx, reply)
         }
 
-        async fn run(&self) -> Result<(), Error> {
-            (**self).run().await
+        fn run(&self) -> impl Future<Output = Result<(), Error>> {
+            (**self).run()
         }
     }
 
@@ -850,24 +858,28 @@ mod asynch {
             (**self).invoke_awaits(ctx)
         }
 
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-            (**self).read(ctx, reply).await
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            (**self).read(ctx, reply)
         }
 
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-            (**self).write(ctx).await
+        fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            (**self).write(ctx)
         }
 
-        async fn invoke(
+        fn invoke(
             &self,
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
-        ) -> Result<(), Error> {
-            (**self).invoke(ctx, reply).await
+        ) -> impl Future<Output = Result<(), Error>> {
+            (**self).invoke(ctx, reply)
         }
 
-        async fn run(&self) -> Result<(), Error> {
-            (**self).run().await
+        fn run(&self) -> impl Future<Output = Result<(), Error>> {
+            (**self).run()
         }
     }
 
@@ -887,20 +899,24 @@ mod asynch {
             self.1.invoke_awaits(ctx)
         }
 
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-            self.1.read(ctx, reply).await
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
+            self.1.read(ctx, reply)
         }
 
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-            self.1.write(ctx).await
+        fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
+            self.1.write(ctx)
         }
 
-        async fn invoke(
+        fn invoke(
             &self,
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
-        ) -> Result<(), Error> {
-            self.1.invoke(ctx, reply).await
+        ) -> impl Future<Output = Result<(), Error>> {
+            self.1.invoke(ctx, reply)
         }
     }
 
@@ -985,36 +1001,43 @@ mod asynch {
             }
         }
 
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+        fn read(
+            &self,
+            ctx: impl ReadContext,
+            reply: impl ReadReply,
+        ) -> impl Future<Output = Result<(), Error>> {
             if self.matcher.matches(&ctx) {
-                self.handler.read(ctx, reply).await
+                Either::Left(self.handler.read(ctx, reply))
             } else {
-                self.next.read(ctx, reply).await
+                Either::Right(self.next.read(ctx, reply))
             }
         }
 
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
+        fn write(&self, ctx: impl WriteContext) -> impl Future<Output = Result<(), Error>> {
             if self.matcher.matches(&ctx) {
-                self.handler.write(ctx).await
+                Either::Left(self.handler.write(ctx))
             } else {
-                self.next.write(ctx).await
+                Either::Right(self.next.write(ctx))
             }
         }
 
-        async fn invoke(
+        fn invoke(
             &self,
             ctx: impl InvokeContext,
             reply: impl InvokeReply,
-        ) -> Result<(), Error> {
+        ) -> impl Future<Output = Result<(), Error>> {
             if self.matcher.matches(&ctx) {
-                self.handler.invoke(ctx, reply).await
+                Either::Left(self.handler.invoke(ctx, reply))
             } else {
-                self.next.invoke(ctx, reply).await
+                Either::Right(self.next.invoke(ctx, reply))
             }
         }
 
         async fn run(&self) -> Result<(), Error> {
-            select(self.handler.run(), self.next.run()).coalesce().await
+            let mut handler = pin!(self.handler.run());
+            let mut next = pin!(self.next.run());
+
+            select(&mut handler, &mut next).coalesce().await
         }
     }
 

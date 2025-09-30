@@ -242,7 +242,6 @@ impl MediaHandler {
 impl media_playback::ClusterAsyncHandler for MediaHandler {
     /// The metadata cluster definition corresponding to the handler
     const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
-        .with_revision(1)
         .with_attrs(with!(required))
         .with_cmds(with!(
             media_playback::CommandId::Play
@@ -420,7 +419,6 @@ impl ContentHandler {
 
 impl content_launcher::ClusterAsyncHandler for ContentHandler {
     const CLUSTER: Cluster<'static> = content_launcher::FULL_CLUSTER
-        .with_revision(1)
         .with_features(0b11)
         .with_attrs(
             with!(required; content_launcher::AttributeId::AcceptHeader | content_launcher::AttributeId::SupportedStreamingProtocols),
@@ -532,7 +530,6 @@ impl KeypadInputHandler {
 
 impl keypad_input::ClusterAsyncHandler for KeypadInputHandler {
     const CLUSTER: Cluster<'static> = keypad_input::FULL_CLUSTER
-        .with_revision(1)
         .with_attrs(with!(required))
         .with_cmds(with!(keypad_input::CommandId::SendKey));
 

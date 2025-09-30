@@ -16,6 +16,7 @@
  */
 
 use core::cell::{Cell, RefCell};
+use core::future::Future;
 use core::num::NonZeroU8;
 use core::pin::pin;
 use core::time::Duration;
@@ -765,8 +766,8 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        DataModel::handle(self, exchange).await
+    fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
+        DataModel::handle(self, exchange)
     }
 }
 
@@ -865,8 +866,11 @@ where
                             } else {
                                 return Ok(false);
                             }
-                        } else if !self.send(true, false, wb).await? {
-                            return Ok(false);
+                        } else {
+                            debug!("<<< No TX space, chunking >>>");
+                            if !self.send(true, false, wb).await? {
+                                return Ok(false);
+                            }
                         }
                     }
                     Err(err) => Err(err)?,
@@ -922,6 +926,7 @@ where
                     attr.list_index = Some(Nullable::some(new_list_index));
                 }
                 Err(err) if err.code() == ErrorCode::NoSpace => {
+                    debug!("<<< No TX space, chunking >>>");
                     if !self.send(true, false, wb).await? {
                         return Ok(false);
                     }

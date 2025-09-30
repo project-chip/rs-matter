@@ -129,7 +129,7 @@ impl<'a> GenCommHandler<'a> {
 }
 
 impl ClusterHandler for GenCommHandler<'_> {
-    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_revision(1).with_attrs(with!(required));
+    const CLUSTER: Cluster<'static> = FULL_CLUSTER.with_attrs(with!(required));
 
     fn dataver(&self) -> u32 {
         self.dataver.get()
