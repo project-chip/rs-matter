@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{self, ClusterAsyncHandler as _, NoLevelControl};
 use rs_matter::dm::GlobalElements;
 use rs_matter::im::GenericPath;
 use rs_matter::im::IMStatusCode;
@@ -24,6 +24,7 @@ use rs_matter::im::{AttrPath, AttrStatus};
 use crate::common::e2e::im::{attributes::TestAttrData, echo_cluster};
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
+use crate::common::on_off_hooks_impl::OnOffDeviceLogic;
 use crate::{attr_data, attr_data_path, attr_read_status_resp};
 
 #[test]
@@ -149,14 +150,14 @@ fn test_read_wc_endpoint_only_1_has_cluster() {
 
     let wc_ep_onoff = GenericPath::new(
         None,
-        Some(on_off::OnOffHandler::CLUSTER.id),
+        Some(on_off::OnOffHandler::<'_, OnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
         Some(on_off::AttributeId::OnOff as u32),
     );
     let input = &[AttrPath::from_gp(&wc_ep_onoff)];
 
     let expected = &[attr_data!(
         1,
-        on_off::OnOffHandler::CLUSTER.id,
+        on_off::OnOffHandler::<'_, OnOffDeviceLogic, NoLevelControl>::CLUSTER.id,
         on_off::AttributeId::OnOff,
         Some(&false)
     )];
