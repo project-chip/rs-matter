@@ -127,7 +127,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     ///
     /// # Panics
     ///
-    /// panics with error message if the `state`'s `CLUSTER` is misconfigured.
+    /// Panics with an error message if the handler's cluster configuration (`Self::CLUSTER`) is misconfigured.
     fn validate(&self) {
         if Self::CLUSTER.revision != 6 {
             panic!(
@@ -274,6 +274,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             self.global_scene_control.set(true)
         }
 
+        // todo: Is calling this here enough or should we be calling this after every change?
+        self.dataver_changed();
+        // todo `ctx.notify_changed();`
+
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if !level_control_initiated {
             if let Some(level_control_handler) = self.level_control_handler.get() {
@@ -297,6 +301,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             // 1.5.7.1. Off Command
             // ... when the OnTime attribute is supported, the server SHALL set the OnTime attribute to 0.
             self.on_time.set(0);
+            self.dataver_changed();
+            // todo `ctx.notify_changed();`
         }
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
@@ -315,6 +321,8 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // 1.5.7.1. Off Command
         // On receipt of the Off command, a server SHALL set the OnOff attribute to FALSE.
         self.hooks.set_on_off(false);
+        self.dataver_changed();
+        // todo `ctx.notify_changed();`
 
         true
     }
@@ -549,22 +557,29 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
         Ok(self.hooks.start_up_on_off())
     }
 
-    async fn set_on_time(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
+    async fn set_on_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.on_time.set(value);
+        self.dataver_changed();
+        ctx.notify_changed();
         Ok(())
     }
 
-    async fn set_off_wait_time(&self, _ctx: impl WriteContext, value: u16) -> Result<(), Error> {
+    async fn set_off_wait_time(&self, ctx: impl WriteContext, value: u16) -> Result<(), Error> {
         self.off_wait_time.set(value);
+        self.dataver_changed();
+        ctx.notify_changed();
         Ok(())
     }
 
     async fn set_start_up_on_off(
         &self,
-        _ctx: impl WriteContext,
+        ctx: impl WriteContext,
         value: Nullable<StartUpOnOffEnum>,
     ) -> Result<(), Error> {
-        self.hooks.set_start_up_on_off(value)
+        self.hooks.set_start_up_on_off(value)?;
+        self.dataver_changed();
+        ctx.notify_changed();
+        Ok(())
     }
 
     // Commands
@@ -713,7 +728,7 @@ pub trait OnOffHooks {
     async fn handle_off_with_effect(&self, effect: EffectVariantEnum);
 }
 
-/// This is a phantom type for when the OnOff cluster is not coupled with an LevelControl cluster.
+/// This is a phantom type for when the OnOff cluster is not coupled with a LevelControl cluster.
 /// This type should only be used for annotations and not for actual LevelControl functionality.
 /// All methods will panic.
 pub struct NoLevelControl;

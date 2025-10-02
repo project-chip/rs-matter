@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! This is as common implementation of the OnOffHooks trait for the OnOffHandler to be used by the tests.
+//! This is a common implementation of the OnOffHooks trait for the OnOffHandler, used by the tests.
 
 use std::sync::RwLock;
 
