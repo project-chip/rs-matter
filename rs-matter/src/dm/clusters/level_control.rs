@@ -1206,32 +1206,34 @@ pub trait LevelControlHooks {
     }
 }
 
-/// A phantom type for when the LevelControl cluster is not coupled with an OnOff cluster.
+/// This is a phantom type for when the LevelControl cluster is not coupled with an OnOff cluster.
+/// This type should only be used for annotations and not for actual OnOff functionality.
+/// All methods will panic.
 pub struct NoOnOff;
 
 impl OnOffHooks for NoOnOff {
     const CLUSTER: Cluster<'static> = ON_OFF_FULL_CLUSTER;
 
     fn on_off(&self) -> bool {
-        todo!()
+        panic!("NoOnOff: on_off called unexpectedly - this phantom type should not be used for OnOff functionality")
     }
 
     fn set_on_off(&self, _on: bool) {
-        todo!()
+        panic!("NoOnOff: set_on_off called unexpectedly - this phantom type should not be used for OnOff functionality")
     }
 
     fn start_up_on_off(&self) -> Nullable<super::on_off::StartUpOnOffEnum> {
-        todo!()
+        panic!("NoOnOff: start_up_on_off called unexpectedly - this phantom type should not be used for OnOff functionality")
     }
 
     fn set_start_up_on_off(
         &self,
         _value: Nullable<super::on_off::StartUpOnOffEnum>,
     ) -> Result<(), Error> {
-        todo!()
+        panic!("NoOnOff: set_start_up_on_off called unexpectedly - this method should not be called when LevelControl is not coupled with OnOff")
     }
 
     async fn handle_off_with_effect(&self, _effect: super::on_off::EffectVariantEnum) {
-        todo!()
+        panic!("NoOnOff: handle_off_with_effect called unexpectedly - this phantom type should not be used for OnOff functionality")
     }
 }

@@ -300,7 +300,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
-        if self.level_control_handler.get().is_some() & !level_control_initiated {
+        if self.level_control_handler.get().is_some() && !level_control_initiated {
             // Use of unwrap is safe due to the previous check.
             self.level_control_handler
                 .get()
@@ -385,7 +385,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 OnOffClusterState::TimedOn => {
                     match command {
                         OnOffCommand::Off | OnOffCommand::Toggle => {
-                            info!("Got Off command from TimedOn state");
+                            trace!("Got Off command from TimedOn state");
                             if self.set_off(false) {
                                 self.state.set(OnOffClusterState::DelayedOff);
                             } else {
@@ -425,6 +425,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         }
                         OnOffCommand::CoupledClusterOn => {
                             // This should not be reachable as the device would already be on so a change in the LevelControl cluster cannot cause the OnOff cluster to switch to On.
+                            unreachable!("CoupledClusterOn should not be reachable in TimedOn state: device is already on");
                         }
                     }
                 }
@@ -712,7 +713,9 @@ pub trait OnOffHooks {
     async fn handle_off_with_effect(&self, effect: EffectVariantEnum);
 }
 
-/// A phantom type for when the OnOff cluster is not coupled with a LevelControl cluster.
+/// This is a phantom type for when the OnOff cluster is not coupled with an LevelControl cluster.
+/// This type should only be used for annotations and not for actual LevelControl functionality.
+/// All methods will panic.
 pub struct NoLevelControl;
 
 impl LevelControlHooks for NoLevelControl {
@@ -722,10 +725,10 @@ impl LevelControlHooks for NoLevelControl {
     const CLUSTER: Cluster<'static> = level_control::FULL_CLUSTER;
 
     fn set_level(&self, _level: u8) -> Option<u8> {
-        todo!()
+        panic!("NoLevelControl: set_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
     }
 
     fn get_level(&self) -> Option<u8> {
-        todo!()
+        panic!("NoLevelControl: get_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
     }
 }
