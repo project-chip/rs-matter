@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{
+    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl,
+};
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{CmdPath, CmdStatus};
 
@@ -115,12 +117,12 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
 
     let target = CmdPath::new(
         None,
-        Some(on_off::OnOffHandler::CLUSTER.id),
+        Some(on_off::OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let expected_path = CmdPath::new(
         Some(1),
-        Some(on_off::OnOffHandler::CLUSTER.id),
+        Some(on_off::OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let input = &[cmd_data!(target, 1)];

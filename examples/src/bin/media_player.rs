@@ -27,7 +27,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -46,8 +46,12 @@ use media_playback::{
 };
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::clusters::on_off::{
+    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
+    OnOffHooks,
+};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
@@ -97,7 +101,13 @@ fn main() -> Result<(), Error> {
     let subscriptions = DefaultSubscriptions::new();
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
-    let dm_handler = dm_handler(&matter);
+    let on_off_device_logic = TestOnOffDeviceLogic::new();
+    let on_off_handler: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
+    on_off_handler.init(None);
+    let mut on_off_job = pin!(on_off_handler.run());
+
+    let dm_handler = dm_handler(&matter, &on_off_handler);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -130,7 +140,7 @@ fn main() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select(&mut respond, &mut dm_handler_job).coalesce(),
+        select3(&mut respond, &mut dm_handler_job, &mut on_off_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -150,7 +160,7 @@ const NODE: Node<'static> = Node {
                 MediaHandler::CLUSTER,
                 ContentHandler::CLUSTER,
                 KeypadInputHandler::CLUSTER,
-                on_off::OnOffHandler::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER
             ),
         },
     ],
@@ -158,7 +168,10 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Media Player cluster handlers.
-fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    matter: &Matter<'_>,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
         endpoints::with_eth(
@@ -186,8 +199,8 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         KeypadInputHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     ),
             ),
         ),

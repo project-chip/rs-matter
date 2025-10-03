@@ -18,6 +18,7 @@
 //! A dedicated Matter device for ConnectedHomeIP YAML integration tests.
 //! Implements On/Off and Unit Testing clusters over Ethernet.
 
+use core::cell::Cell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -25,7 +26,7 @@ use std::path::PathBuf;
 
 use async_signal::{Signal, Signals};
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use futures_lite::StreamExt;
@@ -35,9 +36,13 @@ use log::info;
 use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, ProductAppearance, ProductFinishEnum,
 };
+use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::clusters::on_off::{
+    self, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
+};
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
 };
@@ -47,17 +52,19 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
+use rs_matter::with;
 use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
@@ -127,13 +134,20 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(DefaultSubscriptions::init());
 
+    // Our on-off cluster
+    let on_off_device_logic = OnOffDeviceLogic::new();
+    let on_off_handler: OnOffHandler<OnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
+    on_off_handler.init(None);
+    let mut on_off_job = pin!(on_off_handler.run());
+
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our cluster handlers
-    let dm_handler = dm_handler(matter, unit_testing_data);
+    let dm_handler = dm_handler(matter, unit_testing_data, &on_off_handler);
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -200,7 +214,7 @@ fn main() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select(&mut respond, &mut term).coalesce(),
+        select3(&mut respond, &mut term, &mut on_off_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -227,7 +241,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
-                OnOffHandler::CLUSTER,
+                OnOffDeviceLogic::CLUSTER,
                 UnitTestingHandler::CLUSTER
             ),
         },
@@ -236,9 +250,10 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off and unit testing handlers.
-fn dm_handler<'a>(
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -255,8 +270,8 @@ fn dm_handler<'a>(
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(UnitTestingHandler::CLUSTER.id)),
@@ -271,4 +286,67 @@ fn dm_handler<'a>(
             ),
         ),
     )
+}
+
+// Implementing the OnOff business logic
+
+#[derive(Default)]
+pub struct OnOffDeviceLogic {
+    on_off: Cell<bool>,
+    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+}
+
+impl OnOffDeviceLogic {
+    pub fn new() -> Self {
+        Self {
+            on_off: Cell::new(false),
+            start_up_on_off: Cell::new(None),
+        }
+    }
+}
+
+impl OnOffHooks for OnOffDeviceLogic {
+    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+        .with_revision(6)
+        .with_features(on_off_cluster::Feature::LIGHTING.bits())
+        .with_attrs(with!(
+            required;
+            on_off_cluster::AttributeId::OnOff
+            | on_off_cluster::AttributeId::GlobalSceneControl
+            | on_off_cluster::AttributeId::OnTime
+            | on_off_cluster::AttributeId::OffWaitTime
+            | on_off_cluster::AttributeId::StartUpOnOff
+        ))
+        .with_cmds(with!(
+            on_off_cluster::CommandId::Off
+                | on_off_cluster::CommandId::On
+                | on_off_cluster::CommandId::Toggle
+                | on_off_cluster::CommandId::OffWithEffect
+                | on_off_cluster::CommandId::OnWithRecallGlobalScene
+                | on_off_cluster::CommandId::OnWithTimedOff
+        ));
+
+    fn on_off(&self) -> bool {
+        self.on_off.get()
+    }
+
+    fn set_on_off(&self, on: bool) {
+        self.on_off.set(on);
+    }
+
+    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
+        match self.start_up_on_off.get() {
+            Some(value) => Nullable::some(value),
+            None => Nullable::none(),
+        }
+    }
+
+    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+        self.start_up_on_off.set(value.into_option());
+        Ok(())
+    }
+
+    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
+        // no effect
+    }
 }
