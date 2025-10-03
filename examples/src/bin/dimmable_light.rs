@@ -162,6 +162,7 @@ fn run() -> Result<(), Error> {
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
 
+    // todo remove in all examlpes and e2e tests
     let mut level_control_job = pin!(level_control_handler.run());
     let mut on_off_job = pin!(on_off_handler.run());
 

@@ -44,7 +44,8 @@ pub use crate::dm::clusters::decl::on_off::*;
 use crate::tlv::Nullable;
 
 /// A rust friendly combined enum that groups the effect and its variant.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EffectVariantEnum {
     DelayedAllOff(DelayedAllOffEffectVariantEnum),
     DyingLight(DyingLightEffectVariantEnum),
@@ -745,5 +746,71 @@ impl LevelControlHooks for NoLevelControl {
 
     fn get_level(&self) -> Option<u8> {
         panic!("NoLevelControl: get_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
+    }
+}
+
+pub mod test {
+    use crate::error::Error;
+    use crate::tlv::Nullable;
+    use core::cell::Cell;
+
+    use crate::dm::clusters::decl::on_off as on_off_cluster;
+    use crate::dm::clusters::on_off::{EffectVariantEnum, OnOffHooks, StartUpOnOffEnum};
+    use crate::dm::Cluster;
+
+    use crate::with;
+
+    /// This is a basic implementation of the OnOff device logic, an implementer of OnOffHooks, used for testing.
+    #[derive(Default)]
+    pub struct TestOnOffDeviceLogic {
+        on_off: Cell<bool>,
+        start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+    }
+
+    impl TestOnOffDeviceLogic {
+        pub const fn new() -> Self {
+            Self {
+                on_off: Cell::new(false),
+                start_up_on_off: Cell::new(None),
+            }
+        }
+    }
+
+    impl OnOffHooks for TestOnOffDeviceLogic {
+        const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+            .with_revision(6)
+            .with_attrs(with!(
+                required;
+                on_off_cluster::AttributeId::OnOff
+            ))
+            .with_cmds(with!(
+                on_off_cluster::CommandId::Off
+                    | on_off_cluster::CommandId::On
+                    | on_off_cluster::CommandId::Toggle
+            ));
+
+        fn on_off(&self) -> bool {
+            self.on_off.get()
+        }
+
+        fn set_on_off(&self, on: bool) {
+            self.on_off.set(on)
+        }
+
+        fn start_up_on_off(&self) -> Nullable<StartUpOnOffEnum> {
+            match self.start_up_on_off.get() {
+                Some(value) => Nullable::some(value),
+                None => Nullable::none(),
+            }
+        }
+
+        fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error> {
+            self.start_up_on_off.set(value.into_option());
+            Ok(())
+        }
+
+        async fn handle_off_with_effect(&self, _effect: EffectVariantEnum) {
+            // no effect
+        }
     }
 }

@@ -16,7 +16,6 @@
  */
 
 pub mod e2e;
-pub mod on_off_hooks_impl;
 
 pub fn init_env_logger() {
     #[cfg(all(feature = "std", not(target_os = "espidf")))]

@@ -18,7 +18,8 @@
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::on_off::{
-    self, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler, OnOffHooks,
+    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
+    OnOffHooks,
 };
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
@@ -31,11 +32,8 @@ use rs_matter::Matter;
 use rs_matter::{clusters, handler_chain_type};
 
 use crate::common::e2e::E2eRunner;
-use crate::common::on_off_hooks_impl::OnOffDeviceLogic;
 
 use super::echo_cluster::{self, EchoHandler};
-
-static ON_OFF_DEVICE_LOGIC: OnOffDeviceLogic = OnOffDeviceLogic::new();
 
 /// A sample handler for E2E IM tests.
 pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
@@ -60,7 +58,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
                 id: 1,
                 clusters: clusters!(
                     DescHandler::CLUSTER,
-                    OnOffHandler::<'_, OnOffDeviceLogic, NoLevelControl>::CLUSTER,
+                    OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER,
                     echo_cluster::CLUSTER,
                 ),
                 device_types: &[DEV_TYPE_ON_OFF_LIGHT],
@@ -90,7 +88,7 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
             Async(EchoHandler::new(3, Dataver::new_rand(matter.rand()))),
         )
         .chain(
-            EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
             on_off::HandlerAsyncAdaptor(on_off),
         );
 
@@ -145,9 +143,9 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncMetadata for E2eTestHandler
 
 impl<'a> E2eRunner {
     // For backwards compatibility
-    pub fn handler(&self) -> E2eTestHandler<'_, OnOffDeviceLogic, NoLevelControl> {
-        let on_off_handler: OnOffHandler<'_, OnOffDeviceLogic, NoLevelControl> =
-            on_off::OnOffHandler::new(Dataver::new_rand(self.matter.rand()), &ON_OFF_DEVICE_LOGIC);
+    pub fn handler(&self) -> E2eTestHandler<'_, TestOnOffDeviceLogic, NoLevelControl> {
+        let on_off_handler: OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl> =
+            on_off::OnOffHandler::new(Dataver::new_rand(self.matter.rand()), &self.on_off_hooks);
         on_off_handler.init(None);
         // todo for proper function of the OnOffHandler we need to call `.run()`.
 

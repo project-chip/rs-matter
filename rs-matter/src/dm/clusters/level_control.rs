@@ -90,6 +90,8 @@ pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
 }
 
 /// Default values for the attributes with manufacturer specific defaults.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AttributeDefaults {
     pub on_level: Nullable<u8>,
     pub options: OptionsBitmap,

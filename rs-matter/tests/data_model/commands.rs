@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::clusters::on_off::{self, ClusterAsyncHandler as _, NoLevelControl};
+use rs_matter::dm::clusters::on_off::{
+    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl,
+};
 use rs_matter::im::IMStatusCode;
 use rs_matter::im::{CmdPath, CmdStatus};
 
@@ -23,7 +25,6 @@ use crate::common::e2e::im::commands::TestCmdResp;
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
-use crate::common::on_off_hooks_impl::OnOffDeviceLogic;
 use crate::{cmd_data, echo_req, echo_resp};
 
 #[test]
@@ -116,12 +117,12 @@ fn test_invoke_cmd_wc_endpoint_only_1_has_cluster() {
 
     let target = CmdPath::new(
         None,
-        Some(on_off::OnOffHandler::<'_, OnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
+        Some(on_off::OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let expected_path = CmdPath::new(
         Some(1),
-        Some(on_off::OnOffHandler::<'_, OnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
+        Some(on_off::OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER.id),
         Some(on_off::CommandId::On as u32),
     );
     let input = &[cmd_data!(target, 1)];

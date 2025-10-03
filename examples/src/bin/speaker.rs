@@ -31,7 +31,6 @@ use log::info;
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
-use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{
     self, AttributeDefaults, ClusterAsyncHandler as _, LevelControlHandler, LevelControlHooks,
@@ -39,7 +38,7 @@ use rs_matter::dm::clusters::level_control::{
 };
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{
-    self, ClusterAsyncHandler as _, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
+    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, OnOffHandler, OnOffHooks,
 };
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
@@ -80,7 +79,7 @@ fn main() -> Result<(), Error> {
     let subscriptions = DefaultSubscriptions::new();
 
     // OnOff cluster setup
-    let on_off_device_logic = OnOffDeviceLogic::new();
+    let on_off_device_logic = TestOnOffDeviceLogic::new();
     let on_off_handler =
         on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
 
@@ -164,7 +163,7 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_SMART_SPEAKER),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
-                OnOffDeviceLogic::CLUSTER,
+                TestOnOffDeviceLogic::CLUSTER,
                 LevelControlDeviceLogic::CLUSTER
             ),
         },
@@ -197,7 +196,7 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
                         level_control::HandlerAsyncAdaptor(level_control),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
                         on_off::HandlerAsyncAdaptor(on_off),
                     ),
             ),
@@ -271,60 +270,5 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     fn set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.start_up_current_level.set(value);
         Ok(())
-    }
-}
-
-// Implementing the OnOff business logic
-
-#[derive(Default)]
-pub struct OnOffDeviceLogic {
-    on_off: Cell<bool>,
-    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
-}
-
-impl OnOffDeviceLogic {
-    pub fn new() -> Self {
-        Self {
-            on_off: Cell::new(false),
-            start_up_on_off: Cell::new(None),
-        }
-    }
-}
-
-impl OnOffHooks for OnOffDeviceLogic {
-    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
-        .with_revision(6)
-        .with_attrs(with!(
-            required;
-            on_off_cluster::AttributeId::OnOff
-        ))
-        .with_cmds(with!(
-            on_off_cluster::CommandId::Off
-                | on_off_cluster::CommandId::On
-                | on_off_cluster::CommandId::Toggle
-        ));
-
-    fn on_off(&self) -> bool {
-        self.on_off.get()
-    }
-
-    fn set_on_off(&self, on: bool) {
-        self.on_off.set(on);
-    }
-
-    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
-        match self.start_up_on_off.get() {
-            Some(value) => Nullable::some(value),
-            None => Nullable::none(),
-        }
-    }
-
-    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
-        self.start_up_on_off.set(value.into_option());
-        Ok(())
-    }
-
-    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
-        // no effect
     }
 }
