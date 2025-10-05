@@ -1041,6 +1041,10 @@ mod asynch {
         ) -> impl Future<Output = Result<(), Error>> {
             self.1.invoke(ctx, reply)
         }
+
+        fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+            self.1.run(ctx)
+        }
     }
 
     impl<T> AsyncHandler for Async<T>
