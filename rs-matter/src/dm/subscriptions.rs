@@ -22,6 +22,7 @@ use embassy_time::Instant;
 
 use portable_atomic::{AtomicU32, Ordering};
 
+use crate::dm::{ClusterId, EndptId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -99,11 +100,18 @@ impl<const N: usize> Subscriptions<N> {
         })
     }
 
-    /// Notify the instance that some data in the data model has changed and that it should re-evaluate the subscriptions
-    /// and report on those that concern the changed data.
+    /// Notify the instance that the data of a specific cluster had changed and that it should re-evaluate the subscriptions
+    /// and report on those that are interested in the changed data.
     ///
-    /// This method is supposed to be called by the application code whenever it changes the data model.
-    pub fn notify_changed(&self) {
+    /// This method is supposed to be called by the application code whenever it changes the data of a cluster.
+    ///
+    /// # Arguments
+    /// - `endpoint_id`: The endpoint ID of the cluster that had changed.
+    /// - `cluster_id`: The cluster ID of the cluster that had changed.
+    pub fn notify_cluster_changed(&self, _endpoint_id: EndptId, _cluster_id: ClusterId) {
+        // TODO: Make use of the endpoint_id and cluster_id parameters
+        // to implement more intelligent reporting on subscriptions
+
         for sub in self.subscriptions.borrow_mut().iter_mut() {
             sub.changed = true;
         }
