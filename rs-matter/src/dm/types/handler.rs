@@ -47,6 +47,10 @@ impl ChangeNotify for () {
     }
 }
 
+/// A context super-type that is passed to the `AsyncHandler::run` method.
+///
+/// It provides access to the Matter instance and to Data Model-related objects,
+/// which could be useful in the context of executing background tasks specific for the concrete handler.
 pub trait HandlerContext {
     /// Return the Matter object that is associated with this handler
     fn matter(&self) -> &Matter<'_>;
