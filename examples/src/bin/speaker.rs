@@ -28,15 +28,15 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
-use level_control::{
-    ClusterAsyncHandler as _, MoveRequest, MoveToClosestFrequencyRequest, MoveToLevelRequest,
-    MoveToLevelWithOnOffRequest, MoveWithOnOffRequest, OptionsBitmap, StepRequest,
-    StepWithOnOffRequest, StopRequest, StopWithOnOffRequest,
+use rs_matter::dm::clusters::decl::level_control::{
+    AttributeId, CommandId, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
-
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::{
+    self, AttributeDefaults, LevelControlHandler, LevelControlHooks, OptionsBitmap,
+};
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::dm::endpoints;
@@ -44,9 +44,9 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, InvokeContext, Node, ReadContext, WriteContext,
+    EpClMatcher, Node,
 };
-use rs_matter::error::{Error, ErrorCode};
+use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
@@ -55,15 +55,6 @@ use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
-
-// Import the LevelControl cluster from `rs-matter`.
-//
-// This will auto-generate all Rust types related to the LevelControl cluster
-// in a module named `level_control`.
-//
-// User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
-// so as to handle the requests from the controller.
-rs_matter::import!(LevelControl);
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -85,8 +76,39 @@ fn main() -> Result<(), Error> {
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // OnOff cluster setup
+    let on_off_device_logic = TestOnOffDeviceLogic::new();
+    let on_off_handler =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
+
+    // LevelControl cluster setup
+    let level_control_device_logic = LevelControlDeviceLogic::new();
+    let level_control_defaults = AttributeDefaults {
+        on_level: Nullable::some(42),
+        options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+        on_off_transition_time: 0,
+        on_transition_time: Nullable::none(),
+        off_transition_time: Nullable::none(),
+        default_move_rate: Nullable::none(),
+    };
+    let level_control_handler = LevelControlHandler::new(
+        Dataver::new_rand(matter.rand()),
+        1,
+        &level_control_device_logic,
+        level_control_defaults,
+    );
+
+    // Cluster wiring, validation and initialisation
+    on_off_handler.init(Some(&level_control_handler));
+    level_control_handler.init(Some(&on_off_handler));
+
     // Create the Data Model instance
-    let dm = DataModel::new(&matter, &buffers, &subscriptions, dm_handler(&matter));
+    let dm = DataModel::new(
+        &matter,
+        &buffers,
+        &subscriptions,
+        dm_handler(&matter, &on_off_handler, &level_control_handler),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -136,8 +158,8 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_SMART_SPEAKER),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
-                OnOffHandler::CLUSTER,
-                LevelControlHandler::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER,
+                LevelControlDeviceLogic::CLUSTER
             ),
         },
     ],
@@ -145,7 +167,11 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the Speaker handler.
-fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
+fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
+    matter: &Matter<'_>,
+    on_off: &'a OnOffHandler<'a, OH, LH>,
+    level_control: &'a LevelControlHandler<'a, LH, OH>,
+) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
         endpoints::with_eth(
@@ -161,208 +187,83 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(LevelControlHandler::CLUSTER.id)),
-                        LevelControlHandler::new(Dataver::new_rand(matter.rand())).adapt(),
+                        EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
+                        level_control::HandlerAsyncAdaptor(level_control),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     ),
             ),
         ),
     )
 }
 
-/// A sample NOOP handler for the LevelControl cluster.
-pub struct LevelControlHandler {
-    dataver: Dataver,
-    level: Cell<u8>,
+pub struct LevelControlDeviceLogic {
+    current_level: Cell<u8>,
+    start_up_current_level: Cell<Nullable<u8>>,
 }
 
-impl LevelControlHandler {
-    /// Create a new instance of the handler
-    pub const fn new(dataver: Dataver) -> Self {
+impl Default for LevelControlDeviceLogic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LevelControlDeviceLogic {
+    pub const fn new() -> Self {
         Self {
-            dataver,
-            level: Cell::new(0),
-        }
-    }
-
-    /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> level_control::HandlerAsyncAdaptor<Self> {
-        level_control::HandlerAsyncAdaptor(self)
-    }
-
-    /// Update the volume level of the handler
-    fn set_level(&self, state: u8, ctx: impl InvokeContext) {
-        let old_state = self.level.replace(state);
-
-        if old_state != state {
-            // Update the cluster data version and notify potential subscribers
-            self.dataver.changed();
-            ctx.notify_changed();
+            current_level: Cell::new(1),
+            start_up_current_level: Cell::new(Nullable::none()),
         }
     }
 }
 
-impl level_control::ClusterAsyncHandler for LevelControlHandler {
-    /// The metadata cluster definition corresponding to the handler
-    const CLUSTER: Cluster<'static> = level_control::FULL_CLUSTER
-        .with_attrs(with!(required))
+impl LevelControlHooks for LevelControlDeviceLogic {
+    const MIN_LEVEL: u8 = 1;
+    const MAX_LEVEL: u8 = 254;
+    const FASTEST_RATE: u8 = 50;
+    const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
+        .with_revision(5)
+        .with_features(level_control::Feature::ON_OFF.bits())
+        .with_attrs(with!(
+            required;
+            AttributeId::CurrentLevel
+            | AttributeId::MinLevel
+            | AttributeId::MaxLevel
+            | AttributeId::OnLevel
+            | AttributeId::Options
+        ))
         .with_cmds(with!(
-            level_control::CommandId::MoveToLevel
-                | level_control::CommandId::Move
-                | level_control::CommandId::Step
-                | level_control::CommandId::Stop
-                | level_control::CommandId::MoveToLevelWithOnOff
-                | level_control::CommandId::MoveWithOnOff
-                | level_control::CommandId::StepWithOnOff
-                | level_control::CommandId::StopWithOnOff
+            CommandId::MoveToLevel
+                | CommandId::Move
+                | CommandId::Step
+                | CommandId::Stop
+                | CommandId::MoveToLevelWithOnOff
+                | CommandId::MoveWithOnOff
+                | CommandId::StepWithOnOff
+                | CommandId::StopWithOnOff
         ));
 
-    fn dataver(&self) -> u32 {
-        self.dataver.get()
+    fn set_level(&self, level: u8) -> Option<u8> {
+        // This is where business logic is implemented to physically change the level.
+        info!("LevelControlHandler::set_level: setting level to {}", level);
+        self.current_level.set(level);
+        Some(level)
     }
 
-    fn dataver_changed(&self) {
-        self.dataver.changed();
+    fn get_level(&self) -> Option<u8> {
+        Some(self.current_level.get())
     }
 
-    async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        Ok(Nullable::some(self.level.get()))
+    fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+        let val = self.start_up_current_level.take();
+        self.start_up_current_level.set(val.clone());
+        Ok(val)
     }
 
-    async fn options(&self, _ctx: impl ReadContext) -> Result<OptionsBitmap, Error> {
-        Ok(OptionsBitmap::empty())
-    }
-
-    async fn set_options(
-        &self,
-        _ctx: impl WriteContext,
-        _value: OptionsBitmap,
-    ) -> Result<(), Error> {
+    fn set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+        self.start_up_current_level.set(value);
         Ok(())
-    }
-
-    async fn on_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        Ok(Nullable::none())
-    }
-
-    async fn set_on_level(
-        &self,
-        _ctx: impl WriteContext,
-        _value: Nullable<u8>,
-    ) -> Result<(), Error> {
-        Ok(())
-    }
-
-    async fn handle_move_to_level(
-        &self,
-        ctx: impl InvokeContext,
-        request: MoveToLevelRequest<'_>,
-    ) -> Result<(), Error> {
-        info!("Moving to level: {}", request.level()?);
-
-        self.set_level(request.level()?, ctx);
-
-        Ok(())
-    }
-
-    async fn handle_move(
-        &self,
-        _ctx: impl InvokeContext,
-        request: MoveRequest<'_>,
-    ) -> Result<(), Error> {
-        info!(
-            "Moving {:?} with rate: {:?}",
-            request.move_mode()?,
-            request.rate()?
-        );
-
-        Ok(())
-    }
-
-    async fn handle_step(
-        &self,
-        _ctx: impl InvokeContext,
-        request: StepRequest<'_>,
-    ) -> Result<(), Error> {
-        info!(
-            "Stepping {:?} with step size: {} and transition time: {:?}",
-            request.step_mode()?,
-            request.step_size()?,
-            request.transition_time()?
-        );
-
-        Ok(())
-    }
-
-    async fn handle_stop(
-        &self,
-        _ctx: impl InvokeContext,
-        _request: StopRequest<'_>,
-    ) -> Result<(), Error> {
-        info!("Stopping");
-
-        Ok(())
-    }
-
-    async fn handle_move_to_level_with_on_off(
-        &self,
-        ctx: impl InvokeContext,
-        request: MoveToLevelWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        info!("Moving to level with on/off: {}", request.level()?);
-
-        self.set_level(request.level()?, ctx);
-
-        Ok(())
-    }
-
-    async fn handle_move_with_on_off(
-        &self,
-        _ctx: impl InvokeContext,
-        request: MoveWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        info!(
-            "Moving with on/off: {:?} with rate: {:?}",
-            request.move_mode()?,
-            request.rate()?
-        );
-
-        Ok(())
-    }
-
-    async fn handle_step_with_on_off(
-        &self,
-        _ctx: impl InvokeContext,
-        request: StepWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        info!(
-            "Stepping with on/off: {:?} with step size: {} and transition time: {:?}",
-            request.step_mode()?,
-            request.step_size()?,
-            request.transition_time()?
-        );
-
-        Ok(())
-    }
-
-    async fn handle_stop_with_on_off(
-        &self,
-        _ctx: impl InvokeContext,
-        _request: StopWithOnOffRequest<'_>,
-    ) -> Result<(), Error> {
-        info!("Stopping with on/off");
-
-        Ok(())
-    }
-
-    async fn handle_move_to_closest_frequency(
-        &self,
-        _ctx: impl InvokeContext,
-        _request: MoveToClosestFrequencyRequest<'_>,
-    ) -> Result<(), Error> {
-        Err(ErrorCode::InvalidAction.into())
     }
 }

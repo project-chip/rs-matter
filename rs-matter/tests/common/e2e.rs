@@ -26,6 +26,7 @@ use embassy_sync::{
 
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::KeyPair;
+use rs_matter::dm::clusters::on_off::test::TestOnOffDeviceLogic;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
@@ -66,6 +67,7 @@ pub struct E2eRunner {
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
     subscriptions: Subscriptions<1>,
     cat_ids: NocCatIds,
+    on_off_hooks: TestOnOffDeviceLogic,
 }
 
 impl E2eRunner {
@@ -90,6 +92,7 @@ impl E2eRunner {
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
             cat_ids,
+            on_off_hooks: TestOnOffDeviceLogic::new(),
         }
     }
 

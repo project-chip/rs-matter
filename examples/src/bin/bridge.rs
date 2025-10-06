@@ -27,8 +27,11 @@ use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::clusters::on_off::{
+    self, test::TestOnOffDeviceLogic, NoLevelControl, OnOffHandler, OnOffHooks,
+};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
 use rs_matter::dm::endpoints;
@@ -71,8 +74,32 @@ fn main() -> Result<(), Error> {
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Our on-off clusters
+    let on_off_device_logic_ep2 = TestOnOffDeviceLogic::new();
+    let on_off_handler_ep2: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(
+            Dataver::new_rand(matter.rand()),
+            2,
+            &on_off_device_logic_ep2,
+        );
+    on_off_handler_ep2.init(None);
+
+    let on_off_device_logic_ep3 = TestOnOffDeviceLogic::new();
+    let on_off_handler_ep3: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(
+            Dataver::new_rand(matter.rand()),
+            3,
+            &on_off_device_logic_ep3,
+        );
+    on_off_handler_ep3.init(None);
+
     // Create the Data Model instance
-    let dm = DataModel::new(&matter, &buffers, &subscriptions, dm_handler(&matter));
+    let dm = DataModel::new(
+        &matter,
+        &buffers,
+        &subscriptions,
+        dm_handler(&matter, &on_off_handler_ep2, &on_off_handler_ep3),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -142,7 +169,7 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
-                OnOffHandler::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER
             ),
         },
         // This is the second bridged device.
@@ -155,14 +182,18 @@ const NODE: Node<'static> = Node {
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
                 BridgedHandler::CLUSTER,
-                OnOffHandler::CLUSTER
+                TestOnOffDeviceLogic::CLUSTER
             ),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter Bridge.
-fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'static {
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
+    matter: &Matter<'_>,
+    on_off_ep2: &'a on_off::OnOffHandler<'a, OH, LH>,
+    on_off_ep3: &'a on_off::OnOffHandler<'a, OH, LH>,
+) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
         endpoints::with_eth(
@@ -204,8 +235,8 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(2), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off_ep2),
                     )
                     .chain(
                         EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
@@ -216,8 +247,8 @@ fn dm_handler(matter: &Matter<'_>) -> impl AsyncMetadata + AsyncHandler + 'stati
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(3), Some(OnOffHandler::CLUSTER.id)),
-                        Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off_ep3),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),

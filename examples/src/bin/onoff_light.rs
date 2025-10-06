@@ -28,8 +28,11 @@ use embassy_time::{Duration, Timer};
 use log::info;
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{
+    self, test::TestOnOffDeviceLogic, NoLevelControl, OnOffHandler, OnOffHooks,
+};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
@@ -122,10 +125,18 @@ fn run() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Our on-off cluster
-    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
+    let on_off_device_logic = TestOnOffDeviceLogic::new();
+    let on_off_handler: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
+    on_off_handler.init(None);
 
     // Create the Data Model instance
-    let dm = DataModel::new(matter, buffers, subscriptions, dm_handler(matter, &on_off));
+    let dm = DataModel::new(
+        matter,
+        buffers,
+        subscriptions,
+        dm_handler(matter, &on_off_handler),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
@@ -149,8 +160,9 @@ fn run() -> Result<(), Error> {
         loop {
             Timer::after(Duration::from_secs(5)).await;
 
-            on_off.set(!on_off.get());
-            subscriptions.notify_cluster_changed(1, on_off::OnOffHandler::CLUSTER.id);
+            // todo should we add an on_off accessor to the handler that dose not require a context?
+            on_off_handler.set_on_off(!on_off_device_logic.on_off());
+            subscriptions.notify_cluster_changed(1, TestOnOffDeviceLogic::CLUSTER.id);
 
             info!("Lamp toggled");
         }
@@ -203,16 +215,16 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, on_off::OnOffHandler::CLUSTER),
+            clusters: clusters!(desc::DescHandler::CLUSTER, TestOnOffDeviceLogic::CLUSTER),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a>(
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
-    on_off: &'a on_off::OnOffHandler,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -229,8 +241,8 @@ fn dm_handler<'a>(
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(on_off::OnOffHandler::CLUSTER.id)),
-                        Async(on_off::HandlerAdaptor(on_off)),
+                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     ),
             ),
         ),

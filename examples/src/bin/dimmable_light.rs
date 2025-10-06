@@ -18,22 +18,30 @@
 //! An example Matter device that implements the On/Off and LevelControl cluster over Ethernet.
 #![allow(clippy::uninlined_format_args)]
 
+use core::cell::Cell;
 use core::pin::pin;
 
+use std::fs;
+use std::io::{Read, Write};
 use std::net::UdpSocket;
-
-use async_signal::{Signal, Signals};
+use std::path::PathBuf;
 
 use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use async_signal::{Signal, Signals};
+use log::{error, info, trace};
+
 use futures_lite::StreamExt;
 
-use log::info;
-
+use rs_matter::dm::clusters::decl::level_control::{
+    AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
+};
+use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
@@ -41,20 +49,19 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
-    Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
+    EpClMatcher, Node,
 };
-use rs_matter::error::Error;
+use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, Matter, MATTER_PORT};
-
-use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _, LevelControlState};
+use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
 
 use static_cell::StaticCell;
 
@@ -69,8 +76,6 @@ static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCe
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
-#[cfg(feature = "chip-test")]
-use std::path::PathBuf;
 #[cfg(feature = "chip-test")]
 const PERSIST_FILE_NAME: &str = "/tmp/chip_kvs";
 
@@ -133,31 +138,38 @@ fn run() -> Result<(), Error> {
         .uninit()
         .init_with(DefaultSubscriptions::init());
 
-    // Our on-off cluster
-    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
+    // OnOff cluster setup
+    let on_off_device_logic = OnOffDeviceLogic::new();
+    let on_off_handler =
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
 
+    // LevelControl cluster setup
     let level_control_device_logic = LevelControlDeviceLogic::new();
-    let level_control_state = LevelControlState::new(
-        &level_control_device_logic,
-        Nullable::some(42),
-        OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-        0,
-        Nullable::none(),
-        Nullable::none(),
-        Nullable::none(),
-    );
-    let level_control_cluster = level_control::LevelControlHandler::new(
+    let level_control_defaults = level_control::AttributeDefaults {
+        on_level: Nullable::some(42),
+        options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+        on_off_transition_time: 0,
+        on_transition_time: Nullable::none(),
+        off_transition_time: Nullable::none(),
+        default_move_rate: Nullable::none(),
+    };
+    let level_control_handler = level_control::LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
-        &level_control_state,
+        1,
+        &level_control_device_logic,
+        level_control_defaults,
     );
-    level_control_cluster.set_on_off_handler(&on_off);
+
+    // Cluster wiring, validation and initialisation
+    on_off_handler.init(Some(&level_control_handler));
+    level_control_handler.init(Some(&on_off_handler));
 
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
         buffers,
         subscriptions,
-        dm_handler(matter, &on_off, &level_control_cluster),
+        dm_handler(matter, &on_off_handler, &level_control_handler),
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -176,7 +188,6 @@ fn run() -> Result<(), Error> {
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
 
-    // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     info!(
@@ -187,7 +198,23 @@ fn run() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
+    #[cfg(not(feature = "chip-test"))]
     let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
+    #[cfg(feature = "chip-test")]
+    let mut transport = pin!(async {
+        // Unconditionally enable basic commissioning because the `chip-tool` tests
+        // expect that - even if the device is already commissioned,
+        // as the code path always unconditionally scans for the QR code.
+        //
+        // TODO: Figure out why the test suite has this expectation and also whether
+        // to instead just always enable printing the QR code to the console at startup
+        // rather than to enable basic commissioning.
+        matter
+            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
+            .await?;
+
+        matter.run_transport(&socket, &socket).await
+    });
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -197,9 +224,10 @@ fn run() -> Result<(), Error> {
     let path = PathBuf::from(PERSIST_FILE_NAME);
 
     info!(
-        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B",
+        "Persist memory: Persist (BSS)={}B, Persist fut (stack)={}B, Persist path={}",
         core::mem::size_of::<Psm<4096>>(),
-        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS))
+        core::mem::size_of_val(&psm.run(&path, matter, NO_NETWORKS)),
+        path.as_path().to_str().unwrap_or("none")
     );
 
     psm.load(&path, matter, NO_NETWORKS)?;
@@ -235,8 +263,8 @@ const NODE: Node<'static> = Node {
             device_types: devices!(DEV_TYPE_DIMMABLE_LIGHT),
             clusters: clusters!(
                 desc::DescHandler::CLUSTER,
-                on_off::OnOffHandler::CLUSTER,
-                level_control::LevelControlHandler::<LevelControlDeviceLogic>::CLUSTER,
+                OnOffDeviceLogic::CLUSTER,
+                LevelControlDeviceLogic::CLUSTER,
             ),
         },
     ],
@@ -244,10 +272,10 @@ const NODE: Node<'static> = Node {
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, LH: LevelControlHooks>(
+fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
     matter: &'a Matter<'a>,
-    on_off: &'a on_off::OnOffHandler,
-    level_control: &'a level_control::LevelControlHandler<'a, LH>,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    level_control: &'a level_control::LevelControlHandler<'a, LH, OH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -264,14 +292,11 @@ fn dm_handler<'a, LH: LevelControlHooks>(
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(on_off::OnOffHandler::CLUSTER.id)),
-                        Async(on_off::HandlerAdaptor(on_off)),
+                        EpClMatcher::new(Some(1), Some(OnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     )
                     .chain(
-                        EpClMatcher::new(
-                            Some(1),
-                            Some(level_control::LevelControlHandler::<'a, LH>::CLUSTER.id),
-                        ),
+                        EpClMatcher::new(Some(1), Some(LevelControlDeviceLogic::CLUSTER.id)),
                         level_control::HandlerAsyncAdaptor(level_control),
                     ),
             ),
@@ -280,17 +305,6 @@ fn dm_handler<'a, LH: LevelControlHooks>(
 }
 
 // Implementing the LevelControl business logic
-
-use core::cell::Cell;
-use rs_matter::dm::clusters::decl::level_control::OptionsBitmap;
-use rs_matter::dm::clusters::decl::level_control::{
-    AttributeId, CommandId, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
-};
-use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::Cluster;
-use rs_matter::tlv::Nullable;
-use rs_matter::with;
-
 pub struct LevelControlDeviceLogic {
     current_level: Cell<u8>,
     start_up_current_level: Cell<Nullable<u8>>,
@@ -364,5 +378,154 @@ impl LevelControlHooks for LevelControlDeviceLogic {
     fn set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
         self.start_up_current_level.set(value);
         Ok(())
+    }
+}
+
+// Implementing the OnOff business logic
+
+// A simple serializer and deserializer for persisting the OnOff state in a single byte.
+// Stores the on_off state in the first bit.
+// Stores the start_up_on_off state in the remaining bits.
+#[derive(Default)]
+struct OnOffPersistentState {
+    on_off: bool,
+    start_up_on_off: Option<StartUpOnOffEnum>,
+}
+
+impl OnOffPersistentState {
+    fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
+        info!(
+            "to_bytes_from_values: got on_off: {} | start_up_on_off: {:?}",
+            on_off, start_up_on_off
+        );
+        let on_off = on_off as u8;
+        let start_up_on_off: u8 = match start_up_on_off {
+            Some(StartUpOnOffEnum::Off) => 0,
+            Some(StartUpOnOffEnum::On) => 1,
+            Some(StartUpOnOffEnum::Toggle) => 2,
+            None => 3,
+        };
+        info!(
+            "to_bytes_from_values: vals before writing on_off: {} | start_up_on_off: {}",
+            on_off, start_up_on_off
+        );
+        info!("final val: {}", on_off + (start_up_on_off << 1));
+        on_off + (start_up_on_off << 1)
+    }
+
+    fn from_bytes(data: u8) -> Result<Self, Error> {
+        Ok(Self {
+            on_off: data & 1 != 0,
+            start_up_on_off: match data >> 1 {
+                0 => Some(StartUpOnOffEnum::Off),
+                1 => Some(StartUpOnOffEnum::On),
+                2 => Some(StartUpOnOffEnum::Toggle),
+                3 => None,
+                _ => return Err(ErrorCode::Failure.into()),
+            },
+        })
+    }
+}
+
+#[derive(Default)]
+pub struct OnOffDeviceLogic {
+    on_off: Cell<bool>,
+    start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+    storage_path: PathBuf,
+}
+
+const STORAGE_FILE_NAME: &str = "rs-matter-on-off-state";
+
+impl OnOffDeviceLogic {
+    pub fn new() -> Self {
+        let storage_path = std::env::temp_dir().join(STORAGE_FILE_NAME);
+        info!(
+            "OnOffDeviceLogic using storage path: {}",
+            storage_path.as_path().to_str().unwrap_or("none")
+        );
+
+        let persisted_state = match fs::File::open(storage_path.as_path()) {
+            Ok(mut file) => {
+                let mut buf: [u8; 1] = [0];
+                file.read_exact(&mut buf).unwrap();
+
+                trace!("OnOffDeviceLogic::new: read from storage: {:0x}", buf[0]);
+
+                OnOffPersistentState::from_bytes(buf[0]).unwrap()
+            }
+            Err(_) => OnOffPersistentState::default(),
+        };
+
+        Self {
+            on_off: Cell::new(persisted_state.on_off),
+            start_up_on_off: Cell::new(persisted_state.start_up_on_off),
+            storage_path,
+        }
+    }
+
+    fn save_state(&self) -> Result<(), Error> {
+        let mut file = fs::File::create(self.storage_path.as_path())?;
+
+        let value = OnOffPersistentState::to_bytes_from_values(
+            self.on_off.get(),
+            self.start_up_on_off.get(),
+        );
+
+        let buf = &[value];
+
+        trace!("save_storage: wrote {:0x}", value);
+
+        file.write_all(buf)?;
+
+        Ok(())
+    }
+}
+
+impl OnOffHooks for OnOffDeviceLogic {
+    const CLUSTER: Cluster<'static> = on_off_cluster::FULL_CLUSTER
+        .with_revision(6)
+        .with_features(on_off_cluster::Feature::LIGHTING.bits())
+        .with_attrs(with!(
+            required;
+            on_off_cluster::AttributeId::OnOff
+            | on_off_cluster::AttributeId::GlobalSceneControl
+            | on_off_cluster::AttributeId::OnTime
+            | on_off_cluster::AttributeId::OffWaitTime
+            | on_off_cluster::AttributeId::StartUpOnOff
+        ))
+        .with_cmds(with!(
+            on_off_cluster::CommandId::Off
+                | on_off_cluster::CommandId::On
+                | on_off_cluster::CommandId::Toggle
+                | on_off_cluster::CommandId::OffWithEffect
+                | on_off_cluster::CommandId::OnWithRecallGlobalScene
+                | on_off_cluster::CommandId::OnWithTimedOff
+        ));
+
+    fn on_off(&self) -> bool {
+        self.on_off.get()
+    }
+
+    fn set_on_off(&self, on: bool) {
+        self.on_off.set(on);
+        if let Err(err) = self.save_state() {
+            error!("Error saving state: {}", err);
+        }
+    }
+
+    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
+        match self.start_up_on_off.get() {
+            Some(value) => Nullable::some(value),
+            None => Nullable::none(),
+        }
+    }
+
+    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+        self.start_up_on_off.set(value.into_option());
+        self.save_state()
+    }
+
+    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
+        // no effect
     }
 }

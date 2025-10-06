@@ -16,7 +16,11 @@
  */
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _, DescHandler};
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _, OnOffHandler};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
+use rs_matter::dm::clusters::on_off::{
+    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler,
+    OnOffHooks,
+};
 use rs_matter::dm::devices::{DEV_TYPE_ON_OFF_LIGHT, DEV_TYPE_ROOT_NODE};
 use rs_matter::dm::endpoints::{with_eth, with_sys, EthHandler, SysHandler, ROOT_ENDPOINT_ID};
 use rs_matter::dm::{
@@ -32,16 +36,16 @@ use crate::common::e2e::E2eRunner;
 use super::echo_cluster::{self, EchoHandler};
 
 /// A sample handler for E2E IM tests.
-pub struct E2eTestHandler<'a>(
+pub struct E2eTestHandler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     handler_chain_type!(
-        EpClMatcher => Async<on_off::HandlerAdaptor<OnOffHandler>>,
+        EpClMatcher => on_off::HandlerAsyncAdaptor<OnOffHandler<'a, OH, LH>>,
         EpClMatcher => Async<EchoHandler>,
         EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'static>>>,
         EpClMatcher => Async<EchoHandler>
         | EthHandler<'a, SysHandler<'a, EmptyHandler>>),
 );
 
-impl<'a> E2eTestHandler<'a> {
+impl<'a, OH: OnOffHooks, LH: LevelControlHooks> E2eTestHandler<'a, OH, LH> {
     pub const NODE: Node<'static> = Node {
         id: 0,
         endpoints: &[
@@ -54,7 +58,7 @@ impl<'a> E2eTestHandler<'a> {
                 id: 1,
                 clusters: clusters!(
                     DescHandler::CLUSTER,
-                    OnOffHandler::CLUSTER,
+                    OnOffHandler::<'_, TestOnOffDeviceLogic, NoLevelControl>::CLUSTER,
                     echo_cluster::CLUSTER,
                 ),
                 device_types: &[DEV_TYPE_ON_OFF_LIGHT],
@@ -62,7 +66,7 @@ impl<'a> E2eTestHandler<'a> {
         ],
     };
 
-    pub fn new(matter: &'a Matter<'a>) -> Self {
+    pub fn new(matter: &'a Matter<'a>, on_off: on_off::OnOffHandler<'a, OH, LH>) -> Self {
         let handler = with_eth(
             &(),
             &(),
@@ -84,8 +88,8 @@ impl<'a> E2eTestHandler<'a> {
             Async(EchoHandler::new(3, Dataver::new_rand(matter.rand()))),
         )
         .chain(
-            EpClMatcher::new(Some(1), Some(OnOffHandler::CLUSTER.id)),
-            Async(OnOffHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+            EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+            on_off::HandlerAsyncAdaptor(on_off),
         );
 
         Self(handler)
@@ -100,7 +104,7 @@ impl<'a> E2eTestHandler<'a> {
     }
 }
 
-impl AsyncHandler for E2eTestHandler<'_> {
+impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncHandler for E2eTestHandler<'a, OH, LH> {
     fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
         false
     }
@@ -126,7 +130,7 @@ impl AsyncHandler for E2eTestHandler<'_> {
     }
 }
 
-impl AsyncMetadata for E2eTestHandler<'_> {
+impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncMetadata for E2eTestHandler<'a, OH, LH> {
     type MetadataGuard<'g>
         = Node<'g>
     where
@@ -137,9 +141,13 @@ impl AsyncMetadata for E2eTestHandler<'_> {
     }
 }
 
-impl E2eRunner {
+impl<'a> E2eRunner {
     // For backwards compatibility
-    pub fn handler(&self) -> E2eTestHandler<'_> {
-        E2eTestHandler::new(&self.matter)
+    pub fn handler(&self) -> E2eTestHandler<'_, TestOnOffDeviceLogic, NoLevelControl> {
+        let on_off_handler: OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl> =
+            on_off::OnOffHandler::new(Dataver::new_rand(self.matter.rand()), 1, &self.on_off_hooks);
+        on_off_handler.init(None);
+
+        E2eTestHandler::new(&self.matter, on_off_handler)
     }
 }
