@@ -37,7 +37,8 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -123,12 +124,12 @@ fn run() -> Result<(), Error> {
     // Our on-off cluster
     let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
 
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = dm_handler(matter, &on_off);
+    // Create the Data Model instance
+    let dm = DataModel::new(matter, buffers, subscriptions, dm_handler(matter, &on_off));
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(matter, buffers, subscriptions, &dm_handler);
+    let responder = DefaultResponder::new(&dm);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
@@ -139,8 +140,8 @@ fn run() -> Result<(), Error> {
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
-    // Run the background job the handler might be having
-    let mut dm_handler_job = pin!(dm_handler.run());
+    // Run the background job of the data model
+    let mut dm_job = pin!(dm.run());
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
@@ -149,7 +150,7 @@ fn run() -> Result<(), Error> {
             Timer::after(Duration::from_secs(5)).await;
 
             on_off.set(!on_off.get());
-            subscriptions.notify_changed();
+            subscriptions.notify_cluster_changed(1, on_off::OnOffHandler::CLUSTER.id);
 
             info!("Lamp toggled");
         }
@@ -187,7 +188,7 @@ fn run() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select3(&mut respond, &mut device, &mut dm_handler_job).coalesce(),
+        select3(&mut respond, &mut device, &mut dm_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.

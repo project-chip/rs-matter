@@ -22,8 +22,12 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
+use async_signal::{Signal, Signals};
+
 use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+use futures_lite::StreamExt;
 
 use log::info;
 
@@ -37,7 +41,8 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -146,14 +151,18 @@ fn run() -> Result<(), Error> {
         &level_control_state,
     );
     level_control_cluster.set_on_off_handler(&on_off);
-    let mut level_control_job = pin!(level_control_cluster.run());
 
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = dm_handler(matter, &on_off, &level_control_cluster);
+    // Create the Data Model instance
+    let dm = DataModel::new(
+        matter,
+        buffers,
+        subscriptions,
+        dm_handler(matter, &on_off, &level_control_cluster),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(matter, buffers, subscriptions, &dm_handler);
+    let responder = DefaultResponder::new(&dm);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
@@ -164,8 +173,8 @@ fn run() -> Result<(), Error> {
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
-    // Run the background job the handler might be having
-    let mut dm_handler_job = pin!(dm_handler.run());
+    // Run the background job of the data model
+    let mut dm_job = pin!(dm.run());
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -197,12 +206,19 @@ fn run() -> Result<(), Error> {
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
 
+    // Listen to SIGTERM because at the end of the test we'll receive it
+    let mut term_signal = Signals::new([Signal::Term])?;
+    let mut term = pin!(async {
+        term_signal.next().await;
+        Ok(())
+    });
+
     // Combine all async tasks in a single one
     let all = select4(
         &mut transport,
         &mut mdns,
         &mut persist,
-        select3(&mut respond, &mut dm_handler_job, &mut level_control_job).coalesce(),
+        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.

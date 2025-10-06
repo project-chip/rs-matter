@@ -97,10 +97,11 @@ where
         &mut self,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         mut tw: T,
+        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(item, &mut tw).await;
+        let result = self.do_process_read(item, &mut tw, notify).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -114,12 +115,13 @@ where
         &mut self,
         item: &Result<AttrDetails<'_>, AttrStatus>,
         mut tw: T,
+        notify: &dyn ChangeNotify,
     ) -> Result<(), Error> {
         let result = match item {
             Ok(attr) => {
                 let pos = tw.get_tail();
 
-                let result = self.read(attr, &mut tw).await;
+                let result = self.read(attr, &mut tw, notify).await;
 
                 match result {
                     Ok(()) => Ok(None),
@@ -150,9 +152,10 @@ where
         &'t mut self,
         attr: &'t AttrDetails<'_>,
         tw: T,
+        notify: &'t dyn ChangeNotify,
     ) -> impl Future<Output = Result<(), Error>> + 't {
         self.handler.read(
-            ReadContextInstance::new(self.exchange, &self.handler, &self.buffers, attr),
+            ReadContextInstance::new(self.exchange, &self.handler, &self.buffers, attr, notify),
             ReadReplyInstance::new(attr, tw),
         )
     }

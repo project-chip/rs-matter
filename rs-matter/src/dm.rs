@@ -70,10 +70,11 @@ pub struct DataModel<'a, const N: usize, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
-    handler: T,
+    matter: &'a Matter<'a>,
+    buffers: &'a B,
     subscriptions: &'a Subscriptions<N>,
     subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, N>>,
-    buffers: &'a B,
+    handler: T,
 }
 
 impl<'a, const N: usize, B, T> DataModel<'a, N, B, T>
@@ -83,21 +84,40 @@ where
 {
     /// Create the data model.
     ///
-    /// The parameters are as follows:
-    /// * `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
-    /// * `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
+    /// # Arguments
+    /// - `matter` - a reference to the `Matter` instance
+    /// - `buffers` - a reference to an implementation of `BufferAccess<IMBuffer>` which is used for allocating RX and TX buffers on the fly, when necessary
+    /// - `subscriptions` - a reference to a `Subscriptions<N>` struct which is used for managing subscriptions. `N` designates the maximum
     ///   number of subscriptions that can be managed by this handler.
-    /// * `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
+    /// - `handler` - an instance of type `T` which implements the `DataModelHandler` trait. This instance is used for interacting with the underlying
     ///   clusters of the data model. Note that the expectations is for the user to provide a handler that handles the Matter system clusters
     ///   as well (Endpoint 0), possibly by decorating her own clusters with the `rs_matter::dm::root_endpoint::with_` methods
     #[inline(always)]
-    pub const fn new(buffers: &'a B, subscriptions: &'a Subscriptions<N>, handler: T) -> Self {
+    pub const fn new(
+        matter: &'a Matter<'a>,
+        buffers: &'a B,
+        subscriptions: &'a Subscriptions<N>,
+        handler: T,
+    ) -> Self {
         Self {
-            handler,
+            matter,
+            buffers,
             subscriptions,
             subscriptions_buffers: RefCell::new(heapless::Vec::new()),
-            buffers,
+            handler,
         }
+    }
+
+    /// Get a reference to the `Matter` instance this data model is associated with.
+    pub const fn matter(&self) -> &'a Matter<'a> {
+        self.matter
+    }
+
+    /// Run the Data Model instance.
+    pub async fn run(&self) -> Result<(), Error> {
+        let ctx = HandlerContextInstance::new(self.matter, &self.handler, self.buffers, self);
+
+        self.handler.run(&ctx).await
     }
 
     /// Answer a responding exchange using the `DataModelHandler` instance wrapped by this exchange handler.
@@ -174,7 +194,7 @@ where
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
         );
 
-        resp.respond(&mut wb, true).await?;
+        resp.respond(self, &mut wb, true).await?;
 
         Ok(())
     }
@@ -642,7 +662,7 @@ where
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
         );
 
-        let sub_valid = resp.respond(&mut wb, false).await?;
+        let sub_valid = resp.respond(self, &mut wb, false).await?;
 
         if !sub_valid {
             debug!(
@@ -776,9 +796,9 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn notify(&self, _endpt: EndptId, _clust: ClusterId) {
-        // TODO: Make use of endpt and clust
-        self.subscriptions.notify_changed();
+    fn notify(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.subscriptions
+            .notify_cluster_changed(endpoint_id, cluster_id);
     }
 }
 
@@ -825,12 +845,14 @@ where
     /// chunk if the data is too large to fit into a single Matter message.
     ///
     /// Arguments:
+    /// - `notify` - the `ChangeNotify` instance to use while processing the read requests
     /// - `wb` - the buffer to use while sending the response
     /// - `suppress_last_resp` - whether to suppress the response from the peer. When multiple Matter messages are
     ///   being sent due to chunking, this is valid for the last chunk only, as the others - by necessity need to have a
     ///   status response by the other peer
     async fn respond(
         &mut self,
+        notify: &dyn ChangeNotify,
         wb: &mut WriteBuf<'_>,
         suppress_last_resp: bool,
     ) -> Result<bool, Error> {
@@ -842,7 +864,7 @@ where
             let item = item?;
 
             loop {
-                let result = self.invoker.process_read(&item, &mut *wb).await;
+                let result = self.invoker.process_read(&item, &mut *wb, notify).await;
 
                 match result {
                     Ok(()) => break,
@@ -861,7 +883,7 @@ where
                         });
 
                         if let Some(array_attr) = array_attr {
-                            if self.send_array_items(array_attr, wb).await? {
+                            if self.send_array_items(array_attr, wb, notify).await? {
                                 break;
                             } else {
                                 return Ok(false);
@@ -888,10 +910,12 @@ where
     /// Arguments:
     /// - `attr` - the array attribute to send the items of
     /// - `wb` - the buffer to use while sending the items
+    /// - `notify` - the `ChangeNotify` instance to use while processing the read requests
     async fn send_array_items(
         &mut self,
         attr: &AttrDetails<'_>,
         wb: &mut WriteBuf<'_>,
+        notify: &dyn ChangeNotify,
     ) -> Result<bool, Error> {
         let mut attr = attr.clone();
 
@@ -903,7 +927,7 @@ where
         loop {
             let pos = wb.get_tail();
 
-            let result = self.invoker.read(&attr, &mut *wb).await;
+            let result = self.invoker.read(&attr, &mut *wb, notify).await;
 
             if result.is_err() {
                 // If we got an error, we rewind to the position before the read

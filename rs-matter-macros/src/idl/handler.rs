@@ -78,8 +78,8 @@ pub fn handler(
     if delegate {
         let run = if asynch {
             quote!(
-                async fn run(&self) -> Result<(), #krate::error::Error> {
-                    (**self).run().await
+                fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    (**self).run(ctx)
                 }
             )
         } else {
@@ -108,8 +108,8 @@ pub fn handler(
     } else {
         let run = if asynch {
             quote!(
-                async fn run(&self) -> Result<(), #krate::error::Error> {
-                    core::future::pending::<Result::<(), #krate::error::Error>>().await
+                fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                    core::future::pending::<Result::<(), #krate::error::Error>>()
                 }
             )
         } else {
@@ -270,8 +270,8 @@ pub fn handler_adaptor(
 
     let run = if asynch {
         quote!(
-            async fn run(&self) -> Result<(), #krate::error::Error> {
-                self.0.run().await
+            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                self.0.run(ctx)
             }
         )
     } else {

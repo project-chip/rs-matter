@@ -36,7 +36,7 @@ use embassy_time::{Duration, Instant};
 
 pub use crate::dm::clusters::decl::level_control::*;
 use crate::dm::clusters::{level_control, on_off::OnOffHandler};
-use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
+use crate::dm::{Cluster, Dataver, HandlerContext, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::Nullable;
 
@@ -790,7 +790,7 @@ impl<'a, H: LevelControlHooks> ClusterAsyncHandler for LevelControlHandler<'a, H
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     // Runs an async task manager for the cluster handler.
-    async fn run(&self) -> Result<(), Error> {
+    async fn run(&self, _ctx: impl HandlerContext) -> Result<(), Error> {
         loop {
             let mut task = self.task_signal.wait().await;
 
