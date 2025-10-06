@@ -168,7 +168,7 @@ impl E2eRunner {
 
         let responder = Responder::new(
             "Default",
-            DataModel::new(&self.buffers, &self.subscriptions, handler),
+            DataModel::new(&self.matter, &self.buffers, &self.subscriptions, handler),
             &self.matter,
             0,
         );

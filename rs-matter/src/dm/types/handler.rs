@@ -22,6 +22,7 @@ use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
+use crate::Matter;
 
 use super::{AttrDetails, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
@@ -46,42 +47,93 @@ impl ChangeNotify for () {
     }
 }
 
-/// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait Context {
-    /// Return the exchange object that is associated with this operation.
-    fn exchange(&self) -> &Exchange<'_>;
+/// A context super-type that is passed to the `AsyncHandler::run` method.
+///
+/// It provides access to the Matter instance and to Data Model-related objects,
+/// which could be useful in the context of executing background tasks specific for the concrete handler.
+pub trait HandlerContext {
+    /// Return the Matter object that is associated with this handler
+    fn matter(&self) -> &Matter<'_>;
 
-    /// Return the global handler that is associated with this operation.
+    /// Return the global handler that this handler is part of.
     ///
     /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
     /// access the global handler so as to invoke read/write/invoke operations on other clusters.
     fn handler(&self) -> impl AsyncHandler + '_;
 
-    /// Return the buffer pool of the Data Model, in of the that are associated with this operation.
+    /// Return the buffer pool of the Data Model.
     ///
-    /// Useful in case a concrete cluster handler needs to invoke read/write/invoke operations on
+    /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
 
-    /// Notify that the state of the cluster has changed.
-    fn notify_changed(&self);
+    /// Notify that the state of a cluster has changed.
+    ///
+    /// # Arguments
+    /// - `endpoint_id`: The endpoint ID of the cluster that has changed.
+    /// - `cluster_id`: The cluster ID of the cluster that has changed.
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId);
+}
+
+impl<T> HandlerContext for &T
+where
+    T: HandlerContext,
+{
+    fn matter(&self) -> &Matter<'_> {
+        (**self).matter()
+    }
+
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        (**self).handler()
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        (**self).buffers()
+    }
+
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        (**self).notify_cluster_changed(endpoint_id, cluster_id);
+    }
+}
+
+/// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
+pub trait Context: HandlerContext {
+    /// Return the exchange object that is associated with this operation.
+    fn exchange(&self) -> &Exchange<'_>;
+
+    /// Notify that the state of the cluster whose read/write/invoke operation is processed has changed.
+    fn notify_changed(&self) {
+        if let Some(ctx) = self.as_read_ctx() {
+            self.notify_cluster_changed(ctx.attr().endpoint_id, ctx.attr().cluster_id);
+        } else if let Some(ctx) = self.as_write_ctx() {
+            self.notify_cluster_changed(ctx.attr().endpoint_id, ctx.attr().cluster_id);
+        } else if let Some(ctx) = self.as_invoke_ctx() {
+            self.notify_cluster_changed(ctx.cmd().endpoint_id, ctx.cmd().cluster_id);
+        } else {
+            unreachable!()
+        }
+    }
 
     /// Try to upcast the context to a read context.
     /// The operation will return `Some` only if the underlying context represents a read operation.
     fn as_read_ctx(&self) -> Option<impl ReadContext> {
-        Option::<ReadContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>>::None
+        Option::<&'static ReadContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>>::None
     }
 
     /// Try to upcast the context to a write context.
     /// The operation will return `Some` only if the underlying context represents a write operation.
     fn as_write_ctx(&self) -> Option<impl WriteContext> {
-        Option::<WriteContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>>::None
+        Option::<
+            &'static WriteContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>,
+        >::None
     }
 
     /// Try to upcast the context to an invoke context.
     /// The operation will return `Some` only if the underlying context represents an invoke operation.
     fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
-        Option::<InvokeContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>>::None
+        Option::<
+            &'static InvokeContextInstance<EmptyHandler, PooledBuffers<0, NoopRawMutex, IMBuffer>>,
+        >::None
     }
 }
 
@@ -91,14 +143,6 @@ where
 {
     fn exchange(&self) -> &Exchange<'_> {
         (**self).exchange()
-    }
-
-    fn handler(&self) -> impl AsyncHandler + '_ {
-        (**self).handler()
-    }
-
-    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
-        (**self).buffers()
     }
 
     fn notify_changed(&self) {
@@ -176,12 +220,65 @@ where
     }
 }
 
+/// A concrete implementation of the `HandlerContext` trait
+pub(crate) struct HandlerContextInstance<'a, T, B> {
+    matter: &'a Matter<'a>,
+    handler: T,
+    buffers: B,
+    pub(crate) notify: &'a dyn ChangeNotify,
+}
+
+impl<'a, T, B> HandlerContextInstance<'a, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    /// Construct a new instance.
+    #[inline(always)]
+    pub(crate) const fn new(
+        matter: &'a Matter<'a>,
+        handler: T,
+        buffers: B,
+        notify: &'a dyn ChangeNotify,
+    ) -> Self {
+        Self {
+            matter,
+            handler,
+            buffers,
+            notify,
+        }
+    }
+}
+
+impl<T, B> HandlerContext for HandlerContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    fn matter(&self) -> &Matter<'_> {
+        self.matter
+    }
+
+    fn handler(&self) -> impl AsyncHandler + '_ {
+        &self.handler
+    }
+
+    fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
+        &self.buffers
+    }
+
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.notify.notify(endpoint_id, cluster_id);
+    }
+}
+
 /// A concrete implementation of the `ReadContext` trait
 pub(crate) struct ReadContextInstance<'a, T, B> {
     exchange: &'a Exchange<'a>,
     handler: T,
     buffers: B,
     attr: &'a AttrDetails<'a>,
+    pub(crate) notify: &'a dyn ChangeNotify,
 }
 
 impl<'a, T, B> ReadContextInstance<'a, T, B>
@@ -196,23 +293,25 @@ where
         handler: T,
         buffers: B,
         attr: &'a AttrDetails<'a>,
+        notify: &'a dyn ChangeNotify,
     ) -> Self {
         Self {
             exchange,
             handler,
             buffers,
             attr,
+            notify,
         }
     }
 }
 
-impl<T, B> Context for ReadContextInstance<'_, T, B>
+impl<T, B> HandlerContext for ReadContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn exchange(&self) -> &Exchange<'_> {
-        self.exchange
+    fn matter(&self) -> &Matter<'_> {
+        self.exchange().matter()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -223,8 +322,18 @@ where
         &self.buffers
     }
 
-    fn notify_changed(&self) {
-        // no-op
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.notify.notify(endpoint_id, cluster_id);
+    }
+}
+
+impl<T, B> Context for ReadContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    fn exchange(&self) -> &Exchange<'_> {
+        self.exchange
     }
 
     fn as_read_ctx(&self) -> Option<impl ReadContext> {
@@ -278,13 +387,13 @@ where
     }
 }
 
-impl<T, B> Context for WriteContextInstance<'_, T, B>
+impl<T, B> HandlerContext for WriteContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn exchange(&self) -> &Exchange<'_> {
-        self.exchange
+    fn matter(&self) -> &Matter<'_> {
+        self.exchange().matter()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -295,9 +404,18 @@ where
         &self.buffers
     }
 
-    fn notify_changed(&self) {
-        self.notify
-            .notify(self.attr.endpoint_id, self.attr.cluster_id);
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.notify.notify(endpoint_id, cluster_id);
+    }
+}
+
+impl<T, B> Context for WriteContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    fn exchange(&self) -> &Exchange<'_> {
+        self.exchange
     }
 
     fn as_write_ctx(&self) -> Option<impl WriteContext> {
@@ -355,13 +473,13 @@ where
     }
 }
 
-impl<T, B> Context for InvokeContextInstance<'_, T, B>
+impl<T, B> HandlerContext for InvokeContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn exchange(&self) -> &Exchange<'_> {
-        self.exchange
+    fn matter(&self) -> &Matter<'_> {
+        self.exchange().matter()
     }
 
     fn handler(&self) -> impl AsyncHandler + '_ {
@@ -372,9 +490,18 @@ where
         &self.buffers
     }
 
-    fn notify_changed(&self) {
-        self.notify
-            .notify(self.cmd.endpoint_id, self.cmd.cluster_id);
+    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+        self.notify.notify(endpoint_id, cluster_id);
+    }
+}
+
+impl<T, B> Context for InvokeContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
+    fn exchange(&self) -> &Exchange<'_> {
+        self.exchange
     }
 
     fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
@@ -713,7 +840,7 @@ mod asynch {
     use either::Either;
     use embassy_futures::select::select;
 
-    use crate::dm::{InvokeReply, Matcher, ReadReply};
+    use crate::dm::{HandlerContext, InvokeReply, Matcher, ReadReply};
     use crate::error::{Error, ErrorCode};
     use crate::utils::select::Coalesce;
 
@@ -794,7 +921,7 @@ mod asynch {
 
         /// A hook (a scheduling facility) for placing handler-impl-specific code that needs to run
         /// asynchronously - forever and in the "background".
-        fn run(&self) -> impl Future<Output = Result<(), Error>> {
+        fn run(&self, _ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
             // Default implementation pends forever.
             // This is useful for handlers that do not need to run any async operations in the background.
             core::future::pending::<Result<(), Error>>()
@@ -837,8 +964,8 @@ mod asynch {
             (**self).invoke(ctx, reply)
         }
 
-        fn run(&self) -> impl Future<Output = Result<(), Error>> {
-            (**self).run()
+        fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+            (**self).run(ctx)
         }
     }
 
@@ -878,8 +1005,8 @@ mod asynch {
             (**self).invoke(ctx, reply)
         }
 
-        fn run(&self) -> impl Future<Output = Result<(), Error>> {
-            (**self).run()
+        fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+            (**self).run(ctx)
         }
     }
 
@@ -917,6 +1044,10 @@ mod asynch {
             reply: impl InvokeReply,
         ) -> impl Future<Output = Result<(), Error>> {
             self.1.invoke(ctx, reply)
+        }
+
+        fn run(&self, ctx: impl HandlerContext) -> impl Future<Output = Result<(), Error>> {
+            self.1.run(ctx)
         }
     }
 
@@ -1033,9 +1164,9 @@ mod asynch {
             }
         }
 
-        async fn run(&self) -> Result<(), Error> {
-            let mut handler = pin!(self.handler.run());
-            let mut next = pin!(self.next.run());
+        async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+            let mut handler = pin!(self.handler.run(&ctx));
+            let mut next = pin!(self.next.run(&ctx));
 
             select(&mut handler, &mut next).coalesce().await
         }

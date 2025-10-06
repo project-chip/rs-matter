@@ -51,7 +51,8 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -136,18 +137,28 @@ fn main() -> Result<(), Error> {
                 WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
             );
 
-            let dm_handler = dm_handler(&matter, &on_off, &wpa_supp, &networks);
-            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
+            let dm = DataModel::new(
+                &matter,
+                &buffers,
+                &subscriptions,
+                dm_handler(&matter, &on_off, &wpa_supp, &networks),
+            );
+            let responder = DefaultResponder::new(&dm);
 
-            select(responder.run::<4, 4>(), dm_handler.run()).await
+            select(responder.run::<4, 4>(), dm.run()).await
         } else {
             let nm =
                 NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
 
-            let dm_handler = dm_handler(&matter, &on_off, &nm, &networks);
-            let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
+            let dm = DataModel::new(
+                &matter,
+                &buffers,
+                &subscriptions,
+                dm_handler(&matter, &on_off, &nm, &networks),
+            );
+            let responder = DefaultResponder::new(&dm);
 
-            select(responder.run::<4, 4>(), dm_handler.run()).await
+            select(responder.run::<4, 4>(), dm.run()).await
         }
     });
 
@@ -158,7 +169,7 @@ fn main() -> Result<(), Error> {
             Timer::after(Duration::from_secs(5)).await;
 
             on_off.set(!on_off.get());
-            subscriptions.notify_changed();
+            subscriptions.notify_cluster_changed(1, on_off::OnOffHandler::CLUSTER.id);
 
             info!("Lamp toggled");
         }

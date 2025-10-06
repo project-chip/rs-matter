@@ -41,7 +41,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{
-    self, ClusterAsyncHandler as _, NoLevelControl, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
+    self, EffectVariantEnum, NoLevelControl, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
 };
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
@@ -52,7 +52,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
+    EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -137,21 +138,25 @@ fn main() -> Result<(), Error> {
     // Our on-off cluster
     let on_off_device_logic = OnOffDeviceLogic::new();
     let on_off_handler: OnOffHandler<OnOffDeviceLogic, NoLevelControl> =
-        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
+        OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
     on_off_handler.init(None);
-    let mut on_off_job = pin!(on_off_handler.run());
 
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our cluster handlers
-    let dm_handler = dm_handler(matter, unit_testing_data, &on_off_handler);
+    // Create the Data Model instance
+    let dm = DataModel::new(
+        matter,
+        buffers,
+        subscriptions,
+        dm_handler(matter, unit_testing_data, &on_off_handler),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(matter, buffers, subscriptions, dm_handler);
+    let responder = DefaultResponder::new(&dm);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
@@ -161,6 +166,9 @@ fn main() -> Result<(), Error> {
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
+
+    // Run the background job of the data model
+    let mut dm_job = pin!(dm.run());
 
     // Create, load and run the persister
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -214,7 +222,7 @@ fn main() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select3(&mut respond, &mut term, &mut on_off_job).coalesce(),
+        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -253,7 +261,7 @@ const NODE: Node<'static> = Node {
 fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
     matter: &'a Matter<'a>,
     unit_testing_data: &'a RefCell<UnitTestingHandlerData>,
-    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
+    on_off: &'a OnOffHandler<'a, OH, LH>,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
@@ -334,19 +342,19 @@ impl OnOffHooks for OnOffDeviceLogic {
         self.on_off.set(on);
     }
 
-    fn start_up_on_off(&self) -> Nullable<on_off::StartUpOnOffEnum> {
+    fn start_up_on_off(&self) -> Nullable<StartUpOnOffEnum> {
         match self.start_up_on_off.get() {
             Some(value) => Nullable::some(value),
             None => Nullable::none(),
         }
     }
 
-    fn set_start_up_on_off(&self, value: Nullable<on_off::StartUpOnOffEnum>) -> Result<(), Error> {
+    fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error> {
         self.start_up_on_off.set(value.into_option());
         Ok(())
     }
 
-    async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
+    async fn handle_off_with_effect(&self, _effect: EffectVariantEnum) {
         // no effect
     }
 }

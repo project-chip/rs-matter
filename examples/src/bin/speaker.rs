@@ -23,7 +23,7 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
@@ -33,20 +33,18 @@ use rs_matter::dm::clusters::decl::level_control::{
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{
-    self, AttributeDefaults, ClusterAsyncHandler as _, LevelControlHandler, LevelControlHooks,
-    OptionsBitmap,
+    self, AttributeDefaults, LevelControlHandler, LevelControlHooks, OptionsBitmap,
 };
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{
-    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, OnOffHandler, OnOffHooks,
-};
+use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
+    EpClMatcher, Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -81,7 +79,7 @@ fn main() -> Result<(), Error> {
     // OnOff cluster setup
     let on_off_device_logic = TestOnOffDeviceLogic::new();
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
 
     // LevelControl cluster setup
     let level_control_device_logic = LevelControlDeviceLogic::new();
@@ -95,6 +93,7 @@ fn main() -> Result<(), Error> {
     };
     let level_control_handler = LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
+        1,
         &level_control_device_logic,
         level_control_defaults,
     );
@@ -103,22 +102,24 @@ fn main() -> Result<(), Error> {
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
 
-    let mut level_control_job = pin!(level_control_handler.run());
-    let mut on_off_job = pin!(on_off_handler.run());
-
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
-    let dm_handler = dm_handler(&matter, &on_off_handler, &level_control_handler);
+    // Create the Data Model instance
+    let dm = DataModel::new(
+        &matter,
+        &buffers,
+        &subscriptions,
+        dm_handler(&matter, &on_off_handler, &level_control_handler),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(&matter, &buffers, &subscriptions, &dm_handler);
+    let responder = DefaultResponder::new(&dm);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
-    // Run the background job the handler might be having
-    let mut dm_handler_job = pin!(dm_handler.run());
+    // Run the background job of the data model
+    let mut dm_job = pin!(dm.run());
 
     // Create the Matter UDP socket
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
@@ -140,13 +141,7 @@ fn main() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select4(
-            &mut respond,
-            &mut dm_handler_job,
-            &mut on_off_job,
-            &mut level_control_job,
-        )
-        .coalesce(),
+        select(&mut respond, &mut dm_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.

@@ -26,22 +26,22 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 
-use embassy_futures::select::select4;
+use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use async_signal::{Signal, Signals};
 use log::{error, info, trace};
+
+use futures_lite::StreamExt;
 
 use rs_matter::dm::clusters::decl::level_control::{
     AttributeId, CommandId, OptionsBitmap, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
 };
 use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
-use rs_matter::dm::clusters::level_control::LevelControlHooks;
-use rs_matter::dm::clusters::level_control::{self, ClusterAsyncHandler as _};
+use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{
-    self, ClusterAsyncHandler as _, OnOffHooks, StartUpOnOffEnum,
-};
+use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
@@ -49,7 +49,8 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
+    EpClMatcher, Node,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -140,7 +141,7 @@ fn run() -> Result<(), Error> {
     // OnOff cluster setup
     let on_off_device_logic = OnOffDeviceLogic::new();
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), &on_off_device_logic);
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
 
     // LevelControl cluster setup
     let level_control_device_logic = LevelControlDeviceLogic::new();
@@ -154,6 +155,7 @@ fn run() -> Result<(), Error> {
     };
     let level_control_handler = level_control::LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
+        1,
         &level_control_device_logic,
         level_control_defaults,
     );
@@ -162,16 +164,17 @@ fn run() -> Result<(), Error> {
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
 
-    // todo remove in all examlpes and e2e tests
-    let mut level_control_job = pin!(level_control_handler.run());
-    let mut on_off_job = pin!(on_off_handler.run());
-
-    // Assemble our Data Model handler by composing the predefined Root Endpoint handler with the On/Off handler
-    let dm_handler = dm_handler(matter, &on_off_handler, &level_control_handler);
+    // Create the Data Model instance
+    let dm = DataModel::new(
+        matter,
+        buffers,
+        subscriptions,
+        dm_handler(matter, &on_off_handler, &level_control_handler),
+    );
 
     // Create a default responder capable of handling up to 3 subscriptions
     // All other subscription requests will be turned down with "resource exhausted"
-    let responder = DefaultResponder::new(matter, buffers, subscriptions, &dm_handler);
+    let responder = DefaultResponder::new(&dm);
     info!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
         core::mem::size_of_val(&responder),
@@ -182,8 +185,8 @@ fn run() -> Result<(), Error> {
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
-    // Run the background job the handler might be having
-    let mut dm_handler_job = pin!(dm_handler.run());
+    // Run the background job of the data model
+    let mut dm_job = pin!(dm.run());
 
     let socket = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
@@ -231,18 +234,19 @@ fn run() -> Result<(), Error> {
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
 
+    // Listen to SIGTERM because at the end of the test we'll receive it
+    let mut term_signal = Signals::new([Signal::Term])?;
+    let mut term = pin!(async {
+        term_signal.next().await;
+        Ok(())
+    });
+
     // Combine all async tasks in a single one
     let all = select4(
         &mut transport,
         &mut mdns,
         &mut persist,
-        select4(
-            &mut respond,
-            &mut dm_handler_job,
-            &mut level_control_job,
-            &mut on_off_job,
-        )
-        .coalesce(),
+        select3(&mut respond, &mut dm_job, &mut term).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
