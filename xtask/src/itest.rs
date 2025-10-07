@@ -43,10 +43,8 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestCommissioningWindow",
 ];
 
-/// The default Git reference to use for the Chip repository
-pub const CHIP_DEFAULT_GITREF: &str = "v1.3.0.0"; //"master";
 /// The directory where the Chip repository will be cloned
-const CHIP_DIR: &str = ".build/itest/connectedhomeip";
+const CHIP_DIR: &str = "matter_cpp/repo";
 
 /// The tooling that is checked for presence in the command line
 const REQUIRED_TOOLING: &[&str] = &[
@@ -138,8 +136,8 @@ impl ITests {
     /// - Clone the Chip repo if it doesn't exist, or updates it if it does
     /// - Activate the Chip environment
     /// - Build `chip-tool`
-    pub fn setup(&self, chip_gitref: Option<&str>, force_rebuild: bool) -> anyhow::Result<()> {
-        self.setup_chip_tool(chip_gitref, force_rebuild)
+    pub fn setup(&self, force_rebuild: bool) -> anyhow::Result<()> {
+        self.setup_chip_tool(force_rebuild)
     }
 
     /// Build the executable (`chip-tool-tests`) that is to be tested with the Chip integration tests.
@@ -166,64 +164,25 @@ impl ITests {
 
     fn setup_chip_tool(
         &self,
-        chip_gitref: Option<&str>,
         force_rebuild: bool,
     ) -> anyhow::Result<()> {
         warn!("Setting up Chip environment...");
 
         let chip_dir = self.workspace_dir.join(CHIP_DIR);
-        let chip_gitref = chip_gitref.unwrap_or(CHIP_DEFAULT_GITREF);
 
         // Check system dependencies
         self.check_tooling()?;
 
-        // Clone or update Chip repository
-        if !chip_dir.exists() {
-            info!("Cloning Chip repository...");
+        if force_rebuild {
+            info!("Force rebuild requested, cleaning build artifacts...");
 
-            // Ensure parent directories exist
-            if let Some(parent) = chip_dir.parent() {
-                fs::create_dir_all(parent)
-                    .context("Failed to create parent directories for Chip")?;
-            }
-
-            let mut cmd = Command::new("git");
-
-            cmd.arg("clone")
-                .arg("https://github.com/project-chip/connectedhomeip.git")
-                .arg(&chip_dir);
-
-            if !self.print_cmd_output {
-                cmd.arg("--quiet");
-            }
-
-            self.run_command(&mut cmd)?;
-        } else {
-            info!("Chip repository already exists");
-
-            if force_rebuild {
-                info!("Force rebuild requested, cleaning build artifacts...");
-
-                let out_dir = chip_dir.join("out");
-                if out_dir.exists() {
-                    fs::remove_dir_all(&out_dir)
-                        .context("Failed to remove existing out directory")?;
-                }
+            let out_dir = chip_dir.join("out");
+            if out_dir.exists() {
+                fs::remove_dir_all(&out_dir)
+                    .context("Failed to remove existing out directory")?;
             }
         }
 
-        // Checkout the specified reference
-        info!("Checking out Chip GIT reference: {chip_gitref}...");
-
-        let mut cmd = Command::new("git");
-
-        cmd.current_dir(&chip_dir).arg("checkout").arg(chip_gitref);
-
-        if !self.print_cmd_output {
-            cmd.arg("--quiet");
-        }
-
-        self.run_command(&mut cmd)?;
 
         // Detect host platform for selective submodule initialization
         let platform = self.host_platform()?;
