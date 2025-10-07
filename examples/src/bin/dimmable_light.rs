@@ -306,8 +306,8 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
 
 // Implementing the LevelControl business logic
 pub struct LevelControlDeviceLogic {
-    current_level: Cell<u8>,
-    start_up_current_level: Cell<Nullable<u8>>,
+    current_level: Cell<Option<u8>>,
+    start_up_current_level: Cell<Option<u8>>,
 }
 
 impl Default for LevelControlDeviceLogic {
@@ -319,8 +319,8 @@ impl Default for LevelControlDeviceLogic {
 impl LevelControlDeviceLogic {
     pub const fn new() -> Self {
         Self {
-            current_level: Cell::new(1),
-            start_up_current_level: Cell::new(Nullable::none()),
+            current_level: Cell::new(Some(1)),
+            start_up_current_level: Cell::new(None),
         }
     }
 }
@@ -358,24 +358,28 @@ impl LevelControlHooks for LevelControlDeviceLogic {
                 | CommandId::StopWithOnOff
         ));
 
-    fn set_level(&self, level: u8) -> Option<u8> {
-        // This is where business logic is implemented to physically change the level.
-        info!("LevelControlHandler::set_level: setting level to {}", level);
+    fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
+        // This is where business logic is implemented to physically change the level of the device.
+        Ok(Some(level))
+    }
+
+    fn current_level(&self) -> Option<u8> {
+        self.current_level.get()
+    }
+
+    fn set_current_level(&self, level: Option<u8>) {
+        info!(
+            "LevelControlDeviceLogic::set_current_level: setting level to {:?}",
+            level
+        );
         self.current_level.set(level);
-        Some(level)
     }
 
-    fn get_level(&self) -> Option<u8> {
-        Some(self.current_level.get())
+    fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
+        Ok(self.start_up_current_level.get())
     }
 
-    fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
-        let val = self.start_up_current_level.take();
-        self.start_up_current_level.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
+    fn set_start_up_current_level(&self, value: Option<u8>) -> Result<(), Error> {
         self.start_up_current_level.set(value);
         Ok(())
     }

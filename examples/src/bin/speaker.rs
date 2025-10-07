@@ -18,7 +18,6 @@
 //! An example Matter device that implements a Speaker device over Ethernet.
 //! Demonstrates how to make use of the `rs_matter::import` macro for `LevelControl`.
 
-use core::cell::Cell;
 use core::pin::pin;
 
 use std::net::UdpSocket;
@@ -26,14 +25,10 @@ use std::net::UdpSocket;
 use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
-use log::info;
-
-use rs_matter::dm::clusters::decl::level_control::{
-    AttributeId, CommandId, FULL_CLUSTER as LEVEL_CONTROL_FULL_CLUSTER,
-};
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{
-    self, AttributeDefaults, LevelControlHandler, LevelControlHooks, OptionsBitmap,
+    self, test::LevelControlDeviceLogic, AttributeDefaults, LevelControlHandler, LevelControlHooks,
+    OptionsBitmap,
 };
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHandler, OnOffHooks};
@@ -43,8 +38,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, Node,
+    Async, AsyncHandler, AsyncMetadata, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    Node,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
@@ -54,7 +49,7 @@ use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
-use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
+use rs_matter::{clusters, devices, Matter, MATTER_PORT};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -197,73 +192,4 @@ fn dm_handler<'a, LH: LevelControlHooks, OH: OnOffHooks>(
             ),
         ),
     )
-}
-
-pub struct LevelControlDeviceLogic {
-    current_level: Cell<u8>,
-    start_up_current_level: Cell<Nullable<u8>>,
-}
-
-impl Default for LevelControlDeviceLogic {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LevelControlDeviceLogic {
-    pub const fn new() -> Self {
-        Self {
-            current_level: Cell::new(1),
-            start_up_current_level: Cell::new(Nullable::none()),
-        }
-    }
-}
-
-impl LevelControlHooks for LevelControlDeviceLogic {
-    const MIN_LEVEL: u8 = 1;
-    const MAX_LEVEL: u8 = 254;
-    const FASTEST_RATE: u8 = 50;
-    const CLUSTER: Cluster<'static> = LEVEL_CONTROL_FULL_CLUSTER
-        .with_revision(5)
-        .with_features(level_control::Feature::ON_OFF.bits())
-        .with_attrs(with!(
-            required;
-            AttributeId::CurrentLevel
-            | AttributeId::MinLevel
-            | AttributeId::MaxLevel
-            | AttributeId::OnLevel
-            | AttributeId::Options
-        ))
-        .with_cmds(with!(
-            CommandId::MoveToLevel
-                | CommandId::Move
-                | CommandId::Step
-                | CommandId::Stop
-                | CommandId::MoveToLevelWithOnOff
-                | CommandId::MoveWithOnOff
-                | CommandId::StepWithOnOff
-                | CommandId::StopWithOnOff
-        ));
-
-    fn set_level(&self, level: u8) -> Option<u8> {
-        // This is where business logic is implemented to physically change the level.
-        info!("LevelControlHandler::set_level: setting level to {}", level);
-        self.current_level.set(level);
-        Some(level)
-    }
-
-    fn get_level(&self) -> Option<u8> {
-        Some(self.current_level.get())
-    }
-
-    fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
-        let val = self.start_up_current_level.take();
-        self.start_up_current_level.set(val.clone());
-        Ok(val)
-    }
-
-    fn set_start_up_current_level(&self, value: Nullable<u8>) -> Result<(), Error> {
-        self.start_up_current_level.set(value);
-        Ok(())
-    }
 }

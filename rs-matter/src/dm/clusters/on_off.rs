@@ -747,12 +747,16 @@ impl LevelControlHooks for NoLevelControl {
     const FASTEST_RATE: u8 = 1;
     const CLUSTER: Cluster<'static> = level_control::FULL_CLUSTER;
 
-    fn set_level(&self, _level: u8) -> Option<u8> {
-        panic!("NoLevelControl: set_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
+    fn set_device_level(&self, _: u8) -> Result<Option<u8>, ()> {
+        panic!("NoLevelControl: set_device_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
     }
 
-    fn get_level(&self) -> Option<u8> {
-        panic!("NoLevelControl: get_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
+    fn current_level(&self) -> Option<u8> {
+        panic!("NoLevelControl: current_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
+    }
+
+    fn set_current_level(&self, _level: Option<u8>) {
+        panic!("NoLevelControl: set_current_level called unexpectedly - this phantom type should not be used for LevelControl functionality")
     }
 }
 
