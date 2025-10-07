@@ -242,18 +242,19 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
         // `self.hooks` holds the previous current level as supplied by the SDK consumer.
         // Hence, if this process errors, we quietly abort resulting in the previous current level.
-        if let Ok(startup_current_level) = self.hooks.start_up_current_level() {
-            if let Some(startup_current_level) = startup_current_level.into_option() {
-                // The spec fails to mention the need for this bounding.
-                let level = if startup_current_level < H::MIN_LEVEL {
-                    H::MIN_LEVEL
-                } else if startup_current_level > H::MAX_LEVEL {
-                    H::MAX_LEVEL
-                } else {
-                    startup_current_level
-                };
+        if let Ok(Some(startup_current_level)) = self.hooks.start_up_current_level() {
+            // The spec fails to mention the need for this bounding.
+            let level = if startup_current_level < H::MIN_LEVEL {
+                H::MIN_LEVEL
+            } else if startup_current_level > H::MAX_LEVEL {
+                H::MAX_LEVEL
+            } else {
+                startup_current_level
+            };
 
-                let _ = self.hooks.set_level(level);
+            match self.hooks.set_device_level(level) {
+                Ok(current_level) => self.hooks.set_current_level(current_level),
+                Err(_) => error!("Failed to set Current Level to Start Up Current Level."),
             }
         }
     }
@@ -334,9 +335,13 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         ctx: &impl HandlerContext,
         level: u8,
         is_end_of_transition: bool,
-    ) -> Option<u8> {
-        self.previous_current_level.set(self.hooks.get_level());
-        let current_level = self.hooks.set_level(level);
+    ) -> Result<Option<u8>, Error> {
+        self.previous_current_level.set(self.hooks.current_level());
+        let current_level = self
+            .hooks
+            .set_device_level(level)
+            .map_err(|_| ErrorCode::Failure)?;
+        self.hooks.set_current_level(current_level);
         let last_notification = Instant::now() - self.last_current_level_notification.get();
 
         // CurrentLevel Quiet report conditions:
@@ -352,7 +357,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
         }
 
-        current_level
+        Ok(current_level)
     }
 
     /// Checks if a command should proceed beyond the Options processing.
@@ -463,7 +468,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     ) -> Result<(), Error> {
         info!("handle_on_off_state_change");
 
-        let temp_current_level = self.hooks.get_level().ok_or(ErrorCode::Failure)?;
+        let temp_current_level = self.hooks.current_level();
 
         // use of unwrap is justified since this will option is always valid.
         let bitmap = OptionsBitmap::from_bits(0).unwrap();
@@ -476,12 +481,12 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         match on {
             true => {
                 let _ = self
-                    .set_level_and_notify(ctx, H::MIN_LEVEL, false)
+                    .set_level_and_notify(ctx, H::MIN_LEVEL, false)?
                     .ok_or(ErrorCode::Failure)?;
 
                 let target_level = match self.on_level().into_option() {
                     Some(on_level) => on_level,
-                    None => temp_current_level,
+                    None => temp_current_level.ok_or(ErrorCode::Failure)?,
                 };
 
                 // 1.6.6.12. OnTransitionTime Attribute
@@ -525,9 +530,8 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 )
                 .await?;
 
-                // todo we may need to separate the device logic from attribute storage as users will implement the set_level to both set and store the level. Hence, calling `set_level` here will probably switch the device on again.
                 if self.on_level().is_none() {
-                    let _ = self.hooks.set_level(temp_current_level);
+                    self.hooks.set_current_level(temp_current_level);
                 }
             }
         };
@@ -615,7 +619,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         if !block {
             self.task_signal.signal(Task::Stop);
         }
-        if self.hooks.get_level() == Some(level) {
+        if self.hooks.current_level() == Some(level) {
             self.update_coupled_on_off(level, with_on_off)?;
             return Ok(());
         }
@@ -623,7 +627,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         match transition_time {
             None | Some(0) => {
                 let level = self
-                    .set_level_and_notify(ctx, level, true)
+                    .set_level_and_notify(ctx, level, true)?
                     .ok_or(ErrorCode::Failure)?;
                 self.write_remaining_time_quietly(ctx, Duration::from_millis(0), true)?;
 
@@ -658,7 +662,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         let event_start_time = Instant::now();
 
         // Check if current_level is null. If so, return error.
-        let mut current_level = match self.hooks.get_level() {
+        let mut current_level = match self.hooks.current_level() {
             Some(cl) => cl,
             None => return Err(ErrorCode::Failure.into()),
         };
@@ -691,7 +695,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 current_level
             );
             let current_level = self
-                .set_level_and_notify(ctx, current_level, is_transition_end)
+                .set_level_and_notify(ctx, current_level, is_transition_end)?
                 .ok_or(ErrorCode::Failure)?;
 
             if is_transition_start || is_transition_end {
@@ -766,7 +770,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         }
 
         // Exit if we are already at the limit in the direct of movement.
-        if let Some(current_level) = self.hooks.get_level() {
+        if let Some(current_level) = self.hooks.current_level() {
             if (current_level == H::MIN_LEVEL && move_mode == MoveModeEnum::Down)
                 || (current_level == H::MAX_LEVEL && move_mode == MoveModeEnum::Up)
             {
@@ -798,7 +802,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         loop {
             let event_start_time = Instant::now();
 
-            let current_level = match self.hooks.get_level() {
+            let current_level = match self.hooks.current_level() {
                 Some(cl) => cl,
                 None => return Err(ErrorCode::InvalidState.into()),
             };
@@ -820,7 +824,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
             let is_end_of_transition = (new_level == H::MAX_LEVEL) || (new_level == H::MIN_LEVEL);
             let new_level = self
-                .set_level_and_notify(ctx, new_level, is_end_of_transition)
+                .set_level_and_notify(ctx, new_level, is_end_of_transition)?
                 .ok_or(ErrorCode::Failure)?;
 
             if is_end_of_transition {
@@ -860,7 +864,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             return Ok(());
         }
 
-        let current_level = match self.hooks.get_level() {
+        let current_level = match self.hooks.current_level() {
             Some(val) => val,
             None => return Err(ErrorCode::InvalidState.into()),
         };
@@ -954,7 +958,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler
     }
 
     async fn current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        match self.hooks.get_level() {
+        match self.hooks.current_level() {
             Some(level) => Ok(Nullable::some(level)),
             None => Ok(Nullable::none()),
         }
@@ -1067,7 +1071,10 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler
     }
 
     async fn start_up_current_level(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        self.hooks.start_up_current_level()
+        match self.hooks.start_up_current_level()? {
+            Some(val) => Ok(Nullable::some(val)),
+            None => Ok(Nullable::none()),
+        }
     }
 
     async fn set_start_up_current_level(
@@ -1083,7 +1090,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler
             }
         }
 
-        self.hooks.set_start_up_current_level(value)?;
+        self.hooks.set_start_up_current_level(value.into_option())?;
         self.dataver_changed();
         ctx.notify_changed();
         Ok(())
@@ -1227,26 +1234,33 @@ pub trait LevelControlHooks {
     const CLUSTER: Cluster<'static>;
 
     /// Implements the business logic for setting the level of the device.
-    /// The new level of the device must be persistently stored, as required by the spec, and accessible via `get_level`.
-    /// Returns the new level of the device.
-    /// If this method returns None, the `LevelControlHandler` will represent this as an error with `ImStatusCode` of `Failure`.
-    fn set_level(&self, level: u8) -> Option<u8>;
-
-    /// Get the current level of the device.
-    fn get_level(&self) -> Option<u8>;
+    /// Returns the level the device was set to.
+    /// If this method returns Err, the `LevelControlHandler` will represent this as an error with `ImStatusCode` of `Failure`.
+    /// Note: The above is the only responsibility of this method. There is no need to update Matter attributes.
+    #[allow(clippy::result_unit_err)]
+    fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()>;
 
     // Raw accessors
     //  These methods should not perform any checks.
     //  They should simply get or set values.
+    //  They should not error.
+
+    /// Raw current_level getter.
+    /// This value should persist across reboots.
+    fn current_level(&self) -> Option<u8>;
+
+    /// Raw current_level setter.
+    /// This value should persist across reboots.
+    fn set_current_level(&self, level: Option<u8>);
 
     /// Raw start_up_current_level getter.
     /// This value should persist across reboots.
-    fn start_up_current_level(&self) -> Result<Nullable<u8>, Error> {
+    fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
         Err(ErrorCode::InvalidAction.into())
     }
     /// Raw start_up_current_level setter.
     /// This value should persist across reboots.
-    fn set_start_up_current_level(&self, _value: Nullable<u8>) -> Result<(), Error> {
+    fn set_start_up_current_level(&self, _value: Option<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 }
@@ -1280,5 +1294,89 @@ impl OnOffHooks for NoOnOff {
 
     async fn handle_off_with_effect(&self, _effect: super::on_off::EffectVariantEnum) {
         panic!("NoOnOff: handle_off_with_effect called unexpectedly - this phantom type should not be used for OnOff functionality")
+    }
+}
+
+pub mod test {
+    use core::cell::Cell;
+
+    use crate::dm::clusters::level_control::{
+        AttributeId, CommandId, Feature, LevelControlHooks, FULL_CLUSTER,
+    };
+    use crate::dm::Cluster;
+    use crate::error::Error;
+    use crate::with;
+
+    pub struct LevelControlDeviceLogic {
+        current_level: Cell<Option<u8>>,
+        start_up_current_level: Cell<Option<u8>>,
+    }
+
+    impl Default for LevelControlDeviceLogic {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl LevelControlDeviceLogic {
+        pub const fn new() -> Self {
+            Self {
+                current_level: Cell::new(Some(1)),
+                start_up_current_level: Cell::new(None),
+            }
+        }
+    }
+
+    impl LevelControlHooks for LevelControlDeviceLogic {
+        const MIN_LEVEL: u8 = 1;
+        const MAX_LEVEL: u8 = 254;
+        const FASTEST_RATE: u8 = 50;
+        const CLUSTER: Cluster<'static> = FULL_CLUSTER
+            .with_revision(5)
+            .with_features(Feature::ON_OFF.bits())
+            .with_attrs(with!(
+                required;
+                AttributeId::CurrentLevel
+                | AttributeId::MinLevel
+                | AttributeId::MaxLevel
+                | AttributeId::OnLevel
+                | AttributeId::Options
+            ))
+            .with_cmds(with!(
+                CommandId::MoveToLevel
+                    | CommandId::Move
+                    | CommandId::Step
+                    | CommandId::Stop
+                    | CommandId::MoveToLevelWithOnOff
+                    | CommandId::MoveWithOnOff
+                    | CommandId::StepWithOnOff
+                    | CommandId::StopWithOnOff
+            ));
+
+        fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
+            // This is where business logic is implemented to physically change the level of the device.
+            Ok(Some(level))
+        }
+
+        fn current_level(&self) -> Option<u8> {
+            self.current_level.get()
+        }
+
+        fn set_current_level(&self, level: Option<u8>) {
+            info!(
+                "LevelControlDeviceLogic::set_current_level: setting level to {:?}",
+                level
+            );
+            self.current_level.set(level);
+        }
+
+        fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
+            Ok(self.start_up_current_level.get())
+        }
+
+        fn set_start_up_current_level(&self, value: Option<u8>) -> Result<(), Error> {
+            self.start_up_current_level.set(value);
+            Ok(())
+        }
     }
 }
