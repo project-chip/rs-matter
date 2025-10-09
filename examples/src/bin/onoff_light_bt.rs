@@ -34,15 +34,16 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select4};
+use embassy_futures::select::{select, select3, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
-use rs_matter::dm::clusters::on_off::{self, ClusterHandler as _};
+use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
@@ -81,7 +82,7 @@ fn main() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
-    let args = std::env::args().into_iter().skip(1).collect::<Vec<_>>();
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() > 2 {
         eprintln!("Usage: onoff_light_bt [-w] [if_name]");
         eprintln!(
@@ -105,6 +106,19 @@ fn main() -> Result<(), Error> {
         "wlan0".into()
     });
 
+    let connection = futures_lite::future::block_on(Connection::system()).unwrap();
+
+    if use_wpa_supp {
+        run(
+            &connection,
+            WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
+        )
+    } else {
+        run(&connection, NetMgrCtl::new(&connection, &if_name))
+    }
+}
+
+fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), Error> {
     // Create the Matter object
     let matter = Matter::new_default(&TEST_DEV_DET, TEST_DEV_COMM, &TEST_DEV_ATT, MATTER_PORT);
 
@@ -118,49 +132,38 @@ fn main() -> Result<(), Error> {
     let subscriptions = DefaultSubscriptions::new();
 
     // Our on-off cluster
-    let on_off = on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()));
+    let on_off_handler = on_off::OnOffHandler::new_standalone(
+        Dataver::new_rand(matter.rand()),
+        1,
+        TestOnOffDeviceLogic::new(),
+    );
 
     // A storage for the Wifi networks
     let networks = WifiNetworks::<3, NoopRawMutex>::new();
 
-    let connection = futures_lite::future::block_on(Connection::system()).unwrap();
-
-    // The network controller based on `wpa_supplicant` and `dhclient`.
+    // The network controller
     let net_ctl_state = NetCtlState::new_with_mutex::<NoopRawMutex>();
+
+    let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
+
+    // Create the Data Model instance
+    let dm = DataModel::new(
+        &matter,
+        &buffers,
+        &subscriptions,
+        dm_handler(&matter, &on_off_handler, &net_ctl, &networks),
+    );
+
+    // Create a default responder capable of handling up to 3 subscriptions
+    // All other subscription requests will be turned down with "resource exhausted"
+    let responder = DefaultResponder::new(&dm);
 
     // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
     // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
-    let mut respond = pin!(async {
-        if use_wpa_supp {
-            let wpa_supp = NetCtlWithStatusImpl::new(
-                &net_ctl_state,
-                WpaSuppCtl::new(&connection, &if_name, DhClientCtl::new(&if_name, true)),
-            );
+    let mut respond = pin!(responder.run::<4, 4>());
 
-            let dm = DataModel::new(
-                &matter,
-                &buffers,
-                &subscriptions,
-                dm_handler(&matter, &on_off, &wpa_supp, &networks),
-            );
-            let responder = DefaultResponder::new(&dm);
-
-            select(responder.run::<4, 4>(), dm.run()).await
-        } else {
-            let nm =
-                NetCtlWithStatusImpl::new(&net_ctl_state, NetMgrCtl::new(&connection, &if_name));
-
-            let dm = DataModel::new(
-                &matter,
-                &buffers,
-                &subscriptions,
-                dm_handler(&matter, &on_off, &nm, &networks),
-            );
-            let responder = DefaultResponder::new(&dm);
-
-            select(responder.run::<4, 4>(), dm.run()).await
-        }
-    });
+    // Run the background job of the data model
+    let mut dm_job = pin!(dm.run());
 
     // This is a sample code that simulates state changes triggered by the HAL
     // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
@@ -168,8 +171,8 @@ fn main() -> Result<(), Error> {
         loop {
             Timer::after(Duration::from_secs(5)).await;
 
-            on_off.set(!on_off.get());
-            subscriptions.notify_cluster_changed(1, on_off::OnOffHandler::CLUSTER.id);
+            on_off_handler.set_on_off(!on_off_handler.on_off());
+            subscriptions.notify_cluster_changed(1, TestOnOffDeviceLogic::CLUSTER.id);
 
             info!("Lamp toggled");
         }
@@ -190,7 +193,7 @@ fn main() -> Result<(), Error> {
         // Not commissioned yet, start commissioning first
 
         // The BTP transport impl
-        let btp = Btp::new(BluezGattPeripheral::new(None, &connection), &BTP_CONTEXT);
+        let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
         let mut transport = pin!(matter.run(&btp, &btp, DiscoveryCapabilities::BLE));
@@ -204,7 +207,7 @@ fn main() -> Result<(), Error> {
             &mut transport,
             &mut bluetooth,
             select(&mut wifi_prov_task, &mut persist).coalesce(),
-            select(&mut respond, &mut device).coalesce(),
+            select3(&mut respond, &mut device, &mut dm_job).coalesce(),
         );
 
         // Run with a simple `block_on`. Any local executor would do.
@@ -224,7 +227,7 @@ fn main() -> Result<(), Error> {
         &mut transport,
         &mut mdns,
         &mut persist,
-        select(&mut respond, &mut device).coalesce(),
+        select3(&mut respond, &mut device, &mut dm_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.
@@ -239,16 +242,19 @@ const NODE: Node<'static> = Node {
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_ON_OFF_LIGHT),
-            clusters: clusters!(desc::DescHandler::CLUSTER, on_off::OnOffHandler::CLUSTER),
+            clusters: clusters!(
+                desc::DescHandler::CLUSTER,
+                on_off::test::TestOnOffDeviceLogic::CLUSTER
+            ),
         },
     ],
 };
 
 /// The Data Model handler + meta-data for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
-fn dm_handler<'a, N>(
+fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks, N>(
     matter: &'a Matter<'a>,
-    on_off: &'a on_off::OnOffHandler,
+    on_off: &'a on_off::OnOffHandler<'a, OH, LH>,
     net_ctl: &'a N,
     networks: &'a dyn Networks,
 ) -> impl AsyncMetadata + AsyncHandler + 'a
@@ -272,8 +278,8 @@ where
                         Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
                     )
                     .chain(
-                        EpClMatcher::new(Some(1), Some(on_off::OnOffHandler::CLUSTER.id)),
-                        Async(on_off::HandlerAdaptor(on_off)),
+                        EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
+                        on_off::HandlerAsyncAdaptor(on_off),
                     ),
             ),
         ),

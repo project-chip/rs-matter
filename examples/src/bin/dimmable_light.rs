@@ -139,25 +139,22 @@ fn run() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // OnOff cluster setup
-    let on_off_device_logic = OnOffDeviceLogic::new();
     let on_off_handler =
-        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
+        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, OnOffDeviceLogic::new());
 
     // LevelControl cluster setup
-    let level_control_device_logic = LevelControlDeviceLogic::new();
-    let level_control_defaults = level_control::AttributeDefaults {
-        on_level: Nullable::some(42),
-        options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-        on_off_transition_time: 0,
-        on_transition_time: Nullable::none(),
-        off_transition_time: Nullable::none(),
-        default_move_rate: Nullable::none(),
-    };
     let level_control_handler = level_control::LevelControlHandler::new(
         Dataver::new_rand(matter.rand()),
         1,
-        &level_control_device_logic,
-        level_control_defaults,
+        LevelControlDeviceLogic::new(),
+        level_control::AttributeDefaults {
+            on_level: Nullable::some(42),
+            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            on_off_transition_time: 0,
+            on_transition_time: Nullable::none(),
+            off_transition_time: Nullable::none(),
+            default_move_rate: Nullable::none(),
+        },
     );
 
     // Cluster wiring, validation and initialisation

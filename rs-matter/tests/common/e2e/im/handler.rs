@@ -144,9 +144,11 @@ impl<'a, OH: OnOffHooks, LH: LevelControlHooks> AsyncMetadata for E2eTestHandler
 impl<'a> E2eRunner {
     // For backwards compatibility
     pub fn handler(&self) -> E2eTestHandler<'_, TestOnOffDeviceLogic, NoLevelControl> {
-        let on_off_handler: OnOffHandler<'_, TestOnOffDeviceLogic, NoLevelControl> =
-            on_off::OnOffHandler::new(Dataver::new_rand(self.matter.rand()), 1, &self.on_off_hooks);
-        on_off_handler.init(None);
+        let on_off_handler = on_off::OnOffHandler::new_standalone(
+            Dataver::new_rand(self.matter.rand()),
+            1,
+            TestOnOffDeviceLogic::new(),
+        );
 
         E2eTestHandler::new(&self.matter, on_off_handler)
     }

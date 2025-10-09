@@ -29,9 +29,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{
-    self, test::TestOnOffDeviceLogic, NoLevelControl, OnOffHandler, OnOffHooks,
-};
+use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::{DEV_TYPE_AGGREGATOR, DEV_TYPE_BRIDGED_NODE, DEV_TYPE_ON_OFF_LIGHT};
 use rs_matter::dm::endpoints;
@@ -75,23 +73,16 @@ fn main() -> Result<(), Error> {
     let subscriptions = DefaultSubscriptions::new();
 
     // Our on-off clusters
-    let on_off_device_logic_ep2 = TestOnOffDeviceLogic::new();
-    let on_off_handler_ep2: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
-        on_off::OnOffHandler::new(
-            Dataver::new_rand(matter.rand()),
-            2,
-            &on_off_device_logic_ep2,
-        );
-    on_off_handler_ep2.init(None);
-
-    let on_off_device_logic_ep3 = TestOnOffDeviceLogic::new();
-    let on_off_handler_ep3: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
-        on_off::OnOffHandler::new(
-            Dataver::new_rand(matter.rand()),
-            3,
-            &on_off_device_logic_ep3,
-        );
-    on_off_handler_ep3.init(None);
+    let on_off_handler_ep2 = on_off::OnOffHandler::new_standalone(
+        Dataver::new_rand(matter.rand()),
+        2,
+        TestOnOffDeviceLogic::new(),
+    );
+    let on_off_handler_ep3 = on_off::OnOffHandler::new_standalone(
+        Dataver::new_rand(matter.rand()),
+        3,
+        TestOnOffDeviceLogic::new(),
+    );
 
     // Create the Data Model instance
     let dm = DataModel::new(

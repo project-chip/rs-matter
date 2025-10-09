@@ -30,9 +30,7 @@ use log::info;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
-use rs_matter::dm::clusters::on_off::{
-    self, test::TestOnOffDeviceLogic, NoLevelControl, OnOffHandler, OnOffHooks,
-};
+use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHooks};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
@@ -87,16 +85,6 @@ fn run() -> Result<(), Error> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "debug"),
     );
 
-    // NOTE: chip-tool tests need the log to go to `stdout` instead
-    // env_logger::builder()
-    //     .format(|buf, record| {
-    //         use std::io::Write;
-    //         writeln!(buf, "{}: {}", record.level(), record.args())
-    //     })
-    //     .target(env_logger::Target::Stdout)
-    //     .filter_level(::log::LevelFilter::Info)
-    //     .init();
-
     info!(
         "Matter memory: Matter (BSS)={}B, IM Buffers (BSS)={}B, Subscriptions (BSS)={}B",
         core::mem::size_of::<Matter>(),
@@ -125,10 +113,11 @@ fn run() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Our on-off cluster
-    let on_off_device_logic = TestOnOffDeviceLogic::new();
-    let on_off_handler: OnOffHandler<TestOnOffDeviceLogic, NoLevelControl> =
-        on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
-    on_off_handler.init(None);
+    let on_off_handler = on_off::OnOffHandler::new_standalone(
+        Dataver::new_rand(matter.rand()),
+        1,
+        TestOnOffDeviceLogic::new(),
+    );
 
     // Create the Data Model instance
     let dm = DataModel::new(
@@ -160,8 +149,7 @@ fn run() -> Result<(), Error> {
         loop {
             Timer::after(Duration::from_secs(5)).await;
 
-            // todo should we add an on_off accessor to the handler that dose not require a context?
-            on_off_handler.set_on_off(!on_off_device_logic.on_off());
+            on_off_handler.set_on_off(!on_off_handler.on_off());
             subscriptions.notify_cluster_changed(1, TestOnOffDeviceLogic::CLUSTER.id);
 
             info!("Lamp toggled");
