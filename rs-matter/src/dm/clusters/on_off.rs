@@ -103,6 +103,8 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
 impl<'a, H: OnOffHooks> OnOffHandler<'a, H, NoLevelControl> {
     /// Creates a new `OnOffHandler` with the given hooks which is **not** coupled with a `LevelControl` handler.
     ///
+    /// NOTE: This constructor automatically calls `init` with no coupled `LevelControl` handler.
+    ///
     /// # Arguments
     /// - `hooks` - A reference to the struct implementing the device-specific on/off logic.
     pub fn new_standalone(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {

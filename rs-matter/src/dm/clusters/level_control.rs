@@ -107,6 +107,8 @@ pub struct AttributeDefaults {
 impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H, NoOnOff> {
     /// Creates a new `LevelControlHandler` with the given hooks which is **not** coupled to an OnOff cluster.
     ///
+    /// NOTE: This constructor automatically calls `init` with no coupled `OnOff` handler.
+    ///
     /// # Arguments
     /// - `hooks` - A reference to the struct implementing the device-specific level control logic.
     pub fn new_standalone(
