@@ -41,7 +41,7 @@ use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::NetworkType;
 use rs_matter::dm::clusters::on_off::{
-    self, EffectVariantEnum, NoLevelControl, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
+    self, EffectVariantEnum, OnOffHandler, OnOffHooks, StartUpOnOffEnum,
 };
 use rs_matter::dm::clusters::unit_testing::{
     ClusterHandler as _, UnitTestingHandler, UnitTestingHandlerData,
@@ -136,10 +136,8 @@ fn main() -> Result<(), Error> {
         .init_with(DefaultSubscriptions::init());
 
     // Our on-off cluster
-    let on_off_device_logic = OnOffDeviceLogic::new();
-    let on_off_handler: OnOffHandler<OnOffDeviceLogic, NoLevelControl> =
-        OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, &on_off_device_logic);
-    on_off_handler.init(None);
+    let on_off_handler =
+        OnOffHandler::new_standalone(Dataver::new_rand(matter.rand()), 1, OnOffDeviceLogic::new());
 
     // Our unit testing cluster data
     let unit_testing_data = UNIT_TESTING_DATA

@@ -68,7 +68,7 @@ jobs:
 
       - name: Examples
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
-        run: cargo build --examples --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log
+        run: cargo build --no-default-features --features ${{matrix.crypto-backend}},${{matrix.features}},log,zbus
 
       - name: Xtask Fmt
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'

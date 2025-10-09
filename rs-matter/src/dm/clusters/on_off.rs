@@ -29,6 +29,7 @@
 //! - The attribute and logic related to the Scenes cluster are not fully implemented since the Scenes cluster is not yet implemented.
 
 use core::cell::Cell;
+use core::future::Future;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
@@ -90,7 +91,7 @@ enum OnOffCommand {
 pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     dataver: Dataver,
     endpoint_id: EndptId,
-    hooks: &'a H,
+    hooks: H,
     level_control_handler: Cell<Option<&'a LevelControlHandler<'a, LH, H>>>,
     state_change_signal: Signal<NoopRawMutex, OnOffCommand>,
     state: Cell<OnOffClusterState>,
@@ -99,17 +100,32 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     off_wait_time: Cell<u16>,
 }
 
+impl<'a, H: OnOffHooks> OnOffHandler<'a, H, NoLevelControl> {
+    /// Creates a new `OnOffHandler` with the given hooks which is **not** coupled with a `LevelControl` handler.
+    ///
+    /// NOTE: This constructor automatically calls `init` with no coupled `LevelControl` handler.
+    ///
+    /// # Arguments
+    /// - `hooks` - A reference to the struct implementing the device-specific on/off logic.
+    pub fn new_standalone(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {
+        let this = Self::new(dataver, endpoint_id, hooks);
+
+        this.init(None);
+
+        this
+    }
+}
+
 impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     /// Creates a new `OnOffHandler` with the given hooks.
     ///
     /// # Arguments
-    /// - `on_off_hooks` - A reference to the struct implementing the device-specific on/off logic.
+    /// - `hooks` - A reference to the struct implementing the device-specific on/off logic.
     ///
     /// # Usage
-    /// - Initialise and optionally couple with a LevelControl cluster via `init`.
-    /// - Use the async `run` method to run the OnOff server.
-    pub fn new(dataver: Dataver, endpoint_id: EndptId, on_off_hooks: &'a H) -> Self {
-        let state = match on_off_hooks.on_off() {
+    /// - Initialise and optionally couple with a LevelControl handler via `init`.
+    pub fn new(dataver: Dataver, endpoint_id: EndptId, hooks: H) -> Self {
+        let state = match hooks.on_off() {
             true => OnOffClusterState::On,
             false => OnOffClusterState::Off,
         };
@@ -117,7 +133,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         Self {
             dataver,
             endpoint_id,
-            hooks: on_off_hooks,
+            hooks,
             level_control_handler: Cell::new(None),
             state_change_signal: Signal::new(),
             state: Cell::new(state),
@@ -244,9 +260,9 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         }
     }
 
-    // Allows coupled clusters to get the on_off state.
-    pub(crate) fn on_off(&self) -> Result<bool, Error> {
-        Ok(self.hooks.on_off())
+    // Allows coupled clusters or user code to get the on_off state.
+    pub fn on_off(&self) -> bool {
+        self.hooks.on_off()
     }
 
     /// Sets the on_off state to true and updates the off_wait_time and global_scene_control accordingly.
@@ -734,6 +750,33 @@ pub trait OnOffHooks {
     fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error>;
 
     async fn handle_off_with_effect(&self, effect: EffectVariantEnum);
+}
+
+impl<T> OnOffHooks for &T
+where
+    T: OnOffHooks,
+{
+    const CLUSTER: Cluster<'static> = T::CLUSTER;
+
+    fn on_off(&self) -> bool {
+        (*self).on_off()
+    }
+
+    fn set_on_off(&self, on: bool) {
+        (*self).set_on_off(on)
+    }
+
+    fn start_up_on_off(&self) -> Nullable<StartUpOnOffEnum> {
+        (*self).start_up_on_off()
+    }
+
+    fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error> {
+        (*self).set_start_up_on_off(value)
+    }
+
+    fn handle_off_with_effect(&self, effect: EffectVariantEnum) -> impl Future<Output = ()> {
+        (*self).handle_off_with_effect(effect)
+    }
 }
 
 /// This is a phantom type for when the OnOff cluster is not coupled with a LevelControl cluster.

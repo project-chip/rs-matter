@@ -78,7 +78,7 @@ enum Task {
 pub struct LevelControlHandler<'a, H: LevelControlHooks, OH: OnOffHooks> {
     dataver: Dataver,
     endpoint_id: EndptId,
-    hooks: &'a H,
+    hooks: H,
     on_off_handler: Cell<Option<&'a OnOffHandler<'a, OH, H>>>,
     task_signal: Signal<NoopRawMutex, Task>,
     on_level: Cell<Nullable<u8>>,
@@ -104,23 +104,47 @@ pub struct AttributeDefaults {
     pub default_move_rate: Nullable<u8>,
 }
 
+impl<'a, H: LevelControlHooks> LevelControlHandler<'a, H, NoOnOff> {
+    /// Creates a new `LevelControlHandler` with the given hooks which is **not** coupled to an OnOff cluster.
+    ///
+    /// NOTE: This constructor automatically calls `init` with no coupled `OnOff` handler.
+    ///
+    /// # Arguments
+    /// - `hooks` - A reference to the struct implementing the device-specific level control logic.
+    pub fn new_standalone(
+        dataver: Dataver,
+        endpoint_id: EndptId,
+        hooks: H,
+        attribute_defaults: AttributeDefaults,
+    ) -> Self {
+        let this = Self::new(dataver, endpoint_id, hooks, attribute_defaults);
+
+        this.init(None);
+
+        this
+    }
+}
+
 impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     const MAXIMUM_LEVEL: u8 = 254;
 
     /// Creates a new `LevelControlHandler` with the given hooks.
     ///
     /// # Arguments
-    /// - `level_control_hooks` - A reference to the struct implementing the device-specific level control logic.
+    /// - `hooks` - A reference to the struct implementing the device-specific level control logic.
+    ///
+    /// # Usage
+    /// - Initialise and optionally couple with an OnOff handler via `init`.
     pub fn new(
         dataver: Dataver,
         endpoint_id: EndptId,
-        level_control_hooks: &'a H,
+        hooks: H,
         attribute_defaults: AttributeDefaults,
     ) -> Self {
         Self {
             dataver,
             endpoint_id,
-            hooks: level_control_hooks,
+            hooks,
             on_off_handler: Cell::new(None),
             task_signal: Signal::new(),
             on_level: Cell::new(attribute_defaults.on_level),
@@ -388,7 +412,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             }
         };
 
-        if on_off_state.on_off()? {
+        if on_off_state.on_off() {
             return Ok(true);
         }
 
@@ -557,7 +581,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
 
         // The `validate` method ensures that the on_off_handler is set if this function is called.
         if let Some(on_off) = self.on_off_handler.get() {
-            let current_on_off = on_off.on_off()?;
+            let current_on_off = on_off.on_off();
             if current_on_off != new_on_off_value {
                 info!(
                     "Updating the OnOff cluster with on_off = {}",
@@ -1262,6 +1286,36 @@ pub trait LevelControlHooks {
     /// This value should persist across reboots.
     fn set_start_up_current_level(&self, _value: Option<u8>) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
+    }
+}
+
+impl<T> LevelControlHooks for &T
+where
+    T: LevelControlHooks,
+{
+    const MIN_LEVEL: u8 = T::MIN_LEVEL;
+    const MAX_LEVEL: u8 = T::MAX_LEVEL;
+    const FASTEST_RATE: u8 = T::FASTEST_RATE;
+    const CLUSTER: Cluster<'static> = T::CLUSTER;
+
+    fn set_device_level(&self, level: u8) -> Result<Option<u8>, ()> {
+        (*self).set_device_level(level)
+    }
+
+    fn current_level(&self) -> Option<u8> {
+        (*self).current_level()
+    }
+
+    fn set_current_level(&self, level: Option<u8>) {
+        (*self).set_current_level(level)
+    }
+
+    fn start_up_current_level(&self) -> Result<Option<u8>, Error> {
+        (*self).start_up_current_level()
+    }
+
+    fn set_start_up_current_level(&self, value: Option<u8>) -> Result<(), Error> {
+        (*self).set_start_up_current_level(value)
     }
 }
 
