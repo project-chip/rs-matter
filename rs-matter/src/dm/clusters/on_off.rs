@@ -30,7 +30,9 @@
 
 use core::cell::Cell;
 use core::future::Future;
+use core::pin::pin;
 
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::Duration;
@@ -44,6 +46,20 @@ use crate::error::{Error, ErrorCode};
 pub use crate::dm::clusters::decl::on_off::*;
 
 use crate::tlv::Nullable;
+
+/// Messages passed to the `notify` closure in `OnOffHooks::run()` method.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum OutOfBandMessage {
+    /// Indicates to the handler that the state of the device has changed and it should update the Matter state accordingly.
+    Update,
+    /// Indicates to the handler that a request to change the state to On has been made.
+    /// This will change the state of the device if and when appropriate according to the Matter logic.
+    On,
+    /// Indicates to the handler that a request to change the state to Off has been made.
+    /// This will change the state of the device if and when appropriate according to the Matter logic.
+    Off,
+}
 
 /// A rust friendly combined enum that groups the effect and its variant.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -71,6 +87,9 @@ enum OnOffCommand {
     OnWithTimedOff,
     CoupledClusterOn,
     CoupledClusterOff,
+    // This indicates that the physical state of the device has changed and our state machine should
+    // reflect that without making any changes to the state of the device.
+    Update,
 }
 
 /// Implementation of the Matter On/Off cluster handler.
@@ -276,6 +295,22 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // ... on receipt of the On command, a server SHALL set the OnOff attribute to TRUE.
         self.hooks.set_on_off(true);
 
+        let _ = self.update_attr_on();
+
+        self.dataver_changed();
+        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+
+        // LevelControl coupling logic defined in section 1.6.4.1.1
+        if !level_control_initiated {
+            if let Some(level_control_handler) = self.level_control_handler.get() {
+                level_control_handler.coupled_on_off_cluster_on_off_state_change(true);
+            }
+        }
+    }
+
+    // Updates Matter attributes when the state changes to On.
+    // Returns true if attributes have been updated and hence Matter notification is required.
+    fn update_attr_on(&self) -> bool {
         // Note: The OnTime, OffWaitTime and GlobalScenesControl attributes are only supported and must
         // be supported when the LIGHTING feature is enabled.
         // This configuration is ensured by the validate method upon initialisation.
@@ -291,19 +326,11 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             // This attribute SHALL be set to TRUE after the reception of a command which causes the OnOff
             // attribute to be set to TRUE, such as a standard On command, a MoveToLevel(WithOnOff) command,
             // a RecallScene command or a OnWithRecallGlobalScene command.
-            self.global_scene_control.set(true)
-        }
+            self.global_scene_control.set(true);
 
-        // todo: Is calling this here enough or should we be calling this after every change?
-        self.dataver_changed();
-        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
-
-        // LevelControl coupling logic defined in section 1.6.4.1.1
-        if !level_control_initiated {
-            if let Some(level_control_handler) = self.level_control_handler.get() {
-                level_control_handler.coupled_on_off_cluster_on_off_state_change(true);
-            }
+            return true;
         }
+        false
     }
 
     /// Sets the on_off state to false.
@@ -317,21 +344,21 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             return true;
         }
 
-        if self.supports_feature(on_off::Feature::LIGHTING.bits()) {
-            // 1.5.7.1. Off Command
-            // ... when the OnTime attribute is supported, the server SHALL set the OnTime attribute to 0.
-            self.on_time.set(0);
-            self.dataver_changed();
-            ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
-        }
+        let attr_updated = self.update_attr_off();
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if self.level_control_handler.get().is_some() && !level_control_initiated {
-            // Use of unwrap is safe due to the previous check.
+            // Use of unwrap is safe due to the previous check that level_control_handler is Some.
             self.level_control_handler
                 .get()
                 .unwrap()
                 .coupled_on_off_cluster_on_off_state_change(false);
+
+            if attr_updated {
+                self.dataver_changed();
+                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+            }
+
             // When calling the LevelControl with false (off), the levelControl cluster will call
             // back into the OnOff cluster to set the OnOff attribute to false when it is done.
             // Hence, we return without setting the on_off attribute.
@@ -345,6 +372,18 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
 
         true
+    }
+
+    // Update Matter attributes when the state changes to Off.
+    // Returns true if attributes have been updated and hence Matter notification is required.
+    fn update_attr_off(&self) -> bool {
+        if self.supports_feature(on_off::Feature::LIGHTING.bits()) && self.on_time.get() != 0 {
+            // 1.5.7.1. Off Command
+            // ... when the OnTime attribute is supported, the server SHALL set the OnTime attribute to 0.
+            self.on_time.set(0);
+            return true;
+        }
+        false
     }
 
     fn supports_feature(&self, features: u32) -> bool {
@@ -373,6 +412,37 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         let _ = self.set_off(true, ctx);
     }
 
+    // Updates the state of the state machine and Matter attributes to match the state of the physical device.
+    // The state of the physical device is not modified.
+    fn update(&self, ctx: &impl HandlerContext) {
+        match self.on_off() {
+            true => {
+                if self.state.get() == OnOffClusterState::On {
+                    return;
+                }
+
+                self.state.set(OnOffClusterState::On);
+
+                let _ = self.update_attr_on();
+
+                self.dataver_changed();
+                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+            }
+            false => {
+                if self.state.get() == OnOffClusterState::Off {
+                    return;
+                }
+
+                self.state.set(OnOffClusterState::Off);
+
+                let _ = self.update_attr_off();
+
+                self.dataver_changed();
+                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+            }
+        }
+    }
+
     async fn state_machine(&self, command: OnOffCommand, ctx: &impl HandlerContext) {
         let start_time = embassy_time::Instant::now();
 
@@ -397,6 +467,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         break;
                     }
                     OnOffCommand::OnWithTimedOff => self.state.set(OnOffClusterState::TimedOn),
+                    OnOffCommand::Update => {
+                        self.update(ctx);
+                        break;
+                    }
                 },
                 OnOffClusterState::Off => match command {
                     OnOffCommand::Off
@@ -413,6 +487,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         break;
                     }
                     OnOffCommand::OnWithTimedOff => self.state.set(OnOffClusterState::TimedOn),
+                    OnOffCommand::Update => {
+                        self.update(ctx);
+                        break;
+                    }
                 },
                 OnOffClusterState::TimedOn => {
                     match command {
@@ -459,6 +537,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                             // This should not be reachable as the device would already be on so a change in the LevelControl cluster cannot cause the OnOff cluster to switch to On.
                             unreachable!("CoupledClusterOn should not be reachable in TimedOn state: device is already on");
                         }
+                        OnOffCommand::Update => {
+                            self.update(ctx);
+                            break;
+                        }
                     }
                 }
                 OnOffClusterState::DelayedOff => {
@@ -480,6 +562,10 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                         | OnOffCommand::OffWithEffect(_)
                         | OnOffCommand::OnWithTimedOff
                         | OnOffCommand::CoupledClusterOff => (),
+                        OnOffCommand::Update => {
+                            self.update(ctx);
+                            break;
+                        }
                     }
 
                     // 1.5.7.6.4. Effect on Receipt
@@ -500,6 +586,14 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                     break;
                 }
             }
+        }
+    }
+
+    fn out_of_band_message(&self, message: OutOfBandMessage) {
+        match message {
+            OutOfBandMessage::Update => self.state_change_signal.signal(OnOffCommand::Update),
+            OutOfBandMessage::On => self.state_change_signal.signal(OnOffCommand::On),
+            OutOfBandMessage::Off => self.state_change_signal.signal(OnOffCommand::Off),
         }
     }
 
@@ -540,18 +634,28 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHand
     }
 
     async fn run(&self, ctx: impl HandlerContext) -> Result<(), Error> {
+        let mut hooks_fut = pin!(self.hooks.run(|message| self.out_of_band_message(message)));
+
         loop {
-            let mut command = self.state_change_signal.wait().await;
+            let mut command = match select(
+                &mut hooks_fut,
+                self.state_change_signal.wait()
+            ).await {
+                Either::First(_) => panic!("OnOffHooks::run returned; implementers MUST not return. Implementations should loop forever or await core::future::pending::<()>()."),
+                Either::Second(command) => command,
+            };
 
             loop {
-                match embassy_futures::select::select(
+                match select3(
+                    &mut hooks_fut,
                     self.state_machine(command, &ctx),
                     self.state_change_signal.wait(),
                 )
                 .await
                 {
-                    embassy_futures::select::Either::First(_) => break,
-                    embassy_futures::select::Either::Second(new_command) => command = new_command,
+                    Either3::First(_) => panic!("OnOffHooks::run returned; implementers MUST not return. Implementations should loop forever or await core::future::pending::<()>()."),
+                    Either3::Second(_) => break,
+                    Either3::Third(new_command) => command = new_command,
                 }
             }
         }
@@ -741,7 +845,8 @@ pub trait OnOffHooks {
     // Get the current device on/off state. This value SHALL be persisted across reboots.
     fn on_off(&self) -> bool;
     // todo should we allow this to return an error? If so, we'd need to know if the state has changed even if error occurs.
-    // Switch the device to the `on`` value and persist this setting.
+    // todo make `async`
+    // Switch the device to the `on` value and persist this setting.
     fn set_on_off(&self, on: bool);
 
     // Get the start_up_on_off attribute. This value SHALL be persisted across reboots.
@@ -750,6 +855,17 @@ pub trait OnOffHooks {
     fn set_start_up_on_off(&self, value: Nullable<StartUpOnOffEnum>) -> Result<(), Error>;
 
     async fn handle_off_with_effect(&self, effect: EffectVariantEnum);
+
+    /// Background task for out-of-band notifications to the handler.
+    ///
+    /// This future MUST NOT return. Implementers should either loop forever or await
+    /// core::future::pending::<()>(), so the SDK's task does not observe a completed future.
+    ///
+    /// # Panics
+    /// The SDK will panic if this method returns.
+    async fn run<F: Fn(OutOfBandMessage)>(&self, _notify: F) {
+        core::future::pending::<()>().await
+    }
 }
 
 impl<T> OnOffHooks for &T
@@ -776,6 +892,10 @@ where
 
     fn handle_off_with_effect(&self, effect: EffectVariantEnum) -> impl Future<Output = ()> {
         (*self).handle_off_with_effect(effect)
+    }
+
+    fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) -> impl Future<Output = ()> {
+        (*self).run(notify)
     }
 }
 

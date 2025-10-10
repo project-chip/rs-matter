@@ -28,6 +28,8 @@ use std::path::PathBuf;
 
 use embassy_futures::select::{select3, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+#[cfg(not(feature = "chip-test"))]
+use embassy_time::{Duration, Timer};
 
 use async_signal::{Signal, Signals};
 use log::{error, info, trace};
@@ -41,6 +43,8 @@ use rs_matter::dm::clusters::decl::on_off as on_off_cluster;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{self, LevelControlHooks};
 use rs_matter::dm::clusters::net_comm::NetworkType;
+#[cfg(not(feature = "chip-test"))]
+use rs_matter::dm::clusters::on_off::OutOfBandMessage;
 use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
@@ -395,9 +399,10 @@ struct OnOffPersistentState {
 
 impl OnOffPersistentState {
     fn to_bytes_from_values(on_off: bool, start_up_on_off: Option<StartUpOnOffEnum>) -> u8 {
-        info!(
+        trace!(
             "to_bytes_from_values: got on_off: {} | start_up_on_off: {:?}",
-            on_off, start_up_on_off
+            on_off,
+            start_up_on_off
         );
         let on_off = on_off as u8;
         let start_up_on_off: u8 = match start_up_on_off {
@@ -406,11 +411,12 @@ impl OnOffPersistentState {
             Some(StartUpOnOffEnum::Toggle) => 2,
             None => 3,
         };
-        info!(
+        trace!(
             "to_bytes_from_values: vals before writing on_off: {} | start_up_on_off: {}",
-            on_off, start_up_on_off
+            on_off,
+            start_up_on_off
         );
-        info!("final val: {}", on_off + (start_up_on_off << 1));
+        trace!("final val: {}", on_off + (start_up_on_off << 1));
         on_off + (start_up_on_off << 1)
     }
 
@@ -509,6 +515,7 @@ impl OnOffHooks for OnOffDeviceLogic {
 
     fn set_on_off(&self, on: bool) {
         self.on_off.set(on);
+        info!("OnOff state set to: {}", on);
         if let Err(err) = self.save_state() {
             error!("Error saving state: {}", err);
         }
@@ -528,5 +535,17 @@ impl OnOffHooks for OnOffDeviceLogic {
 
     async fn handle_off_with_effect(&self, _effect: on_off::EffectVariantEnum) {
         // no effect
+    }
+
+    #[cfg(not(feature = "chip-test"))]
+    async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
+        loop {
+            // In a real example we wait for physical interaction.
+            Timer::after(Duration::from_secs(5)).await;
+            match self.on_off() {
+                true => notify(OutOfBandMessage::Off),
+                false => notify(OutOfBandMessage::On),
+            }
+        }
     }
 }
