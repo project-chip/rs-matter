@@ -670,6 +670,35 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         Ok(())
     }
 
+    // Helper method performing initial validation for the move-to-level command.
+    // Used by move_to_level and move_to_level_blocking.
+    // Return true if processing should continue. False otherwise.
+    fn move_to_level_validation(
+        &self,
+        level: &mut u8,
+        with_on_off: bool,
+        options_mask: OptionsBitmap,
+        options_override: OptionsBitmap,
+    ) -> Result<bool, Error> {
+        if *level > Self::MAXIMUM_LEVEL {
+            return Err(ErrorCode::InvalidCommand.into());
+        }
+
+        if !self.should_continue(with_on_off, options_mask, options_override)? {
+            return Ok(false);
+        }
+
+        if *level > H::MAX_LEVEL {
+            *level = H::MAX_LEVEL;
+            debug!("target level > MAX_LEVEL. level set to MAX_LEVEL")
+        } else if *level < H::MIN_LEVEL {
+            *level = H::MIN_LEVEL;
+            debug!("target level < MIN_LEVEL. level set to MIN_LEVEL")
+        }
+
+        Ok(true)
+    }
+
     /// Handles MoveToLevel commands, including validation, bounding, and transition logic.
     /// Note: This will try to update the OnOff cluster's OnOff attribute at the start and end of the transition.
     /// Note: If calling this from another Task, use the blocking version `move_to_level_blocking`, otherwise the calling Task will be halted.
@@ -689,20 +718,10 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
     ) -> Result<(), Error> {
-        if level > Self::MAXIMUM_LEVEL {
-            return Err(ErrorCode::InvalidCommand.into());
-        }
-
-        if !self.should_continue(with_on_off, options_mask, options_override)? {
+        if let Ok(false) =
+            self.move_to_level_validation(&mut level, with_on_off, options_mask, options_override)
+        {
             return Ok(());
-        }
-
-        if level > H::MAX_LEVEL {
-            level = H::MAX_LEVEL;
-            debug!("target level > MAX_LEVEL. level set to MAX_LEVEL")
-        } else if level < H::MIN_LEVEL {
-            level = H::MIN_LEVEL;
-            debug!("target level < MIN_LEVEL. level set to MIN_LEVEL")
         }
 
         info!(
@@ -729,7 +748,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         Ok(())
     }
 
-    // This version dose not call Task::Stop. If we are called from another Task, we shouldn't stop it.
+    // This version does not call Task::Stop. If we are called from another Task, we shouldn't stop it.
     /// Handles MoveToLevel commands, including validation, bounding, and transition logic.
     /// Note: This will try to update the OnOff cluster's OnOff attribute at the start and end of the transition.
     /// Note: This will block until the transition completes.
@@ -750,20 +769,10 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
     ) -> Result<(), Error> {
-        if level > Self::MAXIMUM_LEVEL {
-            return Err(ErrorCode::InvalidCommand.into());
-        }
-
-        if !self.should_continue(with_on_off, options_mask, options_override)? {
+        if let Ok(false) =
+            self.move_to_level_validation(&mut level, with_on_off, options_mask, options_override)
+        {
             return Ok(());
-        }
-
-        if level > H::MAX_LEVEL {
-            level = H::MAX_LEVEL;
-            debug!("target level > MAX_LEVEL. level set to MAX_LEVEL")
-        } else if level < H::MIN_LEVEL {
-            level = H::MIN_LEVEL;
-            debug!("target level < MIN_LEVEL. level set to MIN_LEVEL")
         }
 
         info!(
@@ -1083,15 +1092,18 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
             OutOfBandMessage::Update(current_level) => {
                 self.task_signal.signal(Task::Stop);
 
-                let (_, should_notify) = self
-                    .set_level(current_level, true, false)
-                    .expect("set_level should not error if set_device == false");
-
-                if should_notify
-                    || self.write_remaining_time_quietly(Duration::from_millis(0), false)
-                {
-                    self.dataver_changed();
-                    ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                match self.set_level(current_level, true, false) {
+                    Ok((_, should_notify)) => {
+                        if should_notify
+                            || self.write_remaining_time_quietly(Duration::from_millis(0), false)
+                        {
+                            self.dataver_changed();
+                            ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                        }
+                    }
+                    Err(e) => {
+                        error!("OutOfBandMessage::Update failed: set_level failed unexpectedly with set_device == false: {}", e);
+                    }
                 }
             }
             OutOfBandMessage::MoveToLevel {
@@ -1147,7 +1159,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                     options_override,
                 ) {
                     error!(
-                        "Device initiated Step failed: {} | with_on_off: {}, step_mode: {:?}, step_size: {}, transition_time:: {:?}, options_mask: {:?}, options_override: {:?}",
+                        "Device initiated Step failed: {} | with_on_off: {}, step_mode: {:?}, step_size: {}, transition_time: {:?}, options_mask: {:?}, options_override: {:?}",
                         e, with_on_off, step_mode, step_size, transition_time, options_mask, options_override
                     );
                 }
