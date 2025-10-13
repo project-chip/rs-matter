@@ -119,7 +119,7 @@ pub struct OnOffHandler<'a, H: OnOffHooks, LH: LevelControlHooks> {
     off_wait_time: Cell<u16>,
 }
 
-impl<'a, H: OnOffHooks> OnOffHandler<'a, H, NoLevelControl> {
+impl<H: OnOffHooks> OnOffHandler<'_, H, NoLevelControl> {
     /// Creates a new `OnOffHandler` with the given hooks which is **not** coupled with a `LevelControl` handler.
     ///
     /// NOTE: This constructor automatically calls `init` with no coupled `LevelControl` handler.
@@ -621,7 +621,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
     }
 }
 
-impl<'a, H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<'a, H, LH> {
+impl<H: OnOffHooks, LH: LevelControlHooks> ClusterAsyncHandler for OnOffHandler<'_, H, LH> {
     #[doc = "The cluster-metadata corresponding to this handler trait."]
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
