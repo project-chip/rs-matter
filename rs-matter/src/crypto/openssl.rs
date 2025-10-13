@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#![allow(deprecated)] // Remove this once `hmac` updates to `generic-array` 1.x
+
 use core::fmt::{self, Debug};
 
 use crate::error::{Error, ErrorCode};

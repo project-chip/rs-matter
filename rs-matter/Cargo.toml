@@ -150,7 +150,7 @@ ccm = { version = "0.5", default-features = false, features = ["alloc"], optiona
 p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
 sec1 = { version = "0.7", default-features = false, optional = true }
 elliptic-curve = { version = "0.13", optional = true }
-crypto-bigint = { version = "0.5", default-features = false, optional = true }
+crypto-bigint = { version = "0.6", default-features = false, optional = true }
 rand_core = { version = "0.6", default-features = false, optional = true }
 x509-cert = { version = "0.2", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
 
