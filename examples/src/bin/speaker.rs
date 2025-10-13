@@ -75,7 +75,7 @@ fn main() -> Result<(), Error> {
     let on_off_handler = on_off::OnOffHandler::new(
         Dataver::new_rand(matter.rand()),
         1,
-        TestOnOffDeviceLogic::new(),
+        TestOnOffDeviceLogic::new(true),
     );
 
     // LevelControl cluster setup
