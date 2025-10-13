@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+#![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
+
 use core::convert::{TryFrom, TryInto};
 use core::mem::MaybeUninit;
 

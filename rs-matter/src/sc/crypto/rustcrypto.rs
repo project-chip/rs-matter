@@ -15,7 +15,8 @@
  *    limitations under the License.
  */
 
-use crypto_bigint::Encoding;
+#![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
+
 use crypto_bigint::NonZero;
 use crypto_bigint::U384;
 use elliptic_curve::ops::*;
