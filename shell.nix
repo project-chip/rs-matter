@@ -1,4 +1,9 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import <nixpkgs> {
+        overlays = [
+            (import (builtins.fetchTarball "https://github.com/oxalica/rust-overlay/archive/master.tar.gz"))
+        ];
+    }
+}:
 
 (pkgs.buildFHSEnv {
 	name = "rs-matter-test-env";
@@ -6,10 +11,7 @@
 
     targetPkgs = pkgs: with pkgs; [
         # rust support
-        rustc
-        cargo
-        rustfmt
-        clippy
+        rust-bin.stable.latest.default
 
         # Provide non-privileged execution of `ip` commands
         iproute2
@@ -39,7 +41,7 @@
 
         ## python support
         # Note: python 3.11 is required due to the deprecation of the `imp` module in newer versions of python.
-        python311Full
+        python311
         python311Packages.pip 
         python311Packages.virtualenv
     ];
