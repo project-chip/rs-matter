@@ -147,7 +147,7 @@ impl<'a> E2eRunner {
         let on_off_handler = on_off::OnOffHandler::new_standalone(
             Dataver::new_rand(self.matter.rand()),
             1,
-            TestOnOffDeviceLogic::new(),
+            TestOnOffDeviceLogic::new(false),
         );
 
         E2eTestHandler::new(&self.matter, on_off_handler)

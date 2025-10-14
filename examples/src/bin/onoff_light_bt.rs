@@ -34,10 +34,9 @@ use core::pin::pin;
 
 use std::net::UdpSocket;
 
-use embassy_futures::select::{select, select3, select4};
+use embassy_futures::select::{select, select4};
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_time::{Duration, Timer};
 use log::{info, warn};
 
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
@@ -135,7 +134,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(matter.rand()),
         1,
-        TestOnOffDeviceLogic::new(),
+        TestOnOffDeviceLogic::new(true),
     );
 
     // A storage for the Wifi networks
@@ -164,19 +163,6 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
     // Run the background job of the data model
     let mut dm_job = pin!(dm.run());
-
-    // This is a sample code that simulates state changes triggered by the HAL
-    // Changes will be properly communicated to the Matter controllers and other Matter apps (i.e. Google Home, Alexa), thanks to subscriptions
-    let mut device = pin!(async {
-        loop {
-            Timer::after(Duration::from_secs(5)).await;
-
-            on_off_handler.set_on_off(!on_off_handler.on_off());
-            subscriptions.notify_cluster_changed(1, TestOnOffDeviceLogic::CLUSTER.id);
-
-            info!("Lamp toggled");
-        }
-    });
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
@@ -207,7 +193,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
             &mut transport,
             &mut bluetooth,
             select(&mut wifi_prov_task, &mut persist).coalesce(),
-            select3(&mut respond, &mut device, &mut dm_job).coalesce(),
+            select(&mut respond, &mut dm_job).coalesce(),
         );
 
         // Run with a simple `block_on`. Any local executor would do.
@@ -227,7 +213,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &mut transport,
         &mut mdns,
         &mut persist,
-        select3(&mut respond, &mut device, &mut dm_job).coalesce(),
+        select(&mut respond, &mut dm_job).coalesce(),
     );
 
     // Run with a simple `block_on`. Any local executor would do.

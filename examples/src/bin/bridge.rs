@@ -76,12 +76,12 @@ fn main() -> Result<(), Error> {
     let on_off_handler_ep2 = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(matter.rand()),
         2,
-        TestOnOffDeviceLogic::new(),
+        TestOnOffDeviceLogic::new(false),
     );
     let on_off_handler_ep3 = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(matter.rand()),
         3,
-        TestOnOffDeviceLogic::new(),
+        TestOnOffDeviceLogic::new(false),
     );
 
     // Create the Data Model instance

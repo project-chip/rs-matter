@@ -924,12 +924,16 @@ impl LevelControlHooks for NoLevelControl {
 }
 
 pub mod test {
+    use embassy_time::{Duration, Timer};
+
     use crate::error::Error;
     use crate::tlv::Nullable;
     use core::cell::Cell;
 
     use crate::dm::clusters::decl::on_off as on_off_cluster;
-    use crate::dm::clusters::on_off::{EffectVariantEnum, OnOffHooks, StartUpOnOffEnum};
+    use crate::dm::clusters::on_off::{
+        EffectVariantEnum, OnOffHooks, OutOfBandMessage, StartUpOnOffEnum,
+    };
     use crate::dm::Cluster;
 
     use crate::with;
@@ -939,13 +943,15 @@ pub mod test {
     pub struct TestOnOffDeviceLogic {
         on_off: Cell<bool>,
         start_up_on_off: Cell<Option<StartUpOnOffEnum>>,
+        toggle_periodically: bool,
     }
 
     impl TestOnOffDeviceLogic {
-        pub const fn new() -> Self {
+        pub const fn new(toggle_periodically: bool) -> Self {
             Self {
                 on_off: Cell::new(false),
                 start_up_on_off: Cell::new(None),
+                toggle_periodically,
             }
         }
     }
@@ -985,6 +991,27 @@ pub mod test {
 
         async fn handle_off_with_effect(&self, _effect: EffectVariantEnum) {
             // no effect
+        }
+
+        async fn run<F: Fn(OutOfBandMessage)>(&self, notify: F) {
+            if self.toggle_periodically {
+                loop {
+                    // In a real example we wait for physical interaction.
+                    Timer::after(Duration::from_secs(5)).await;
+                    match self.on_off() {
+                        true => {
+                            info!("Emulation: out of band switch off");
+                            notify(OutOfBandMessage::Off);
+                        }
+                        false => {
+                            info!("Emulation: out of band switch on");
+                            notify(OutOfBandMessage::On);
+                        }
+                    }
+                }
+            } else {
+                core::future::pending::<()>().await
+            }
         }
     }
 }
