@@ -34,11 +34,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Checkout submodules & Matter CPP Bootstrap
-        uses: ./.github/actions/checkout-submodules-and-cpp-bootstrap
-        with:
-          platform: linux
-
       - name: Set up environment for size reports
         uses: ./.github/actions/setup-size-reports
         if: ${{ !env.ACT }}
@@ -50,15 +45,15 @@ jobs:
 
       - name: Prepare bloat report from the previous builds
         run: |
-            .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+            scripts/memory/gh_sizes.py \
               linux rs-matter onoff-light-bt \
               target/release/onoff_light_bt \
               /tmp/bloat_reports/
-            .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+            scripts/memory/gh_sizes.py \
               linux rs-matter dimmable_light \
               target/release/dimmable_light \
               /tmp/bloat_reports/
-            .environment/pigweed-venv/bin/python3 scripts/tools/memory/gh_sizes.py \
+            scripts/memory/gh_sizes.py \
               linux rs-matter speaker \
               target/release/speaker \
               /tmp/bloat_reports/

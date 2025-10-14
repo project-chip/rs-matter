@@ -1,4 +1,0 @@
-[submodule "matter_cpp/repo"]
-	path = matter_cpp/repo
-	url = https://github.com/project-chip/connectedhomeip.git
-	branch = v1.3-branch

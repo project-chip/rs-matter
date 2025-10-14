@@ -95,7 +95,7 @@ impl Command {
                 ITests::new(workspace_dir(), print_cmd_output).print_packages()
             }
             Command::ItestSetup(args) => ITests::new(workspace_dir(), print_cmd_output)
-                .setup(args.force_setup),
+                .setup(Some(&args.gitref), args.force_setup),
             Command::ItestExe(args) => ITests::new(workspace_dir(), print_cmd_output).build(
                 &args.profile,
                 &args.target,
@@ -171,6 +171,9 @@ impl Verbosity {
 /// Arguments for the `itest-setup` command
 #[derive(Parser, Debug, Clone)]
 struct ItestSetupArgs {
+    /// Chip repository reference (branch/tag/commit)
+    #[arg(long, default_value = itest::CHIP_DEFAULT_GITREF)]
+    gitref: String,
     /// Force setup even if cached
     #[arg(long)]
     force_setup: bool,

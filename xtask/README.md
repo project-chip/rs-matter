@@ -12,5 +12,5 @@ cargo xtask --help
 
 To get necessary environment configs (such as `gn`), you may also need to run:
 ```base
-source matter_cpp/repo/scripts/bootstrap.sh
+source .build/itest/connectedhomeip/scripts/bootstrap.sh
 ```
