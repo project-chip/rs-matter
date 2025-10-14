@@ -41,7 +41,7 @@
 
         ## python support
         # Note: python 3.11 is required due to the deprecation of the `imp` module in newer versions of python.
-        python311Full
+        python311
         python311Packages.pip 
         python311Packages.virtualenv
     ];

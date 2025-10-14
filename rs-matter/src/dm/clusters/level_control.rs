@@ -151,23 +151,30 @@ pub struct AttributeDefaults {
 }
 
 impl AttributeDefaults {
-    /// Creates an `AttributeDefaults` instance with default values for optional attributes.
-    /// These defaults are chosen to provide a minimal configuration for devices that do not require optional attributes.
+    /// Creates an `AttributeDefaults` instance with default values.
     ///
     /// # Default Values
+    /// - `on_level`: `Nullable::none()` (not set)
+    /// - `options`: 0 (no options set)
     /// - `on_off_transition_time`: 0 (no transition delay by default)
     /// - `on_transition_time`: `Nullable::none()` (not set)
     /// - `off_transition_time`: `Nullable::none()` (not set)
     /// - `default_move_rate`: `Nullable::none()` (not set)
-    pub fn with_optional_defaults(on_level: Option<u8>, options: OptionsBitmap) -> Self {
+    pub const fn new() -> Self {
         Self {
-            on_level: Nullable::from(on_level),
-            options,
+            on_level: Nullable::none(),
+            options: OptionsBitmap::from_bits(0).unwrap(),
             on_off_transition_time: 0,
             on_transition_time: Nullable::none(),
             off_transition_time: Nullable::none(),
             default_move_rate: Nullable::none(),
         }
+    }
+}
+
+impl Default for AttributeDefaults {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

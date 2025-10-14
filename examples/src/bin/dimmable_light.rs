@@ -151,10 +151,11 @@ fn run() -> Result<(), Error> {
         Dataver::new_rand(matter.rand()),
         1,
         LevelControlDeviceLogic::new(),
-        level_control::AttributeDefaults::with_optional_defaults(
-            Some(42),
-            OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
-        ),
+        level_control::AttributeDefaults {
+            on_level: Nullable::some(42),
+            options: OptionsBitmap::from_bits(OptionsBitmap::EXECUTE_IF_OFF.bits()).unwrap(),
+            ..Default::default()
+        },
     );
 
     // Cluster wiring, validation and initialisation
