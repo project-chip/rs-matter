@@ -8,11 +8,10 @@ inputs:
 runs:
   using: "composite"
   steps:
-  - uses: Wandalen/wretry.action@v1.4.10
-    name: Set up environment for size reports
+  - run: pip install numpy pandas humanfriendly pyelftools cxxfilt tabulate fastcore ghapi
+    shell: bash
+  - name: Set up environment for size reports
+    shell: bash
     env:
       GH_CONTEXT: ${{ inputs.gh-context }}
-    with:
-      command: scripts/memory/gh_sizes_environment.py "${GH_CONTEXT}"
-      attempt_limit: 2
-      attempt_delay: 2000
+    run: python scripts/memory/gh_sizes_environment.py "${GH_CONTEXT}"

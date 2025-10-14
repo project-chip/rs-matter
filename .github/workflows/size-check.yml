@@ -41,19 +41,19 @@ jobs:
           gh-context: ${{ toJson(github) }}
 
       - name: Examples
-        run: cargo build --examples --release --no-default-features --features os,rustcrypto,log
+        run: cargo build --release --no-default-features --features os,rustcrypto,log
 
       - name: Prepare bloat report from the previous builds
         run: |
-            scripts/memory/gh_sizes.py \
-              linux rs-matter onoff-light-bt \
-              target/release/onoff_light_bt \
+            python scripts/memory/gh_sizes.py \
+              linux rs-matter onoff-light \
+              target/release/onoff_light \
               /tmp/bloat_reports/
-            scripts/memory/gh_sizes.py \
+            python scripts/memory/gh_sizes.py \
               linux rs-matter dimmable_light \
               target/release/dimmable_light \
               /tmp/bloat_reports/
-            scripts/memory/gh_sizes.py \
+            python scripts/memory/gh_sizes.py \
               linux rs-matter speaker \
               target/release/speaker \
               /tmp/bloat_reports/

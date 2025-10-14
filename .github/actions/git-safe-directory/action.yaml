@@ -1,0 +1,8 @@
+name: Git safe directory
+description: For running act with checkout owned by non-root user, e.g. docker
+runs:
+  using: "composite"
+  steps:
+  - name: Set git safe.directory to "*"
+    shell: bash
+    run: git config --system --add safe.directory '*'
