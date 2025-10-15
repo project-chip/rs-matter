@@ -15,13 +15,11 @@
  *    limitations under the License.
  */
 
-use core::sync::atomic::Ordering;
-
 use cfg_if::cfg_if;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use std::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
