@@ -9,3 +9,8 @@ From the rs-matter root directory:
 ```bash
 cargo xtask --help
 ```
+
+To get necessary environment configs (such as `gn`), you may also need to run:
+```base
+source .build/itest/connectedhomeip/scripts/bootstrap.sh
+```

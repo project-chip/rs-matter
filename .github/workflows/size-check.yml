@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: "50 6 * * *"
+  workflow_dispatch:
+
+env:
+  RUST_TOOLCHAIN: stable
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_run_size_report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy, rust-src
+
+      - name: Setup | Rust no-std target
+        run: rustup target add riscv32imac-unknown-none-elf
+
+      - name: Install libdbus
+        run: sudo apt-get install -y libdbus-1-dev
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up environment for size reports
+        uses: ./.github/actions/setup-size-reports
+        if: ${{ !env.ACT }}
+        with:
+          gh-context: ${{ toJson(github) }}
+
+      - name: Examples
+        run: cargo build --release --no-default-features --features os,rustcrypto,log
+
+      - name: Prepare bloat report from the previous builds
+        run: |
+            python scripts/memory/gh_sizes.py \
+              linux rs-matter onoff-light \
+              target/release/onoff_light \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              linux rs-matter dimmable_light \
+              target/release/dimmable_light \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              linux rs-matter speaker \
+              target/release/speaker \
+              /tmp/bloat_reports/
+
+      - name: Uploading Size Reports
+        uses: ./.github/actions/upload-size-reports
+        if: ${{ !env.ACT }}
+        with:
+          platform-name: linux

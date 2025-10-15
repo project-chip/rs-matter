@@ -1,0 +1,17 @@
+name: Setup size reports
+description: Setup size reports
+inputs:
+  gh-context:
+    description: "GH Context"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+  - run: pip install numpy pandas humanfriendly pyelftools cxxfilt tabulate fastcore ghapi
+    shell: bash
+  - name: Set up environment for size reports
+    shell: bash
+    env:
+      GH_CONTEXT: ${{ inputs.gh-context }}
+    run: python scripts/memory/gh_sizes_environment.py "${GH_CONTEXT}"
