@@ -229,7 +229,7 @@ impl CryptoSpake2 {
     }
 
     fn add_to_tt(tt: &mut Hasher, buf: &[u8]) -> Result<(), Error> {
-        let mut len_buf: [u8; 8] = (buf.len() as u64).to_le_bytes()
+        let mut len_buf: [u8; 8] = (buf.len() as u64).to_le_bytes();
         tt.update(&len_buf)?;
         if !buf.is_empty() {
             tt.update(buf)?;
