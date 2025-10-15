@@ -111,7 +111,6 @@ large-buffers = [] # TCP support
 rs-matter-macros = { version = "0.1", path = "../rs-matter-macros" }
 cfg-if = "1"
 bitflags = { version =  "2.5", default-features = false }
-byteorder = { version = "1.5", default-features = false }
 heapless = "0.8"
 num = { version = "0.4", default-features = false }
 num-derive = "0.4"
@@ -120,7 +119,6 @@ strum = { version = "0.26", features = ["derive"], default-features = false }
 log = { version = "0.4", optional = true }
 defmt = { version = "0.3", optional = true, features = ["ip_in_core"] }
 subtle = { version = "2.5", default-features = false }
-safemem = { version = "0.3", default-features = false }
 time = { version = "0.3", default-features = false }
 verhoeff = { version = "1", default-features = false }
 embassy-futures = "0.1.2"
@@ -129,7 +127,6 @@ embassy-sync = "0.7"
 either = { version = "1", default-features = false }
 critical-section = "1.1"
 domain = { version = "0.10", default-features = false, features = ["heapless"] }
-portable-atomic = "1"
 qrcodegen-no-heap = "1.8"
 scopeguard = { version = "1", default-features = false }
 pinned-init = { version = "0.0.8", default-features = false }

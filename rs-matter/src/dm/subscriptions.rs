@@ -20,7 +20,7 @@ use core::num::NonZeroU8;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Instant;
 
-use portable_atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::dm::{ClusterId, EndptId};
 use crate::fabric::MAX_FABRICS;

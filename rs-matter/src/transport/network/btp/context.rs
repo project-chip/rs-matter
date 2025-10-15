@@ -21,7 +21,7 @@ use cfg_if::cfg_if;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
-use portable_atomic::AtomicUsize;
+use std::sync::atomic::AtomicUsize;
 
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
