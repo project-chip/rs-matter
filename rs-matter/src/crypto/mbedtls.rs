@@ -180,7 +180,7 @@ impl KeyPair {
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
             Err(ErrorCode::NoSpace)?;
         }
-        safemem::write_bytes(signature, 0);
+        signature.fill(0);
 
         // mbedTLS writes the DER signature first
         // TODO: Update rust-mbedtls to provide raw level APIs to get r and s values
