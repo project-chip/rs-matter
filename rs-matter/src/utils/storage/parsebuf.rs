@@ -18,7 +18,7 @@
 use core::borrow::{Borrow, BorrowMut};
 
 use crate::error::*;
-use std::convert::TryInto;
+use core::convert::TryInto;
 
 /// A buffer for reading data from a byte slice.
 pub struct ReadBuf<T> {
