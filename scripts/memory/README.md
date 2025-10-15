@@ -1,0 +1,1 @@
+Scripts copied from https://github.com/project-chip/connectedhomeip/tree/master/scripts/tools/memory
