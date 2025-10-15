@@ -31,7 +31,7 @@ Users are free to consume all of the APIs, including the provided system cluster
 
 ## Documentation
 
-We'll have an `rs-matter` Rust Book in future, but in the meantime - look at the [examples](examples), as well as the code documentation.
+We'll have an `rs-matter` Rust Book in future, but in the meantime - look at the [examples](examples), [docs](docs), as well as the code documentation.
 Use the [discussions](https://github.com/project-chip/rs-matter/discussions) to ask questions.
 
 ## Status Quo
