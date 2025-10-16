@@ -203,10 +203,11 @@ where
     }
 }
 
-struct BtpContextData {
-    conn_ct: usize,
-    sessions: crate::utils::storage::Vec<Session, MAX_BTP_SESSIONS>,
+pub(crate) struct BtpContextData {
+    pub(crate) conn_ct: usize,
+    pub(crate) sessions: crate::utils::storage::Vec<Session, MAX_BTP_SESSIONS>,
 }
+
 impl BtpContextData {
     #[inline(always)]
     const fn new() -> Self {
@@ -245,7 +246,7 @@ pub struct BtpContext<M>
 where
     M: RawMutex,
 {
-    state: Mutex<M, RefCell<BtpContextData>>,
+    pub(crate) state: Mutex<M, RefCell<BtpContextData>>,
     pub(crate) handshake_notif: Notification<M>,
     pub(crate) available_notif: Notification<M>,
     pub(crate) recv_notif: Notification<M>,

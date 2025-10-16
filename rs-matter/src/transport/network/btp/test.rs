@@ -320,8 +320,8 @@ fn test_mtu() {
 
         peripheral.subscribe(PEER_ADDR).await;
 
-        // io.context.sessions.lock(|sessions| {
-        //     assert!(sessions.borrow().len() == 1);
+        // io.context.state.lock(|internal| {
+        //     assert!(internal.borrow().sessions.len() == 1);
         // });
 
         // Expected MTU in response is 0xc8 - 3 = 0xc5
@@ -333,8 +333,8 @@ fn test_mtu() {
 
         Timer::after(Duration::from_secs(1)).await;
 
-        io.context.sessions.lock(|sessions| {
-            assert!(sessions.borrow().is_empty());
+        io.context.state.lock(|internal| {
+            assert!(internal.borrow().sessions.is_empty());
         });
 
         /////////////////////////////////
@@ -349,8 +349,8 @@ fn test_mtu() {
 
         peripheral.subscribe(PEER_ADDR).await;
 
-        // io.context.sessions.lock(|sessions| {
-        //     assert!(sessions.borrow().len() == 1);
+        // io.context.state.lock(|internal| {
+        //     assert!(internal.borrow().sessions.len() == 1);
         // });
 
         // Expected MTU is the minimum one (0x14)
@@ -372,8 +372,8 @@ async fn nego_min_mtu(peripheral: &Peripheral) {
 
     peripheral.subscribe(PEER_ADDR).await;
 
-    // io.context.sessions.lock(|sessions| {
-    //     assert!(sessions.borrow().len() == 1);
+    // io.context.state.lock(|internal| {
+    //     assert!(internal.borrow().sessions.len() == 1);
     // });
 
     // Peer window = 1 because of this handshake resp
@@ -443,8 +443,8 @@ fn test_long_read() {
 
         Timer::after(Duration::from_secs(1)).await;
 
-        io.context.sessions.lock(|sessions| {
-            assert!(sessions.borrow().is_empty());
+        io.context.state.lock(|internal| {
+            assert!(internal.borrow().sessions.is_empty());
         });
     });
 }
@@ -534,8 +534,8 @@ fn test_long_read_ack() {
 
         Timer::after(Duration::from_secs(1)).await;
 
-        io.context.sessions.lock(|sessions| {
-            assert!(sessions.borrow().is_empty());
+        io.context.state.lock(|internal| {
+            assert!(internal.borrow().sessions.is_empty());
         });
     });
 }
@@ -608,8 +608,8 @@ fn test_idle_timeout() {
             Timer::after(Duration::from_secs(3)).await;
 
             // Session should be closed by now
-            io.context.sessions.lock(|sessions| {
-                assert!(sessions.borrow().is_empty());
+            io.context.state.lock(|internal| {
+                assert!(internal.borrow().sessions.is_empty());
             });
         },
     );
