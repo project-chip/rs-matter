@@ -194,7 +194,7 @@ impl KeyPair {
         if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
             Err(ErrorCode::NoSpace)?;
         }
-        safemem::write_bytes(signature, 0);
+        signature.fill(0);
 
         let sig = EcdsaSig::sign(&msg, self.private_key()?)?;
         let r = sig.r().to_vec();

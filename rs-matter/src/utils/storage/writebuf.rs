@@ -16,7 +16,6 @@
  */
 
 use crate::error::*;
-use byteorder::{ByteOrder, LittleEndian};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -181,44 +180,26 @@ impl<'a> WriteBuf<'a> {
     }
 
     pub fn le_u16(&mut self, data: u16) -> Result<(), Error> {
-        self.append_with(2, |x| {
-            LittleEndian::write_u16(&mut x.buf[x.end..], data);
-        })
+        self.append(&data.to_le_bytes())
     }
     pub fn le_i16(&mut self, data: i16) -> Result<(), Error> {
-        self.append_with(2, |x| {
-            LittleEndian::write_i16(&mut x.buf[x.end..], data);
-        })
+        self.append(&data.to_le_bytes())
     }
 
     pub fn le_u32(&mut self, data: u32) -> Result<(), Error> {
-        self.append_with(4, |x| {
-            LittleEndian::write_u32(&mut x.buf[x.end..], data);
-        })
+        self.append(&data.to_le_bytes())
     }
 
     pub fn le_i32(&mut self, data: i32) -> Result<(), Error> {
-        self.append_with(4, |x| {
-            LittleEndian::write_i32(&mut x.buf[x.end..], data);
-        })
+        self.append(&data.to_le_bytes())
     }
 
     pub fn le_u64(&mut self, data: u64) -> Result<(), Error> {
-        self.append_with(8, |x| {
-            LittleEndian::write_u64(&mut x.buf[x.end..], data);
-        })
+        self.append(&data.to_le_bytes())
     }
 
     pub fn le_i64(&mut self, data: i64) -> Result<(), Error> {
-        self.append_with(8, |x| {
-            LittleEndian::write_i64(&mut x.buf[x.end..], data);
-        })
-    }
-
-    pub fn le_uint(&mut self, nbytes: usize, data: u64) -> Result<(), Error> {
-        self.append_with(nbytes, |x| {
-            LittleEndian::write_uint(&mut x.buf[x.end..], data, nbytes);
-        })
+        self.append(&data.to_le_bytes())
     }
 }
 
@@ -244,7 +225,7 @@ mod tests {
         unwrap!(buf.le_u16(65));
         unwrap!(buf.le_u32(0xcafebabe));
         unwrap!(buf.le_u64(0xcafebabecafebabe));
-        unwrap!(buf.le_uint(2, 64));
+        unwrap!(buf.le_u16(64));
         assert_eq!(
             test_slice,
             [

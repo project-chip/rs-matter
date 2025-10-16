@@ -18,7 +18,7 @@
 use core::borrow::{Borrow, BorrowMut};
 
 use crate::error::*;
-use byteorder::{ByteOrder, LittleEndian};
+use core::convert::TryInto;
 
 /// A buffer for reading data from a byte slice.
 pub struct ReadBuf<T> {
@@ -115,20 +115,35 @@ where
         Err(ErrorCode::TruncatedPacket.into())
     }
 
+    pub fn parse_as_array<F, R, const N: usize>(&mut self, f: F) -> Result<R, Error>
+    where
+        F: FnOnce([u8; N]) -> R,
+    {
+        if self.left >= N {
+            let end_offset = self.read_off + N;
+            let data = f(self.buf.borrow()[self.read_off..end_offset]
+                .try_into()
+                .unwrap());
+            self.advance(N);
+            return Ok(data);
+        }
+        Err(ErrorCode::TruncatedPacket.into())
+    }
+
     pub fn le_u8(&mut self) -> Result<u8, Error> {
         self.parse_head_with(1, |x| x.buf.borrow()[x.read_off])
     }
 
     pub fn le_u16(&mut self) -> Result<u16, Error> {
-        self.parse_head_with(2, |x| LittleEndian::read_u16(&x.buf.borrow()[x.read_off..]))
+        self.parse_as_array(u16::from_le_bytes)
     }
 
     pub fn le_u32(&mut self) -> Result<u32, Error> {
-        self.parse_head_with(4, |x| LittleEndian::read_u32(&x.buf.borrow()[x.read_off..]))
+        self.parse_as_array(u32::from_le_bytes)
     }
 
     pub fn le_u64(&mut self) -> Result<u64, Error> {
-        self.parse_head_with(8, |x| LittleEndian::read_u64(&x.buf.borrow()[x.read_off..]))
+        self.parse_as_array(u64::from_le_bytes)
     }
 }
 

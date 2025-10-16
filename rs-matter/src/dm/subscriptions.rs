@@ -18,14 +18,14 @@
 use core::num::NonZeroU8;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Instant;
-
-use portable_atomic::{AtomicU32, Ordering};
 
 use crate::dm::{ClusterId, EndptId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
+use crate::utils::sync::blocking::Mutex;
 use crate::utils::sync::Notification;
 
 /// The maximum number of subscriptions that can be tracked at the same time by default.
@@ -70,14 +70,40 @@ impl Subscription {
     }
 }
 
+struct SubscriptionInner<const N: usize> {
+    next_subscription_id: u32,
+    subscriptions: crate::utils::storage::Vec<Subscription, N>,
+}
+
+impl<const N: usize> SubscriptionInner<N> {
+    /// Create the instance.
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            next_subscription_id: 1,
+            subscriptions: crate::utils::storage::Vec::new(),
+        }
+    }
+
+    /// Create an in-place initializer for the instance.
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            next_subscription_id: 1,
+            subscriptions <- crate::utils::storage::Vec::init(),
+        })
+    }
+}
+
 /// A utility for tracking subscriptions accepted by the data model.
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
-pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS> {
-    next_subscription_id: AtomicU32,
-    subscriptions: RefCell<crate::utils::storage::Vec<Subscription, N>>,
-    pub(crate) notification: Notification<NoopRawMutex>,
+pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS, M = NoopRawMutex>
+where
+    M: RawMutex,
+{
+    state: Mutex<M, RefCell<SubscriptionInner<N>>>,
+    pub(crate) notification: Notification<M>,
 }
 
 impl<const N: usize> Subscriptions<N> {
@@ -85,8 +111,7 @@ impl<const N: usize> Subscriptions<N> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            next_subscription_id: AtomicU32::new(1),
-            subscriptions: RefCell::new(crate::utils::storage::Vec::new()),
+            state: Mutex::new(RefCell::new(SubscriptionInner::new())),
             notification: Notification::new(),
         }
     }
@@ -94,8 +119,7 @@ impl<const N: usize> Subscriptions<N> {
     /// Create an in-place initializer for the instance.
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            next_subscription_id: AtomicU32::new(1),
-            subscriptions <- RefCell::init(crate::utils::storage::Vec::init()),
+            state <- Mutex::init(RefCell::init(SubscriptionInner::init())),
             notification: Notification::new(),
         })
     }
@@ -112,9 +136,12 @@ impl<const N: usize> Subscriptions<N> {
         // TODO: Make use of the endpoint_id and cluster_id parameters
         // to implement more intelligent reporting on subscriptions
 
-        for sub in self.subscriptions.borrow_mut().iter_mut() {
-            sub.changed = true;
-        }
+        self.state.lock(|internal| {
+            let subscriptions = &mut internal.borrow_mut().subscriptions;
+            for sub in subscriptions.iter_mut() {
+                sub.changed = true;
+            }
+        });
 
         self.notification.notify();
     }
@@ -127,22 +154,26 @@ impl<const N: usize> Subscriptions<N> {
         min_int_secs: u16,
         max_int_secs: u16,
     ) -> Option<u32> {
-        let id = self.next_subscription_id.fetch_add(1, Ordering::SeqCst);
+        self.state.lock(|internal| {
+            let mut state = internal.borrow_mut();
+            let id = state.next_subscription_id;
+            state.next_subscription_id += 1;
 
-        self.subscriptions
-            .borrow_mut()
-            .push(Subscription {
-                fabric_idx,
-                peer_node_id,
-                session_id: Some(session_id),
-                id,
-                min_int_secs,
-                max_int_secs,
-                reported_at: Instant::MAX,
-                changed: false,
-            })
-            .map(|_| id)
-            .ok()
+            state
+                .subscriptions
+                .push(Subscription {
+                    fabric_idx,
+                    peer_node_id,
+                    session_id: Some(session_id),
+                    id,
+                    min_int_secs,
+                    max_int_secs,
+                    reported_at: Instant::MAX,
+                    changed: false,
+                })
+                .map(|_| id)
+                .ok()
+        })
     }
 
     /// Mark the subscription with the given ID as reported.
@@ -150,16 +181,18 @@ impl<const N: usize> Subscriptions<N> {
     /// Will return `false` if the subscription with the given ID does no longer exist, as it might be
     /// removed by a concurrent transaction while being reported on.
     pub(crate) fn mark_reported(&self, id: u32) -> bool {
-        let mut subscriptions = self.subscriptions.borrow_mut();
+        self.state.lock(|internal| {
+            let subscriptions = &mut internal.borrow_mut().subscriptions;
 
-        if let Some(sub) = subscriptions.iter_mut().find(|sub| sub.id == id) {
-            sub.reported_at = Instant::now();
-            sub.changed = false;
+            if let Some(sub) = subscriptions.iter_mut().find(|sub| sub.id == id) {
+                sub.reported_at = Instant::now();
+                sub.changed = false;
 
-            true
-        } else {
-            false
-        }
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub(crate) fn remove(
@@ -168,14 +201,16 @@ impl<const N: usize> Subscriptions<N> {
         peer_node_id: Option<u64>,
         id: Option<u32>,
     ) {
-        let mut subscriptions = self.subscriptions.borrow_mut();
-        while let Some(index) = subscriptions.iter().position(|sub| {
-            sub.fabric_idx == fabric_idx.unwrap_or(sub.fabric_idx)
-                && sub.peer_node_id == peer_node_id.unwrap_or(sub.peer_node_id)
-                && sub.id == id.unwrap_or(sub.id)
-        }) {
-            subscriptions.swap_remove(index);
-        }
+        self.state.lock(|internal| {
+            let subscriptions = &mut internal.borrow_mut().subscriptions;
+            while let Some(index) = subscriptions.iter().position(|sub| {
+                sub.fabric_idx == fabric_idx.unwrap_or(sub.fabric_idx)
+                    && sub.peer_node_id == peer_node_id.unwrap_or(sub.peer_node_id)
+                    && sub.id == id.unwrap_or(sub.id)
+            }) {
+                subscriptions.swap_remove(index);
+            }
+        })
     }
 
     pub(crate) fn find_removed_session<F>(
@@ -185,27 +220,31 @@ impl<const N: usize> Subscriptions<N> {
     where
         F: Fn(u32) -> bool,
     {
-        self.subscriptions.borrow().iter().find_map(|sub| {
-            sub.session_id
-                .map(&session_removed)
-                .unwrap_or(false)
-                .then_some((
-                    sub.fabric_idx,
-                    sub.peer_node_id,
-                    unwrap!(sub.session_id),
-                    sub.id,
-                ))
+        self.state.lock(|internal| {
+            internal.borrow_mut().subscriptions.iter().find_map(|sub| {
+                sub.session_id
+                    .map(&session_removed)
+                    .unwrap_or(false)
+                    .then_some((
+                        sub.fabric_idx,
+                        sub.peer_node_id,
+                        unwrap!(sub.session_id),
+                        sub.id,
+                    ))
+            })
         })
     }
 
     pub(crate) fn find_expired(&self, now: Instant) -> Option<(NonZeroU8, u64, Option<u32>, u32)> {
-        self.subscriptions.borrow().iter().find_map(|sub| {
-            sub.is_expired(now).then_some((
-                sub.fabric_idx,
-                sub.peer_node_id,
-                sub.session_id,
-                sub.id,
-            ))
+        self.state.lock(|internal| {
+            internal.borrow_mut().subscriptions.iter().find_map(|sub| {
+                sub.is_expired(now).then_some((
+                    sub.fabric_idx,
+                    sub.peer_node_id,
+                    sub.session_id,
+                    sub.id,
+                ))
+            })
         })
     }
 
@@ -215,14 +254,17 @@ impl<const N: usize> Subscriptions<N> {
         &self,
         now: Instant,
     ) -> Option<(NonZeroU8, u64, Option<u32>, u32)> {
-        self.subscriptions
-            .borrow_mut()
-            .iter_mut()
-            .find(|sub| sub.report_due(now))
-            .map(|sub| {
-                sub.reported_at = now;
-                (sub.fabric_idx, sub.peer_node_id, sub.session_id, sub.id)
-            })
+        self.state.lock(|internal| {
+            internal
+                .borrow_mut()
+                .subscriptions
+                .iter_mut()
+                .find(|sub| sub.report_due(now))
+                .map(|sub| {
+                    sub.reported_at = now;
+                    (sub.fabric_idx, sub.peer_node_id, sub.session_id, sub.id)
+                })
+        })
     }
 }
 

@@ -15,13 +15,9 @@
  *    limitations under the License.
  */
 
-use core::sync::atomic::Ordering;
-
 use cfg_if::cfg_if;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-
-use portable_atomic::AtomicUsize;
 
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
@@ -111,8 +107,8 @@ where
     where
         F: Fn(&Session) -> bool,
     {
-        context.sessions.lock(move |sessions| {
-            let mut sessions = sessions.borrow_mut();
+        context.state.lock(move |internal| {
+            let sessions = &mut internal.borrow_mut().sessions;
 
             let Some(session) = sessions.iter_mut().find(|session| condition(session)) else {
                 return Err(LockError::NoMatch);
@@ -137,17 +133,21 @@ where
     where
         F: Fn(&Session) -> bool,
     {
-        context.sessions.lock(move |sessions| {
-            sessions.borrow_mut().iter_mut().find_map(|session| {
-                if condition(session) && session.set_sending(true) {
-                    Some(Self {
-                        context,
-                        address: session.address(),
-                    })
-                } else {
-                    None
-                }
-            })
+        context.state.lock(move |internal| {
+            internal
+                .borrow_mut()
+                .sessions
+                .iter_mut()
+                .find_map(|session| {
+                    if condition(session) && session.set_sending(true) {
+                        Some(Self {
+                            context,
+                            address: session.address(),
+                        })
+                    } else {
+                        None
+                    }
+                })
         })
     }
 
@@ -163,8 +163,8 @@ where
     where
         F: FnOnce(&mut Session) -> Result<R, Error>,
     {
-        self.context.sessions.lock(|sessions| {
-            let mut sessions = sessions.borrow_mut();
+        self.context.state.lock(|internal| {
+            let sessions = &mut internal.borrow_mut().sessions;
             let session = sessions
                 .iter_mut()
                 .find(|session| session.address() == self.address)
@@ -180,9 +180,10 @@ where
     M: RawMutex,
 {
     fn drop(&mut self) {
-        self.context.sessions.lock(|sessions| {
-            if let Some(session) = sessions
+        self.context.state.lock(|internal| {
+            if let Some(session) = internal
                 .borrow_mut()
+                .sessions
                 .iter_mut()
                 .find(|session| session.address() == self.address)
             {
@@ -199,6 +200,29 @@ where
         });
 
         self.context.send_notif.notify();
+    }
+}
+
+pub(crate) struct BtpContextInner {
+    pub(crate) conn_ct: usize,
+    pub(crate) sessions: crate::utils::storage::Vec<Session, MAX_BTP_SESSIONS>,
+}
+
+impl BtpContextInner {
+    #[inline(always)]
+    const fn new() -> Self {
+        Self {
+            conn_ct: 0,
+            sessions: crate::utils::storage::Vec::new(),
+        }
+    }
+
+    /// Create a BTP context in-place initializer.
+    fn init() -> impl Init<Self> {
+        init!(Self {
+            conn_ct: 0,
+            sessions <- crate::utils::storage::Vec::init(),
+        })
     }
 }
 
@@ -222,14 +246,13 @@ pub struct BtpContext<M>
 where
     M: RawMutex,
 {
-    pub(crate) sessions: Mutex<M, RefCell<crate::utils::storage::Vec<Session, MAX_BTP_SESSIONS>>>,
+    pub(crate) state: Mutex<M, RefCell<BtpContextInner>>,
     pub(crate) handshake_notif: Notification<M>,
     pub(crate) available_notif: Notification<M>,
     pub(crate) recv_notif: Notification<M>,
     pub(crate) ack_notif: Notification<M>,
     pub(crate) send_notif: Notification<M>,
     pub(crate) changed_notif: Notification<M>,
-    pub(crate) conn_ct: AtomicUsize,
 }
 
 impl<M> Default for BtpContext<M>
@@ -249,28 +272,26 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            sessions: Mutex::new(RefCell::new(crate::utils::storage::Vec::new())),
+            state: Mutex::new(RefCell::new(BtpContextInner::new())),
             handshake_notif: Notification::new(),
             available_notif: Notification::new(),
             recv_notif: Notification::new(),
             ack_notif: Notification::new(),
             send_notif: Notification::new(),
             changed_notif: Notification::new(),
-            conn_ct: AtomicUsize::new(0),
         }
     }
 
     /// Create a BTP context in-place initializer.
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            sessions <- Mutex::init(RefCell::init(crate::utils::storage::Vec::init())),
+            state <- Mutex::init(RefCell::init(BtpContextInner::init())),
             handshake_notif: Notification::new(),
             available_notif: Notification::new(),
             recv_notif: Notification::new(),
             ack_notif: Notification::new(),
             send_notif: Notification::new(),
             changed_notif: Notification::new(),
-            conn_ct: AtomicUsize::new(0),
         })
     }
 }
@@ -303,8 +324,8 @@ where
     fn on_write(&self, address: BtAddr, data: &[u8], gatt_mtu: Option<u16>) -> Result<(), Error> {
         trace!("Received {} bytes from {}", Bytes(data), address);
 
-        self.sessions.lock(|sessions| {
-            let mut sessions = sessions.borrow_mut();
+        self.state.lock(|internal| {
+            let sessions = &mut internal.borrow_mut().sessions;
 
             if Session::is_handshake(data)? {
                 if sessions.len() >= MAX_BTP_SESSIONS {
@@ -359,7 +380,9 @@ where
     fn on_connect(&self, address: BtAddr) -> Result<(), Error> {
         debug!("Connect request from {}", address);
 
-        self.conn_ct.fetch_add(1, Ordering::SeqCst);
+        self.state.lock(|internal| {
+            internal.borrow_mut().conn_ct += 1;
+        });
         self.changed_notif.notify();
 
         Ok(())
@@ -369,7 +392,9 @@ where
     fn on_disconnect(&self, address: BtAddr) -> Result<(), Error> {
         debug!("Disconnect request from {}", address);
 
-        self.conn_ct.fetch_sub(1, Ordering::SeqCst);
+        self.state.lock(|internal| {
+            internal.borrow_mut().conn_ct -= 1;
+        });
         self.changed_notif.notify();
 
         Ok(())
@@ -379,8 +404,8 @@ where
     fn on_subscribe(&self, address: BtAddr) -> Result<(), Error> {
         debug!("Subscribe request from {}", address);
 
-        self.sessions.lock(|sessions| {
-            let mut sessions = sessions.borrow_mut();
+        self.state.lock(|internal| {
+            let sessions = &mut internal.borrow_mut().sessions;
             if let Some(session) = sessions
                 .iter_mut()
                 .find(|session| session.address() == address)
@@ -413,7 +438,7 @@ where
     }
 
     pub fn conn_ct(&self) -> usize {
-        self.conn_ct.load(Ordering::SeqCst)
+        self.state.lock(|internal| internal.borrow().conn_ct)
     }
 
     pub async fn wait_changed(&self) {
@@ -425,8 +450,8 @@ where
     where
         F: Fn(&Session) -> bool,
     {
-        self.sessions.lock(|sessions| {
-            let mut sessions = sessions.borrow_mut();
+        self.state.lock(|internal| {
+            let sessions = &mut internal.borrow_mut().sessions;
             while let Some(index) = sessions.iter().position(&condition) {
                 let session = sessions.swap_remove(index);
                 debug!("Session {} removed", session.address());
@@ -443,9 +468,10 @@ where
     /// `Btp::wait_available` internally delegates to this method.
     pub(crate) async fn wait_available(&self) -> Result<(), Error> {
         loop {
-            let available = self.sessions.lock(|sessions| {
-                sessions
+            let available = self.state.lock(|internal| {
+                internal
                     .borrow()
+                    .sessions
                     .iter()
                     .any(|session| session.message_available())
             });
@@ -468,8 +494,8 @@ where
     /// `Btp::recv` internally delegates to this method.
     pub(crate) async fn recv(&self, buf: &mut [u8]) -> Result<(usize, BtAddr), Error> {
         loop {
-            let result = self.sessions.lock(|sessions| {
-                let mut sessions = sessions.borrow_mut();
+            let result = self.state.lock(|internal| {
+                let sessions = &mut internal.borrow_mut().sessions;
 
                 let Some(session) = sessions
                     .iter_mut()

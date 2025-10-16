@@ -20,7 +20,6 @@ use crate::{
     utils::rand::Rand,
 };
 
-use byteorder::{ByteOrder, LittleEndian};
 use openssl::{
     bn::{BigNum, BigNumContext},
     ec::{EcGroup, EcPoint, EcPointRef, PointConversionForm},
@@ -230,8 +229,7 @@ impl CryptoSpake2 {
     }
 
     fn add_to_tt(tt: &mut Hasher, buf: &[u8]) -> Result<(), Error> {
-        let mut len_buf: [u8; 8] = [0; 8];
-        LittleEndian::write_u64(&mut len_buf, buf.len() as u64);
+        let len_buf: [u8; 8] = (buf.len() as u64).to_le_bytes();
         tt.update(&len_buf)?;
         if !buf.is_empty() {
             tt.update(buf)?;
