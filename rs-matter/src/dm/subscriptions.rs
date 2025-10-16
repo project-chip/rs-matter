@@ -156,8 +156,8 @@ impl<const N: usize> Subscriptions<N> {
     ) -> Option<u32> {
         self.state.lock(|internal| {
             let mut state = internal.borrow_mut();
-            state.next_subscription_id += 1;
             let id = state.next_subscription_id;
+            state.next_subscription_id += 1;
 
             state
                 .subscriptions
