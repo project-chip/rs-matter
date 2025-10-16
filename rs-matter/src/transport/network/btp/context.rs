@@ -203,12 +203,12 @@ where
     }
 }
 
-pub(crate) struct BtpContextData {
+pub(crate) struct BtpContextInner {
     pub(crate) conn_ct: usize,
     pub(crate) sessions: crate::utils::storage::Vec<Session, MAX_BTP_SESSIONS>,
 }
 
-impl BtpContextData {
+impl BtpContextInner {
     #[inline(always)]
     const fn new() -> Self {
         Self {
@@ -246,7 +246,7 @@ pub struct BtpContext<M>
 where
     M: RawMutex,
 {
-    pub(crate) state: Mutex<M, RefCell<BtpContextData>>,
+    pub(crate) state: Mutex<M, RefCell<BtpContextInner>>,
     pub(crate) handshake_notif: Notification<M>,
     pub(crate) available_notif: Notification<M>,
     pub(crate) recv_notif: Notification<M>,
@@ -272,7 +272,7 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(BtpContextData::new())),
+            state: Mutex::new(RefCell::new(BtpContextInner::new())),
             handshake_notif: Notification::new(),
             available_notif: Notification::new(),
             recv_notif: Notification::new(),
@@ -285,7 +285,7 @@ where
     /// Create a BTP context in-place initializer.
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            state <- Mutex::init(RefCell::init(BtpContextData::init())),
+            state <- Mutex::init(RefCell::init(BtpContextInner::init())),
             handshake_notif: Notification::new(),
             available_notif: Notification::new(),
             recv_notif: Notification::new(),

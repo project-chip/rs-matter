@@ -17,7 +17,7 @@
 
 use core::num::NonZeroU8;
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Instant;
 
@@ -70,12 +70,12 @@ impl Subscription {
     }
 }
 
-struct SubscriptionData<const N: usize> {
+struct SubscriptionInner<const N: usize> {
     next_subscription_id: u32,
     subscriptions: crate::utils::storage::Vec<Subscription, N>,
 }
 
-impl<const N: usize> SubscriptionData<N> {
+impl<const N: usize> SubscriptionInner<N> {
     /// Create the instance.
     #[inline(always)]
     const fn new() -> Self {
@@ -98,11 +98,11 @@ impl<const N: usize> SubscriptionData<N> {
 ///
 /// The `N` type parameter specifies the maximum number of subscriptions that can be tracked at the same time.
 /// Additional subscriptions are rejected by the data model with a "resource exhausted" IM status message.
-pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS, M = CriticalSectionRawMutex>
+pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS, M = NoopRawMutex>
 where
     M: RawMutex,
 {
-    state: Mutex<M, RefCell<SubscriptionData<N>>>,
+    state: Mutex<M, RefCell<SubscriptionInner<N>>>,
     pub(crate) notification: Notification<M>,
 }
 
@@ -111,7 +111,7 @@ impl<const N: usize> Subscriptions<N> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(SubscriptionData::new())),
+            state: Mutex::new(RefCell::new(SubscriptionInner::new())),
             notification: Notification::new(),
         }
     }
@@ -119,7 +119,7 @@ impl<const N: usize> Subscriptions<N> {
     /// Create an in-place initializer for the instance.
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            state <- Mutex::init(RefCell::init(SubscriptionData::init())),
+            state <- Mutex::init(RefCell::init(SubscriptionInner::init())),
             notification: Notification::new(),
         })
     }
