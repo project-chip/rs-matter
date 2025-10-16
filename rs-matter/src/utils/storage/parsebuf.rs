@@ -135,15 +135,15 @@ where
     }
 
     pub fn le_u16(&mut self) -> Result<u16, Error> {
-        self.parse_as_array(|x| u16::from_le_bytes(x))
+        self.parse_as_array(u16::from_le_bytes)
     }
 
     pub fn le_u32(&mut self) -> Result<u32, Error> {
-        self.parse_as_array(|x| u32::from_le_bytes(x))
+        self.parse_as_array(u32::from_le_bytes)
     }
 
     pub fn le_u64(&mut self) -> Result<u64, Error> {
-        self.parse_as_array(|x| u64::from_le_bytes(x))
+        self.parse_as_array(u64::from_le_bytes)
     }
 }
 
