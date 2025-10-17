@@ -25,7 +25,13 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy, rust-src
 
-      - name: Setup | Rust no-std target
+      - name: Setup | Rust no-std Thumbv6 target
+        run: rustup target add thumbv6m-none-eabi
+
+      - name: Setup | Rust no-std Thumbv7 target
+        run: rustup target add thumbv7em-none-eabi
+
+      - name: Setup | Rust no-std Riscv32 target
         run: rustup target add riscv32imac-unknown-none-elf
 
       - name: Install libdbus
@@ -40,21 +46,64 @@ jobs:
         with:
           gh-context: ${{ toJson(github) }}
 
+      - name: Build | Host binary for size report
+        run: cd bloat-check; cargo build --release
+
+      - name: Clippy - bloat-check
+        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
+        run: cd bloat-check; cargo clippy --no-deps -- -Dwarnings
+
+      - name: Clippy - bloat-check - riscv32imac
+        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
+        run: cd bloat-check; cargo clippy --no-deps --target riscv32imac-unknown-none-elf -- -Dwarnings
+
+      - name: Build | Thumbv6m binary for size report
+#        run: cd bloat-check; cargo build --release --target thumbv6m-none-eabi -Zbuild-std=core,alloc,panic_abort
+        run: cd bloat-check; cargo build --release --target thumbv6m-none-eabi
+
+      - name: Build | Thumbv7em binary for size report
+#        run: cd bloat-check; cargo build --release --target thumbv7em-none-eabi -Zbuild-std=core,alloc,panic_abort
+        run: cd bloat-check; cargo build --release --target thumbv7em-none-eabi
+
+      - name: Build | Riscv32imac binary for size report
+#        run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc,panic_abort
+        run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf
+
       - name: Examples
-        run: cargo build --release --no-default-features --features os,rustcrypto,log
+        run: cargo build --release --no-default-features --features os,rustcrypto,log,zbus
 
       - name: Prepare bloat report from the previous builds
         run: |
             python scripts/memory/gh_sizes.py \
-              linux rs-matter onoff-light \
+              rs-matter-core x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              bloat-check/target/release/bloat-check \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              rs-matter-core thumbv6m-none-eabi infodefmt-optz-ltofat \
+              bloat-check/target/thumbv6m-none-eabi/release/bloat-check \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              rs-matter-core thumbv7em-none-eabi infodefmt-optz-ltofat \
+              bloat-check/target/thumbv7em-none-eabi/release/bloat-check \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              rs-matter-core riscv32imac-unknown-none-elf infodefmt-optz-ltofat \
+              bloat-check/target/riscv32imac-unknown-none-elf/release/bloat-check \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              onoff-light x86_64-unknown-linux-gnu infologs-optz-ltofat \
               target/release/onoff_light \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              linux rs-matter dimmable_light \
+              onoff-light-bt x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              target/release/onoff_light_bt \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              dimmable-light x86_64-unknown-linux-gnu infologs-optz-ltofat \
               target/release/dimmable_light \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              linux rs-matter speaker \
+              speaker x86_64-unknown-linux-gnu infologs-optz-ltofat \
               target/release/speaker \
               /tmp/bloat_reports/
 
@@ -62,4 +111,4 @@ jobs:
         uses: ./.github/actions/upload-size-reports
         if: ${{ !env.ACT }}
         with:
-          platform-name: linux
+          platform-name: cross-platform

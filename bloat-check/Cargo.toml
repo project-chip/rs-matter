@@ -1,0 +1,69 @@
+[package]
+name = "rs-matter-bloat-check"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "bloat-check"
+
+[workspace]
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[profile.release]
+opt-level = "z"
+debug = 0
+debug-assertions = false
+codegen-units = 1 # LLVM can perform better optimizations using a single thread
+lto = "fat"
+incremental = false
+overflow-checks = false
+
+[features]
+defmt = []
+log = []
+
+[dependencies]
+embassy-futures = "0.1"
+static_cell = "1"
+critical-section = "1"
+embassy-executor = { version = "0.9", features = ["executor-thread"] }
+rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto"] }
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+log = { version = "0.4", features = ["max_level_info"] }
+simple_logger = "5"
+embassy-sync = { version = "0.7", features = ["log"] }
+embassy-time = { version = "0.5", features = ["std", "log"] }
+embassy-executor = { version = "0.9", features = ["arch-std", "log"] }
+critical-section = { version = "1", features = ["std"] }
+rs-matter = { path = "../rs-matter", default-features = false, features = ["log"] }
+
+[target.'cfg(target_os = "none")'.dependencies]
+defmt = "0.3"
+embassy-sync = { version = "0.7", features = ["defmt"] }
+embassy-time = { version = "0.5", features = ["defmt"] }
+embassy-executor = { version = "0.9", features = ["defmt"] }
+embedded-alloc = "0.6"
+rtt-target = { version = "0.6", features = ["defmt"] }
+panic-rtt-target = "0.2"
+rs-matter = { path = "../rs-matter", default-features = false, features = ["defmt"] }
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+cortex-m = { version = "0.7.6", features = ["critical-section-single-core" ] }
+cortex-m-rt = "0.7"
+embassy-executor = { version = "0.9", features = ["arch-cortex-m"] }
+
+[target.thumbv7em-none-eabi.dependencies]
+hal = { package = "embassy-nrf", version = "0.8", default-features = false, features = ["defmt", "time-driver-rtc1", "time", "nrf52840"] }
+
+[target.thumbv6m-none-eabi.dependencies]
+hal = { package = "embassy-rp", version = "0.8", features = ["defmt", "unstable-pac", "time-driver", "rp2040"] }
+
+[target.riscv32imac-unknown-none-elf.dependencies]
+hal = { package = "esp-hal", version = "=1.0.0-rc.1", features = ["defmt", "exception-handler", "unstable", "esp32c6"] }
+esp-rtos = { version = "0.1.0", features = ["embassy", "esp32c6"] }
+#embassy-executor = { version = "0.9", features = ["riscv32"] }
