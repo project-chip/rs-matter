@@ -50,13 +50,16 @@ jobs:
         run: cd bloat-check; cargo build --release
 
       - name: Build | Thumbv6m binary for size report
-        run: cd bloat-check; cargo build --release --target thumbv6m-none-eabi -Zbuild-std=core,alloc,panic_abort
+#        run: cd bloat-check; cargo build --release --target thumbv6m-none-eabi -Zbuild-std=core,alloc,panic_abort
+        run: cd bloat-check; cargo build --release --target thumbv6m-none-eabi
 
       - name: Build | Thumbv7em binary for size report
-        run: cd bloat-check; cargo build --release --target thumbv7em-none-eabi -Zbuild-std=core,alloc,panic_abort
+#        run: cd bloat-check; cargo build --release --target thumbv7em-none-eabi -Zbuild-std=core,alloc,panic_abort
+        run: cd bloat-check; cargo build --release --target thumbv7em-none-eabi
 
       - name: Build | Riscv32imac binary for size report
-        run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc,panic_abort
+#        run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc,panic_abort
+        run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf
 
       - name: Prepare bloat report from the previous builds
         run: |
