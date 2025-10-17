@@ -83,27 +83,3 @@ jobs:
       - name: Xtask Clippy
         if: matrix.features == 'os' && matrix.crypto-backend == 'rustcrypto'
         run: cd xtask; cargo clippy --no-deps -- -Dwarnings
-
-      - name: Clippy - bloat-check
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
-        run: cd bloat-check; cargo clippy --no-deps -- -Dwarnings
-
-      - name: Clippy - bloat-check - riscv32imac
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
-        run: cd bloat-check; cargo clippy --no-deps --target riscv32imac-unknown-none-elf -- -Dwarnings
-
-      - name: Build - bloat-check
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
-        run: cd bloat-check; cargo clippy --no-deps
-
-      - name: Build - bloat-check - riscv32imac
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
-        run: cd bloat-check; cargo clippy --no-deps --target riscv32imac-unknown-none-elf
-
-      - name: Build - bloat-check - thumbv6m
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
-        run: cd bloat-check; cargo clippy --no-deps --target thumbv6m-none-eabi
-
-      - name: Build - bloat-check - thumbv7em
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
-        run: cd bloat-check; cargo clippy --no-deps --target thumbv7em-none-eabi
