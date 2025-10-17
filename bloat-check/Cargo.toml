@@ -34,7 +34,8 @@ embassy-executor = { version = "0.9", features = ["executor-thread"] }
 rs-matter = { path = "../rs-matter", default-features = false, features = ["rustcrypto"] }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
-log = "0.4"
+log = { version = "0.4", features = ["max_level_info"] }
+simple_logger = "5"
 embassy-sync = { version = "0.7", features = ["log"] }
 embassy-time = { version = "0.5", features = ["std", "log"] }
 embassy-executor = { version = "0.9", features = ["arch-std", "log"] }

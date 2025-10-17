@@ -77,6 +77,7 @@ use rs_matter::dm::subscriptions::{Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
 use rs_matter::dm::{endpoints, IMBuffer};
 use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::network::btp::{
@@ -207,8 +208,10 @@ type AppResponder<'d, 'a> = DefaultResponder<
 
 #[cfg_attr(target_os = "none", main)]
 fn main() -> ! {
-    #[cfg(feature = "defmt")]
+    #[cfg(target_os = "none")]
     rtt_target::rtt_init_defmt!(rtt_target::ChannelMode::NoBlockSkip, 2048);
+    #[cfg(not(target_os = "none"))]
+    unwrap!(simple_logger::init_with_env());
 
     info!("Starting bloat check app...");
 
@@ -242,9 +245,43 @@ fn main() -> ! {
     // affecting flash size, as it is not all-zeroes
     //
 
+    info!("===================================================");
+    info!("Memory usage report");
+
     let stack = mk_static!(MatterStack<'static, NoopRawMutex>).init_with(MatterStack::init());
 
-    info!("Matter stack size: {}B", size_of_val(&*stack));
+    let mut stack_total = 0;
+
+    report_size("Matter", size_of_val(&stack.matter), &mut stack_total);
+    report_size("Buffers", size_of_val(&stack.buffers), &mut stack_total);
+    report_size(
+        "Subscriptions",
+        size_of_val(&stack.subscriptions),
+        &mut stack_total,
+    );
+    report_size("Networks", size_of_val(&stack.networks), &mut stack_total);
+    report_size(
+        "NetCtl state",
+        size_of_val(&stack.net_ctl_state),
+        &mut stack_total,
+    );
+    report_size(
+        "BTP context",
+        size_of_val(&stack.btp_context),
+        &mut stack_total,
+    );
+    report_size(
+        "Wireless mgr buffer",
+        size_of_val(&stack.wireless_mgr_buffer),
+        &mut stack_total,
+    );
+    report_size(
+        "Persister buffer",
+        size_of_val(&stack.psm_buffer),
+        &mut stack_total,
+    );
+
+    report_subtotal_size("TOTAL MATTER STACK ", stack_total);
 
     //
     // Now create all types that do borrow the stack
@@ -253,11 +290,17 @@ fn main() -> ! {
     // The BTP transport impl with a fake GATT peripheral
     let btp = mk_static!(AppBtp, Btp::new(FakeGattPeripheral, &stack.btp_context));
 
+    let mut aux_total = 0;
+
+    report_size("BTP transport", size_of_val(&*btp), &mut aux_total);
+
     // The Wifi network controller with a fake underlying Wifi implementation
     let net_ctl = &*mk_static!(
         AppNetCtl,
         NetCtlWithStatusImpl::new(&stack.net_ctl_state, FakeWifi)
     );
+
+    report_size("Network controller", size_of_val(net_ctl), &mut aux_total);
 
     // Wifi network manager (cycle registered networks, auto-reconnect)
     let wifi_mgr = mk_static!(
@@ -266,6 +309,15 @@ fn main() -> ! {
             stack.wireless_mgr_buffer.assume_init_mut()
         },)
     );
+
+    report_size("Wireless manager", size_of_val(&*wifi_mgr), &mut aux_total);
+
+    let mdns = mk_static!(
+        BuiltinMdnsResponder,
+        BuiltinMdnsResponder::new(&stack.matter)
+    );
+
+    report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
 
     // A Wireless handler with a sample app cluster (on-off)
     let handler = mk_static!(
@@ -282,6 +334,8 @@ fn main() -> ! {
         )
     );
 
+    report_size("DM Handler size", size_of_val(&*handler), &mut aux_total);
+
     // Data Model
     let dm = mk_static!(
         AppDataModel,
@@ -293,20 +347,67 @@ fn main() -> ! {
         )
     );
 
+    report_size("Data Model", size_of_val(&*dm), &mut aux_total);
+
     // A default responder
     let responder = mk_static!(AppResponder, DefaultResponder::new(dm));
+
+    report_size("Responder", size_of_val(&*responder), &mut aux_total);
+
+    let executor = mk_static!(Executor, Executor::new());
+
+    report_size("Executor", size_of_val(&*executor), &mut aux_total);
+
+    report_subtotal_size("TOTAL AUXILLIARY", aux_total);
 
     //
     // Schedule all futures into embassy-executor
     // This way, they will be moved into `.bss` as well
     //
 
-    let executor = mk_static!(Executor, Executor::new());
+    let mut fut_total = 0;
+
+    report_size(
+        "Respond task",
+        size_of_val(&respond_task0(responder)),
+        &mut fut_total,
+    );
+    report_size("DM task", size_of_val(&dm_task0(dm)), &mut fut_total);
+    report_size("mDNS task", size_of_val(&mdns_task0(mdns)), &mut fut_total);
+    report_size("BTP task", size_of_val(&btp_task0(btp)), &mut fut_total);
+    report_size(
+        "Wifi task",
+        size_of_val(&wifi_task0(wifi_mgr)),
+        &mut fut_total,
+    );
+    report_size(
+        "BTP transport task",
+        size_of_val(&btp_transport_task0(&stack.matter, btp)),
+        &mut fut_total,
+    );
+    report_size(
+        "UDP transport task",
+        size_of_val(&udp_transport_task0(&stack.matter)),
+        &mut fut_total,
+    );
+
+    report_subtotal_size("TOTAL FUTURES", fut_total);
+
+    report_total_size(stack_total + aux_total + fut_total);
+
+    info!("===================================================");
 
     executor.run(|spawner| {
+        unwrap!(embassy_futures::block_on(
+            stack.matter.enable_basic_commissioning(
+                DiscoveryCapabilities::BLE,
+                TEST_DEV_COMM.discriminator
+            )
+        ));
+
         unwrap!(spawner.spawn(respond_task(responder)));
         unwrap!(spawner.spawn(dm_task(dm)));
-        unwrap!(spawner.spawn(mdns_task(&stack.matter)));
+        unwrap!(spawner.spawn(mdns_task(mdns)));
         unwrap!(spawner.spawn(btp_task(btp)));
         unwrap!(spawner.spawn(wifi_task(wifi_mgr)));
         unwrap!(spawner.spawn(btp_transport_task(&stack.matter, btp)));
@@ -314,57 +415,117 @@ fn main() -> ! {
     });
 }
 
+#[inline(always)]
+fn respond_task0<'d, 'a>(
+    responder: &'a AppResponder<'d, 'a>,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    responder.run::<4, 4>()
+}
+
 #[embassy_executor::task]
 async fn respond_task(responder: &'static AppResponder<'static, 'static>) {
-    unwrap!(responder.run::<4, 4>().await)
+    unwrap!(respond_task0(responder).await);
+}
+
+#[inline(always)]
+fn dm_task0<'a>(dm: &'a AppDataModel<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
+    dm.run()
 }
 
 #[embassy_executor::task]
 async fn dm_task(dm: &'static AppDataModel<'static>) {
-    unwrap!(dm.run().await);
+    unwrap!(dm_task0(dm).await);
+}
+
+#[inline(always)]
+fn mdns_task0<'a>(
+    mdns: &'a mut BuiltinMdnsResponder<'static>,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    mdns.run(
+        FakeUdp,
+        FakeUdp,
+        &Host {
+            id: 0,
+            hostname: "rs-matter-bloat-check",
+            ip: Ipv4Addr::LOCALHOST,
+            ipv6: Ipv6Addr::LOCALHOST,
+        },
+        Some(Ipv4Addr::LOCALHOST),
+        Some(0),
+    )
 }
 
 #[embassy_executor::task]
-async fn mdns_task(matter: &'static Matter<'static>) {
-    unwrap!(
-        BuiltinMdnsResponder::new(matter)
-            .run(
-                FakeUdp,
-                FakeUdp,
-                &Host {
-                    id: 0,
-                    hostname: "rs-matter-bloat-check",
-                    ip: Ipv4Addr::LOCALHOST,
-                    ipv6: Ipv6Addr::LOCALHOST,
-                },
-                Some(Ipv4Addr::LOCALHOST),
-                Some(0),
-            )
-            .await
-    );
+async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder<'static>) {
+    unwrap!(mdns_task0(mdns).await);
+}
+
+#[inline(always)]
+fn btp_task0<'a>(btp: &'a AppBtp<'static>) -> impl Future<Output = Result<(), Error>> + 'a {
+    btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator)
 }
 
 #[embassy_executor::task]
 async fn btp_task(btp: &'static AppBtp<'static>) {
-    unwrap!(
-        btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator)
-            .await
-    );
+    unwrap!(btp_task0(btp).await);
+}
+
+#[inline(always)]
+fn wifi_task0<'a>(
+    wifi_mgr: &'a mut AppWirelessMgr<'static>,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    wifi_mgr.run()
 }
 
 #[embassy_executor::task]
 async fn wifi_task(wifi_mgr: &'static mut AppWirelessMgr<'static>) {
-    unwrap!(wifi_mgr.run().await);
+    unwrap!(wifi_task0(wifi_mgr).await);
+}
+
+#[inline(always)]
+fn btp_transport_task0<'a>(
+    matter: &'a Matter<'a>,
+    btp: &'a AppBtp<'static>,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    matter.run_transport(btp, btp)
 }
 
 #[embassy_executor::task]
 async fn btp_transport_task(matter: &'static Matter<'static>, btp: &'static AppBtp<'static>) {
-    unwrap!(matter.run_transport(btp, btp).await);
+    unwrap!(btp_transport_task0(matter, btp).await);
+}
+
+#[inline(always)]
+fn udp_transport_task0<'a>(matter: &'a Matter<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
+    matter.run_transport(FakeUdp, FakeUdp)
 }
 
 #[embassy_executor::task]
 async fn udp_transport_task(matter: &'static Matter<'static>) {
-    unwrap!(matter.run_transport(FakeUdp, FakeUdp).await);
+    unwrap!(udp_transport_task0(matter).await);
+}
+
+fn report_size(for_item: &str, size: usize, total: &mut usize) {
+    *total += size;
+
+    #[cfg(target_os = "none")]
+    info!("[{} = {} B]", for_item, size);
+    #[cfg(not(target_os = "none"))]
+    info!("[{:20} = {:6} B]", for_item, size);
+}
+
+fn report_subtotal_size(for_item: &str, subtotal_size: usize) {
+    #[cfg(target_os = "none")]
+    info!("({} = {} B)", for_item, subtotal_size);
+    #[cfg(not(target_os = "none"))]
+    info!("({:20} = {:6} B)", for_item, subtotal_size);
+}
+
+fn report_total_size(total_size: usize) {
+    #[cfg(target_os = "none")]
+    info!("(:GRAND TOTAL BSS: = {} B)", total_size);
+    #[cfg(not(target_os = "none"))]
+    info!("({:20} = {:6} B)", ":GRAND TOTAL BSS:", total_size);
 }
 
 /// The Node meta-data describing our Matter device.
