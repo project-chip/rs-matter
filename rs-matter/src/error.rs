@@ -249,7 +249,7 @@ impl From<sec1::Error> for Error {
     }
 }
 
-#[cfg(all(feature = "std", target_os = "linux", not(feature = "backtrace")))]
+#[cfg(all(feature = "os", target_os = "linux", not(feature = "backtrace")))]
 impl From<bluer::Error> for Error {
     fn from(e: bluer::Error) -> Self {
         // Log the error given that we lose all context from the
@@ -259,7 +259,7 @@ impl From<bluer::Error> for Error {
     }
 }
 
-#[cfg(all(feature = "std", target_os = "linux", feature = "backtrace"))]
+#[cfg(all(feature = "os", target_os = "linux", feature = "backtrace"))]
 impl From<bluer::Error> for Error {
     fn from(e: bluer::Error) -> Self {
         Self::new_with_details(ErrorCode::BtpError, Box::new(e))

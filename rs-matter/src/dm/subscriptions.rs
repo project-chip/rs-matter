@@ -106,8 +106,8 @@ where
     pub(crate) notification: Notification<M>,
 }
 
-impl<const N: usize, M> Subscriptions<N, M> 
-where 
+impl<const N: usize, M> Subscriptions<N, M>
+where
     M: RawMutex,
 {
     /// Create the instance.

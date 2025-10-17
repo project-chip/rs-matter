@@ -24,7 +24,7 @@ use crate::transport::network::BtAddr;
 
 use super::{GATT_HEADER_SIZE, MAX_BTP_SEGMENT_SIZE};
 
-#[cfg(all(feature = "std", target_os = "linux"))]
+#[cfg(all(feature = "os", target_os = "linux"))]
 pub mod bluer;
 // `unix` necessary because BlueZ requires Unix Domain sockets.
 // Note that BlueZ is anyway Linux-only, even though this module - thanks to zbus itself being cross-platform - builds
