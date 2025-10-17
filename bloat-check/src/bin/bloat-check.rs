@@ -248,7 +248,7 @@ fn main() -> ! {
     // Create the Matter stack statically in `.bss` using emplacement initialization
     // which does not take space in `.rodata`.
     //
-    // Otherwise, the initial state of the (large) stack will be captured in `.rodata`
+    // Otherwise, the initial state of the (large) `MatterStack` struct will be captured in `.rodata`
     // affecting flash size, as it is not all-zeroes
     //
 
