@@ -1,0 +1,10 @@
+[build]
+#target = "thumbv7em-none-eabi"
+
+[unstable]
+#build-std-features = ["panic_immediate_abort"]
+#build-std = ["core", "std", "panic_abort"]
+
+[env]
+DEFMT_LOG = "info"
+RUST_LOG = "info"

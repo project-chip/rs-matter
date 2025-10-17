@@ -70,12 +70,12 @@ impl Subscription {
     }
 }
 
-struct SubscriptionInner<const N: usize> {
+struct SubscriptionsInner<const N: usize> {
     next_subscription_id: u32,
     subscriptions: crate::utils::storage::Vec<Subscription, N>,
 }
 
-impl<const N: usize> SubscriptionInner<N> {
+impl<const N: usize> SubscriptionsInner<N> {
     /// Create the instance.
     #[inline(always)]
     const fn new() -> Self {
@@ -102,16 +102,19 @@ pub struct Subscriptions<const N: usize = DEFAULT_MAX_SUBSCRIPTIONS, M = NoopRaw
 where
     M: RawMutex,
 {
-    state: Mutex<M, RefCell<SubscriptionInner<N>>>,
+    state: Mutex<M, RefCell<SubscriptionsInner<N>>>,
     pub(crate) notification: Notification<M>,
 }
 
-impl<const N: usize> Subscriptions<N> {
+impl<const N: usize, M> Subscriptions<N, M> 
+where 
+    M: RawMutex,
+{
     /// Create the instance.
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(SubscriptionInner::new())),
+            state: Mutex::new(RefCell::new(SubscriptionsInner::new())),
             notification: Notification::new(),
         }
     }
@@ -119,7 +122,7 @@ impl<const N: usize> Subscriptions<N> {
     /// Create an in-place initializer for the instance.
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            state <- Mutex::init(RefCell::init(SubscriptionInner::init())),
+            state <- Mutex::init(RefCell::init(SubscriptionsInner::init())),
             notification: Notification::new(),
         })
     }
