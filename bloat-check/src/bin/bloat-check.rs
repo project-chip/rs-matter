@@ -112,6 +112,7 @@ use hal as _;
 #[global_allocator]
 static HEAP: embedded_alloc::LlffHeap = embedded_alloc::LlffHeap::empty();
 
+// A macro to create static variables in `.bss` using `static_cell::StaticCell`
 macro_rules! mk_static {
     ($t:ty) => {{
         static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
@@ -127,6 +128,7 @@ macro_rules! mk_static {
     }};
 }
 
+// An `unwrap!` polyfill when `defmt` is not available
 #[cfg(not(target_os = "none"))]
 #[collapse_debuginfo(yes)]
 macro_rules! unwrap {
@@ -148,6 +150,7 @@ macro_rules! unwrap {
     }
 }
 
+/// One large struct holding the entire Matter stack state
 struct MatterStack<'a, M: RawMutex> {
     matter: Matter<'a>, // #258 - Can't generify by the raw mutex
     buffers: PooledBuffers<10, M, IMBuffer>,
@@ -161,6 +164,7 @@ struct MatterStack<'a, M: RawMutex> {
 }
 
 impl<'a, M: RawMutex> MatterStack<'a, M> {
+    /// Return an in-place initializer for the Matter stack
     fn init() -> impl Init<Self> {
         init!(Self {
             matter <- Matter::init(
@@ -181,6 +185,9 @@ impl<'a, M: RawMutex> MatterStack<'a, M> {
         })
     }
 }
+
+// Fully spelled-out types for everything which is passed down as arguments to `embassy-executor` tasks
+// Necessary, because `embassy-executor` doesn't grok generics
 
 type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, NoopRawMutex, FakeWifi>;
 type AppWirelessMgr<'a> = WirelessMgr<'a, &'a WifiNetworks<3, NoopRawMutex>, &'a AppNetCtl<'a>>;
@@ -505,6 +512,7 @@ async fn udp_transport_task(matter: &'static Matter<'static>) {
     unwrap!(udp_transport_task0(matter).await);
 }
 
+/// Report the size of an item and accumulate it into `total`
 fn report_size(for_item: &str, size: usize, total: &mut usize) {
     *total += size;
 
@@ -514,6 +522,7 @@ fn report_size(for_item: &str, size: usize, total: &mut usize) {
     info!("[{:20} = {:6} B]", for_item, size);
 }
 
+/// Report a subtotal size
 fn report_subtotal_size(for_item: &str, subtotal_size: usize) {
     #[cfg(target_os = "none")]
     info!("({} = {} B)", for_item, subtotal_size);
@@ -521,6 +530,7 @@ fn report_subtotal_size(for_item: &str, subtotal_size: usize) {
     info!("({:20} = {:6} B)", for_item, subtotal_size);
 }
 
+/// Report the total size
 fn report_total_size(total_size: usize) {
     #[cfg(target_os = "none")]
     info!("(:GRAND TOTAL BSS: = {} B)", total_size);
@@ -544,7 +554,7 @@ const NODE: Node<'static> = Node {
     ],
 };
 
-/// The Data Model handler + meta-data for our Matter device.
+/// The Data Model handler for our Matter device.
 /// The handler is the root endpoint 0 handler plus the on-off handler and its descriptor.
 fn dm_handler<'a, N>(
     matter: &'a Matter<'a>,
@@ -577,6 +587,7 @@ where
     )
 }
 
+/// A fake UDP implementation
 struct FakeUdp;
 
 impl NetworkReceive for FakeUdp {
@@ -602,6 +613,7 @@ impl NetworkSend for FakeUdp {
     }
 }
 
+/// A fake Wifi implemewntation
 struct FakeWifi;
 
 impl NetCtl for FakeWifi {
@@ -655,6 +667,7 @@ impl WifiDiag for FakeWifi {
     }
 }
 
+/// A fake BTP GATT Peripheral implementation
 struct FakeGattPeripheral;
 
 impl GattPeripheral for FakeGattPeripheral {

@@ -66,3 +66,4 @@ hal = { package = "embassy-rp", version = "0.8", features = ["defmt", "unstable-
 [target.riscv32imac-unknown-none-elf.dependencies]
 hal = { package = "esp-hal", version = "=1.0.0-rc.1", features = ["defmt", "exception-handler", "unstable", "esp32c6"] }
 esp-rtos = { version = "0.1.0", features = ["embassy", "esp32c6"] }
+#embassy-executor = { version = "0.9", features = ["riscv32"] }
