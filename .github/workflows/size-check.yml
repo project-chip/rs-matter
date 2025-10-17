@@ -69,6 +69,9 @@ jobs:
 #        run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc,panic_abort
         run: cd bloat-check; cargo build --release --target riscv32imac-unknown-none-elf
 
+      - name: Examples
+        run: cargo build --release --no-default-features --features os,rustcrypto,log,zbus
+
       - name: Prepare bloat report from the previous builds
         run: |
             python scripts/memory/gh_sizes.py \
@@ -86,6 +89,22 @@ jobs:
             python scripts/memory/gh_sizes.py \
               rs-matter-core riscv32imac-unknown-none-elf infodefmt-optz-ltofat \
               bloat-check/target/riscv32imac-unknown-none-elf/release/bloat-check \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              onoff-light x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              target/release/onoff_light \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              onoff-light-bt x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              target/release/onoff_light_bt \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              dimmable-light x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              target/release/dimmable_light \
+              /tmp/bloat_reports/
+            python scripts/memory/gh_sizes.py \
+              speaker x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              target/release/speaker \
               /tmp/bloat_reports/
 
       - name: Uploading Size Reports

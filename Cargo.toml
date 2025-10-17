@@ -8,13 +8,15 @@ members = [
 
 exclude = ["tools/tlv", "xtask"]
 
-[profile.release]
-opt-level = "z"
-
 [profile.dev]
 debug = true
 opt-level = "z"
 
-[profile.flamegraph]
-inherits = "release"
-debug = true
+[profile.release]
+opt-level = "z"
+debug = 0
+debug-assertions = false
+codegen-units = 1 # LLVM can perform better optimizations using a single thread
+lto = "fat"
+incremental = false
+overflow-checks = false
