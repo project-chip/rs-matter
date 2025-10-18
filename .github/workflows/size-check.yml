@@ -50,11 +50,9 @@ jobs:
         run: cd bloat-check; cargo build --release
 
       - name: Clippy - bloat-check
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
         run: cd bloat-check; cargo clippy --no-deps -- -Dwarnings
 
       - name: Clippy - bloat-check - riscv32imac
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
         run: cd bloat-check; cargo clippy --no-deps --target riscv32imac-unknown-none-elf -- -Dwarnings
 
       - name: Build | Thumbv6m binary for size report
