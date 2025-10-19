@@ -25,7 +25,7 @@ The SDK supports all clusters in this way and does not require any further imple
 ### Usage
 
 1. Import the auto-generated cluster data types and trait using the `rs_matter::import!(<ClusterName>)` macro.
-2. Implement the `<cluster>::ClusterHandler` trait on a `<Cluster>Handler` struct. See code snippet below.
+2. Implement the `<cluster>::ClusterHandler` trait on a `<Cluster>Handler` struct or the `<cluster>::AsyncClusterHandler` trait on a `<Cluster>Handler` for handlers that need asynchrony. See code snippet below.
 3. Instantiate the `<Cluster>Handler` struct and chain it to the endpoint handler.
 
 ```rust
@@ -47,17 +47,19 @@ impl air_quality::ClusterHandler for AirQualityHandler {
 	fn air_quality(&self, _ctx: impl ReadContext) -> Result<AirQualityEnum, Error> {
         Ok(self.sensor.read_aqi())
     }
+
+	// ...
 }
 
 fn main() {
 	// Instantiate cluster handler
-	let air_quality_handler = AirQualityHandler{ sensor: SensorInterface::new() };
+	let air_quality_handler = AirQualityHandler { sensor: SensorInterface::new() };
 
 	// Build endpoint handler for device clusters
 	let device_handler = EmptyHandler
 		.chain(
 			EpClMatcher::new(Some(1), Some(AirQualityHandler::CLUSTER.id)),
-			Async(air_quality_handler.adapt()),
+			air_quality::HandlerAdaptor(air_quality_handler),
 		)
 		// Continue chaining device clusters
 }
@@ -66,10 +68,10 @@ fn main() {
 ## Pattern B: Implemented Handler
 
 **When to use**:
+- No device specific logic. Most often the case for certain system clusters like AccessControl, Descriptor and others.
 - The Matter spec defines complex command logic (e.g., state machines, timing requirements)
 - The cluster has side effects beyond simple attribute updates
 - There are validation rules that must be enforced consistently
-- No device specific logic.
 - No coupling with other clusters
 
 The Simple Handler pattern works for all clusters, however, some clusters define complex Matter logic which would have to be implemented by every consumer. For these clusters, `rs-matter` implements a `<Cluster>Handler` struct matching the cluster name, e.g. `OnOffHandler`.  This struct implements the corresponding `<Cluster>Handler` trait with all the Matter spec-defined logic.
@@ -108,10 +110,10 @@ fn main() {
 ## Pattern B1: Hooks-Based Handler
 
 **When to use**:
+- Device specific logic is required
 - The Matter spec defines complex command logic (e.g., state machines, timing requirements)
 - The cluster has side effects beyond simple attribute updates
 - There are validation rules that must be enforced consistently
-- Device specific logic is required
 - No coupling with other clusters
 
 On top of pattern B, this pattern provides a `<Cluster>Hooks` trait, delegating business logic implementation to the SDK consumer. For example; a method to switch the device on or off. Attributes that require persistence are also delegated to the SDK consumer, allowing them to use their own persistence strategy.
@@ -167,6 +169,8 @@ impl FanModeHooks for FanModeDeviceLogic {
 	fn step(&self, direction: StepDirectionEnum, wrap: bool, lowest_off: bool) {
 		self.fan_controller.step(direction, wrap, lowest_off)
 	}
+
+	// ...
 }
 
 fn main() {
@@ -228,11 +232,12 @@ The following table summarises the implementation pattern types used for Matter 
 Provisional clusters are not included.
 
 All clusters are supported by pattern A.
+✅ indicates that a pattern is required and implemented.
 ⚫ indicates that a pattern is not required.
-❌ indicates that a pattern is not yet implemented.
-Blank entries indicate that an assessment has not yet been made to identify if a pattern needs to be implemented.
+❌ indicates that a pattern is required and not yet implemented.
+Blank entries indicate that an assessment has not yet been made to identify if the pattern is required.
 
-**Note** Some clusters support multiple patterns, excluding pattern A. Consult the cluster documentation for further explanation on how to use them.
+**Note** Some clusters support multiple patterns, excluding pattern A. Consult the cluster specific documentation for further explanation on how to use them.
 
 **Note** Events are currently not supported. See issue [#36](https://github.com/project-chip/rs-matter/issues/36).
 
@@ -265,7 +270,7 @@ Blank entries indicate that an assessment has not yet been made to identify if a
 | NetworkCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
 | GeneralCommissioning                                  | ✅ | ⚫ | ✅ | ⚫ |       |
 | DiagnosticLogs                                        | ✅ |    |    |    |       |
-| GeneralDiagnostics                                    | ✅ | ✅ | ⚫ | ⚫ |       |
+| GeneralDiagnostics                                    | ✅ | ⚫ | ✅ | ⚫ |       |
 | SoftwareDiagnostics                                   | ✅ |    |    |    |       |
 | ThreadNetworkDiagnostics                              | ✅ | ⚫ | ✅ | ⚫ |       |
 | WiFiNetworkDiagnostics                                | ✅ | ⚫ | ✅ | ⚫ |       |
