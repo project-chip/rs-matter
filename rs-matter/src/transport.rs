@@ -1348,6 +1348,19 @@ impl<const N: usize> BufferAccess<[u8]> for PacketBufferExternalAccess<'_, N> {
 
         Some(ExternalPacketBuffer(packet))
     }
+
+    fn get_immediate(&self) -> Option<Self::Buffer<'_>> {
+        self.0
+            .try_lock_if(|packet| packet.buf.is_empty())
+            .ok()
+            .map(|mut packet| {
+                // TODO: Resizing might be a bit expensive with large buffers
+                // Resizing to `N` is always safe because the size of `buf` heapless vec is `N`
+                unwrap!(packet.buf.resize_default(N));
+
+                ExternalPacketBuffer(packet)
+            })
+    }
 }
 
 // Wraps the RX or TX packet of the transport manager in something that looks like a `&mut [u8]` buffer.

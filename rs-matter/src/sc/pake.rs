@@ -32,8 +32,8 @@ use crate::{crypto, MatterMdnsService};
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 use super::SCStatusCodes;
 
-pub const MIN_COMMISSIONING_TIMEOUT_SECS: u16 = 3 * 60;
-pub const MAX_COMMISSIONING_TIMEOUT_SECS: u16 = 15 * 60;
+pub const MIN_COMM_TIMEOUT_SECS: u16 = 3 * 60;
+pub const MAX_COMM_TIMEOUT_SECS: u16 = 15 * 60;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -171,9 +171,7 @@ impl PaseMgr {
             Err(ErrorCode::Busy)?;
         }
 
-        if !(MIN_COMMISSIONING_TIMEOUT_SECS..=MAX_COMMISSIONING_TIMEOUT_SECS)
-            .contains(&timeout_secs)
-        {
+        if !(MIN_COMM_TIMEOUT_SECS..=MAX_COMM_TIMEOUT_SECS).contains(&timeout_secs) {
             Err(ErrorCode::InvalidCommand)?;
         }
 

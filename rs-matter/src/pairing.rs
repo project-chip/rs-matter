@@ -17,15 +17,10 @@
 
 //! This module contains the logic for generating the pairing code and the QR code for easy pairing.
 
-use qr::no_optional_data;
-
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::Error;
 use crate::utils::bitflags::bitflags;
 use crate::BasicCommData;
-
-use self::code::{compute_pairing_code, pretty_print_pairing_code};
-use self::qr::{compute_qr_code_text, print_qr_code};
 
 pub mod code;
 pub mod qr;
@@ -44,39 +39,4 @@ impl Default for DiscoveryCapabilities {
     fn default() -> Self {
         Self::IP
     }
-}
-
-/// Prepares and prints the pairing code and the QR code for easy pairing.
-pub fn print_pairing_code_and_qr(
-    dev_det: &BasicInfoConfig,
-    comm_data: &BasicCommData,
-    discovery_capabilities: DiscoveryCapabilities,
-    buf: &mut [u8],
-) -> Result<(), Error> {
-    let pairing_code = compute_pairing_code(comm_data);
-
-    pretty_print_pairing_code(&pairing_code);
-
-    let (qr_code, remaining_buf) = compute_qr_code_text(
-        dev_det,
-        comm_data,
-        discovery_capabilities,
-        no_optional_data,
-        buf,
-    )?;
-
-    print_qr_code(qr_code, remaining_buf)?;
-
-    Ok(())
-}
-
-#[repr(u16)]
-pub enum VendorId {
-    CommonOrUnspecified = 0x0000,
-    TestVendor4 = 0xFFF4,
-}
-
-pub fn is_vendor_id_valid_operationally(vendor_id: u16) -> bool {
-    (vendor_id != VendorId::CommonOrUnspecified as u16)
-        && (vendor_id <= VendorId::TestVendor4 as u16)
 }

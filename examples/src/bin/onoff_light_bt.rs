@@ -55,9 +55,11 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pake::MAX_COMM_TIMEOUT_SECS;
 use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::transport::network::wifi::nm::NetMgrCtl;
@@ -178,11 +180,19 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     if !matter.is_commissioned() {
         // Not commissioned yet, start commissioning first
 
+        // Print the QR text and code to the console
+        // and enable basic commissioning
+
+        matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
+        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
+
+        matter.enable_basic_commissioning(MAX_COMM_TIMEOUT_SECS)?;
+
         // The BTP transport impl
         let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
-        let mut transport = pin!(matter.run(&btp, &btp, DiscoveryCapabilities::BLE));
+        let mut transport = pin!(matter.run(&btp, &btp));
         let mut wifi_prov_task = pin!(async {
             NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
             Ok(())

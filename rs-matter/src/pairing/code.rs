@@ -21,45 +21,52 @@ use verhoeff::Verhoeff;
 
 use crate::BasicCommData;
 
-pub fn compute_pairing_code(comm_data: &BasicCommData) -> heapless::String<32> {
-    // 0: no Vendor ID and Product ID present in Manual Pairing Code
-    const VID_PID_PRESENT: u8 = 0;
+impl BasicCommData {
+    /// Compute the manual pairing code string from the commissioning data
+    pub fn compute_pairing_code(&self) -> heapless::String<11> {
+        // 0: no Vendor ID and Product ID present in Manual Pairing Code
+        const VID_PID_PRESENT: u8 = 0;
 
-    let BasicCommData {
-        password,
-        discriminator,
-        ..
-    } = comm_data;
+        let BasicCommData {
+            password,
+            discriminator,
+            ..
+        } = self;
 
-    let mut digits = heapless::String::<32>::new();
-    write_unwrap!(
-        &mut digits,
-        "{}{:0>5}{:0>4}",
-        (VID_PID_PRESENT << 2) | (discriminator >> 10) as u8,
-        ((discriminator & 0x300) << 6) | (*password & 0x3FFF) as u16,
-        *password >> 14
-    );
+        let mut digits = heapless::String::<10>::new();
+        write_unwrap!(
+            &mut digits,
+            "{}{:0>5}{:0>4}",
+            (VID_PID_PRESENT << 2) | (discriminator >> 10) as u8,
+            ((discriminator & 0x300) << 6) | (*password & 0x3FFF) as u16,
+            *password >> 14
+        );
 
-    let mut final_digits = heapless::String::<32>::new();
-    write_unwrap!(
-        &mut final_digits,
-        "{}{}",
-        digits,
-        digits.calculate_verhoeff_check_digit()
-    );
+        let mut final_digits = heapless::String::<11>::new();
+        write_unwrap!(
+            &mut final_digits,
+            "{}{}",
+            digits,
+            digits.calculate_verhoeff_check_digit()
+        );
 
-    final_digits
-}
+        final_digits
+    }
 
-pub(super) fn pretty_print_pairing_code(pairing_code: &str) {
-    assert!(pairing_code.len() == 11);
-    let mut pretty = heapless::String::<32>::new();
-    unwrap!(pretty.push_str(&pairing_code[..4]));
-    unwrap!(pretty.push('-'));
-    unwrap!(pretty.push_str(&pairing_code[4..8]));
-    unwrap!(pretty.push('-'));
-    unwrap!(pretty.push_str(&pairing_code[8..]));
-    info!("Pairing Code: {}", pretty);
+    /// Compute the manual pairing code string from the commissioning data
+    /// and return it in a pretty format with dashes.
+    pub fn compute_pretty_pairing_code(&self) -> heapless::String<13> {
+        let pairing_code = self.compute_pairing_code();
+
+        let mut pretty = heapless::String::new();
+        unwrap!(pretty.push_str(&pairing_code[..4]));
+        unwrap!(pretty.push('-'));
+        unwrap!(pretty.push_str(&pairing_code[4..8]));
+        unwrap!(pretty.push('-'));
+        unwrap!(pretty.push_str(&pairing_code[8..]));
+
+        pretty
+    }
 }
 
 #[cfg(test)]
@@ -72,14 +79,14 @@ mod tests {
             password: 123456,
             discriminator: 250,
         };
-        let pairing_code = compute_pairing_code(&comm_data);
+        let pairing_code = comm_data.compute_pairing_code();
         assert_eq!(pairing_code, "00876800071");
 
         let comm_data = BasicCommData {
             password: 34567890,
             discriminator: 2976,
         };
-        let pairing_code = compute_pairing_code(&comm_data);
+        let pairing_code = comm_data.compute_pairing_code();
         assert_eq!(pairing_code, "26318621095");
     }
 }

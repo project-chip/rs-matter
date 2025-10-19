@@ -84,10 +84,13 @@ use crate::dm::clusters::dev_att::DevAttDataFetcher;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::failsafe::FailSafe;
-use crate::pairing::{print_pairing_code_and_qr, DiscoveryCapabilities};
+use crate::pairing::qr::{
+    no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
+};
+use crate::pairing::DiscoveryCapabilities;
 use crate::sc::pake::PaseMgr;
 use crate::transport::network::{NetworkReceive, NetworkSend};
-use crate::transport::{PacketBufferExternalAccess, TransportMgr};
+use crate::transport::TransportMgr;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
@@ -427,6 +430,103 @@ impl<'a> Matter<'a> {
         self.dev_att = dev_att;
     }
 
+    /// Print the standard QR code text to the console
+    ///
+    /// The printed QR code text corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
+    /// and contains no optional data.
+    ///
+    /// This method is useful primarily during development, when the Matter device is
+    /// attached to a console. It is expected that the developer will call this method prior to running the Matter transport.
+    ///
+    /// # Arguments
+    /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    pub fn print_standard_qr_text(&self, disc_caps: DiscoveryCapabilities) -> Result<(), Error> {
+        let rx_buf = self.transport_mgr.rx_buffer();
+
+        let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
+        let buf = &mut *buf;
+
+        let payload = self.standard_qr_payload(disc_caps)?;
+
+        let (text, _) = payload.as_str(buf)?;
+
+        // Do not remove this logging line or change its formatting.
+        // C++ E2E tests rely on this log line to grep the QR code
+        info!("SetupQRCode: [{}]", text);
+
+        Ok(())
+    }
+
+    /// Print the standard QR code to the console
+    ///
+    /// The printed QR code corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
+    /// and contains no optional data.
+    ///
+    /// This method is useful primarily during development, when the Matter device is
+    /// attached to a console. It is expected that the developer will call this method prior to running the Matter transport.
+    ///
+    /// # Arguments
+    /// - `text_type`: The type of text representation to use when printing the QR code
+    /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    pub fn print_standard_qr_code(
+        &self,
+        text_type: QrTextType,
+        disc_caps: DiscoveryCapabilities,
+    ) -> Result<(), Error> {
+        // Also print the pairing code for convenience
+        info!(
+            "PairingCode: [{}]",
+            self.dev_comm.compute_pretty_pairing_code()
+        );
+
+        let rx_buf = self.transport_mgr.rx_buffer();
+
+        let mut buf = rx_buf.get_immediate().ok_or(ErrorCode::NoMemory)?;
+        let buf = &mut *buf;
+
+        let payload = self.standard_qr_payload(disc_caps)?;
+
+        let (text, buf) = payload.as_str(buf)?;
+
+        let (tmp_buf, out_buf) = buf.split_at_mut(buf.len() / 2);
+
+        let qr = Qr::compute(text, tmp_buf, out_buf)?;
+
+        const BORDER_SIZE: u8 = 4;
+
+        for y in qr.lines_range(text_type, BORDER_SIZE) {
+            info!(
+                "{}",
+                qr.line_as_str(text_type, BORDER_SIZE, false, false, y, tmp_buf)?
+                    .0
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Return the standard QR code payload
+    ///
+    /// The returned QR code payload corresponds to the standard commissioning flow (i.e. `CommFlowType::Standard`)
+    /// and contains no optional data.
+    ///
+    /// # Arguments
+    /// - `disc_caps`: The discovery capabilities to be used in the QR code payload
+    fn standard_qr_payload(
+        &self,
+        disc_caps: DiscoveryCapabilities,
+    ) -> Result<QrPayload<'_, NoOptionalData>, Error> {
+        let payload = QrPayload::new_from_basic_info(
+            disc_caps,
+            CommFlowType::Standard,
+            self.dev_comm,
+            self.dev_det,
+            no_optional_data as _,
+        );
+
+        Ok(payload)
+    }
+
     /// Return `true` if there is at least one commissioned fabric
     //
     // TODO:
@@ -442,28 +542,21 @@ impl<'a> Matter<'a> {
         self.fabric_mgr.borrow().iter().count() > 0
     }
 
-    /// Enable basic commissioning by setting up a PASE session and printing the pairing code and QR code.
+    /// Enable basic commissioning by setting up a PASE session.
     ///
-    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code
-    /// or if the PASE session could not be set up (due to another PASE session already being active, for example).
+    /// The method will return an error if the PASE session could not be set up
+    /// (due to another PASE session already being active, for example).
     ///
-    /// Parameters:
-    /// * `discovery_capabilities`: The discovery capabilities of the device (IP, BLE or Soft-AP)
-    /// * `timeout_secs`: The timeout in seconds for the basic commissioning session
-    pub async fn enable_basic_commissioning(
-        &self,
-        discovery_capabilities: DiscoveryCapabilities,
-        timeout_secs: u16,
-    ) -> Result<(), Error> {
+    /// # Arguments
+    /// - `timeout_secs`: The timeout in seconds for the basic commissioning session
+    pub fn enable_basic_commissioning(&self, timeout_secs: u16) -> Result<(), Error> {
         self.pase_mgr.borrow_mut().enable_basic_pase_session(
             self.dev_comm.password,
             self.dev_comm.discriminator,
             timeout_secs,
             None,
             &mut || self.notify_mdns(),
-        )?;
-
-        self.print_pairing_code_and_qr(discovery_capabilities).await
+        )
     }
 
     /// Disable the basic commissioning session
@@ -475,47 +568,16 @@ impl<'a> Matter<'a> {
             .disable_pase_session(&mut || self.notify_mdns())
     }
 
-    /// Prepare and print the pairing code and the QR code for easy pairing
-    ///
-    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code.
-    ///
-    /// # Arguments
-    /// - `discovery_capabilities`: The discovery capabilities of the device (IP, BLE or Soft-AP)
-    pub async fn print_pairing_code_and_qr(
-        &self,
-        discovery_capabilities: DiscoveryCapabilities,
-    ) -> Result<(), Error> {
-        let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
-        let mut buf = buf_access.get().await.ok_or(ErrorCode::ResourceExhausted)?;
-
-        print_pairing_code_and_qr(
-            self.dev_det,
-            &self.dev_comm,
-            discovery_capabilities,
-            &mut buf,
-        )
-    }
-
     /// Run the transport layer
     ///
-    /// Enables basic commissioning if the device is not commissioned
-    /// Note that the fabrics should be loaded by the PSM before calling this method
-    /// or else commissioning will be always enabled.
-    pub async fn run<S, R>(
-        &self,
-        send: S,
-        recv: R,
-        discovery_capabilities: DiscoveryCapabilities,
-    ) -> Result<(), Error>
+    /// # Arguments
+    /// - `send`: The network send interface
+    /// - `recv`: The network receive interface
+    pub async fn run<S, R>(&self, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
     {
-        if !self.is_commissioned() {
-            self.enable_basic_commissioning(discovery_capabilities, 0 /*TODO*/)
-                .await?;
-        }
-
         self.run_transport(send, recv).await
     }
 
