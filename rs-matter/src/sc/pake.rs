@@ -32,6 +32,9 @@ use crate::{crypto, MatterMdnsService};
 use super::spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 use super::SCStatusCodes;
 
+pub const MIN_COMMISSIONING_TIMEOUT_SECS: u16 = 3 * 60;
+pub const MAX_COMMISSIONING_TIMEOUT_SECS: u16 = 15 * 60;
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PaseSessionType {
@@ -160,12 +163,18 @@ impl PaseMgr {
         &mut self,
         password: u32,
         discriminator: u16,
-        _timeout_secs: u16,
+        timeout_secs: u16,
         opener: Option<PaseSessionOpener>,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<(), Error> {
         if self.session.is_some() {
-            Err(ErrorCode::Invalid)?;
+            Err(ErrorCode::Busy)?;
+        }
+
+        if !(MIN_COMMISSIONING_TIMEOUT_SECS..=MAX_COMMISSIONING_TIMEOUT_SECS)
+            .contains(&timeout_secs)
+        {
+            Err(ErrorCode::InvalidCommand)?;
         }
 
         self.session
@@ -207,6 +216,8 @@ impl PaseMgr {
 
         mdns_notif();
 
+        info!("PASE session enabled");
+
         Ok(())
     }
 
@@ -215,8 +226,12 @@ impl PaseMgr {
             self.session.clear();
             mdns_notif();
 
+            info!("PASE session disabled");
+
             Ok(true)
         } else {
+            warn!("No PASE session to disable");
+
             Ok(false)
         }
     }

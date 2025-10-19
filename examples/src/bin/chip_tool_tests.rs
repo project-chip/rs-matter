@@ -33,7 +33,7 @@ use futures_lite::StreamExt;
 use log::info;
 
 use rs_matter::dm::clusters::basic_info::{
-    BasicInfoConfig, ColorEnum, ProductAppearance, ProductFinishEnum,
+    BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
@@ -56,6 +56,7 @@ use rs_matter::error::Error;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pake::MAX_COMMISSIONING_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -178,16 +179,18 @@ fn main() -> Result<(), Error> {
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
     let mut transport = pin!(async {
-        // Unconditionally enable basic commissioning because the `chip-tool` tests
-        // expect that - even if the device is already commissioned,
-        // as the code path always unconditionally scans for the QR code.
-        //
-        // TODO: Figure out why the test suite has this expectation and also whether
-        // to instead just always enable printing the QR code to the console at startup
-        // rather than to enable basic commissioning.
-        matter
-            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
-            .await?;
+        if matter.is_commissioned() {
+            matter
+                .print_pairing_code_and_qr(DiscoveryCapabilities::IP)
+                .await?;
+        } else {
+            matter
+                .enable_basic_commissioning(
+                    DiscoveryCapabilities::IP,
+                    MAX_COMMISSIONING_TIMEOUT_SECS,
+                )
+                .await?;
+        }
 
         matter.run_transport(&socket, &socket).await
     });
@@ -225,13 +228,16 @@ fn main() -> Result<(), Error> {
     futures_lite::future::block_on(all.coalesce())
 }
 
-/// Overriden so that we can set the product appearance to
-/// what the `TestBasicInformation` tests expect.
+/// Overriden so that:
+/// - We can set the product appearance to what the `TestBasicInformation` tests expect;
+/// - We can set the device type and pairing hint to what the `TestDiscovery` tests expect.
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
         finish: ProductFinishEnum::Satin,
         color: Some(ColorEnum::Purple),
     },
+    device_type: Some(65535),
+    pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     ..TEST_DEV_DET
 };
 

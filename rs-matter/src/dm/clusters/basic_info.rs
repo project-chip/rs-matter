@@ -26,6 +26,7 @@ use crate::fabric::MAX_FABRICS;
 use crate::tlv::{FromTLV, Nullable, TLVBuilderParent, TLVElement, TLVTag, ToTLV, Utf8StrBuilder};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::MAX_SESSIONS;
+use crate::utils::bitflags::bitflags;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::storage::WriteBuf;
@@ -48,6 +49,82 @@ pub const DEFAULT_DATA_MODEL_REVISION: u16 = 16;
 /// Set to 1
 pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 1;
 
+bitflags! {
+    #[repr(transparent)]
+    #[derive(Default)]
+    #[cfg_attr(not(feature = "defmt"), derive(Debug, Copy, Clone, Eq, PartialEq, Hash))]
+    pub struct PairingHintFlags: u32 {
+        /// Power Cycle False The Device will automatically enter Commissioning Mode upon
+        /// power cycle (unplug/replug, remove/re-insert batteries).
+        /// This bit SHALL be set to 1 for devices using Standard Commissioning Flow,
+        /// and set to 0 otherwise.
+        const POWER_CYCLE = 0x0000_0001;
+        /// This SHALL be set to 1 for devices requiring Custom Commissioning
+        /// Flow before they can be available for Commissioning by any Commissioner.
+        /// For such a flow, the user SHOULD be sent to the URL specified in the
+        /// CommissioningCustomFlowUrl of the DeviceModel schema entry indexed by the
+        /// Vendor ID and Product ID (e.g., as found in the announcement) in the
+        /// Distributed Compliance Ledger.
+        const DEV_MANUFACTURER_URL = 0x0000_0002;
+        /// The Device has been commissioned. Any Administrator that commissioned the
+        /// device provides a user interface that may be used to put the device
+        /// into Commissioning Mode.
+        const ADMINISTRATOR = 0x0000_0004;
+        /// The settings menu on the Device provides instructions to put it
+        /// into Commissioning Mode.
+        const SETTINGS_MENU = 0x0000_0008;
+        /// The PI key/value pair describes a custom way to put the Device into
+        /// Commissioning Mode. This Custom Instruction option is NOT recommended
+        /// for use by a Device that does not have knowledge of the user's language preference.
+        const CUSTOM_INSTRUCTION = 0x0000_0010;
+        /// The Device Manual provides special instructions to put the Device
+        /// into Commissioning Mode (see Section 11.23.5.8, "UserManualUrl" in the Core Spec).
+        /// This is a catchall option to capture user interactions that are not codified by
+        /// other options in this flags type.
+        const DEVICE_MANUAL = 0x0000_0020;
+        /// The Device will enter Commissioning Mode when reset button is pressed.
+        const PRESS_RESET_BUTTON = 0x0000_0040;
+        /// The Device will enter Commissioning Mode when reset button is pressed when applying power to it.
+        const PRESS_RESET_BUTTON_WITH_POWER = 0x0000_0080;
+        /// The Device will enter Commissioning Mode when reset button is pressed for N seconds.
+        /// The exact value of N SHALL be made available via PI key.
+        const PRESS_RESET_BUTTON_FOR_N_SECONDS = 0x0000_0100;
+        /// The Device will enter Commissioning Mode when reset button is pressed until associated light blinks.
+        /// Information on color of light MAY be made available via PI key.
+        const PRESS_RESET_BUTTON_UNTIL_LIGHT_BLINKS = 0x0000_0200;
+        /// The Device will enter Commissioning Mode when reset button is pressed for N seconds
+        /// when applying power to it. The exact value of N SHALL be made available via PI key.
+        const PRESS_RESET_BUTTON_FOR_N_SECONDS_WITH_POWER = 0x0000_0400;
+        /// The Device will enter Commissioning Mode when reset button is pressed until associated
+        /// light blinks when applying power to the Device. Information on color of light MAY be
+        /// made available via PI key.
+        const PRESS_RESET_BUTTON_UNTIL_LIGHT_BLINKS_WITH_POWER = 0x0000_0800;
+        /// The Device will enter Commissioning Mode when reset button is pressed N times
+        /// with maximum 1 second between each press. The exact value of N SHALL be made available via PI key.
+        const PRESS_RESET_BUTTON_N_TIMES = 0x0000_1000;
+        /// The Device will enter Commissioning Mode when setup button is pressed.
+        const PRESS_SETUP_BUTTON = 0x0000_2000;
+        /// The Device will enter Commissioning Mode when setup button is pressed when applying power to it.
+        const PRESS_SETUP_BUTTON_WITH_POWER = 0x0000_4000;
+        /// The Device will enter Commissioning Mode when setup button is pressed for N seconds.
+        /// The exact value of N SHALL be made available via PI key.
+        const PRESS_SETUP_BUTTON_FOR_N_SECONDS = 0x0000_8000;
+        /// The Device will enter Commissioning Mode when setup button is pressed until associated
+        /// light blinks. Information on color of light MAY be made available via PI key.
+        const PRESS_SETUP_BUTTON_UNTIL_LIGHT_BLINKS = 0x0001_0000;
+        /// The Device will enter Commissioning Mode when setup button is pressed for N seconds
+        /// when applying power to it. The exact value of N SHALL be made available via PI key.
+        const PRESS_SETUP_BUTTON_FOR_N_SECONDS_WITH_POWER = 0x0002_0000;
+        /// The Device will enter Commissioning Mode when setup button is pressed until associated
+        /// light blinks when applying power to the Device. Information on color of light MAY be
+        /// made available via PI key.
+        const PRESS_SETUP_BUTTON_UNTIL_LIGHT_BLINKS_WITH_POWER = 0x0004_0000;
+        /// The Device will enter Commissioning Mode when setup button is pressed N times with
+        /// maximum 1 second between each press. The exact value of N SHALL be made available via PI key.
+        const PRESS_SETUP_BUTTON_N_TIMES = 0x0008_0000;
+    }
+}
+
 /// Basic information which is immutable
 /// (i.e. valid for the lifetime of the device firmware)
 ///
@@ -55,7 +132,8 @@ pub const DEFAULT_MAX_PATHS_PER_INVOKE: u16 = 1;
 ///
 /// By default, `BasicInfoHandler::CLUSTER` enables ALL optional attributes except `reachable` which is only valid for
 /// bridged devices.
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicInfoConfig<'a> {
     /// Vendor name (up to 32 characters)
     pub vendor_name: &'a str,
@@ -99,6 +177,18 @@ pub struct BasicInfoConfig<'a> {
     ///
     /// Not a real attribute; used in the mDNS commissioning advertisement
     pub device_name: &'a str,
+    /// Device Type
+    ///
+    /// Not a real attribute; used in the mDNS commissioning advertisement
+    pub device_type: Option<u16>,
+    /// Pairing Hint
+    ///
+    /// Not a real attribute; used in the mDNS commissioning advertisement
+    pub pairing_hint: PairingHintFlags,
+    /// Pairing Instruction
+    ///
+    /// Not a real attribute; used in the mDNS commissioning advertisement
+    pub pairing_instruction: &'a str,
     /// Session Active Interval in ms
     /// If not specified, defaults to 300
     ///
@@ -133,7 +223,10 @@ impl BasicInfoConfig<'_> {
             specification_version: DEFAULT_MATTER_SPEC_VERSION,
             data_model_revision: DEFAULT_DATA_MODEL_REVISION,
             max_paths_per_invoke: DEFAULT_MAX_PATHS_PER_INVOKE,
-            device_name: "Matter Device",
+            device_name: "",
+            device_type: None,
+            pairing_hint: PairingHintFlags::empty(),
+            pairing_instruction: "",
             sai: None,
             sii: None,
         }
@@ -147,7 +240,8 @@ impl Default for BasicInfoConfig<'_> {
 }
 
 /// Capability Minima as reported in the Basic Information cluster
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CapabilityMinima {
     /// Maximum CASE sessions per fabric
     pub case_sessions_per_fabric: u16,
@@ -173,7 +267,8 @@ impl Default for CapabilityMinima {
 }
 
 /// Product Appearance as reported in the Basic Information cluster
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ProductAppearance {
     /// Product finish type
     pub finish: ProductFinishEnum,

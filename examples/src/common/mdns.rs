@@ -136,7 +136,7 @@ async fn run_builtin_mdns(matter: &Matter<'_>) -> Result<(), Error> {
             &socket,
             &Host {
                 id: 0,
-                hostname: "rs-matter-demo",
+                hostname: "001122334455", //"rs-matter-demo",
                 ip: ipv4_addr,
                 ipv6: ipv6_addr,
             },

@@ -455,9 +455,6 @@ impl<'a> Matter<'a> {
         discovery_capabilities: DiscoveryCapabilities,
         timeout_secs: u16,
     ) -> Result<(), Error> {
-        let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
-        let mut buf = buf_access.get().await.ok_or(ErrorCode::ResourceExhausted)?;
-
         self.pase_mgr.borrow_mut().enable_basic_pase_session(
             self.dev_comm.password,
             self.dev_comm.discriminator,
@@ -466,14 +463,7 @@ impl<'a> Matter<'a> {
             &mut || self.notify_mdns(),
         )?;
 
-        print_pairing_code_and_qr(
-            self.dev_det,
-            &self.dev_comm,
-            discovery_capabilities,
-            &mut buf,
-        )?;
-
-        Ok(())
+        self.print_pairing_code_and_qr(discovery_capabilities).await
     }
 
     /// Disable the basic commissioning session
@@ -483,6 +473,27 @@ impl<'a> Matter<'a> {
         self.pase_mgr
             .borrow_mut()
             .disable_pase_session(&mut || self.notify_mdns())
+    }
+
+    /// Prepare and print the pairing code and the QR code for easy pairing
+    ///
+    /// The method will return an error if there is not enough space in the buffer to print the pairing code and QR code.
+    ///
+    /// # Arguments
+    /// - `discovery_capabilities`: The discovery capabilities of the device (IP, BLE or Soft-AP)
+    pub async fn print_pairing_code_and_qr(
+        &self,
+        discovery_capabilities: DiscoveryCapabilities,
+    ) -> Result<(), Error> {
+        let buf_access = PacketBufferExternalAccess(&self.transport_mgr.rx);
+        let mut buf = buf_access.get().await.ok_or(ErrorCode::ResourceExhausted)?;
+
+        print_pairing_code_and_qr(
+            self.dev_det,
+            &self.dev_comm,
+            discovery_capabilities,
+            &mut buf,
+        )
     }
 
     /// Run the transport layer
