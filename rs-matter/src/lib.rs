@@ -542,15 +542,15 @@ impl<'a> Matter<'a> {
         self.fabric_mgr.borrow().iter().count() > 0
     }
 
-    /// Enable basic commissioning by setting up a PASE session.
+    /// Open a basic commissioning window
     ///
-    /// The method will return an error if the PASE session could not be set up
-    /// (due to another PASE session already being active, for example).
+    /// The method will return an error if the commissioning window cannot be opened
+    /// (due to another window already being opened, for example).
     ///
     /// # Arguments
-    /// - `timeout_secs`: The timeout in seconds for the basic commissioning session
-    pub fn enable_basic_commissioning(&self, timeout_secs: u16) -> Result<(), Error> {
-        self.pase_mgr.borrow_mut().enable_basic_pase_session(
+    /// - `timeout_secs`: The timeout in seconds for the basic commissioning window
+    pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
+        self.pase_mgr.borrow_mut().open_basic_comm_window(
             self.dev_comm.password,
             self.dev_comm.discriminator,
             timeout_secs,
@@ -559,13 +559,13 @@ impl<'a> Matter<'a> {
         )
     }
 
-    /// Disable the basic commissioning session
+    /// Close the basic commissioning window
     ///
-    /// The method will return Ok(false) if there is no active PASE session to disable.
-    pub fn disable_commissioning(&self) -> Result<bool, Error> {
+    /// The method will return Ok(false) if there is no active PASE commissioning window to close.
+    pub fn close_comm_window(&self) -> Result<bool, Error> {
         self.pase_mgr
             .borrow_mut()
-            .disable_pase_session(&mut || self.notify_mdns())
+            .close_comm_window(&mut || self.notify_mdns())
     }
 
     /// Run the transport layer
@@ -675,15 +675,15 @@ impl<'a> Matter<'a> {
     {
         debug!("=== Currently published mDNS services");
 
-        let pase_mgr = self.pase_mgr.borrow();
+        let mut pase_mgr = self.pase_mgr.borrow_mut();
         let fabric_mgr = self.fabric_mgr.borrow();
 
-        if let Some(service) = pase_mgr.mdns_service() {
+        if let Some(comm_window) = pase_mgr.comm_window(&mut || self.mdns_notification.notify())? {
             // Do not remove this logging line or change its formatting.
             // C++ E2E tests rely on this log line to determine when the mDNS service is published
-            debug!("mDNS service published: {:?}", service);
+            debug!("mDNS service published: {:?}", comm_window.mdns_service());
 
-            f(service)?;
+            f(comm_window.mdns_service())?;
         }
 
         for fabric in fabric_mgr.iter() {

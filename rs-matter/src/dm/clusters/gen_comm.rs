@@ -226,7 +226,7 @@ impl ClusterHandler for GenCommHandler<'_> {
                 .matter()
                 .pase_mgr
                 .borrow_mut()
-                .disable_pase_session(&mut || ctx.exchange().matter().notify_mdns())?;
+                .close_comm_window(&mut || ctx.exchange().matter().notify_mdns())?;
         }
 
         response.error_code(status)?.debug_text("")?.end()

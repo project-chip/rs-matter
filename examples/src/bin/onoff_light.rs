@@ -45,7 +45,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_TIMEOUT_SECS;
+use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -176,7 +176,7 @@ fn run() -> Result<(), Error> {
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
 
-        matter.enable_basic_commissioning(MAX_COMM_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
     }
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));

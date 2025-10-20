@@ -19,10 +19,10 @@ use subtle::ConstantTimeEq;
 
 use crate::crypto::{self, pbkdf2_hmac, HmacSha256, Sha256};
 use crate::error::{Error, ErrorCode};
+use crate::sc::crypto::CryptoSpake2;
+use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
-
-use super::{crypto::CryptoSpake2, SCStatusCodes};
 
 // This file handles Spake2+ specific instructions. In itself, this file is
 // independent from the BigNum and EC operations that are typically required
@@ -58,6 +58,7 @@ pub enum Spake2VerifierState {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Spake2Mode {
     Unknown,
+    #[allow(unused)]
     Prover,
     Verifier(Spake2VerifierState),
 }

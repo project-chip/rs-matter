@@ -80,7 +80,7 @@ use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_TIMEOUT_SECS;
+use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::network::btp::{
     AdvData, Btp, BtpContext, GattPeripheral, GattPeripheralEvent,
@@ -419,7 +419,7 @@ fn main() -> ! {
 
         unwrap!(stack
             .matter
-            .enable_basic_commissioning(MAX_COMM_TIMEOUT_SECS));
+            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS));
     }
 
     executor.run(|spawner| {

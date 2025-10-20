@@ -28,15 +28,13 @@ use crate::transport::exchange::{Exchange, MessageMeta};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
-use case::{Case, CaseSession};
+use case::Case;
 use pake::Pake;
-use spake2p::Spake2P;
 
 pub mod busy;
 pub mod case;
 pub mod crypto;
 pub mod pake;
-pub mod spake2p;
 
 /* Interaction Model ID as per the Matter Spec */
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
@@ -243,14 +241,12 @@ impl SecureChannel {
 
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
-                let mut spake2p = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                let spake2p = spake2p.init_with(Spake2P::init());
-                Pake::new().handle(exchange, spake2p).await
+                let mut pake = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                pake.init_with(Pake::init()).handle(exchange).await
             }
             OpCode::CASESigma1 => {
-                let mut case_session = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                let case_session = case_session.init_with(CaseSession::init());
-                Case::new().handle(exchange, case_session).await
+                let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                case.init_with(Case::init()).handle(exchange).await
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
