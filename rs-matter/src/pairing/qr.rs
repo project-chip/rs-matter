@@ -270,7 +270,9 @@ where
             wb.le_u8(ch? as u8)?;
         }
 
-        let str = unsafe { core::str::from_utf8_unchecked(str_buf) };
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf));
+
         Ok((str, remaining_buf))
     }
 
@@ -491,10 +493,10 @@ impl<'a> Qr<'a> {
 
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
-        Ok((
-            unsafe { core::str::from_utf8_unchecked(str_buf) },
-            remaining_buf,
-        ))
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf));
+
+        Ok((str, remaining_buf))
     }
 
     /// Encode a single line of the QR as a string into the provided buffer
@@ -535,10 +537,10 @@ impl<'a> Qr<'a> {
 
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
-        Ok((
-            unsafe { core::str::from_utf8_unchecked(str_buf) },
-            remaining_buf,
-        ))
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf));
+
+        Ok((str, remaining_buf))
     }
 
     /// Get an iterator over the indexes of the lines of the QR code including borders
@@ -718,10 +720,10 @@ impl<'a> QrTextRenderer<'a> {
 
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
-        Ok((
-            unsafe { core::str::from_utf8_unchecked(str_buf) },
-            remaining_buf,
-        ))
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf));
+
+        Ok((str, remaining_buf))
     }
 
     /// Render a single line of the QR code as a string into the provided buffer
@@ -760,10 +762,10 @@ impl<'a> QrTextRenderer<'a> {
 
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
-        Ok((
-            unsafe { core::str::from_utf8_unchecked(str_buf) },
-            remaining_buf,
-        ))
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf));
+
+        Ok((str, remaining_buf))
     }
 
     /// Get an iterator over the indexes of the lines of the QR code including borders
