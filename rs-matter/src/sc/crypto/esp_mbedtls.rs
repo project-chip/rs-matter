@@ -113,7 +113,7 @@ impl CryptoSpake2 {
 mod tests {
 
     use super::CryptoSpake2;
-    use crate::sc::spake2p::test_vectors::test_vectors::*;
+    use crate::sc::pake::spake2p::test_vectors::test_vectors::*;
     use openssl::bn::BigNum;
     use openssl::ec::{EcPoint, PointConversionForm};
 

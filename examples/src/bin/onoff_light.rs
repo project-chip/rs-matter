@@ -41,9 +41,11 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::init::InitMaybeUninit;
 use rs_matter::utils::select::Coalesce;
@@ -147,13 +149,13 @@ fn run() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&socket, &socket, DiscoveryCapabilities::IP)),
+        core::mem::size_of_val(&matter.run(&socket, &socket)),
         core::mem::size_of_val(&mdns::run_mdns(matter))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
-    let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
+    let mut transport = pin!(matter.run(&socket, &socket));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -166,6 +168,16 @@ fn run() -> Result<(), Error> {
     );
 
     psm.load(&path, matter, NO_NETWORKS)?;
+
+    if !matter.is_commissioned() {
+        // If the device is not commissioned yet, print the QR text and code to the console
+        // and enable basic commissioning
+
+        matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
+        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
+
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+    }
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
 

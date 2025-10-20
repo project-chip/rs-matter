@@ -33,7 +33,7 @@ use futures_lite::StreamExt;
 use log::info;
 
 use rs_matter::dm::clusters::basic_info::{
-    BasicInfoConfig, ColorEnum, ProductAppearance, ProductFinishEnum,
+    BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
@@ -53,9 +53,11 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -171,26 +173,13 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&socket, &socket, DiscoveryCapabilities::IP)),
+        core::mem::size_of_val(&matter.run(&socket, &socket)),
         core::mem::size_of_val(&mdns::run_mdns(matter))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
-    let mut transport = pin!(async {
-        // Unconditionally enable basic commissioning because the `chip-tool` tests
-        // expect that - even if the device is already commissioned,
-        // as the code path always unconditionally scans for the QR code.
-        //
-        // TODO: Figure out why the test suite has this expectation and also whether
-        // to instead just always enable printing the QR code to the console at startup
-        // rather than to enable basic commissioning.
-        matter
-            .enable_basic_commissioning(DiscoveryCapabilities::IP, 0)
-            .await?;
-
-        matter.run_transport(&socket, &socket).await
-    });
+    let mut transport = pin!(matter.run_transport(&socket, &socket));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());
@@ -203,6 +192,19 @@ fn main() -> Result<(), Error> {
     );
 
     psm.load(&path, matter, NO_NETWORKS)?;
+
+    // We need to always print the QR text, because the test runner expects it to be printed
+    // even if the device is already commissioned
+    matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
+
+    if !matter.is_commissioned() {
+        // If the device is not commissioned yet, print the QR code to the console
+        // and enable basic commissioning
+
+        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
+
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+    }
 
     let mut persist = pin!(psm.run(&path, matter, NO_NETWORKS));
 
@@ -225,13 +227,16 @@ fn main() -> Result<(), Error> {
     futures_lite::future::block_on(all.coalesce())
 }
 
-/// Overriden so that we can set the product appearance to
-/// what the `TestBasicInformation` tests expect.
+/// Overriden so that:
+/// - We can set the product appearance to what the `TestBasicInformation` tests expect;
+/// - We can set the device type and pairing hint to what the `TestDiscovery` tests expect.
 const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
     product_appearance: ProductAppearance {
         finish: ProductFinishEnum::Satin,
         color: Some(ColorEnum::Purple),
     },
+    device_type: Some(65535),
+    pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     ..TEST_DEV_DET
 };
 

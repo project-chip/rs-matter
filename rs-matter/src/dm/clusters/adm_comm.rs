@@ -19,7 +19,7 @@
 
 use crate::dm::{Cluster, Context, Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
-use crate::sc::pake::{PaseSessionOpener, PaseSessionType};
+use crate::sc::pake::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
 
 pub use crate::dm::clusters::decl::administrator_commissioning::*;
@@ -43,17 +43,14 @@ impl AdminCommHandler {
         HandlerAdaptor(self)
     }
 
-    /// Return a `PaseSessionOpener` instance for the current session
+    /// Return a `CommWindowOpener` instance for the current session
     ///
     /// Used when opening a new commissioning window so as to preserve the fabric index and vendor ID
     /// of the admin fabric which opened the current commissioning window.
-    fn current_session_opener(
-        &self,
-        ctx: impl Context,
-    ) -> Result<Option<PaseSessionOpener>, Error> {
+    fn current_window_opener(&self, ctx: impl Context) -> Result<Option<CommWindowOpener>, Error> {
         ctx.exchange().with_session(|session| {
             Ok(match session.get_session_mode() {
-                SessionMode::Case { fab_idx, .. } => Some(PaseSessionOpener {
+                SessionMode::Case { fab_idx, .. } => Some(CommWindowOpener {
                     fab_idx: *fab_idx,
                     vendor_id: unwrap!(ctx.exchange().matter().fabric_mgr.borrow().get(*fab_idx))
                         .vendor_id(),
@@ -76,17 +73,25 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
-        let session_type = ctx.exchange().matter().pase_mgr.borrow().session_type();
+        let matter = ctx.exchange().matter();
+        let mut pase_mgr = matter.pase_mgr.borrow_mut();
+        let comm_window = pase_mgr.comm_window(&mut || matter.notify_mdns())?;
 
-        Ok(match session_type {
-            Some(PaseSessionType::Basic) => CommissioningWindowStatusEnum::BasicWindowOpen,
-            Some(PaseSessionType::Enhanced) => CommissioningWindowStatusEnum::EnhancedWindowOpen,
+        let window_type = comm_window.map(|comm_window| comm_window.comm_window_type());
+
+        Ok(match window_type {
+            Some(CommWindowType::Basic) => CommissioningWindowStatusEnum::BasicWindowOpen,
+            Some(CommWindowType::Enhanced) => CommissioningWindowStatusEnum::EnhancedWindowOpen,
             None => CommissioningWindowStatusEnum::WindowNotOpen,
         })
     }
 
     fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
-        if let Some(opener) = ctx.exchange().matter().pase_mgr.borrow().opener() {
+        let matter = ctx.exchange().matter();
+        let mut pase_mgr = matter.pase_mgr.borrow_mut();
+        let comm_window = pase_mgr.comm_window(&mut || matter.notify_mdns())?;
+
+        if let Some(opener) = comm_window.and_then(|comm_window| comm_window.opener()) {
             if ctx
                 .exchange()
                 .matter()
@@ -105,12 +110,13 @@ impl ClusterHandler for AdminCommHandler {
     }
 
     fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+        let matter = ctx.exchange().matter();
+        let mut pase_mgr = matter.pase_mgr.borrow_mut();
+        let comm_window = pase_mgr.comm_window(&mut || matter.notify_mdns())?;
+
         Ok(Nullable::new(
-            ctx.exchange()
-                .matter()
-                .pase_mgr
-                .borrow()
-                .opener()
+            comm_window
+                .and_then(|comm_window| comm_window.opener())
                 .map(|opener| opener.vendor_id),
         ))
     }
@@ -120,10 +126,10 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
-        let opener = self.current_session_opener(&ctx)?;
+        let opener = self.current_window_opener(&ctx)?;
         let matter = ctx.exchange().matter();
 
-        matter.pase_mgr.borrow_mut().enable_pase_session(
+        matter.pase_mgr.borrow_mut().open_comm_window(
             request.pake_passcode_verifier()?.0,
             request.salt()?.0,
             request.iterations()?,
@@ -139,10 +145,10 @@ impl ClusterHandler for AdminCommHandler {
         ctx: impl InvokeContext,
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
-        let opener = self.current_session_opener(&ctx)?;
+        let opener = self.current_window_opener(&ctx)?;
         let matter = ctx.exchange().matter();
 
-        matter.pase_mgr.borrow_mut().enable_basic_pase_session(
+        matter.pase_mgr.borrow_mut().open_basic_comm_window(
             matter.dev_comm().password,
             matter.dev_comm().discriminator,
             request.commissioning_timeout()?,
@@ -157,7 +163,7 @@ impl ClusterHandler for AdminCommHandler {
         matter
             .pase_mgr
             .borrow_mut()
-            .disable_pase_session(&mut || matter.notify_mdns())?;
+            .close_comm_window(&mut || matter.notify_mdns())?;
 
         // TODO: Send status code if no commissioning window is open?
 

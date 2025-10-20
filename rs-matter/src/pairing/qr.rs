@@ -54,40 +54,121 @@ pub const BPKFSALT_TAG: u8 = 0x02;
 pub const NUMBER_OFDEVICES_TAG: u8 = 0x03;
 pub const COMMISSIONING_TIMEOUT_TAG: u8 = 0x04;
 
-pub struct QrSetupPayload<'data, T> {
+/// Commissioning flow type as per the Matter Core spec
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CommFlowType {
+    /// Standard commissioning flow
+    Standard = 0,
+    /// Enhanced commissioning flow with user intent
+    UserIntent = 1,
+    /// Custom commissioning flow
+    Custom = 2,
+}
+
+/// Type alias for no optional data function for the QR payload
+pub type NoOptionalData = fn() -> Empty<Result<u8, Error>>;
+
+/// Function that provides no optional data for the QR payload
+pub fn no_optional_data() -> Empty<Result<u8, Error>> {
+    core::iter::empty()
+}
+
+/// QR Code payload type
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct QrPayload<'a, T> {
+    /// Payload version. Always 0
     version: u8,
-    flow_type: CommissionningFlowType,
+    /// Discovery capabilities of the device
     discovery_capabilities: DiscoveryCapabilities,
-    dev_det: &'data BasicInfoConfig<'data>,
-    comm_data: &'data BasicCommData,
-    // The data written by the optional data provider must be ordered by the tag of each TLV element in ascending order.
+    /// Commissioning flow type
+    comm_flow: CommFlowType,
+    /// Basic commissioning data
+    comm_data: BasicCommData,
+    /// Vendor ID
+    vid: u16,
+    /// Product ID
+    pid: u16,
+    /// Serial number of the device
+    serial_no: &'a str,
+    /// Optional extra data
+    /// The data must be ordered by the tag of each TLV element in ascending order.
     optional_data: T,
 }
 
-impl<'data, T, I> QrSetupPayload<'data, T>
+impl<'a, T, I> QrPayload<'a, T>
 where
     T: Fn() -> I,
-    I: Iterator<Item = Result<u8, Error>> + 'data,
+    I: Iterator<Item = Result<u8, Error>> + 'a,
 {
-    /// `optional_data` should be ordered by tag number in ascending order.
-    pub fn new(
-        dev_det: &'data BasicInfoConfig,
-        comm_data: &'data BasicCommData,
+    /// Create a new QR payload from the device basic info config
+    ///
+    /// # Arguments
+    /// - `discovery_capabilities` - Discovery capabilities of the device
+    /// - `comm_flow` - Commissioning flow type
+    /// - `comm_data` - Basic commissioning data
+    /// - `dev_det` - Device basic info config
+    /// - `optional_data` - Function that provides an iterator over optional TLV data bytes.
+    ///   NOTE: Should be ordered by tag number in ascending order.
+    pub const fn new_from_basic_info(
         discovery_capabilities: DiscoveryCapabilities,
+        comm_flow: CommFlowType,
+        comm_data: BasicCommData,
+        dev_det: &'a BasicInfoConfig,
+        optional_data: T,
+    ) -> Self {
+        Self::new(
+            discovery_capabilities,
+            comm_flow,
+            comm_data,
+            dev_det.vid,
+            dev_det.pid,
+            dev_det.serial_no,
+            optional_data,
+        )
+    }
+
+    /// Create a new QR payload
+    ///
+    /// # Arguments
+    /// - `discovery_capabilities` - Discovery capabilities of the device
+    /// - `comm_flow` - Commissioning flow type
+    /// - `comm_data` - Basic commissioning data
+    /// - `vid` - Vendor ID
+    /// - `pid` - Product ID
+    /// - `serial_no` - Serial number of the device
+    /// - `optional_data` - Function that provides an iterator over optional TLV data bytes.
+    ///   NOTE: Should be ordered by tag number in ascending order.
+    pub const fn new(
+        discovery_capabilities: DiscoveryCapabilities,
+        comm_flow: CommFlowType,
+        comm_data: BasicCommData,
+        vid: u16,
+        pid: u16,
+        serial_no: &'a str,
         optional_data: T,
     ) -> Self {
         const DEFAULT_VERSION: u8 = 0;
 
         Self {
             version: DEFAULT_VERSION,
-            flow_type: CommissionningFlowType::Standard,
             discovery_capabilities,
-            dev_det,
+            comm_flow,
             comm_data,
+            vid,
+            pid,
+            serial_no,
             optional_data,
         }
     }
 
+    /// Check if the QR payload is valid
+    ///
+    /// # Returns
+    /// - `true` if the payload is valid
+    /// - `false` otherwise
     pub fn is_valid(&self) -> bool {
         // 3-bit value specifying the QR code payload version.
         if self.version >= 1 << VERSION_FIELD_LENGTH_IN_BITS {
@@ -106,6 +187,19 @@ where
     }
 
     fn check_payload_common_constraints(&self) -> bool {
+        #[repr(u16)]
+        enum VendorId {
+            CommonOrUnspecified = 0x0000,
+            TestVendor4 = 0xFFF4,
+        }
+
+        impl VendorId {
+            fn is_valid_operationally(vendor_id: u16) -> bool {
+                (vendor_id != Self::CommonOrUnspecified as u16)
+                    && (vendor_id <= Self::TestVendor4 as u16)
+            }
+        }
+
         // A version not equal to 0 would be invalid for v1 and would indicate new format (e.g. version 2)
         if self.version != 0 {
             return false;
@@ -116,8 +210,8 @@ where
         }
 
         // VendorID must be unspecified (0) or in valid range expected.
-        if !is_vendor_id_valid_operationally(self.dev_det.vid)
-            && (self.dev_det.vid != VendorId::CommonOrUnspecified as u16)
+        if VendorId::is_valid_operationally(self.vid)
+            && (self.vid != VendorId::CommonOrUnspecified as u16)
         {
             return false;
         }
@@ -126,7 +220,7 @@ where
         //  * To announce an anonymized Product ID as part of device discovery
         //  * To indicate an OTA software update file applies to multiple Product IDs equally.
         //  * To avoid confusion when presenting the Onboarding Payload for ECM with multiple nodes
-        if self.dev_det.pid == 0 && self.dev_det.vid != VendorId::CommonOrUnspecified as u16 {
+        if self.pid == 0 && self.vid != VendorId::CommonOrUnspecified as u16 {
             return false;
         }
 
@@ -158,7 +252,15 @@ where
         true
     }
 
-    pub fn try_as_str<'a>(&self, buf: &'a mut [u8]) -> Result<(&'a str, &'a mut [u8]), Error> {
+    /// Encode the QR text of this payload as a string into the provided buffer
+    ///
+    /// # Arguments
+    /// - `buf` - Buffer to store the QR code string
+    ///
+    /// # Returns
+    /// - On success, returns a tuple containing the QR code string and the remaining buffer
+    /// - On failure, returns an error
+    pub fn as_str<'b>(&self, buf: &'b mut [u8]) -> Result<(&'b str, &'b mut [u8]), Error> {
         let str_len = self.emit_chars().count();
 
         let (str_buf, remaining_buf) = buf.split_at_mut(str_len);
@@ -168,10 +270,13 @@ where
             wb.le_u8(ch? as u8)?;
         }
 
-        let str = unsafe { core::str::from_utf8_unchecked(str_buf) };
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+
         Ok((str, remaining_buf))
     }
 
+    /// Emit the QR text of this payload as an iterator of characters
     pub fn emit_chars(&self) -> impl Iterator<Item = Result<char, Error>> + '_ {
         struct PackedBitsIterator<I>(I);
 
@@ -226,15 +331,15 @@ where
     fn emit_all_bits(&self) -> impl Iterator<Item = Result<bool, Error>> + '_ {
         Self::emit_bits(self.version as _, VERSION_FIELD_LENGTH_IN_BITS)
             .chain(Self::emit_bits(
-                self.dev_det.vid as _,
+                self.vid as _,
                 VENDOR_IDFIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
-                self.dev_det.pid as _,
+                self.pid as _,
                 PRODUCT_IDFIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
-                self.flow_type as _,
+                self.comm_flow as _,
                 COMMISSIONING_FLOW_FIELD_LENGTH_IN_BITS,
             ))
             .chain(Self::emit_bits(
@@ -270,16 +375,15 @@ where
     }
 
     fn emit_optional_tlv_data(&self) -> impl Iterator<Item = Result<u8, Error>> + '_ {
-        if self.dev_det.serial_no.is_empty() && (self.optional_data)().next().is_none() {
+        if self.serial_no.is_empty() && (self.optional_data)().next().is_none() {
             return EitherIter::First(core::iter::empty());
         }
 
-        let serial_no = if self.dev_det.serial_no.is_empty() {
+        let serial_no = if self.serial_no.is_empty() {
             EitherIter::First(core::iter::empty())
         } else {
             EitherIter::Second(
-                TLV::utf8(TLVTag::Context(SERIAL_NUMBER_TAG), self.dev_det.serial_no)
-                    .into_tlv_iter(),
+                TLV::utf8(TLVTag::Context(SERIAL_NUMBER_TAG), self.serial_no).into_tlv_iter(),
             )
         };
 
@@ -298,54 +402,84 @@ where
     }
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum CommissionningFlowType {
-    Standard = 0,
-    UserIntent = 1,
-    Custom = 2,
-}
-
-pub fn print_qr_code(qr_code_text: &str, buf: &mut [u8]) -> Result<(), Error> {
-    // Do not remove this logging line or change its formatting.
-    // C++ E2E tests rely on this log line to grep the QR code
-    info!("SetupQRCode: [{}]", qr_code_text);
-
-    let (tmp_buf, out_buf) = buf.split_at_mut(buf.len() / 2);
-
-    let qr_code = compute_qr_code(qr_code_text, tmp_buf, out_buf)?;
-
-    let text_image = TextImage::Unicode;
-
-    for y in text_image.lines_range(&qr_code, 4) {
-        info!(
-            "{}",
-            text_image.render_line(&qr_code, 4, false, false, y, tmp_buf)?
-        );
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+/// QR Code text type
+///
+/// Used when emitting the QR code in different text formats
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TextImage {
+pub enum QrTextType {
+    /// Pure ASCII text
+    /// Compatible with all consoles
     Ascii,
+    /// ANSI
     Ansi,
+    /// Unicode
     Unicode,
 }
 
-impl TextImage {
-    pub fn render<'a>(
+/// QR Code representation
+pub struct Qr<'a>(QrCode<'a>);
+
+impl<'a> Qr<'a> {
+    /// Create a new QR code from the given text
+    ///
+    /// # Arguments
+    /// - `text` - Text to encode in the QR code
+    /// - `tmp_buf` - Temporary buffer for QR code generation
+    /// - `out_buf` - Output buffer for the QR code
+    ///
+    /// # Returns
+    /// - On success, returns the generated QR code
+    /// - On failure, returns an error
+    pub fn compute(text: &str, tmp_buf: &mut [u8], out_buf: &'a mut [u8]) -> Result<Self, Error> {
+        let needed_version = Version::new(Self::version(text));
+
+        let qr = QrCode::encode_text(
+            text,
+            tmp_buf,
+            out_buf,
+            QrCodeEcc::Medium,
+            needed_version,
+            needed_version,
+            None,
+            false,
+        )
+        .map_err(|_| ErrorCode::BufferTooSmall)?;
+
+        Ok(Self(qr))
+    }
+
+    /// Get the size of the QR code
+    pub fn size(&self) -> u32 {
+        self.0.size() as _
+    }
+
+    /// Get the module value at the given coordinates
+    pub fn get_module(&self, x: i32, y: i32) -> bool {
+        self.0.get_module(x, y)
+    }
+
+    /// Encode the QR as a string into the provided buffer
+    ///
+    /// # Arguments
+    /// - `text_type` - Type of text to return (ASCII, ANSI, Unicode)
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    /// - `out_buf` - Output buffer for the rendered string
+    ///
+    /// # Returns
+    /// - On success, returns a tuple containing the rendered string and the remaining buffer
+    /// - On failure, returns an error
+    pub fn as_str<'b>(
         &self,
-        qr_code: &QrCode,
+        text_type: QrTextType,
         border: u8,
         invert: bool,
-        out_buf: &'a mut [u8],
-    ) -> Result<&'a str, Error> {
+        out_buf: &'b mut [u8],
+    ) -> Result<(&'b str, &'b mut [u8]), Error> {
         let mut offset = 0;
 
-        for c in self.render_iter(qr_code, border, invert) {
+        for c in self.emit_chars(text_type, border, invert) {
             let mut dst = [0; 4];
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
@@ -357,21 +491,39 @@ impl TextImage {
             }
         }
 
-        Ok(unsafe { core::str::from_utf8_unchecked(&out_buf[..offset]) })
+        let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
+
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+
+        Ok((str, remaining_buf))
     }
 
-    pub fn render_line<'a>(
+    /// Encode a single line of the QR as a string into the provided buffer
+    ///
+    /// # Arguments
+    /// - `text_type` - Type of text to return (ASCII, ANSI, Unicode)
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    /// - `nl` - Whether to add a newline at the end of the line
+    /// - `y` - Y coordinate of the line to render
+    /// - `out_buf` - Output buffer for the rendered string
+    ///
+    /// # Returns
+    /// - On success, returns a tuple containing the rendered string and the remaining buffer
+    /// - On failure, returns an error
+    pub fn line_as_str<'b>(
         &self,
-        qr_code: &QrCode,
+        text_type: QrTextType,
         border: u8,
         invert: bool,
         nl: bool,
         y: i32,
-        out_buf: &'a mut [u8],
-    ) -> Result<&'a str, Error> {
+        out_buf: &'b mut [u8],
+    ) -> Result<(&'b str, &'b mut [u8]), Error> {
         let mut offset = 0;
 
-        for c in self.render_line_iter(qr_code, border, invert, nl, y) {
+        for c in self.emit_line_chars(text_type, border, invert, nl, y) {
             let mut dst = [0; 4];
             let bytes = c.encode_utf8(&mut dst).as_bytes();
 
@@ -383,57 +535,87 @@ impl TextImage {
             }
         }
 
-        Ok(unsafe { core::str::from_utf8_unchecked(&out_buf[..offset]) })
+        let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
+
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+
+        Ok((str, remaining_buf))
     }
 
-    pub fn render_iter<'a>(
+    /// Get an iterator over the indexes of the lines of the QR code including borders
+    ///
+    /// # Arguments
+    /// - `text_type` - Type of text to return (ASCII, ANSI, Unicode)
+    /// - `border` - Border size
+    pub fn lines_range(
         &self,
-        qr_code: &'a QrCode<'a>,
+        text_type: QrTextType,
         border: u8,
-        invert: bool,
-    ) -> impl Iterator<Item = char> + 'a {
-        let console_type = *self;
-
-        self.lines_range(qr_code, border)
-            .flat_map(move |y| console_type.render_line_iter(qr_code, border, invert, true, y))
-    }
-
-    pub fn lines_range(&self, qr_code: &QrCode, border: u8) -> impl Iterator<Item = i32> {
+    ) -> impl Iterator<Item = i32> + '_ + 'a {
         let iborder: i32 = border as _;
-        let console_type = *self;
 
-        (-iborder..qr_code.size() + iborder)
-            .filter(move |y| console_type != Self::Unicode || (y - -iborder) % 2 == 0)
+        (-iborder..self.size() as i32 + iborder)
+            .filter(move |y| !matches!(text_type, QrTextType::Unicode) || (*y - -iborder) % 2 == 0)
     }
 
-    pub fn render_line_iter<'a>(
+    /// Get an iterator over the characters of the rendered QR code
+    ///
+    /// # Arguments
+    /// - `text_type` - Type of text to return (ASCII, ANSI, Unicode)
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    ///
+    /// # Returns
+    /// - An iterator over the characters of the rendered QR code
+    pub fn emit_chars(
         &self,
-        qr_code: &'a QrCode<'a>,
+        text_type: QrTextType,
+        border: u8,
+        invert: bool,
+    ) -> impl Iterator<Item = char> + use<'_, 'a> {
+        self.lines_range(text_type, border)
+            .flat_map(move |y| self.emit_line_chars(text_type, border, invert, true, y))
+    }
+
+    /// Get an iterator over the characters of a single line of the rendered QR code
+    ///
+    /// # Arguments
+    /// - `text_type` - Type of text to return (ASCII, ANSI, Unicode)
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    /// - `nl` - Whether to add a newline at the end of the line
+    /// - `y` - Y coordinate of the line to render
+    ///
+    /// # Returns
+    /// - An iterator over the characters of the rendered line
+    pub fn emit_line_chars(
+        &self,
+        text_type: QrTextType,
         border: u8,
         invert: bool,
         nl: bool,
         y: i32,
-    ) -> impl Iterator<Item = char> + 'a {
+    ) -> impl Iterator<Item = char> + use<'_, 'a> {
         let border: i32 = border as _;
-        let console_type = *self;
 
-        (-border..qr_code.size() + border + 1)
+        (-border..self.size() as i32 + border + 1)
             .map(move |x| (x, y))
             .map(move |(x, y)| {
-                if x < qr_code.size() + border {
-                    let white = !qr_code.get_module(x, y) ^ invert;
+                if x < self.size() as i32 + border {
+                    let white = !self.get_module(x, y) ^ invert;
 
-                    match console_type {
-                        Self::Ascii => {
+                    match text_type {
+                        QrTextType::Ascii => {
                             if white {
                                 "#"
                             } else {
                                 " "
                             }
                         }
-                        Self::Ansi => {
+                        QrTextType::Ansi => {
                             let prev_white = if x > -border {
-                                Some(qr_code.get_module(x - 1, y))
+                                Some(self.get_module(x - 1, y))
                             } else {
                                 None
                             }
@@ -449,8 +631,8 @@ impl TextImage {
                                 " "
                             }
                         }
-                        Self::Unicode => {
-                            if white == !qr_code.get_module(x, y + 1) ^ invert {
+                        QrTextType::Unicode => {
+                            if white == !self.get_module(x, y + 1) ^ invert {
                                 if white {
                                     "\u{2588}"
                                 } else {
@@ -464,15 +646,15 @@ impl TextImage {
                         }
                     }
                 } else {
-                    match console_type {
-                        TextImage::Ascii => {
+                    match text_type {
+                        QrTextType::Ascii => {
                             if nl {
                                 "\n"
                             } else {
                                 ""
                             }
                         }
-                        TextImage::Ansi | TextImage::Unicode => {
+                        _ => {
                             if nl {
                                 "\x1b[0m\n"
                             } else {
@@ -484,58 +666,232 @@ impl TextImage {
             })
             .flat_map(str::chars)
     }
-}
 
-pub fn compute_qr_code<'a>(
-    qr_code_text: &str,
-    tmp_buf: &mut [u8],
-    out_buf: &'a mut [u8],
-) -> Result<QrCode<'a>, Error> {
-    let needed_version = Version::new(compute_qr_code_version(qr_code_text));
-
-    QrCode::encode_text(
-        qr_code_text,
-        tmp_buf,
-        out_buf,
-        QrCodeEcc::Medium,
-        needed_version,
-        needed_version,
-        None,
-        false,
-    )
-    .map_err(|_| ErrorCode::BufferTooSmall.into())
-}
-
-pub fn compute_qr_code_version(qr_code_text: &str) -> u8 {
-    match qr_code_text.len() {
-        0..=38 => 2,
-        39..=61 => 3,
-        62..=90 => 4,
-        _ => 5,
+    fn version(qr_code_text: &str) -> u8 {
+        match qr_code_text.len() {
+            0..=38 => 2,
+            39..=61 => 3,
+            62..=90 => 4,
+            _ => 5,
+        }
     }
 }
 
-pub fn compute_qr_code_text<'a, T, I>(
-    dev_det: &BasicInfoConfig,
-    comm_data: &BasicCommData,
-    discovery_capabilities: DiscoveryCapabilities,
-    optional_data: T,
-    buf: &'a mut [u8],
-) -> Result<(&'a str, &'a mut [u8]), Error>
-where
-    T: Fn() -> I,
-    I: Iterator<Item = Result<u8, Error>>,
-{
-    let qr_code_data =
-        QrSetupPayload::new(dev_det, comm_data, discovery_capabilities, optional_data);
-
-    qr_code_data.try_as_str(buf)
+/// QR Code text renderer
+pub enum QrTextRenderer<'a> {
+    /// ASCII renderer
+    Ascii(Qr<'a>),
+    /// ANSI renderer
+    Ansi(Qr<'a>),
+    /// Unicode renderer
+    Unicode(Qr<'a>),
 }
 
-pub type NoOptionalData = fn() -> Empty<Result<u8, Error>>;
+impl<'a> QrTextRenderer<'a> {
+    /// Render the complete QR code as a string into the provided buffer
+    ///
+    /// # Arguments
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    /// - `out_buf` - Output buffer for the rendered string
+    ///
+    /// # Returns
+    /// - On success, returns a tuple containing the rendered string and the remaining buffer
+    /// - On failure, returns an error
+    pub fn render<'b>(
+        &self,
+        border: u8,
+        invert: bool,
+        out_buf: &'b mut [u8],
+    ) -> Result<(&'b str, &'b mut [u8]), Error> {
+        let mut offset = 0;
 
-pub fn no_optional_data() -> Empty<Result<u8, Error>> {
-    core::iter::empty()
+        for c in self.render_iter(border, invert) {
+            let mut dst = [0; 4];
+            let bytes = c.encode_utf8(&mut dst).as_bytes();
+
+            if offset + bytes.len() > out_buf.len() {
+                return Err(ErrorCode::BufferTooSmall)?;
+            } else {
+                out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
+                offset += bytes.len();
+            }
+        }
+
+        let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
+
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+
+        Ok((str, remaining_buf))
+    }
+
+    /// Render a single line of the QR code as a string into the provided buffer
+    ///
+    /// # Arguments
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    /// - `nl` - Whether to add a newline at the end of the line
+    /// - `y` - Y coordinate of the line to render
+    /// - `out_buf` - Output buffer for the rendered string
+    ///
+    /// # Returns
+    /// - On success, returns a tuple containing the rendered string and the remaining buffer
+    /// - On failure, returns an error
+    pub fn render_line<'b>(
+        &self,
+        border: u8,
+        invert: bool,
+        nl: bool,
+        y: i32,
+        out_buf: &'b mut [u8],
+    ) -> Result<(&'b str, &'b mut [u8]), Error> {
+        let mut offset = 0;
+
+        for c in self.render_line_iter(border, invert, nl, y) {
+            let mut dst = [0; 4];
+            let bytes = c.encode_utf8(&mut dst).as_bytes();
+
+            if offset + bytes.len() > out_buf.len() {
+                return Err(ErrorCode::BufferTooSmall)?;
+            } else {
+                out_buf[offset..offset + bytes.len()].copy_from_slice(bytes);
+                offset += bytes.len();
+            }
+        }
+
+        let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
+
+        // Can't fail as `emit_chars` generates a valid UTF-8 string
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
+
+        Ok((str, remaining_buf))
+    }
+
+    /// Get an iterator over the indexes of the lines of the QR code including borders
+    ///
+    /// # Arguments
+    /// - `border` - Border size
+    pub fn lines_range(&self, border: u8) -> impl Iterator<Item = i32> + '_ + 'a {
+        let unicode = matches!(self, Self::Unicode(_));
+        let iborder: i32 = border as _;
+
+        (-iborder..self.qr().size() as i32 + iborder)
+            .filter(move |y| !unicode || (*y - -iborder) % 2 == 0)
+    }
+
+    /// Get an iterator over the characters of the rendered QR code
+    ///
+    /// # Arguments
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    ///
+    /// # Returns
+    /// - An iterator over the characters of the rendered QR code
+    pub fn render_iter(
+        &self,
+        border: u8,
+        invert: bool,
+    ) -> impl Iterator<Item = char> + use<'_, 'a> {
+        self.lines_range(border)
+            .flat_map(move |y| self.render_line_iter(border, invert, true, y))
+    }
+
+    /// Get an iterator over the characters of a single line of the rendered QR code
+    ///
+    /// # Arguments
+    /// - `border` - Border size
+    /// - `invert` - Whether to invert the colors (black on a white background)
+    /// - `nl` - Whether to add a newline at the end of the line
+    /// - `y` - Y coordinate of the line to render
+    ///
+    /// # Returns
+    /// - An iterator over the characters of the rendered line
+    pub fn render_line_iter(
+        &self,
+        border: u8,
+        invert: bool,
+        nl: bool,
+        y: i32,
+    ) -> impl Iterator<Item = char> + use<'_, 'a> {
+        let border: i32 = border as _;
+
+        (-border..self.qr().size() as i32 + border + 1)
+            .map(move |x| (x, y))
+            .map(move |(x, y)| {
+                if x < self.qr().size() as i32 + border {
+                    let white = !self.qr().get_module(x, y) ^ invert;
+
+                    match self {
+                        Self::Ascii(_) => {
+                            if white {
+                                "#"
+                            } else {
+                                " "
+                            }
+                        }
+                        Self::Ansi(_) => {
+                            let prev_white = if x > -border {
+                                Some(self.qr().get_module(x - 1, y))
+                            } else {
+                                None
+                            }
+                            .map(|prev_white| !prev_white ^ invert);
+
+                            if prev_white != Some(white) {
+                                if white {
+                                    "\x1b[47m "
+                                } else {
+                                    "\x1b[40m "
+                                }
+                            } else {
+                                " "
+                            }
+                        }
+                        Self::Unicode(_) => {
+                            if white == !self.qr().get_module(x, y + 1) ^ invert {
+                                if white {
+                                    "\u{2588}"
+                                } else {
+                                    " "
+                                }
+                            } else if white {
+                                "\u{2580}"
+                            } else {
+                                "\u{2584}"
+                            }
+                        }
+                    }
+                } else {
+                    match self {
+                        Self::Ascii(_) => {
+                            if nl {
+                                "\n"
+                            } else {
+                                ""
+                            }
+                        }
+                        _ => {
+                            if nl {
+                                "\x1b[0m\n"
+                            } else {
+                                "\x1b[0m"
+                            }
+                        }
+                    }
+                }
+            })
+            .flat_map(str::chars)
+    }
+
+    #[inline(always)]
+    pub fn qr(&self) -> &Qr<'a> {
+        match self {
+            Self::Ascii(qr) => qr,
+            Self::Ansi(qr) => qr,
+            Self::Unicode(qr) => qr,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -557,10 +913,15 @@ mod tests {
         };
 
         let disc_cap = DiscoveryCapabilities::BLE;
-        let qr_code_data =
-            QrSetupPayload::<NoOptionalData>::new(&dev_det, &comm_data, disc_cap, no_optional_data);
+        let qr_code_data = QrPayload::new_from_basic_info(
+            disc_cap,
+            CommFlowType::Standard,
+            comm_data,
+            &dev_det,
+            no_optional_data,
+        );
         let mut buf = [0; 1024];
-        let data_str = unwrap!(qr_code_data.try_as_str(&mut buf), "Failed to encode").0;
+        let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
     }
 
@@ -580,10 +941,15 @@ mod tests {
         };
 
         let disc_cap = DiscoveryCapabilities::IP;
-        let qr_code_data =
-            QrSetupPayload::<NoOptionalData>::new(&dev_det, &comm_data, disc_cap, no_optional_data);
+        let qr_code_data = QrPayload::new_from_basic_info(
+            disc_cap,
+            CommFlowType::Standard,
+            comm_data,
+            &dev_det,
+            no_optional_data,
+        );
         let mut buf = [0; 1024];
-        let data_str = unwrap!(qr_code_data.try_as_str(&mut buf), "Failed to encode").0;
+        let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
     }
 
@@ -625,10 +991,16 @@ mod tests {
             .flat_map(TLV::result_into_bytes_iter)
         };
 
-        let qr_code_data = QrSetupPayload::new(&dev_det, &comm_data, disc_cap, optional_data);
+        let qr_code_data = QrPayload::new_from_basic_info(
+            disc_cap,
+            CommFlowType::Standard,
+            comm_data,
+            &dev_det,
+            optional_data,
+        );
 
         let mut buf = [0; 1024];
-        let data_str = unwrap!(qr_code_data.try_as_str(&mut buf), "Failed to encode").0;
+        let data_str = unwrap!(qr_code_data.as_str(&mut buf), "Failed to encode").0;
         assert_eq!(data_str, QR_CODE)
     }
 }

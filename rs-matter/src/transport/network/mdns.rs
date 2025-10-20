@@ -124,25 +124,67 @@ impl Service<'_> {
                 .await
             }
             MatterMdnsService::Commissionable { discriminator, .. } => {
-                let discriminator_str = Self::get_discriminator_str(*discriminator);
-                let vp = Self::get_vp(dev_det.vid, dev_det.pid);
+                // "_L{u16}""
+                let mut discr_svc_str = heapless::String::<7>::new();
+                // "_S{u16}""
+                let mut short_discr_svc_str = heapless::String::<7>::new();
+                // "_V{u16}P{u16}""
+                let mut vp_svc_str = heapless::String::<13>::new();
 
+                // "{u16}
+                let mut discr_str = heapless::String::<5>::new();
+                // "{u16}+{u16}"
+                let mut vp_str = heapless::String::<11>::new();
+                // "{u16}"
                 let mut sai_str = heapless::String::<5>::new();
-                write_unwrap!(sai_str, "{}", dev_det.sai.unwrap_or(300));
-
+                // "{u16}"
                 let mut sii_str = heapless::String::<5>::new();
-                write_unwrap!(sii_str, "{}", dev_det.sii.unwrap_or(5000));
+                // "{u16}"
+                let mut dt_str = heapless::String::<6>::new();
+                // "{u32}"
+                let mut ph_str = heapless::String::<12>::new();
 
-                let txt_kvs = &[
-                    ("D", discriminator_str.as_str()),
-                    ("CM", "1"),
-                    ("DN", dev_det.device_name),
-                    ("VP", &vp),
-                    ("SAI", sai_str.as_str()), // Session Active Interval
-                    ("SII", sii_str.as_str()), // Session Idle Interval
-                    ("PH", "33"),              // Pairing Hint
-                    ("PI", ""),                // Pairing Instruction
-                ];
+                let mut txt_kvs = heapless::Vec::<_, 9>::new();
+
+                write_unwrap!(&mut discr_svc_str, "_L{}", *discriminator);
+                write_unwrap!(
+                    &mut short_discr_svc_str,
+                    "_S{}",
+                    Self::compute_short_discriminator(*discriminator)
+                );
+                write_unwrap!(&mut vp_svc_str, "_V{}P{}", dev_det.vid, dev_det.pid);
+
+                write_unwrap!(discr_str, "{}", *discriminator);
+                unwrap!(txt_kvs.push(("D", discr_str.as_str())));
+
+                unwrap!(txt_kvs.push(("CM", "1")));
+
+                write_unwrap!(&mut vp_str, "{}+{}", dev_det.vid, dev_det.pid);
+                unwrap!(txt_kvs.push(("VP", &vp_str)));
+
+                write_unwrap!(sai_str, "{}", dev_det.sai.unwrap_or(300));
+                unwrap!(txt_kvs.push(("SAI", sai_str.as_str())));
+
+                write_unwrap!(sii_str, "{}", dev_det.sii.unwrap_or(5000));
+                unwrap!(txt_kvs.push(("SII", sii_str.as_str())));
+
+                if !dev_det.device_name.is_empty() {
+                    unwrap!(txt_kvs.push(("DN", dev_det.device_name)));
+                }
+
+                if let Some(device_type) = dev_det.device_type {
+                    write_unwrap!(&mut dt_str, "{}", device_type);
+                    unwrap!(txt_kvs.push(("DT", dt_str.as_str())));
+                }
+
+                if !dev_det.pairing_hint.is_empty() {
+                    write_unwrap!(&mut ph_str, "{}", dev_det.pairing_hint.bits());
+                    unwrap!(txt_kvs.push(("PH", ph_str.as_str())));
+                }
+
+                if !dev_det.pairing_instruction.is_empty() {
+                    unwrap!(txt_kvs.push(("PI", dev_det.pairing_instruction)));
+                }
 
                 f(&Service {
                     name: matter_service.name(&mut name_buf),
@@ -151,11 +193,12 @@ impl Service<'_> {
                     service_protocol: "_matterc._udp",
                     port: matter_port,
                     service_subtypes: &[
-                        &Self::get_long_service_subtype(*discriminator),
-                        &Self::get_short_service_type(*discriminator),
+                        discr_svc_str.as_str(),
+                        short_discr_svc_str.as_str(),
+                        vp_svc_str.as_str(),
                         "_CM",
                     ],
-                    txt_kvs,
+                    txt_kvs: txt_kvs.as_slice(),
                 })
                 .await
             }
@@ -184,34 +227,6 @@ impl Service<'_> {
             matter_port,
             async |service| f(service),
         ))
-    }
-
-    fn get_long_service_subtype(discriminator: u16) -> heapless::String<32> {
-        let mut serv_type = heapless::String::new();
-        write_unwrap!(&mut serv_type, "_L{}", discriminator);
-
-        serv_type
-    }
-
-    fn get_short_service_type(discriminator: u16) -> heapless::String<32> {
-        let short = Self::compute_short_discriminator(discriminator);
-
-        let mut serv_type = heapless::String::new();
-        write_unwrap!(&mut serv_type, "_S{}", short);
-
-        serv_type
-    }
-
-    fn get_discriminator_str(discriminator: u16) -> heapless::String<5> {
-        unwrap!(discriminator.try_into())
-    }
-
-    fn get_vp(vid: u16, pid: u16) -> heapless::String<11> {
-        let mut vp = heapless::String::new();
-
-        write_unwrap!(&mut vp, "{}+{}", vid, pid);
-
-        vp
     }
 
     fn compute_short_discriminator(discriminator: u16) -> u16 {

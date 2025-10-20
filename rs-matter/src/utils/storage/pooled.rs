@@ -43,6 +43,10 @@ where
     /// immediately, or after a certain amount of time (subject to the concrete implementation of the method).
     /// In that case, the method will return `None`.
     async fn get(&self) -> Option<Self::Buffer<'_>>;
+
+    /// Get a reference to a buffer immediately, without waiting.
+    /// If no buffer is available, return `None`.
+    fn get_immediate(&self) -> Option<Self::Buffer<'_>>;
 }
 
 impl<B, T> BufferAccess<T> for &B
@@ -57,6 +61,10 @@ where
 
     fn get(&self) -> impl Future<Output = Option<Self::Buffer<'_>>> {
         (*self).get()
+    }
+
+    fn get_immediate(&self) -> Option<Self::Buffer<'_>> {
+        (*self).get_immediate()
     }
 }
 
@@ -138,28 +146,32 @@ where
                 Either::Second(()) => None,
             }
         } else {
-            let index = self.available.modify(|available| {
-                if let Some(index) = available.iter().position(|a| *a) {
-                    available[index] = false;
-                    (false, Some(index))
-                } else {
-                    (false, None)
-                }
-            });
-
-            index.map(|index| {
-                let buffers = unwrap!(unsafe { self.pool.get().as_mut() });
-                unwrap!(buffers.resize_default(N));
-
-                let buffer = &mut buffers[index];
-
-                PooledBuffer {
-                    index,
-                    buffer,
-                    access: self,
-                }
-            })
+            self.get_immediate()
         }
+    }
+
+    fn get_immediate(&self) -> Option<Self::Buffer<'_>> {
+        let index = self.available.modify(|available| {
+            if let Some(index) = available.iter().position(|a| *a) {
+                available[index] = false;
+                (false, Some(index))
+            } else {
+                (false, None)
+            }
+        });
+
+        index.map(|index| {
+            let buffers = unwrap!(unsafe { self.pool.get().as_mut() });
+            unwrap!(buffers.resize_default(N));
+
+            let buffer = &mut buffers[index];
+
+            PooledBuffer {
+                index,
+                buffer,
+                access: self,
+            }
+        })
     }
 }
 

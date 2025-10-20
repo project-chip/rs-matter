@@ -42,9 +42,11 @@ use rs_matter::dm::{
     Node,
 };
 use rs_matter::error::Error;
+use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
@@ -121,13 +123,23 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter));
-    let mut transport = pin!(matter.run(&socket, &socket, DiscoveryCapabilities::IP));
+    let mut transport = pin!(matter.run(&socket, &socket));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();
     let path = std::env::temp_dir().join("rs-matter");
 
     psm.load(&path, &matter, NO_NETWORKS)?;
+
+    if !matter.is_commissioned() {
+        // If the device is not commissioned yet, print the QR text and code to the console
+        // and enable basic commissioning
+
+        matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
+        matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
+
+        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+    }
 
     let mut persist = pin!(psm.run(&path, &matter, NO_NETWORKS));
 

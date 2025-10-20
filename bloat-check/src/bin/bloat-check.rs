@@ -77,8 +77,10 @@ use rs_matter::dm::subscriptions::{Subscriptions, DEFAULT_MAX_SUBSCRIPTIONS};
 use rs_matter::dm::{endpoints, IMBuffer};
 use rs_matter::dm::{Async, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher, Node};
 use rs_matter::error::Error;
+use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::respond::DefaultResponder;
+use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::tlv::Nullable;
 use rs_matter::transport::network::btp::{
     AdvData, Btp, BtpContext, GattPeripheral, GattPeripheralEvent,
@@ -404,14 +406,23 @@ fn main() -> ! {
 
     info!("===================================================");
 
-    executor.run(|spawner| {
-        unwrap!(embassy_futures::block_on(
-            stack.matter.enable_basic_commissioning(
-                DiscoveryCapabilities::BLE,
-                TEST_DEV_COMM.discriminator
-            )
-        ));
+    if !stack.matter.is_commissioned() {
+        // If the device is not commissioned yet, print the QR text and code to the console
+        // and enable basic commissioning
 
+        unwrap!(stack
+            .matter
+            .print_standard_qr_text(DiscoveryCapabilities::IP));
+        unwrap!(stack
+            .matter
+            .print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP));
+
+        unwrap!(stack
+            .matter
+            .open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS));
+    }
+
+    executor.run(|spawner| {
         unwrap!(spawner.spawn(respond_task(responder)));
         unwrap!(spawner.spawn(dm_task(dm)));
         unwrap!(spawner.spawn(mdns_task(mdns)));

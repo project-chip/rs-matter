@@ -316,7 +316,7 @@ mod tests {
 
     use elliptic_curve::sec1::FromEncodedPoint;
 
-    use crate::sc::spake2p::test_vectors::*;
+    use crate::sc::pake::spake2p::test_vectors::*;
 
     #[test]
     #[allow(non_snake_case)]
