@@ -22,6 +22,7 @@ use core::time::Duration;
 use cfg_if::cfg_if;
 
 use crate::error::*;
+use crate::group_keys::KeySetKey;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
@@ -41,8 +42,6 @@ use super::proto_hdr::ProtoHdr;
 
 pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
-
-const MATTER_AES128_KEY_SIZE: usize = 16;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -81,9 +80,9 @@ pub struct Session {
     peer_nodeid: Option<u64>,
     // I find the session initiator/responder role getting confused with exchange initiator/responder
     // So, we might keep this as enc_key and dec_key for now
-    dec_key: [u8; MATTER_AES128_KEY_SIZE],
-    enc_key: [u8; MATTER_AES128_KEY_SIZE],
-    att_challenge: [u8; MATTER_AES128_KEY_SIZE],
+    dec_key: KeySetKey,
+    enc_key: KeySetKey,
+    att_challenge: KeySetKey,
     local_sess_id: u16,
     peer_sess_id: u16,
     msg_ctr: u32,
@@ -115,9 +114,9 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key: [0; MATTER_AES128_KEY_SIZE],
-            enc_key: [0; MATTER_AES128_KEY_SIZE],
-            att_challenge: [0; MATTER_AES128_KEY_SIZE],
+            dec_key: KeySetKey::default(),
+            enc_key: KeySetKey::default(),
+            att_challenge: KeySetKey::default(),
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: Self::rand_msg_ctr(rand),
@@ -515,9 +514,9 @@ impl<'a> ReservedSession<'a> {
         local_sessid: u16,
         peer_addr: Address,
         mode: SessionMode,
-        dec_key: Option<&[u8]>,
-        enc_key: Option<&[u8]>,
-        att_challenge: Option<&[u8]>,
+        dec_key: Option<&KeySetKey>,
+        enc_key: Option<&KeySetKey>,
+        att_challenge: Option<&KeySetKey>,
     ) -> Result<(), Error> {
         let mut mgr = self.session_mgr.borrow_mut();
         let session = mgr.get(self.id).ok_or(ErrorCode::NoSession)?;

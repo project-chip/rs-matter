@@ -36,7 +36,7 @@ pub mod case;
 pub mod crypto;
 pub mod pake;
 
-/* Interaction Model ID as per the Matter Spec */
+/// Interaction Model ID as per the Matter Spec
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
 
 #[derive(FromPrimitive, Debug, Copy, Clone, Eq, PartialEq)]

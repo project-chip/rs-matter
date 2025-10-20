@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
@@ -22,12 +23,13 @@ use core::time::Duration;
 use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
 use crate::error::{Error, ErrorCode};
+use crate::group_keys::KeySetKey;
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, try_init, Init};
+use crate::utils::init::{init, try_init, Init, InitMaybeUninit};
 use crate::utils::maybe::Maybe;
 use crate::utils::rand::Rand;
 use crate::{crypto, MatterMdnsService};
@@ -35,6 +37,9 @@ use crate::{crypto, MatterMdnsService};
 use super::SCStatusCodes;
 
 pub(crate) mod spake2p;
+
+/// PAKE Random array type
+type Random = [u8; 32];
 
 /// Minimal commissioning window timeout in seconds, as per the Matter Core Spec
 pub const MIN_COMM_WINDOW_TIMEOUT_SECS: u16 = 3 * 60;
@@ -527,8 +532,9 @@ impl Pake {
         };
 
         if has_comm_window {
-            let mut our_random = [0; 32];
-            let mut initiator_random = [0; 32];
+            // TODO MEDIUM BUFFER
+            let mut our_random = [0; core::mem::size_of::<Random>()];
+            let mut initiator_random = [0; core::mem::size_of::<Random>()];
 
             let resp = {
                 let a = PBKDFParamReq::from_tlv(&TLVElement::new(rx.payload()))?;
@@ -600,6 +606,7 @@ impl Pake {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
         let pA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
+        // TODO MEDIUM BUFFER
         let mut pB: [u8; 65] = [0; 65];
         let mut cB: [u8; 32] = [0; 32];
 
@@ -655,8 +662,10 @@ impl Pake {
         let result = if status == SCStatusCodes::SessionEstablishmentSuccess {
             // Get the keys
             let ke = ke.ok_or(ErrorCode::Invalid)?;
-            let mut session_keys: [u8; 48] = [0; 48];
-            crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+            let mut session_keys =
+                MaybeUninit::<[u8; 3 * core::mem::size_of::<KeySetKey>()]>::uninit(); // TODO MEDIM BUFFER
+            let session_keys = session_keys.init_zeroed();
+            crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, session_keys)
                 .map_err(|_x| ErrorCode::InvalidData)?;
 
             // Create a session
@@ -672,9 +681,9 @@ impl Pake {
                 local_sessid,
                 peer_addr,
                 SessionMode::Pase { fab_idx: 0 },
-                Some(&session_keys[0..16]),
-                Some(&session_keys[16..32]),
-                Some(&session_keys[32..48]),
+                Some(&session_keys[0..16].try_into().unwrap()),
+                Some(&session_keys[16..32].try_into().unwrap()),
+                Some(&session_keys[32..48].try_into().unwrap()),
             )?;
 
             Ok(())

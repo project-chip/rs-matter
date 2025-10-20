@@ -22,7 +22,7 @@ use crate::{
     utils::init::{init, zeroed, Init},
 };
 
-type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
+pub type KeySetKey = [u8; SYMM_KEY_LEN_BYTES];
 
 #[derive(Debug, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -46,27 +46,36 @@ impl KeySet {
         })
     }
 
-    pub fn new(epoch_key: &[u8], compressed_id: &[u8]) -> Result<Self, Error> {
+    pub fn new(epoch_key: &KeySetKey, compressed_fabric_id: &u64) -> Result<Self, Error> {
         let mut ks = KeySet::default();
-        KeySet::op_key_from_ipk(epoch_key, compressed_id, &mut ks.op_key)?;
+        Self::op_key_from_ipk(epoch_key, compressed_fabric_id, &mut ks.op_key)?;
         ks.epoch_key.copy_from_slice(epoch_key);
         Ok(ks)
     }
 
-    fn op_key_from_ipk(ipk: &[u8], compressed_id: &[u8], opkey: &mut [u8]) -> Result<(), Error> {
+    fn op_key_from_ipk(
+        ipk: &KeySetKey,
+        compressed_fabric_id: &u64,
+        opkey: &mut KeySetKey,
+    ) -> Result<(), Error> {
         const GRP_KEY_INFO: [u8; 13] = [
             0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x20, 0x76, 0x31, 0x2e, 0x30,
         ];
 
-        crypto::hkdf_sha256(compressed_id, ipk, &GRP_KEY_INFO, opkey)
-            .map_err(|_| ErrorCode::InvalidData.into())
+        crypto::hkdf_sha256(
+            &compressed_fabric_id.to_be_bytes(),
+            ipk,
+            &GRP_KEY_INFO,
+            opkey,
+        )
+        .map_err(|_| ErrorCode::InvalidData.into())
     }
 
-    pub fn op_key(&self) -> &[u8] {
+    pub fn op_key(&self) -> &KeySetKey {
         &self.op_key
     }
 
-    pub fn epoch_key(&self) -> &[u8] {
+    pub fn epoch_key(&self) -> &KeySetKey {
         &self.epoch_key
     }
 }

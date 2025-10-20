@@ -26,7 +26,7 @@ use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{self, hkdf_sha256, HmacSha256, KeyPair};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
-use crate::group_keys::KeySet;
+use crate::group_keys::{KeySet, KeySetKey};
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
@@ -107,7 +107,7 @@ impl Fabric {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: Option<&[u8]>,
+        ipk: Option<&KeySetKey>,
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
         mdns_notif: &mut dyn FnMut(),
@@ -137,7 +137,7 @@ impl Fabric {
             Self::compute_compressed_fabric_id(root_ca_p.pubkey()?, self.fabric_id);
 
         if let Some(ipk) = ipk {
-            self.ipk = KeySet::new(ipk, &self.compressed_fabric_id.to_be_bytes())?;
+            self.ipk = KeySet::new(ipk, &self.compressed_fabric_id)?;
         }
 
         if let Some(case_admin_subject) = case_admin_subject {
@@ -578,7 +578,7 @@ impl FabricMgr {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: &[u8],
+        ipk: &KeySetKey,
         vendor_id: u16,
         case_admin_subject: u64,
         mdns_notif: &mut dyn FnMut(),
