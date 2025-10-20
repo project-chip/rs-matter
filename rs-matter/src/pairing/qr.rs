@@ -271,7 +271,7 @@ where
         }
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf));
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
 
         Ok((str, remaining_buf))
     }
@@ -494,7 +494,7 @@ impl<'a> Qr<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf));
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
 
         Ok((str, remaining_buf))
     }
@@ -538,7 +538,7 @@ impl<'a> Qr<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf));
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
 
         Ok((str, remaining_buf))
     }
@@ -721,7 +721,7 @@ impl<'a> QrTextRenderer<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf));
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
 
         Ok((str, remaining_buf))
     }
@@ -763,7 +763,7 @@ impl<'a> QrTextRenderer<'a> {
         let (str_buf, remaining_buf) = out_buf.split_at_mut(offset);
 
         // Can't fail as `emit_chars` generates a valid UTF-8 string
-        let str = unwrap!(core::str::from_utf8(str_buf));
+        let str = unwrap!(core::str::from_utf8(str_buf).map_err(|_| ErrorCode::InvalidData));
 
         Ok((str, remaining_buf))
     }
