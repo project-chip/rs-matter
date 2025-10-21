@@ -50,11 +50,9 @@ jobs:
         run: cd bloat-check; cargo build --release
 
       - name: Clippy - bloat-check
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
         run: cd bloat-check; cargo clippy --no-deps -- -Dwarnings
 
       - name: Clippy - bloat-check - riscv32imac
-        if: matrix.features == '' && matrix.crypto-backend == 'rustcrypto'
         run: cd bloat-check; cargo clippy --no-deps --target riscv32imac-unknown-none-elf -- -Dwarnings
 
       - name: Build | Thumbv6m binary for size report
@@ -75,35 +73,35 @@ jobs:
       - name: Prepare bloat report from the previous builds
         run: |
             python scripts/memory/gh_sizes.py \
-              rs-matter-core x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              "(core)" infologs-optz-ltofat x86_64-unknown-linux-gnu \
               bloat-check/target/release/bloat-check \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              rs-matter-core thumbv6m-none-eabi infodefmt-optz-ltofat \
+              "(core)" infodefmt-optz-ltofat thumbv6m-none-eabi \
               bloat-check/target/thumbv6m-none-eabi/release/bloat-check \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              rs-matter-core thumbv7em-none-eabi infodefmt-optz-ltofat \
+              "(core)" infodefmt-optz-ltofat thumbv7em-none-eabi \
               bloat-check/target/thumbv7em-none-eabi/release/bloat-check \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              rs-matter-core riscv32imac-unknown-none-elf infodefmt-optz-ltofat \
+              "(core)" infodefmt-optz-ltofat riscv32imac-unknown-none-elf \
               bloat-check/target/riscv32imac-unknown-none-elf/release/bloat-check \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              onoff-light x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              onoff-light infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/onoff_light \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              onoff-light-bt x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              onoff-light-bt infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/onoff_light_bt \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              dimmable-light x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              dimmable-light infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/dimmable_light \
               /tmp/bloat_reports/
             python scripts/memory/gh_sizes.py \
-              speaker x86_64-unknown-linux-gnu infologs-optz-ltofat \
+              speaker infologs-optz-ltofat x86_64-unknown-linux-gnu \
               target/release/speaker \
               /tmp/bloat_reports/
 

@@ -87,7 +87,7 @@ use rs_matter::transport::network::btp::{
 };
 use rs_matter::transport::network::mdns::builtin::{BuiltinMdnsResponder, Host};
 use rs_matter::transport::network::{
-    Address, BtAddr, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend,
+    Address, BtAddr, ChainedNetwork, Ipv4Addr, Ipv6Addr, NetworkReceive, NetworkSend,
 };
 use rs_matter::utils::epoch::dummy_epoch;
 use rs_matter::utils::init::{init, Init, InitMaybeUninit};
@@ -195,6 +195,7 @@ type AppNetCtl<'a> = NetCtlWithStatusImpl<'a, NoopRawMutex, FakeWifi>;
 type AppWirelessMgr<'a> = WirelessMgr<'a, &'a WifiNetworks<3, NoopRawMutex>, &'a AppNetCtl<'a>>;
 type AppBtp<'a> =
     Btp<&'a BtpContext<CriticalSectionRawMutex>, CriticalSectionRawMutex, FakeGattPeripheral>;
+type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a AppBtp<'a>, fn(&Address) -> bool>;
 type AppHandler<'a> = handler_chain_type!(
     EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
@@ -326,6 +327,20 @@ fn main() -> ! {
         BuiltinMdnsResponder::new(&stack.matter)
     );
 
+    let transport_send = mk_static!(
+        AppTransport<'static>,
+        ChainedNetwork::new(Address::is_udp, FakeUdp, &*btp)
+    );
+
+    report_size("Transport send", size_of_val(&*mdns), &mut aux_total);
+
+    let transport_recv = mk_static!(
+        AppTransport<'static>,
+        ChainedNetwork::new(Address::is_udp, FakeUdp, &*btp)
+    );
+
+    report_size("Transport receive", size_of_val(&*mdns), &mut aux_total);
+
     report_size("mDNS responder", size_of_val(&*mdns), &mut aux_total);
 
     // A Wireless handler with a sample app cluster (on-off)
@@ -377,26 +392,34 @@ fn main() -> ! {
     let mut fut_total = 0;
 
     report_size(
-        "Respond task",
-        size_of_val(&respond_task0(responder)),
+        "Respond tasks",
+        size_of_val(&respond_task_fut(responder, 0)) * 4,
         &mut fut_total,
     );
-    report_size("DM task", size_of_val(&dm_task0(dm)), &mut fut_total);
-    report_size("mDNS task", size_of_val(&mdns_task0(mdns)), &mut fut_total);
-    report_size("BTP task", size_of_val(&btp_task0(btp)), &mut fut_total);
+    report_size(
+        "Respond busy tasks",
+        size_of_val(&respond_busy_task_fut(responder, 0)) * 2,
+        &mut fut_total,
+    );
+    report_size("DM task", size_of_val(&dm_task_fut(dm)), &mut fut_total);
+    report_size(
+        "mDNS task",
+        size_of_val(&mdns_task_fut(mdns)),
+        &mut fut_total,
+    );
+    report_size("BTP task", size_of_val(&btp_task_fut(btp)), &mut fut_total);
     report_size(
         "Wifi task",
-        size_of_val(&wifi_task0(wifi_mgr)),
+        size_of_val(&wifi_task_fut(wifi_mgr)),
         &mut fut_total,
     );
     report_size(
-        "BTP transport task",
-        size_of_val(&btp_transport_task0(&stack.matter, btp)),
-        &mut fut_total,
-    );
-    report_size(
-        "UDP transport task",
-        size_of_val(&udp_transport_task0(&stack.matter)),
+        "Transport task",
+        size_of_val(&transport_task_fut(
+            &stack.matter,
+            transport_send,
+            transport_recv,
+        )),
         &mut fut_total,
     );
 
@@ -423,40 +446,65 @@ fn main() -> ! {
     }
 
     executor.run(|spawner| {
-        unwrap!(spawner.spawn(respond_task(responder)));
+        unwrap!(spawner.spawn(respond_busy_task(responder, 1)));
+        unwrap!(spawner.spawn(respond_busy_task(responder, 0)));
+        unwrap!(spawner.spawn(respond_task(responder, 3)));
+        unwrap!(spawner.spawn(respond_task(responder, 2)));
+        unwrap!(spawner.spawn(respond_task(responder, 1)));
+        unwrap!(spawner.spawn(respond_task(responder, 0)));
         unwrap!(spawner.spawn(dm_task(dm)));
         unwrap!(spawner.spawn(mdns_task(mdns)));
         unwrap!(spawner.spawn(btp_task(btp)));
         unwrap!(spawner.spawn(wifi_task(wifi_mgr)));
-        unwrap!(spawner.spawn(btp_transport_task(&stack.matter, btp)));
-        unwrap!(spawner.spawn(udp_transport_task(&stack.matter)));
+        unwrap!(spawner.spawn(transport_task(
+            &stack.matter,
+            transport_send,
+            transport_recv
+        )));
     });
 }
 
 #[inline(always)]
-fn respond_task0<'d, 'a>(
+fn respond_task_fut<'d, 'a>(
     responder: &'a AppResponder<'d, 'a>,
+    handler_id: u8,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    responder.run::<4, 4>()
+    responder.responder().handle(handler_id)
 }
 
-#[embassy_executor::task]
-async fn respond_task(responder: &'static AppResponder<'static, 'static>) {
-    unwrap!(respond_task0(responder).await);
+#[embassy_executor::task(pool_size = 4)]
+async fn respond_task(responder: &'static AppResponder<'static, 'static>, handler_id: u8) {
+    info!("Starting responder task {}...", handler_id);
+    unwrap!(respond_task_fut(responder, handler_id).await);
 }
 
 #[inline(always)]
-fn dm_task0<'a>(dm: &'a AppDataModel<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
+fn respond_busy_task_fut<'d, 'a>(
+    responder: &'a AppResponder<'d, 'a>,
+    handler_id: u8,
+) -> impl Future<Output = Result<(), Error>> + 'a {
+    responder.busy_responder().handle(handler_id)
+}
+
+#[embassy_executor::task(pool_size = 2)]
+async fn respond_busy_task(responder: &'static AppResponder<'static, 'static>, handler_id: u8) {
+    info!("Starting busy responder task {}...", handler_id);
+    unwrap!(respond_busy_task_fut(responder, handler_id).await);
+}
+
+#[inline(always)]
+fn dm_task_fut<'a>(dm: &'a AppDataModel<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
     dm.run()
 }
 
 #[embassy_executor::task]
 async fn dm_task(dm: &'static AppDataModel<'static>) {
-    unwrap!(dm_task0(dm).await);
+    info!("Starting DM task...");
+    unwrap!(dm_task_fut(dm).await);
 }
 
 #[inline(always)]
-fn mdns_task0<'a>(
+fn mdns_task_fut<'a>(
     mdns: &'a mut BuiltinMdnsResponder<'static>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
     mdns.run(
@@ -475,21 +523,23 @@ fn mdns_task0<'a>(
 
 #[embassy_executor::task]
 async fn mdns_task(mdns: &'static mut BuiltinMdnsResponder<'static>) {
-    unwrap!(mdns_task0(mdns).await);
+    info!("Starting mDNS task...");
+    unwrap!(mdns_task_fut(mdns).await);
 }
 
 #[inline(always)]
-fn btp_task0<'a>(btp: &'a AppBtp<'static>) -> impl Future<Output = Result<(), Error>> + 'a {
+fn btp_task_fut<'a>(btp: &'a AppBtp<'static>) -> impl Future<Output = Result<(), Error>> + 'a {
     btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator)
 }
 
 #[embassy_executor::task]
 async fn btp_task(btp: &'static AppBtp<'static>) {
-    unwrap!(btp_task0(btp).await);
+    info!("Starting BTP task...");
+    unwrap!(btp_task_fut(btp).await);
 }
 
 #[inline(always)]
-fn wifi_task0<'a>(
+fn wifi_task_fut<'a>(
     wifi_mgr: &'a mut AppWirelessMgr<'static>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
     wifi_mgr.run()
@@ -497,30 +547,27 @@ fn wifi_task0<'a>(
 
 #[embassy_executor::task]
 async fn wifi_task(wifi_mgr: &'static mut AppWirelessMgr<'static>) {
-    unwrap!(wifi_task0(wifi_mgr).await);
+    info!("Starting Wifi task...");
+    unwrap!(wifi_task_fut(wifi_mgr).await);
 }
 
 #[inline(always)]
-fn btp_transport_task0<'a>(
+fn transport_task_fut<'a>(
     matter: &'a Matter<'a>,
-    btp: &'a AppBtp<'static>,
+    transport_send: &'a mut AppTransport<'static>,
+    transport_recv: &'a mut AppTransport<'static>,
 ) -> impl Future<Output = Result<(), Error>> + 'a {
-    matter.run_transport(btp, btp)
+    matter.run_transport(transport_send, transport_recv)
 }
 
 #[embassy_executor::task]
-async fn btp_transport_task(matter: &'static Matter<'static>, btp: &'static AppBtp<'static>) {
-    unwrap!(btp_transport_task0(matter, btp).await);
-}
-
-#[inline(always)]
-fn udp_transport_task0<'a>(matter: &'a Matter<'a>) -> impl Future<Output = Result<(), Error>> + 'a {
-    matter.run_transport(FakeUdp, FakeUdp)
-}
-
-#[embassy_executor::task]
-async fn udp_transport_task(matter: &'static Matter<'static>) {
-    unwrap!(udp_transport_task0(matter).await);
+async fn transport_task(
+    matter: &'static Matter<'static>,
+    transport_send: &'static mut AppTransport<'static>,
+    transport_recv: &'static mut AppTransport<'static>,
+) {
+    info!("Starting transport task...");
+    unwrap!(transport_task_fut(matter, transport_send, transport_recv).await);
 }
 
 /// Report the size of an item and accumulate it into `total`
