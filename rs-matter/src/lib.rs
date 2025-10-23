@@ -600,6 +600,21 @@ impl<'a> Matter<'a> {
         self.transport_mgr.run(send, recv)
     }
 
+    /// Reset the Matter state by removing all fabrics and resetting basic info settings
+    ///
+    /// # Arguments
+    /// - `flag_changed`: If true, notifies that fabrics and basic info settings have changed
+    pub fn reset_persist(&self, flag_changed: bool) {
+        self.basic_info_settings.borrow_mut().reset(flag_changed);
+        self.fabric_mgr.borrow_mut().reset(flag_changed);
+
+        self.notify_mdns();
+
+        if flag_changed {
+            self.notify_persist();
+        }
+    }
+
     /// Notify that the ACLs, Fabrics or Basic Info _might_ have changed
     /// This method is supposed to be called after processing SC and IM messages that might affect the ACLs, Fabrics or Basic Info.
     ///

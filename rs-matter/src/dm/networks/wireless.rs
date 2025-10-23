@@ -137,9 +137,19 @@ where
         })
     }
 
-    /// Reset the state.
-    pub fn reset(&self) {
-        self.state.lock(|state| state.borrow_mut().reset());
+    /// Reset the state
+    ///
+    /// # Arguments
+    /// - `flag_changed`: If `true`, the state will be marked as changed
+    pub fn reset(&self, flag_changed: bool) {
+        self.state
+            .lock(|state| state.borrow_mut().reset(flag_changed));
+
+        self.state_changed.notify();
+
+        if flag_changed {
+            self.persist_state_changed.notify();
+        }
     }
 
     /// Load the state from a byte slice.
@@ -404,9 +414,9 @@ where
         })
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self, flag_changed: bool) {
         self.networks.clear();
-        self.changed = false;
+        self.changed = flag_changed;
     }
 
     fn load(&mut self, data: &[u8]) -> Result<(), Error> {

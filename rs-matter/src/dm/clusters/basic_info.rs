@@ -325,11 +325,14 @@ impl BasicInfoSettings {
     }
 
     /// Resets the basic info to initial values
-    pub fn reset(&mut self) {
+    ///
+    /// # Arguments
+    /// - `flag_changed`: whether to mark the basic info settings as changed
+    pub fn reset(&mut self, flag_changed: bool) {
         self.node_label.clear();
         self.location = None;
         self.local_config_disabled = false;
-        self.changed = false;
+        self.changed = flag_changed;
     }
 
     /// Load the basic info settings from the provided TLV data
