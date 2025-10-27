@@ -1679,6 +1679,451 @@ mod tests {
                         self.0
                     }
                 }
+                pub struct GlobalStructBuilder<P, const F: usize = 1usize>(P);
+
+                impl<P> GlobalStructBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    #[doc = "Create a new instance"]
+                    pub fn new(
+                        mut parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        parent.writer().start_struct(tag)?;
+                        Ok(Self(parent))
+                    }
+                }
+
+                #[cfg(feature = "defmt")]
+                impl<P> GlobalStructBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
+                {
+                    pub fn global(
+                        mut self,
+                        value: bool,
+                    ) -> Result<GlobalStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "global",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "global",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(GlobalStructBuilder(self.0))
+                    }
+                }
+
+                #[cfg(not(feature = "defmt"))]
+                impl<P> GlobalStructBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn global(
+                        mut self,
+                        value: bool,
+                    ) -> Result<GlobalStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "global",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(GlobalStructBuilder(self.0))
+                    }
+                }
+
+                impl<P> GlobalStructBuilder<P, 2usize>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    #[doc = "Finish the struct and return the parent"]
+                    pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        self.0.writer().end_container()?;
+                        Ok(self.0)
+                    }
+                }
+
+                impl<P, const F: usize> core::fmt::Debug for GlobalStructBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "GlobalStruct")
+                    }
+                }
+
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for GlobalStructBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "GlobalStruct"
+                        )
+                    }
+                }
+
+                impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for GlobalStructBuilder<P, F>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    type Write = P::Write;
+                    fn writer(&mut self) -> &mut P::Write {
+                        self.0.writer()
+                    }
+                }
+
+                impl<P> rs_matter_crate::tlv::TLVBuilder<P> for GlobalStructBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    fn new(
+                        parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        Self::new(parent, tag)
+                    }
+                    fn unchecked_into_parent(self) -> P {
+                        self.0
+                    }
+                }
+
+                pub struct GlobalStructArrayBuilder<P>(P);
+
+                impl<P> GlobalStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    #[doc = "Create a new instance"]
+                    pub fn new(
+                        mut parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        parent.writer().start_array(tag)?;
+                        Ok(Self(parent))
+                    }
+                    #[doc = "Push a new element into the array"]
+                    pub fn push(
+                        self,
+                    ) -> Result<
+                        GlobalStructBuilder<GlobalStructArrayBuilder<P>>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        rs_matter_crate::tlv::TLVBuilder::new(
+                            GlobalStructArrayBuilder(self.0),
+                            &rs_matter_crate::tlv::TLVTag::Anonymous,
+                        )
+                    }
+                    #[doc = "Finish the array and return the parent"]
+                    pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        self.0.writer().end_container()?;
+                        Ok(self.0)
+                    }
+                }
+
+                impl<P> core::fmt::Debug for GlobalStructArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "GlobalStruct[]")
+                    }
+                }
+
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for GlobalStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "GlobalStruct[]"
+                        )
+                    }
+                }
+
+                impl<P> rs_matter_crate::tlv::TLVBuilderParent for GlobalStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    type Write = P::Write;
+                    fn writer(&mut self) -> &mut P::Write {
+                        self.0.writer()
+                    }
+                }
+
+                impl<P> rs_matter_crate::tlv::TLVBuilder<P> for GlobalStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    fn new(
+                        parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        Self::new(parent, tag)
+                    }
+                    fn unchecked_into_parent(self) -> P {
+                        self.0
+                    }
+                }
+
+                pub struct SharedStructBuilder<P, const F: usize = 1usize>(P);
+
+                impl<P> SharedStructBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    #[doc = "Create a new instance"]
+                    pub fn new(
+                        mut parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        parent.writer().start_struct(tag)?;
+                        Ok(Self(parent))
+                    }
+                }
+
+                #[cfg(feature = "defmt")]
+                impl<P> SharedStructBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent
+                        + core::fmt::Debug
+                        + rs_matter_crate::reexport::defmt::Format,
+                {
+                    pub fn shared(
+                        mut self,
+                        value: bool,
+                    ) -> Result<SharedStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "defmt")]
+                        rs_matter_crate::reexport::defmt::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "shared",
+                            value
+                        );
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "shared",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(SharedStructBuilder(self.0))
+                    }
+                }
+
+                #[cfg(not(feature = "defmt"))]
+                impl<P> SharedStructBuilder<P, 1>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug,
+                {
+                    pub fn shared(
+                        mut self,
+                        value: bool,
+                    ) -> Result<SharedStructBuilder<P, 2usize>, rs_matter_crate::error::Error>
+                    {
+                        #[cfg(feature = "log")]
+                        rs_matter_crate::reexport::log::debug!(
+                            "{:?}::{} -> {:?} +",
+                            self,
+                            "shared",
+                            value
+                        );
+                        rs_matter_crate::tlv::ToTLV::to_tlv(
+                            &value,
+                            &rs_matter_crate::tlv::TLVTag::Context(1),
+                            self.0.writer(),
+                        )?;
+                        Ok(SharedStructBuilder(self.0))
+                    }
+                }
+
+                impl<P> SharedStructBuilder<P, 2usize>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    #[doc = "Finish the struct and return the parent"]
+                    pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        self.0.writer().end_container()?;
+                        Ok(self.0)
+                    }
+                }
+
+                impl<P, const F: usize> core::fmt::Debug for SharedStructBuilder<P, F>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "SharedStruct")
+                    }
+                }
+
+                #[cfg(feature = "defmt")]
+                impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for SharedStructBuilder<P, F>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "SharedStruct"
+                        )
+                    }
+                }
+
+                impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for SharedStructBuilder<P, F>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    type Write = P::Write;
+                    fn writer(&mut self) -> &mut P::Write {
+                        self.0.writer()
+                    }
+                }
+
+                impl<P> rs_matter_crate::tlv::TLVBuilder<P> for SharedStructBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    fn new(
+                        parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        Self::new(parent, tag)
+                    }
+                    fn unchecked_into_parent(self) -> P {
+                        self.0
+                    }
+                }
+
+                pub struct SharedStructArrayBuilder<P>(P);
+
+                impl<P> SharedStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    #[doc = "Create a new instance"]
+                    pub fn new(
+                        mut parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        parent.writer().start_array(tag)?;
+                        Ok(Self(parent))
+                    }
+                    #[doc = "Push a new element into the array"]
+                    pub fn push(
+                        self,
+                    ) -> Result<
+                        SharedStructBuilder<SharedStructArrayBuilder<P>>,
+                        rs_matter_crate::error::Error,
+                    > {
+                        rs_matter_crate::tlv::TLVBuilder::new(
+                            SharedStructArrayBuilder(self.0),
+                            &rs_matter_crate::tlv::TLVTag::Anonymous,
+                        )
+                    }
+                    #[doc = "Finish the array and return the parent"]
+                    pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+                        use rs_matter_crate::tlv::TLVWrite;
+                        self.0.writer().end_container()?;
+                        Ok(self.0)
+                    }
+                }
+
+                impl<P> core::fmt::Debug for SharedStructArrayBuilder<P>
+                where
+                    P: core::fmt::Debug,
+                {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "{:?}::{}", self.0, "SharedStruct[]")
+                    }
+                }
+
+                #[cfg(feature = "defmt")]
+                impl<P> rs_matter_crate::reexport::defmt::Format for SharedStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::reexport::defmt::Format,
+                {
+                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+                        rs_matter_crate::reexport::defmt::write!(
+                            f,
+                            "{:?}::{}",
+                            self.0,
+                            "SharedStruct[]"
+                        )
+                    }
+                }
+
+                impl<P> rs_matter_crate::tlv::TLVBuilderParent for SharedStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    type Write = P::Write;
+                    fn writer(&mut self) -> &mut P::Write {
+                        self.0.writer()
+                    }
+                }
+
+                impl<P> rs_matter_crate::tlv::TLVBuilder<P> for SharedStructArrayBuilder<P>
+                where
+                    P: rs_matter_crate::tlv::TLVBuilderParent,
+                {
+                    fn new(
+                        parent: P,
+                        tag: &rs_matter_crate::tlv::TLVTag,
+                    ) -> Result<Self, rs_matter_crate::error::Error> {
+                        Self::new(parent, tag)
+                    }
+                    fn unchecked_into_parent(self) -> P {
+                        self.0
+                    }
+                }
             )
         );
     }
