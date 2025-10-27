@@ -1427,40 +1427,27 @@ impl Idl {
             .map_err(|e| IdlParsingError::from(input, span, e))?;
 
             match r {
-                InternalIdlParsedData::Cluster(c) => {
-                    // Pull out shared structs in the cluster to global scope & update cluster
-                    // accordingly
-                    let mut requires_update = false;
-                    for s in &c.entities.structs {
-                        if s.struct_type == StructType::Shared {
-                            idl.globals.structs.push(s.clone());
-                            requires_update = true
-                        }
-                    }
-                    for e in &c.entities.enums {
-                        if e.is_shared {
-                            idl.globals.enums.push(e.clone());
-                            requires_update = true
-                        }
-                    }
-                    for e in &c.entities.bitmaps {
-                        if e.is_shared {
-                            idl.globals.bitmaps.push(e.clone());
-                            requires_update = true
-                        }
-                    }
-                    if !requires_update {
-                        idl.clusters.push(c);
-                    } else {
-                        let mut updated = c.clone();
-                        updated
-                            .entities
-                            .structs
-                            .retain(|s| s.struct_type != StructType::Shared);
-                        updated.entities.enums.retain(|s| !s.is_shared);
-                        updated.entities.bitmaps.retain(|s| !s.is_shared);
-                        idl.clusters.push(updated)
-                    }
+                InternalIdlParsedData::Cluster(mut c) => {
+                    // Pull out shared entities into the global scope and update the cluster.
+                    let (shared_structs, local_structs) = c
+                        .entities
+                        .structs
+                        .into_iter()
+                        .partition(|s| s.struct_type == StructType::Shared);
+                    idl.globals.structs.extend(shared_structs);
+                    c.entities.structs = local_structs;
+
+                    let (shared_enums, local_enums) =
+                        c.entities.enums.into_iter().partition(|e| e.is_shared);
+                    idl.globals.enums.extend(shared_enums);
+                    c.entities.enums = local_enums;
+
+                    let (shared_bitmaps, local_bitmaps) =
+                        c.entities.bitmaps.into_iter().partition(|b| b.is_shared);
+                    idl.globals.bitmaps.extend(shared_bitmaps);
+                    c.entities.bitmaps = local_bitmaps;
+
+                    idl.clusters.push(c);
                 }
                 InternalIdlParsedData::Enum(c) => idl.globals.enums.push(c),
                 InternalIdlParsedData::Bitmap(c) => idl.globals.bitmaps.push(c),
