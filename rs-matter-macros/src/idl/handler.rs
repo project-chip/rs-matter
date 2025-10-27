@@ -58,7 +58,7 @@ pub fn handler(
         if asynch { "Async" } else { "" }
     ));
 
-    let entities = &EntityContext::new(Some(&cluster.entities), &globals);
+    let entities = &EntityContext::new(Some(&cluster.entities), globals);
     let handler_attribute_methods = cluster
         .attributes
         .iter()
@@ -175,7 +175,7 @@ pub fn handler_adaptor(
 
     let generic_handler_name = ident(&format!("{}Handler", if asynch { "Async" } else { "" }));
 
-    let entities = &EntityContext::new(Some(&cluster.entities), &globals);
+    let entities = &EntityContext::new(Some(&cluster.entities), globals);
     let handler_adaptor_attribute_match = cluster
         .attributes
         .iter()

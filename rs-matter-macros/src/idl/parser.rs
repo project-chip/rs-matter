@@ -1353,10 +1353,7 @@ pub struct EntityContext<'a> {
 
 impl<'a> EntityContext<'a> {
     pub fn new(local: Option<&'a Entities>, global: &'a Entities) -> Self {
-        Self {
-            local: local,
-            global: global,
-        }
+        Self { local, global }
     }
 
     pub fn bitmaps(&self) -> Box<dyn Iterator<Item = &Bitmap> + '_> {

@@ -26,7 +26,9 @@ pub struct ConstantEntry {
 
 /// A named annotation on a type or value.
 pub struct ConstantAnnotation {
+    #[allow(unused)]
     pub id: String,
+    #[allow(unused)]
     pub value: String,
 }
 
