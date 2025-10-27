@@ -20,7 +20,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use super::id::ident;
-use super::parser::{Cluster, DataType};
+use super::parser::{DataType, EntityContext};
 
 /// Return a stream representing the Rust type that corresponds to the given
 /// IDL type.
@@ -29,19 +29,19 @@ use super::parser::{Cluster, DataType};
 /// - `f`: The IDL type.
 /// - `nullable`: Whether the type is nullable.
 /// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
-/// - `cluster`: The cluster to which the type belongs.
+/// - `entities`: The context of entities to which the type belongs.
 /// - `krate`: The crate name.
 pub fn field_type(
     f: &DataType,
     nullable: bool,
     optional: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let mut field_type = field_type_builtin(f, krate, true).unwrap_or_else(|| {
         let ident = ident(f.name.as_str());
 
-        let structure = cluster.structs.iter().any(|s| s.id == f.name);
+        let structure = entities.structs().any(|s| s.id == f.name);
         if structure {
             quote!(#ident<'_>)
         } else {
@@ -84,7 +84,7 @@ pub enum BuilderPolicy {
 /// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
 /// - `policy`: The policy for determining how to convert the IDL type to a Rust builder.
 /// - `parent`: The parent type for the returned builder (usually `P`)
-/// - `cluster`: The cluster to which the type belongs.
+/// - `entities`: Entities scoped to the type.
 /// - `krate`: The crate name.
 ///
 /// # Returns
@@ -99,7 +99,7 @@ pub fn field_type_builder(
     optional: bool,
     policy: BuilderPolicy,
     parent: TokenStream,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> (TokenStream, bool) {
     let (mut typ, builder) = if data_type.is_octet_string()
@@ -130,7 +130,7 @@ pub fn field_type_builder(
             },
             true,
         )
-    } else if let Some(copy) = field_type_copy(data_type, cluster, krate) {
+    } else if let Some(copy) = field_type_copy(data_type, entities, krate) {
         if data_type.is_list {
             (quote!(#krate::tlv::ToTLVArrayBuilder<#parent, #copy>), true)
         } else if matches!(policy, BuilderPolicy::All) {
@@ -183,12 +183,12 @@ pub fn field_type_builder(
 ///
 /// Note that this function always treats IDL Utf8 and octet strings as `Copy` types,
 /// however callers should be careful as in some contexts this is fine, while in others - it isn't.
-fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<TokenStream> {
+fn field_type_copy(f: &DataType, entities: &EntityContext, krate: &Ident) -> Option<TokenStream> {
     if let Some(stream) = field_type_builtin(f, krate, true) {
         return Some(stream);
     }
 
-    if cluster.structs.iter().all(|s| s.id != f.name) {
+    if entities.structs().all(|s| s.id != f.name) {
         let ident = ident(f.name.as_str());
         return Some(quote!(#ident));
     }

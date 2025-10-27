@@ -23,7 +23,7 @@ use quote::quote;
 use super::cluster::{GLOBAL_ATTR, NO_RESPONSE};
 use super::field::{field_type, field_type_builder, BuilderPolicy};
 use super::id::{ident, idl_attribute_name_to_enum_variant_name, idl_field_name_to_rs_name};
-use super::parser::{Attribute, Cluster, Command, DataType, StructType};
+use super::parser::{Attribute, Cluster, Command, DataType, Entities, EntityContext, StructType};
 use super::IdlGenerateContext;
 
 /// Return a token stream defining the handler trait for the provided IDL cluster.
@@ -48,6 +48,7 @@ pub fn handler(
     asynch: bool,
     delegate: bool,
     cluster: &Cluster,
+    globals: &Entities,
     context: &IdlGenerateContext,
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
@@ -57,23 +58,24 @@ pub fn handler(
         if asynch { "Async" } else { "" }
     ));
 
+    let entities = &EntityContext::new(Some(&cluster.entities), &globals);
     let handler_attribute_methods = cluster
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
-        .map(|attr| handler_attribute(attr, asynch, delegate, cluster, &krate));
+        .map(|attr| handler_attribute(attr, asynch, delegate, entities, &krate));
 
     let handler_attribute_write_methods = cluster
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .filter(|attr| !attr.is_read_only)
-        .map(|attr| handler_attribute_write(attr, asynch, delegate, cluster, &krate));
+        .map(|attr| handler_attribute_write(attr, asynch, delegate, entities, &krate));
 
     let handler_command_methods = cluster
         .commands
         .iter()
-        .map(|cmd| handler_command(cmd, asynch, delegate, cluster, &krate));
+        .map(|cmd| handler_command(cmd, asynch, delegate, entities, &krate));
 
     if delegate {
         let run = if asynch {
@@ -153,6 +155,7 @@ pub fn handler(
 pub fn handler_adaptor(
     asynch: bool,
     cluster: &Cluster,
+    globals: &Entities,
     context: &IdlGenerateContext,
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
@@ -172,11 +175,12 @@ pub fn handler_adaptor(
 
     let generic_handler_name = ident(&format!("{}Handler", if asynch { "Async" } else { "" }));
 
+    let entities = &EntityContext::new(Some(&cluster.entities), &globals);
     let handler_adaptor_attribute_match = cluster
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
-        .map(|attr| handler_adaptor_attribute_match(attr, asynch, cluster, &krate))
+        .map(|attr| handler_adaptor_attribute_match(attr, asynch, entities, &krate))
         .collect::<Vec<_>>();
 
     let handler_adaptor_attribute_write_match = cluster
@@ -184,12 +188,12 @@ pub fn handler_adaptor(
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .filter(|attr| !attr.is_read_only)
-        .map(|attr| handler_adaptor_attribute_write_match(attr, asynch, cluster, &krate));
+        .map(|attr| handler_adaptor_attribute_write_match(attr, asynch, entities, &krate));
 
     let handler_adaptor_command_match = cluster
         .commands
         .iter()
-        .map(|cmd| handler_adaptor_command_match(cmd, asynch, cluster, &krate))
+        .map(|cmd| handler_adaptor_command_match(cmd, asynch, entities, &krate))
         .collect::<Vec<_>>();
 
     let read_stream = if !handler_adaptor_attribute_match.is_empty() {
@@ -392,7 +396,7 @@ fn handler_attribute(
     attr: &Attribute,
     asynch: bool,
     delegate: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let attr_name = ident(&idl_field_name_to_rs_name(&attr.field.field.id));
@@ -410,7 +414,7 @@ fn handler_attribute(
         false,
         BuilderPolicy::NonCopyAndStrings,
         parent.clone(),
-        cluster,
+        entities,
         krate,
     );
 
@@ -426,7 +430,7 @@ fn handler_attribute(
                 false,
                 BuilderPolicy::All,
                 parent,
-                cluster,
+                entities,
                 krate,
             );
 
@@ -482,7 +486,7 @@ fn handler_attribute_write(
     attr: &Attribute,
     asynch: bool,
     delegate: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let attr_name = ident(&format!(
@@ -500,7 +504,7 @@ fn handler_attribute_write(
         &attr.field.field.data_type,
         attr.field.is_nullable,
         false,
-        cluster,
+        entities,
         krate,
     );
 
@@ -513,7 +517,7 @@ fn handler_attribute_write(
             },
             false,
             false,
-            cluster,
+            entities,
             krate,
         );
 
@@ -552,7 +556,7 @@ fn handler_command(
     cmd: &Command,
     asynch: bool,
     delegate: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let cmd_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
@@ -572,7 +576,7 @@ fn handler_command(
             },
             false,
             false,
-            cluster,
+            entities,
             krate,
         )
     });
@@ -590,7 +594,7 @@ fn handler_command(
             false,
             BuilderPolicy::NonCopyAndStrings,
             quote!(P),
-            cluster,
+            entities,
             krate,
         )
     });
@@ -698,7 +702,7 @@ fn handler_command(
 fn handler_adaptor_attribute_match(
     attr: &Attribute,
     asynch: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let attr_name = ident(&idl_attribute_name_to_enum_variant_name(
@@ -717,7 +721,7 @@ fn handler_adaptor_attribute_match(
         attr.field.is_optional,
         BuilderPolicy::NonCopyAndStrings,
         parent,
-        cluster,
+        entities,
         krate,
     );
 
@@ -811,7 +815,7 @@ fn handler_adaptor_attribute_match(
 fn handler_adaptor_attribute_write_match(
     attr: &Attribute,
     asynch: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let attr_name = ident(&idl_attribute_name_to_enum_variant_name(
@@ -828,7 +832,7 @@ fn handler_adaptor_attribute_write_match(
         &attr.field.field.data_type,
         attr.field.is_nullable,
         false,
-        cluster,
+        entities,
         krate,
     );
 
@@ -879,7 +883,7 @@ fn handler_adaptor_attribute_write_match(
 fn handler_adaptor_command_match(
     cmd: &Command,
     asynch: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let cmd_name = ident(&idl_attribute_name_to_enum_variant_name(&cmd.id));
@@ -934,16 +938,15 @@ fn handler_adaptor_command_match(
             },
             false,
             false,
-            cluster,
+            entities,
             krate,
         )
     });
 
     let cmd_output = (cmd.output != NO_RESPONSE)
         .then(|| {
-            cluster
-                .structs
-                .iter()
+            entities
+                .structs()
                 .filter(|s| s.id == cmd.output)
                 .filter_map(|s| {
                     if let StructType::Response(code) = s.struct_type {
@@ -968,7 +971,7 @@ fn handler_adaptor_command_match(
             false,
             BuilderPolicy::NonCopyAndStrings,
             quote!(P),
-            cluster,
+            entities,
             krate,
         );
 
@@ -1177,7 +1180,7 @@ mod tests {
         // panic!("====\n{}\n====", &handler(false, false, cluster, &context));
 
         assert_tokenstreams_eq!(
-            &handler(false, false, cluster, &context),
+            &handler(false, false, cluster, &idl.globals, &context),
             &quote!(
                 #[doc = "The handler trait for the cluster."]
                 pub trait ClusterHandler {
@@ -1270,7 +1273,7 @@ mod tests {
         // panic!("====\n{}\n====", &handler(false, true, cluster, &context));
 
         assert_tokenstreams_eq!(
-            &handler(false, true, cluster, &context),
+            &handler(false, true, cluster, &idl.globals, &context),
             &quote!(
                 impl<T> ClusterHandler for &T
                 where
@@ -1390,7 +1393,7 @@ mod tests {
         // panic!("====\n{}\n====", &handler_adaptor(false, cluster, &context));
 
         assert_tokenstreams_eq!(
-            &handler_adaptor(false, cluster, &context),
+            &handler_adaptor(false, cluster, &idl.globals, &context),
             &quote!(
                 #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
                 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

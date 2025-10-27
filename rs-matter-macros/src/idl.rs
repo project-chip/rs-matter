@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use parser::Cluster;
+use parser::{Cluster, EntityContext};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
@@ -28,6 +28,7 @@ mod parser;
 mod struct_in;
 mod struct_out;
 
+use crate::idl::parser::Entities;
 pub use parser::Idl;
 
 pub const CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0: &str =
@@ -63,12 +64,13 @@ impl IdlGenerateContext {
 /// Return a token stream containing Rust types corresponding to all definitions
 /// in the provided IDL cluster:
 ///
-pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    cluster_internal(cluster, true, context)
+pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateContext) -> TokenStream {
+    cluster_internal(cluster, globals, true, context)
 }
 
 fn cluster_internal(
     cluster: &Cluster,
+    globals: &Entities,
     with_async: bool,
     context: &IdlGenerateContext,
 ) -> TokenStream {
@@ -82,20 +84,21 @@ fn cluster_internal(
         cluster.id
     ));
 
-    let bitmaps = bitmap::bitmaps(cluster, context);
-    let enums = enumeration::enums(cluster, context);
-    let struct_tags = struct_in::struct_tags(cluster, context);
-    let structs = struct_in::structs(cluster, context);
-    let struct_builders = struct_out::struct_builders(cluster, context);
+    let entities = &EntityContext::new(Some(&cluster.entities), globals);
+    let bitmaps = bitmap::bitmaps(entities, context);
+    let enums = enumeration::enums(entities, context);
+    let struct_tags = struct_in::struct_tags(entities, context);
+    let structs = struct_in::structs(entities, context);
+    let struct_builders = struct_out::struct_builders(entities, context);
 
     let attribute_id = cluster::attribute_id(cluster, context);
     let command_id = cluster::command_id(cluster, context);
-    let command_response_id = cluster::command_response_id(cluster, context);
+    let command_response_id = cluster::command_response_id(entities, context);
     let cluster_meta = cluster::cluster(cluster, context);
 
-    let handler = handler::handler(false, false, cluster, context);
-    let handler_inherent_impl = handler::handler(false, true, cluster, context);
-    let handler_adaptor = handler::handler_adaptor(false, cluster, context);
+    let handler = handler::handler(false, false, cluster, globals, context);
+    let handler_inherent_impl = handler::handler(false, true, cluster, globals, context);
+    let handler_adaptor = handler::handler_adaptor(false, cluster, globals, context);
 
     let quote = quote!(
         #bitmaps
@@ -124,9 +127,9 @@ fn cluster_internal(
     );
 
     let quote = if with_async {
-        let async_handler = handler::handler(true, false, cluster, context);
-        let async_handler_inherent_impl = handler::handler(true, true, cluster, context);
-        let async_handler_adaptor = handler::handler_adaptor(true, cluster, context);
+        let async_handler = handler::handler(true, false, cluster, globals, context);
+        let async_handler_inherent_impl = handler::handler(true, true, cluster, globals, context);
+        let async_handler_adaptor = handler::handler_adaptor(true, cluster, globals, context);
 
         quote!(
             #quote
@@ -165,7 +168,18 @@ mod tests {
     use super::cluster_internal;
 
     pub(crate) fn parse_idl(input: &str) -> Idl {
-        Idl::parse(input.into()).expect("valid input")
+        match crate::idl::Idl::parse(input.into()) {
+            Ok(result) => result,
+            Err(e) => {
+                let span_bytes = &input.as_bytes()[e.error_location.offset()..];
+
+                panic!(
+                    "Parser failed with {:?}, at\n===\n{}\n===\n",
+                    e,
+                    core::str::from_utf8(&span_bytes[..span_bytes.len().min(256)]).unwrap()
+                );
+            }
+        }
     }
 
     pub(crate) fn get_cluster_named<'a>(idl: &'a Idl, name: &str) -> Option<&'a Cluster> {
@@ -185,7 +199,7 @@ mod tests {
         // );
 
         assert_tokenstreams_eq!(
-            &cluster_internal(cluster, false, &context),
+            &cluster_internal(cluster, &idl.globals, false, &context),
             &TOKEN_STREAM_OUTPUT
         );
     }

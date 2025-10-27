@@ -23,7 +23,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_attribute_name_to_enum_variant_name};
-use super::parser::{AccessPrivilege, Cluster, StructType};
+use super::parser::{AccessPrivilege, Cluster, EntityContext, StructType};
 use super::IdlGenerateContext;
 
 pub(crate) const NO_RESPONSE: &str = "DefaultSuccess";
@@ -225,12 +225,11 @@ pub fn command_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStrea
 
 /// Return a TokenStream containing a simple enum with variants for each
 /// command response in the given IDL cluster.
-pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+pub fn command_response_id(entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let command_responses = cluster
-        .structs
-        .iter()
+    let command_responses = entities
+        .structs()
         .filter_map(|s| {
             if let StructType::Response(code) = s.struct_type {
                 let cmd_name = ident(&s.id);
@@ -244,7 +243,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
         })
         .collect::<Vec<_>>();
 
-    let command_responses_debug = cluster.structs.iter().filter_map(|s| {
+    let command_responses_debug = entities.structs().filter_map(|s| {
         if let StructType::Response(_) = s.struct_type {
             let cmd_name = ident(&s.id);
             let cmd_name_str = Literal::string(&s.id);
@@ -256,7 +255,7 @@ pub fn command_response_id(cluster: &Cluster, context: &IdlGenerateContext) -> T
         }
     });
 
-    let command_responses_format = cluster.structs.iter().filter_map(|s| {
+    let command_responses_format = entities.structs().filter_map(|s| {
         if let StructType::Response(_) = s.struct_type {
             let cmd_name = ident(&s.id);
             let cmd_name_str = Literal::string(&s.id);

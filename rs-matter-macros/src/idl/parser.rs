@@ -22,7 +22,7 @@ use miette::{Diagnostic, NamedSource, SourceSpan};
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, tag_no_case, take_until, take_while, take_while1},
-    character::complete::{digit1, hex_digit1, multispace1, one_of, space1},
+    character::complete::{char, digit1, hex_digit1, multispace1, one_of, space1},
     combinator::{opt, recognize, value},
     error::ErrorKind,
     multi::{many0, separated_list0},
@@ -238,6 +238,24 @@ fn positive_integer(span: Span) -> IResult<Span, u64, ParseError> {
     decimal_integer.parse(span)
 }
 
+/// Represents a string (i.e. something between `" ... "`), including possible escape sequences \" and \\
+fn quoted_string(span: Span<'_>) -> IResult<Span<'_>, String, ParseError<'_>> {
+    delimited(
+        char('"'),
+        many0(alt((
+            // Case 1: An escaped double quote ("\"). We map it to the literal quote character.
+            tag("\\\"").map(|_| "\""),
+            // Case 2: An escaped backslash ("\"). We map it to the literal backslash character.
+            tag("\\\\").map(|_| "\\"),
+            // Case 3: A sequence of normal characters (not '"' and not '\').
+            take_while1(|c| c != '"' && c != '\\').map(|span: Span<'_>| *span.fragment()),
+        ))),
+        char('"'),
+    )
+    .map(|v| v.into_iter().collect::<String>())
+    .parse(span)
+}
+
 /// Represents a comment (i.e. something between `/** ... */`)
 ///
 /// Typically placed before some element (e.g. cluster or command) to serve
@@ -255,9 +273,12 @@ pub struct DocComment<'a>(pub &'a str);
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Whitespace<'a> {
-    DocComment(&'a str), // /** ... */
-    CppComment(&'a str), // /* ... */ (and NOT a doc comment)
-    CComment(&'a str),   // // ....
+    DocComment(&'a str),
+    // /** ... */
+    CppComment(&'a str),
+    // /* ... */ (and NOT a doc comment)
+    CComment(&'a str),
+    // // ....
     Whitespace(&'a str), // general newline/space/tab
 }
 
@@ -391,6 +412,38 @@ fn parse_id_span(span: Span) -> IResult<Span, Span, ParseError> {
     recognize(tuple((take_while1(valid_first), take_while(valid_second)))).parse(span)
 }
 
+fn constant_annotation(span: Span) -> IResult<Span, ConstantAnnotation, ParseError> {
+    tuple((
+        whitespace0,
+        parse_id,
+        whitespace0,
+        tag("="),
+        whitespace0,
+        quoted_string,
+        whitespace0,
+        opt(tag(",")),
+    ))
+    .map(|(_, key, _, _, _, value, _, _)| ConstantAnnotation {
+        id: key.into(),
+        value,
+    })
+    .parse(span)
+}
+
+fn constant_annotations_list(span: Span) -> IResult<Span, Vec<ConstantAnnotation>, ParseError> {
+    opt(delimited(
+        tag("["),
+        tuple((
+            many0(tuple((whitespace0, constant_annotation)).map(|(_, v)| v)),
+            whitespace0,
+        )),
+        tag("]"),
+    )
+    .map(|(v, _)| v))
+    .map(|o| o.unwrap_or(vec![]))
+    .parse(span)
+}
+
 /// Parses a IDL representation of a constant entry.
 ///
 /// Consumes any whitespace BEFORE the entry.
@@ -423,13 +476,17 @@ fn constant_entry(span: Span) -> IResult<Span, ConstantEntry, ParseError> {
         whitespace0,
         positive_integer,
         whitespace0,
+        constant_annotations_list,
+        whitespace0,
         tag(";"),
     ))
-    .map(|(_, maturity, _, id, _, _, _, code, _, _)| ConstantEntry {
-        maturity,
-        id: id.into(),
-        code,
-    })
+    .map(
+        |(_, maturity, _, id, _, _, _, code, _, _, _, _)| ConstantEntry {
+            maturity,
+            id: id.into(),
+            code,
+        },
+    )
     .parse(span)
 }
 
@@ -449,7 +506,6 @@ fn constant_entries_list(span: Span) -> IResult<Span, Vec<ConstantEntry>, ParseE
     .parse(span)
 }
 
-#[allow(unused)]
 fn parse_enum(span: Span) -> IResult<Span, Enum, ParseError> {
     let (span, comment) = whitespace0(span)?;
     let doc_comment = comment.map(|DocComment(comment)| comment);
@@ -464,6 +520,7 @@ fn parse_enum_after_doc_maturity<'a>(
     span: Span<'a>,
 ) -> IResult<Span<'a>, Enum, ParseError<'a>> {
     tuple((
+        opt(tuple((keyword("shared"), whitespace1))),
         keyword("enum"),
         whitespace1,
         parse_id,
@@ -474,7 +531,8 @@ fn parse_enum_after_doc_maturity<'a>(
         whitespace0,
         constant_entries_list,
     ))
-    .map(|(_, _, id, _, _, _, base_type, _, entries)| Enum {
+    .map(|(shared, _, _, id, _, _, _, base_type, _, entries)| Enum {
+        is_shared: shared.is_some(),
         doc_comment: doc_comment.map(|x| x.into()),
         maturity,
         id: id.into(),
@@ -484,7 +542,6 @@ fn parse_enum_after_doc_maturity<'a>(
     .parse(span)
 }
 
-#[allow(unused)]
 fn parse_bitmap(span: Span) -> IResult<Span, Bitmap, ParseError> {
     let (span, comment) = whitespace0(span)?;
     let doc_comment = comment.map(|DocComment(comment)| comment);
@@ -499,6 +556,7 @@ fn parse_bitmap_after_doc_maturity<'a>(
     span: Span<'a>,
 ) -> IResult<Span<'a>, Bitmap, ParseError<'a>> {
     tuple((
+        opt(tuple((keyword("shared"), whitespace1))),
         keyword("bitmap"),
         whitespace1,
         parse_id,
@@ -509,13 +567,16 @@ fn parse_bitmap_after_doc_maturity<'a>(
         whitespace0,
         constant_entries_list,
     ))
-    .map(|(_, _, id, _, _, _, base_type, _, entries)| Bitmap {
-        doc_comment: doc_comment.map(|c| c.into()),
-        maturity,
-        id: id.into(),
-        base_type: base_type.into(),
-        entries,
-    })
+    .map(
+        |(shared, _, _, id, _, _, _, base_type, _, entries)| Bitmap {
+            is_shared: shared.is_some(),
+            doc_comment: doc_comment.map(|c| c.into()),
+            maturity,
+            id: id.into(),
+            base_type: base_type.into(),
+            entries,
+        },
+    )
     .parse(span)
 }
 
@@ -621,7 +682,6 @@ fn struct_fields(span: Span) -> IResult<Span, Vec<StructField>, ParseError> {
     .parse(span)
 }
 
-#[allow(unused)]
 fn parse_struct(span: Span) -> IResult<Span, Struct, ParseError> {
     let (span, doc_comment) = whitespace0.parse(span)?;
     let doc_comment = doc_comment.map(|DocComment(s)| s);
@@ -635,7 +695,11 @@ fn parse_struct_after_doc_maturity<'a>(
     maturity: ApiMaturity,
     span: Span<'a>,
 ) -> IResult<Span<'a>, Struct, ParseError<'a>> {
-    let (span, struct_type) = opt(alt((keyword("request"), keyword("response"))))(span)?;
+    let (span, struct_type) = opt(alt((
+        keyword("request"),
+        keyword("response"),
+        keyword("shared"),
+    )))(span)?;
     let struct_type = struct_type.map(|f| *f.fragment());
 
     let (span, _) = whitespace0.parse(span)?;
@@ -656,6 +720,7 @@ fn parse_struct_after_doc_maturity<'a>(
         Some("response") => tuple((tag("="), whitespace0, positive_integer, whitespace0))
             .map(|(_, _, id, _)| StructType::Response(id))
             .parse(span)?,
+        Some("shared") => (span, StructType::Shared),
         _ => (span, StructType::Regular),
     };
 
@@ -856,7 +921,7 @@ fn attribute_access(span: Span) -> IResult<Span, (AccessPrivilege, AccessPrivile
             match entry.0 {
                 "read" => read_acl = entry.1,
                 "write" => write_acl = entry.1,
-                _ => panic!("Should hjave only matched read or write"),
+                _ => panic!("Should have only matched read or write"),
             }
         }
     }
@@ -929,15 +994,15 @@ fn parse_cluster_member<'a>(c: &mut Cluster, span: Span<'a>) -> Option<Span<'a>>
     }
 
     if let Ok((rest, b)) = parse_bitmap_after_doc_maturity(doc_comment, maturity, span) {
-        c.bitmaps.push(b);
+        c.entities.bitmaps.push(b);
         return Some(rest);
     }
     if let Ok((rest, e)) = parse_enum_after_doc_maturity(doc_comment, maturity, span) {
-        c.enums.push(e);
+        c.entities.enums.push(e);
         return Some(rest);
     }
     if let Ok((rest, s)) = parse_struct_after_doc_maturity(doc_comment, maturity, span) {
-        c.structs.push(s);
+        c.entities.structs.push(s);
         return Some(rest);
     }
     if let Ok((rest, a)) = parse_attribute_after_doc_maturity(doc_comment, maturity, span) {
@@ -1266,13 +1331,52 @@ fn endpoint(span: Span) -> IResult<Span, Endpoint, ParseError> {
 pub struct Idl {
     pub clusters: Vec<Cluster>,
     pub endpoints: Vec<Endpoint>,
+    pub globals: Entities,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum InternalIdlParsedData {
     Cluster(Cluster),
     Endpoint(Endpoint),
+    Enum(Enum),
+    Bitmap(Bitmap),
+    Struct(Struct),
     Whitespace,
+}
+
+// Contextual information for entities; for a cluster, will include cluster-defined
+// and global; for global, only includes global
+pub struct EntityContext<'a> {
+    local: Option<&'a Entities>,
+    global: &'a Entities,
+}
+
+impl<'a> EntityContext<'a> {
+    pub fn new(local: Option<&'a Entities>, global: &'a Entities) -> Self {
+        Self {
+            local: local,
+            global: global,
+        }
+    }
+
+    pub fn bitmaps(&self) -> Box<dyn Iterator<Item = &Bitmap> + '_> {
+        match &self.local {
+            Some(value) => Box::new(value.bitmaps.iter().chain(self.global.bitmaps.iter())),
+            None => Box::new(self.global.bitmaps.iter()),
+        }
+    }
+    pub fn enums(&self) -> Box<dyn Iterator<Item = &Enum> + '_> {
+        match &self.local {
+            Some(value) => Box::new(value.enums.iter().chain(self.global.enums.iter())),
+            None => Box::new(self.global.enums.iter()),
+        }
+    }
+    pub fn structs(&self) -> Box<dyn Iterator<Item = &Struct> + '_> {
+        match &self.local {
+            Some(value) => Box::new(value.structs.iter().chain(self.global.structs.iter())),
+            None => Box::new(self.global.structs.iter()),
+        }
+    }
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -1314,13 +1418,53 @@ impl Idl {
             let (rest, r) = alt((
                 parse_cluster.map(InternalIdlParsedData::Cluster),
                 endpoint.map(InternalIdlParsedData::Endpoint),
+                parse_enum.map(InternalIdlParsedData::Enum),
+                parse_bitmap.map(InternalIdlParsedData::Bitmap),
+                parse_struct.map(InternalIdlParsedData::Struct),
                 value(InternalIdlParsedData::Whitespace, whitespace1),
             ))
             .parse(span)
             .map_err(|e| IdlParsingError::from(input, span, e))?;
 
             match r {
-                InternalIdlParsedData::Cluster(c) => idl.clusters.push(c),
+                InternalIdlParsedData::Cluster(c) => {
+                    // Pull out shared structs in the cluster to global scope & update cluster
+                    // accordingly
+                    let mut requires_update = false;
+                    for s in &c.entities.structs {
+                        if s.struct_type == StructType::Shared {
+                            idl.globals.structs.push(s.clone());
+                            requires_update = true
+                        }
+                    }
+                    for e in &c.entities.enums {
+                        if e.is_shared {
+                            idl.globals.enums.push(e.clone());
+                            requires_update = true
+                        }
+                    }
+                    for e in &c.entities.bitmaps {
+                        if e.is_shared {
+                            idl.globals.bitmaps.push(e.clone());
+                            requires_update = true
+                        }
+                    }
+                    if !requires_update {
+                        idl.clusters.push(c);
+                    } else {
+                        let mut updated = c.clone();
+                        updated
+                            .entities
+                            .structs
+                            .retain(|s| s.struct_type != StructType::Shared);
+                        updated.entities.enums.retain(|s| !s.is_shared);
+                        updated.entities.bitmaps.retain(|s| !s.is_shared);
+                        idl.clusters.push(updated)
+                    }
+                }
+                InternalIdlParsedData::Enum(c) => idl.globals.enums.push(c),
+                InternalIdlParsedData::Bitmap(c) => idl.globals.bitmaps.push(c),
+                InternalIdlParsedData::Struct(c) => idl.globals.structs.push(c),
                 InternalIdlParsedData::Endpoint(e) => idl.endpoints.push(e),
                 InternalIdlParsedData::Whitespace => (),
             }
@@ -1334,6 +1478,7 @@ impl Idl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::idl::tests::parse_idl;
     use rstest::rstest;
 
     fn remove_loc<'a, O>(
@@ -1357,47 +1502,53 @@ mod tests {
 
     #[test]
     fn parse_idl_success() {
-        let r = Idl::parse(include_str!("parser/test_input1.matter").into());
-        assert!(r.is_ok());
-        let idl = r.unwrap();
+        let idl = parse_idl(include_str!("parser/test_input1.matter").into());
 
         assert_eq!(idl.clusters.len(), 1);
         assert_eq!(idl.clusters.first().expect("cluster").id, "Identify")
     }
 
+    #[test]
+    fn parse_idl_real() {
+        let idl = parse_idl(include_str!("parser/controller-clusters-V1.4.2.0.matter").into());
+
+        assert_eq!(idl.clusters.len(), 140);
+        assert_eq!(idl.clusters.first().expect("cluster").id, "Identify")
+    }
+
     #[rstest]
     #[case("ram      attribute description default = \"B3\";",
-           AttributeInstantiation{
-               handle_type: AttributeHandlingType::Ram,
-               name: "description".into(),
-               default: Some(DefaultAttributeValue::String("B3".into())),
-           })]
+    AttributeInstantiation{
+    handle_type: AttributeHandlingType::Ram,
+    name: "description".into(),
+    default: Some(DefaultAttributeValue::String("B3".into())),
+    })]
     #[case("ram      attribute description default = \"with\\\\escape\\n\\t\";",
-           AttributeInstantiation{
-               handle_type: AttributeHandlingType::Ram,
-               name: "description".into(),
-               default: Some(DefaultAttributeValue::String("with\\escape\n\t".into())),
-           })]
+    AttributeInstantiation{
+    handle_type: AttributeHandlingType::Ram,
+    name: "description".into(),
+    default: Some(DefaultAttributeValue::String("with\\escape\n\t".into())),
+    })]
     #[case(
-        "ram      attribute batChargeLevel default = 0x123;",
-        AttributeInstantiation{
-               handle_type: AttributeHandlingType::Ram,
-               name: "batChargeLevel".into(),
-               default: Some(DefaultAttributeValue::Number(0x123)),
-           })]
+    "ram      attribute batChargeLevel default = 0x123;",
+    AttributeInstantiation{
+    handle_type: AttributeHandlingType::Ram,
+    name: "batChargeLevel".into(),
+    default: Some(DefaultAttributeValue::Number(0x123)),
+    })]
     #[case(
-        "ram      attribute batReplacementNeeded;",
-        AttributeInstantiation{
-               handle_type: AttributeHandlingType::Ram,
-               name: "batReplacementNeeded".into(),
-               default: None,
-         })]
+    "ram      attribute batReplacementNeeded;",
+    AttributeInstantiation{
+    handle_type: AttributeHandlingType::Ram,
+    name: "batReplacementNeeded".into(),
+    default: None,
+    })]
     #[case("callback attribute endpointList;",
-           AttributeInstantiation{
-               handle_type: AttributeHandlingType::Callback,
-               name: "endpointList".into(),
-               default: None,
-         })]
+    AttributeInstantiation{
+    handle_type: AttributeHandlingType::Callback,
+    name: "endpointList".into(),
+    default: None,
+    })]
     fn test_parse_attribute_instantiation(
         #[case] input: &str,
         #[case] expected: AttributeInstantiation,
@@ -1413,8 +1564,8 @@ mod tests {
     #[case(r#"default = "test""#, DefaultAttributeValue::String("test".into()))]
     #[case(r#"default = "test\\test""#, DefaultAttributeValue::String("test\\test".into()))]
     #[case("default = \"escaped\\\\and quote\\\"\"", DefaultAttributeValue::String("escaped\\and quote\"".into()))]
-    #[case("default = -1", DefaultAttributeValue::Signed(-1))]
-    #[case("default = -100", DefaultAttributeValue::Signed(-100))]
+    #[case("default = -1", DefaultAttributeValue::Signed(- 1))]
+    #[case("default = -100", DefaultAttributeValue::Signed(- 100))]
     #[case("default = true", DefaultAttributeValue::Bool(true))]
     #[case("default = false", DefaultAttributeValue::Bool(false))]
     fn test_parse_default_attribute_value(
@@ -1426,20 +1577,20 @@ mod tests {
 
     #[rstest]
     #[case(
-        "device type ma_rootdevice = 22, version 1;",
-        DeviceType {name: "ma_rootdevice".into(), code: 22, version: 1}
+    "device type ma_rootdevice = 22, version 1;",
+    DeviceType {name: "ma_rootdevice".into(), code: 22, version: 1}
     )]
     #[case(
-        "device type ma_powersource = 17, version 2;",
-            DeviceType {name: "ma_powersource".into(), code: 17, version: 2}
+    "device type ma_powersource = 17, version 2;",
+    DeviceType {name: "ma_powersource".into(), code: 17, version: 2}
     )]
     #[case(
-        "dEVICe tYPe
+    "dEVICe tYPe
            ma_secondary_network_commissioning = //large number on next line
            0xFFF10002, version 0x123  /*test*/
         ;
         ",
-        DeviceType {name: "ma_secondary_network_commissioning".into(), code: 0xfff10002 , version: 0x123}
+    DeviceType {name: "ma_secondary_network_commissioning".into(), code: 0xfff10002, version: 0x123}
     )]
     fn test_parse_device_type(#[case] input: &str, #[case] expected: DeviceType) {
         assert_parse_ok(device_type(input.into()), expected);
@@ -1535,19 +1686,48 @@ mod tests {
             id: "MyTestCluster".into(),
             code: 0x123,
             revision: 22,
-            enums: vec![
-                Enum {
+            entities: Entities {
+                enums: vec![
+                    Enum {
+                        is_shared: false,
+                        doc_comment: None,
+                        maturity: ApiMaturity::Stable,
+                        id: "ApplyUpdateActionEnum".into(),
+                        base_type: "enum8".into(),
+                        entries: vec![
+                            ConstantEntry { maturity: ApiMaturity::Stable, id: "kProceed".into(), code: 0 },
+                            ConstantEntry { maturity: ApiMaturity::Stable, id: "kAwaitNextAction".into(), code: 1 },
+                            ConstantEntry { maturity: ApiMaturity::Stable, id: "kDiscontinue".into(), code: 2 },
+                        ],
+                    },
+                ],
+
+                structs: vec![
+                    Struct {
+                        doc_comment: None,
+                        maturity: ApiMaturity::Stable,
+                        struct_type: StructType::Response(5),
+                        id: "CommissioningCompleteResponse".into(),
+                        fields: vec![StructField {
+                            field: Field {
+                                data_type: DataType::scalar("char_string"),
+                                id: "debugText".into(),
+                                code: 1,
+                            },
+                            ..Default::default()
+                        }],
+                        is_fabric_scoped: false,
+                    }
+                ],
+                bitmaps: vec![Bitmap {
+                    is_shared: false,
                     doc_comment: None,
                     maturity: ApiMaturity::Stable,
-                    id: "ApplyUpdateActionEnum".into(),
-                    base_type: "enum8".into(),
-                    entries: vec![
-                        ConstantEntry { maturity: ApiMaturity::Stable, id: "kProceed".into(), code: 0 },
-                        ConstantEntry { maturity: ApiMaturity::Stable, id: "kAwaitNextAction".into(), code: 1 },
-                        ConstantEntry { maturity: ApiMaturity::Stable, id: "kDiscontinue".into(), code: 2 },
-                    ]
-               },
-            ],
+                    id: "Feature".into(),
+                    base_type: "bitmap32".into(),
+                    entries: vec![ConstantEntry { maturity: ApiMaturity::Stable, id: "kCalendarFormat".into(), code: 1 }],
+                }],
+            },
             attributes: vec![Attribute {
                 field: StructField {
                     field: Field { data_type: DataType::list_of("attrib_id"), id: "attributeList".into(), code: 65531 },
@@ -1566,30 +1746,7 @@ mod tests {
                     code: 4,
                     is_fabric_scoped: true,
                     ..Default::default()
-            }],
-            structs: vec![
-                Struct {
-                    doc_comment: None,
-                    maturity: ApiMaturity::Stable,
-                    struct_type: StructType::Response(5),
-                    id: "CommissioningCompleteResponse".into(),
-                    fields: vec![StructField {
-                        field: Field {
-                            data_type: DataType::scalar("char_string"),
-                            id: "debugText".into(),
-                            code: 1
-                        },
-                        ..Default::default()
-                    }],
-                    is_fabric_scoped: false,
-                }
-            ],
-            bitmaps: vec![Bitmap {
-                doc_comment: None,
-                maturity: ApiMaturity::Stable,
-                id: "Feature".into(),
-                base_type: "bitmap32".into(),
-                entries: vec![ConstantEntry { maturity: ApiMaturity::Stable, id: "kCalendarFormat".into(), code: 1 }] }],
+                }],
             events: vec![Event {
                 doc_comment: None,
                 maturity: ApiMaturity::Stable,
@@ -1599,7 +1756,7 @@ mod tests {
                 code: 0,
                 fields: vec![
                     StructField {
-                        field: Field { data_type: DataType::scalar("int16u") , id: "actionID".into(), code: 0 },
+                        field: Field { data_type: DataType::scalar("int16u"), id: "actionID".into(), code: 0 },
                         ..Default::default()
                     }
                 ],
@@ -2050,6 +2207,7 @@ mod tests {
                 .into(),
             ),
             Enum {
+                is_shared: false,
                 doc_comment: Some(" Documented ".into()),
                 maturity: ApiMaturity::Stable,
                 id: "EffectIdentifierEnum".into(),
@@ -2107,6 +2265,7 @@ mod tests {
             .expect("valid value")
             .1,
             Bitmap {
+                is_shared: false,
                 doc_comment: Some(" Test feature bitmap ".into()),
                 maturity: ApiMaturity::Stable,
                 id: "Feature".into(),
@@ -2115,24 +2274,24 @@ mod tests {
                     ConstantEntry {
                         maturity: ApiMaturity::Stable,
                         id: "kSceneNames".into(),
-                        code: 0x01
+                        code: 0x01,
                     },
                     ConstantEntry {
                         maturity: ApiMaturity::Stable,
                         id: "kExplicit".into(),
-                        code: 0x02
+                        code: 0x02,
                     },
                     ConstantEntry {
                         maturity: ApiMaturity::Stable,
                         id: "kTableSize".into(),
-                        code: 0x04
+                        code: 0x04,
                     },
                     ConstantEntry {
                         maturity: ApiMaturity::Provisional,
                         id: "kFabricScenes".into(),
-                        code: 0x08
+                        code: 0x08,
                     },
-                ]
+                ],
             }
         );
     }
@@ -2153,12 +2312,12 @@ mod tests {
                     ConstantEntry {
                         maturity: ApiMaturity::Stable,
                         id: "a".into(),
-                        code: 1
+                        code: 1,
                     },
                     ConstantEntry {
                         maturity: ApiMaturity::Provisional,
                         id: "b".into(),
-                        code: 2
+                        code: 2,
                     },
                 ]
             ))
@@ -2178,12 +2337,12 @@ mod tests {
                     ConstantEntry {
                         maturity: ApiMaturity::Stable,
                         id: "kConstantOne".into(),
-                        code: 123
+                        code: 123,
                     },
                     ConstantEntry {
                         maturity: ApiMaturity::Internal,
                         id: "kAnother".into(),
-                        code: 0x23abc
+                        code: 0x23abc,
                     },
                 ]
             ))
@@ -2403,7 +2562,7 @@ mod tests {
                 ConstantEntry {
                     id: "a".into(),
                     code: 0,
-                    maturity: ApiMaturity::Stable
+                    maturity: ApiMaturity::Stable,
                 }
             ))
         );
@@ -2415,7 +2574,7 @@ mod tests {
                 ConstantEntry {
                     id: "xyz".into(),
                     code: 0x123,
-                    maturity: ApiMaturity::Provisional
+                    maturity: ApiMaturity::Provisional,
                 }
             ))
         );
@@ -2427,7 +2586,7 @@ mod tests {
                 ConstantEntry {
                     id: "kTest".into(),
                     code: 0xABC,
-                    maturity: ApiMaturity::Internal
+                    maturity: ApiMaturity::Internal,
                 }
             ))
         );
@@ -2447,7 +2606,7 @@ mod tests {
                 ConstantEntry {
                     id: "kTest".into(),
                     code: 0xABC,
-                    maturity: ApiMaturity::Internal
+                    maturity: ApiMaturity::Internal,
                 }
             ))
         );
@@ -2468,7 +2627,7 @@ mod tests {
                 ConstantEntry {
                     id: "kTest".into(),
                     code: 0xABC,
-                    maturity: ApiMaturity::Internal
+                    maturity: ApiMaturity::Internal,
                 }
             ))
         );

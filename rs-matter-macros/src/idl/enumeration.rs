@@ -20,12 +20,12 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_id_to_enum_variant_name};
-use super::parser::{Cluster, Enum};
+use super::parser::{EntityContext, Enum};
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all enum definitions in the provided IDL cluster.
-pub fn enums(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    let enums = cluster.enums.iter().map(|c| enumeration(c, context));
+pub fn enums(entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
+    let enums = entities.enums().map(|c| enumeration(c, context));
 
     quote!(
         #(#enums)*
@@ -70,6 +70,7 @@ mod test {
 
     use quote::quote;
 
+    use crate::idl::parser::EntityContext;
     use crate::idl::tests::{get_cluster_named, parse_idl};
     use crate::idl::IdlGenerateContext;
 
@@ -79,6 +80,10 @@ mod test {
     fn test_enums() {
         let idl = parse_idl(
             "
+              enum GlobalEnum : enum8 {
+                kDefault = 0 [spec_name = \"Def\"];
+                kOn = 1;
+              }
               cluster OnOff = 6 {
                 revision 6;
 
@@ -98,9 +103,14 @@ mod test {
                 }
 
                 enum StartUpOnOffEnum : enum8 {
-                  kOff = 0;
+                  kOff = 0 [spec_name = \"Def\"];
                   kOn = 1;
                   kToggle = 2;
+                }
+
+                shared enum SharedEnum : enum8 {
+                  kSharedOff = 0;
+                  kSharedOn = 1;
                 }
             }
         ",
@@ -108,10 +118,13 @@ mod test {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &enums(cluster, &context));
+        // panic!("====\n{}\n====", &enums(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
-            &enums(cluster, &context),
+            &enums(
+                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &context
+            ),
             &quote!(
                 #[derive(
                     Debug,
@@ -190,6 +203,44 @@ mod test {
                     On = 1,
                     #[enumval(2)]
                     Toggle = 2,
+                }
+                #[derive(
+                    Debug,
+                    PartialEq,
+                    Eq,
+                    Copy,
+                    Clone,
+                    Hash,
+                    rs_matter_crate :: tlv :: FromTLV,
+                    rs_matter_crate :: tlv :: ToTLV,
+                )]
+                #[tlvargs(datatype = "u8")]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+                #[repr(u8)]
+                pub enum GlobalEnum {
+                    #[enumval(0)]
+                    Default = 0,
+                    #[enumval(1)]
+                    On = 1,
+                }
+                #[derive(
+                    Debug,
+                    PartialEq,
+                    Eq,
+                    Copy,
+                    Clone,
+                    Hash,
+                    rs_matter_crate :: tlv :: FromTLV,
+                    rs_matter_crate :: tlv :: ToTLV,
+                )]
+                #[tlvargs(datatype = "u8")]
+                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+                #[repr(u8)]
+                pub enum SharedEnum {
+                    #[enumval(0)]
+                    SharedOff = 0,
+                    #[enumval(1)]
+                    SharedOn = 1,
                 }
             )
         );

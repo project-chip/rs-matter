@@ -24,9 +24,16 @@ pub struct ConstantEntry {
     pub code: u64,
 }
 
+/// A named annotation on a type or value.
+pub struct ConstantAnnotation {
+    pub id: String,
+    pub value: String,
+}
+
 /// A set of constant entries that correspont to an enumeration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Enum {
+    pub is_shared: bool,
     pub doc_comment: Option<String>,
     pub maturity: ApiMaturity,
     pub id: String,
@@ -37,6 +44,7 @@ pub struct Enum {
 /// A set of constant entries that correspont to a bitmap.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bitmap {
+    pub is_shared: bool,
     pub doc_comment: Option<String>,
     pub maturity: ApiMaturity,
     pub id: String,
@@ -142,6 +150,7 @@ pub enum StructType {
     Regular,
     Request,
     Response(u64), // response with a code
+    Shared,
 }
 
 /// A structure defined in IDL.
@@ -247,6 +256,14 @@ impl Default for Attribute {
     }
 }
 
+// Entities which can be scoped to a cluster or global
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Entities {
+    pub bitmaps: Vec<Bitmap>,
+    pub enums: Vec<Enum>,
+    pub structs: Vec<Struct>,
+}
+
 /// A cluster contains all underlying types, commands, events and attributes
 /// corresponding to a Matter cluster.
 ///
@@ -261,9 +278,7 @@ pub struct Cluster {
     pub code: u64,
     pub revision: u64,
 
-    pub bitmaps: Vec<Bitmap>,
-    pub enums: Vec<Enum>,
-    pub structs: Vec<Struct>,
+    pub entities: Entities,
 
     pub events: Vec<Event>,
     pub attributes: Vec<Attribute>,
