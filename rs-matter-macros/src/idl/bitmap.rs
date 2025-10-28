@@ -21,12 +21,12 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_id_to_constant_name};
-use super::parser::{Bitmap, EntityContext};
+use super::parser::Bitmap;
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all bitmap definitions in the provided IDL cluster.
-pub fn bitmaps(entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
-    let bitmaps = entities.bitmaps().map(|c| bitmap(c, context));
+pub fn bitmaps(bitmaps: &Vec<Bitmap>, context: &IdlGenerateContext) -> TokenStream {
+    let bitmaps = bitmaps.iter().map(|c| bitmap(c, context));
 
     quote!(
         #(#bitmaps)*
@@ -101,7 +101,6 @@ mod test {
     use quote::quote;
 
     use super::bitmaps;
-    use crate::idl::parser::EntityContext;
     use crate::idl::tests::{get_cluster_named, parse_idl};
     use crate::idl::IdlGenerateContext;
 
@@ -137,10 +136,7 @@ mod test {
         // panic!("====\n{}\n====", &bitmaps(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &bitmaps(
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
-                &context
-            ),
+            &bitmaps(&cluster.entities.bitmaps, &context),
             &quote!(
                 #[cfg(not(feature = "defmt"))]
                 rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; const _INTERNAL_ALL_BITS = !0 ; } }
@@ -152,16 +148,6 @@ mod test {
                 #[cfg(feature = "defmt")]
                 rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; const _INTERNAL_ALL_BITS = !0 ; } }
                 rs_matter_crate::bitflags_tlv!(OnOffControlBitmap, u8);
-                #[cfg(not(feature = "defmt"))]
-                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct GlobalBitmap : u8 { const GLOBAL = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                #[cfg(feature = "defmt")]
-                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct GlobalBitmap : u8 { const GLOBAL = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                rs_matter_crate::bitflags_tlv!(GlobalBitmap, u8);
-                #[cfg(not(feature = "defmt"))]
-                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct SharedBitmap : u8 { const SHARED = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                #[cfg(feature = "defmt")]
-                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct SharedBitmap : u8 { const SHARED = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                rs_matter_crate::bitflags_tlv!(SharedBitmap, u8);
             )
         );
     }

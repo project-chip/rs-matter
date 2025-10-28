@@ -26,10 +26,10 @@ use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
 /// all structures in the given IDL entities.
-pub fn struct_tags(entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
+pub fn struct_tags(structs: &Vec<Struct>, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let struct_tags = entities.structs().map(|s| struct_tag(s, &krate));
+    let struct_tags = structs.iter().map(|s| struct_tag(s, &krate));
 
     quote!(
         #(#struct_tags)*
@@ -38,8 +38,12 @@ pub fn struct_tags(entities: &EntityContext, context: &IdlGenerateContext) -> To
 
 /// Return a token stream containing the structure definitions
 /// for all structures in the given IDL cluster.
-pub fn structs(entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
-    let structs = entities.structs().map(|s| structure(s, entities, context));
+pub fn structs(
+    structs: &Vec<Struct>,
+    entities: &EntityContext,
+    context: &IdlGenerateContext,
+) -> TokenStream {
+    let structs = structs.iter().map(|s| structure(s, entities, context));
 
     quote!(
         #(#structs)*
@@ -302,6 +306,7 @@ mod tests {
 
         assert_tokenstreams_eq!(
             &structs(
+                &cluster.entities.structs,
                 &EntityContext::new(Some(&cluster.entities), &idl.globals),
                 &context
             ),
@@ -707,97 +712,13 @@ mod tests {
                         rs_matter_crate::reexport::defmt::write!(f, "}}")
                     }
                 }
-                #[derive(PartialEq, Eq, Clone, Hash)]
-                pub struct GlobalStruct<'a> (rs_matter_crate::tlv::TLVElement<'a>);
-
-                impl<'a> GlobalStruct<'a> {
-                    #[doc = "Create a new instance"]
-                    pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self { Self(element) }
-                    #[doc = "Return the underlying TLV element"]
-                    pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
-                    pub fn global(&self) -> Result<bool, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
-                }
-
-                impl<'a> rs_matter_crate::tlv::FromTLV<'a> for GlobalStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::error::Error> { Ok(Self::new(element.clone())) } }
-
-                impl rs_matter_crate::tlv::ToTLV for GlobalStruct<'_> {
-                    fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
-                    fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
-                }
-
-                impl core::fmt::Debug for GlobalStruct<'_> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                        write!(f, "{} {{", "GlobalStruct")?;
-                        match self.global() {
-                            Ok(value) => write!(f, "{}: {:?},", "global", value)?,
-                            Err(e) => write!(f, "{}: ??? {:?},", "global", e.code())?,
-                        }
-                        write!(f, "}}")
-                    }
-                }
-
-                #[cfg(feature = "defmt")]
-                impl rs_matter_crate::reexport::defmt::Format for GlobalStruct<'_> {
-                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
-                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "GlobalStruct");
-                        match self.global() {
-                            Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "global", value),
-                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "global", e.code()),
-                        }
-                        rs_matter_crate::reexport::defmt::write!(f, "}}")
-                    }
-                }
-
-                #[derive(PartialEq, Eq, Clone, Hash)]
-                pub struct SharedStruct<'a> (rs_matter_crate::tlv::TLVElement<'a>);
-
-                impl<'a> SharedStruct<'a> {
-                    #[doc = "Create a new instance"]
-                    pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self { Self(element) }
-                    #[doc = "Return the underlying TLV element"]
-                    pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
-                    pub fn shared(&self) -> Result<bool, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
-                }
-
-                impl<'a> rs_matter_crate::tlv::FromTLV<'a> for SharedStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::error::Error> { Ok(Self::new(element.clone())) } }
-
-                impl rs_matter_crate::tlv::ToTLV for SharedStruct<'_> {
-                    fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
-                    fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
-                }
-
-                impl core::fmt::Debug for SharedStruct<'_> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                        write!(f, "{} {{", "SharedStruct")?;
-                        match self.shared() {
-                            Ok(value) => write!(f, "{}: {:?},", "shared", value)?,
-                            Err(e) => write!(f, "{}: ??? {:?},", "shared", e.code())?,
-                        }
-                        write!(f, "}}")
-                    }
-                }
-
-                #[cfg(feature = "defmt")]
-                impl rs_matter_crate::reexport::defmt::Format for SharedStruct<'_> {
-                    fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
-                        rs_matter_crate::reexport::defmt::write!(f, "{} {{", "SharedStruct");
-                        match self.shared() {
-                            Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "shared", value),
-                            Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "shared", e.code()),
-                        }
-                        rs_matter_crate::reexport::defmt::write!(f, "}}")
-                    }
-                }
             )
         );
 
-        // panic!("====\n{}\n====", struct_tags(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
+        // panic!("====\n{}\n====", struct_tags(&cluster.entities.structs, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
-                &context
-            ),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -833,19 +754,6 @@ mod tests {
                     Status = 0,
                     GroupId = 12,
                 }
-                #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
-                #[repr(u8)]
-                pub enum GlobalStructTag {
-                    Global = 1,
-                }
-
-                #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
-                #[repr(u8)]
-                pub enum SharedStructTag {
-                    Shared = 1,
-                }
             )
         );
     }
@@ -878,6 +786,7 @@ mod tests {
 
         assert_tokenstreams_eq!(
             &structs(
+                &cluster.entities.structs,
                 &EntityContext::new(Some(&cluster.entities), &idl.globals),
                 &context
             ),
@@ -1069,10 +978,7 @@ mod tests {
         // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
-                &context
-            ),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -1116,6 +1022,7 @@ mod tests {
 
         assert_tokenstreams_eq!(
             &structs(
+                &cluster.entities.structs,
                 &EntityContext::new(Some(&cluster.entities), &idl.globals),
                 &context
             ),
@@ -1268,10 +1175,7 @@ mod tests {
         // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
-                &context
-            ),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -1308,6 +1212,7 @@ mod tests {
 
         assert_tokenstreams_eq!(
             &structs(
+                &cluster.entities.structs,
                 &EntityContext::new(Some(&cluster.entities), &idl.globals),
                 &context
             ),
@@ -1460,10 +1365,7 @@ mod tests {
         // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
-                &context
-            ),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]

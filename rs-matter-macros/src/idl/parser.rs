@@ -1356,18 +1356,22 @@ impl<'a> EntityContext<'a> {
         Self { local, global }
     }
 
+    #[allow(unused)]
     pub fn bitmaps(&self) -> Box<dyn Iterator<Item = &Bitmap> + '_> {
         match &self.local {
             Some(value) => Box::new(value.bitmaps.iter().chain(self.global.bitmaps.iter())),
             None => Box::new(self.global.bitmaps.iter()),
         }
     }
+
+    #[allow(unused)]
     pub fn enums(&self) -> Box<dyn Iterator<Item = &Enum> + '_> {
         match &self.local {
             Some(value) => Box::new(value.enums.iter().chain(self.global.enums.iter())),
             None => Box::new(self.global.enums.iter()),
         }
     }
+
     pub fn structs(&self) -> Box<dyn Iterator<Item = &Struct> + '_> {
         match &self.local {
             Some(value) => Box::new(value.structs.iter().chain(self.global.structs.iter())),
@@ -1426,22 +1430,44 @@ impl Idl {
             match r {
                 InternalIdlParsedData::Cluster(mut c) => {
                     // Pull out shared entities into the global scope and update the cluster.
-                    let (shared_structs, local_structs) = c
+                    let (shared_structs, local_structs): (Vec<Struct>, Vec<Struct>) = c
                         .entities
                         .structs
                         .into_iter()
                         .partition(|s| s.struct_type == StructType::Shared);
-                    idl.globals.structs.extend(shared_structs);
+                    if !shared_structs.is_empty() {
+                        let by_id: HashSet<String> =
+                            idl.globals.structs.iter().map(|s| s.id.clone()).collect();
+                        idl.globals.structs.extend(
+                            shared_structs
+                                .into_iter()
+                                .filter(|s| !by_id.contains(&*s.id)),
+                        );
+                    }
                     c.entities.structs = local_structs;
 
-                    let (shared_enums, local_enums) =
+                    let (shared_enums, local_enums): (Vec<Enum>, Vec<Enum>) =
                         c.entities.enums.into_iter().partition(|e| e.is_shared);
-                    idl.globals.enums.extend(shared_enums);
+                    if !shared_enums.is_empty() {
+                        let by_id: HashSet<String> =
+                            idl.globals.enums.iter().map(|s| s.id.clone()).collect();
+                        idl.globals
+                            .enums
+                            .extend(shared_enums.into_iter().filter(|s| !by_id.contains(&*s.id)));
+                    }
                     c.entities.enums = local_enums;
 
-                    let (shared_bitmaps, local_bitmaps) =
+                    let (shared_bitmaps, local_bitmaps): (Vec<Bitmap>, Vec<Bitmap>) =
                         c.entities.bitmaps.into_iter().partition(|b| b.is_shared);
-                    idl.globals.bitmaps.extend(shared_bitmaps);
+                    if !shared_bitmaps.is_empty() {
+                        let by_id: HashSet<String> =
+                            idl.globals.bitmaps.iter().map(|s| s.id.clone()).collect();
+                        idl.globals.bitmaps.extend(
+                            shared_bitmaps
+                                .into_iter()
+                                .filter(|s| !by_id.contains(&*s.id)),
+                        );
+                    }
                     c.entities.bitmaps = local_bitmaps;
 
                     idl.clusters.push(c);

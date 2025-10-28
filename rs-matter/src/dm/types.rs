@@ -43,6 +43,7 @@ pub type EndptId = crate::im::EndptId;
 pub type ClusterId = crate::im::ClusterId;
 pub type AttrId = crate::im::AttrId;
 pub type CmdId = crate::im::CmdId;
+pub type FabricId = crate::im::FabricId;
 
 #[derive(Debug, ToTLV, Copy, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

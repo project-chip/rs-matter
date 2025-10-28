@@ -162,14 +162,44 @@ impl From<OpCode> for MessageMeta {
     }
 }
 
-/// A type alias for endpoint ID, which is a 16-bit unsigned integer.
+// Type aliases for first-class matter types
 pub type EndptId = u16;
-/// A type alias for cluster ID, which is a 32-bit unsigned integer.
 pub type ClusterId = u32;
-/// A type alias for attribute ID, which is a 32-bit unsigned integer.
 pub type AttrId = u32;
-/// A type alias for command ID, which is a 32-bit unsigned integer.
 pub type CmdId = u32;
+pub type ActionId = u8;
+pub type AttributeId = u32;
+pub type ClusterStatus = u8;
+pub type CommandRef = u16;
+pub type CompressedFabricId = u64;
+pub type DataVersion = u32;
+pub type DeviceTypeId = u32;
+pub type ElapsedS = u32;
+pub type EventId = u32;
+pub type EventNumber = u64;
+pub type FabricId = u64;
+pub type FabricIndex = u8;
+pub type FieldId = u32;
+pub type ListIndex = u16;
+pub type LocalizedStringIdentifier = u16;
+pub type TransactionId = u32;
+pub type KeysetId = u16;
+pub type InteractionModelRevision = u8;
+pub type SubscriptionId = u32;
+pub type SceneId = u8;
+
+pub type Percent = u8;
+pub type Percent100ths = u16;
+pub type EnergyMilliWh = i64;
+pub type EnergyMilliVAh = i64;
+pub type EnergyMilliVARh = i64;
+pub type AmperageMilliA = i64;
+pub type PowerMilliW = i64;
+pub type PowerMilliVA = i64;
+pub type PowerMilliVAR = i64;
+pub type VoltageMilliV = i64;
+pub type Money = i64;
+
 
 /// A generic (possibly a wildcard) path with endpoint, clusters, and a leaf
 ///

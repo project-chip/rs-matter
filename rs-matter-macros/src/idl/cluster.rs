@@ -447,6 +447,7 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
 
     quote!(
+        use crate::dm::clusters::decl::globals::*;
         #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
         pub const FULL_CLUSTER: #krate::dm::Cluster<'static> = #krate::dm::Cluster::new(
             #cluster_id,

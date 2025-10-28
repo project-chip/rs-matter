@@ -20,12 +20,12 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_id_to_enum_variant_name};
-use super::parser::{EntityContext, Enum};
+use super::parser::Enum;
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all enum definitions in the provided IDL cluster.
-pub fn enums(entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
-    let enums = entities.enums().map(|c| enumeration(c, context));
+pub fn enums(enums: &Vec<Enum>, context: &IdlGenerateContext) -> TokenStream {
+    let enums = enums.iter().map(|c| enumeration(c, context));
 
     quote!(
         #(#enums)*
@@ -70,7 +70,6 @@ mod test {
 
     use quote::quote;
 
-    use crate::idl::parser::EntityContext;
     use crate::idl::tests::{get_cluster_named, parse_idl};
     use crate::idl::IdlGenerateContext;
 
@@ -121,10 +120,7 @@ mod test {
         // panic!("====\n{}\n====", &enums(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
-            &enums(
-                &EntityContext::new(Some(&cluster.entities), &idl.globals),
-                &context
-            ),
+            &enums(&cluster.entities.enums, &context),
             &quote!(
                 #[derive(
                     Debug,
@@ -203,44 +199,6 @@ mod test {
                     On = 1,
                     #[enumval(2)]
                     Toggle = 2,
-                }
-                #[derive(
-                    Debug,
-                    PartialEq,
-                    Eq,
-                    Copy,
-                    Clone,
-                    Hash,
-                    rs_matter_crate :: tlv :: FromTLV,
-                    rs_matter_crate :: tlv :: ToTLV,
-                )]
-                #[tlvargs(datatype = "u8")]
-                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
-                #[repr(u8)]
-                pub enum GlobalEnum {
-                    #[enumval(0)]
-                    Default = 0,
-                    #[enumval(1)]
-                    On = 1,
-                }
-                #[derive(
-                    Debug,
-                    PartialEq,
-                    Eq,
-                    Copy,
-                    Clone,
-                    Hash,
-                    rs_matter_crate :: tlv :: FromTLV,
-                    rs_matter_crate :: tlv :: ToTLV,
-                )]
-                #[tlvargs(datatype = "u8")]
-                #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
-                #[repr(u8)]
-                pub enum SharedEnum {
-                    #[enumval(0)]
-                    SharedOff = 0,
-                    #[enumval(1)]
-                    SharedOn = 1,
                 }
             )
         );

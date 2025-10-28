@@ -23,7 +23,7 @@ use proc_macro2::{Ident, Punct};
 use quote::quote;
 
 use crate::idl::{
-    cluster, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
+    cluster, globals, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
     CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2, CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
     CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0, CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0,
     CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
@@ -123,9 +123,12 @@ pub fn import(item: TokenStream) -> TokenStream {
         .iter()
         .filter(|c| input.clusters.is_empty() || input.clusters.contains(&c.id))
         .map(|c| cluster(c, &idl.globals, &context));
+    let globals = globals(&idl.globals, &context);
 
     let result = quote!(
         // IDL-generated code:
+        #globals
+
         #(#clusters)*
     )
     .into();
