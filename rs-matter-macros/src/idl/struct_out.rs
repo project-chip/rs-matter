@@ -29,7 +29,7 @@ use super::IdlGenerateContext;
 /// Return the token stream of all structure builders corresponding
 /// to the structures defined by the provided IDL cluster.
 pub fn struct_builders(
-    structs: &Vec<Struct>,
+    structs: &[Struct],
     entities: &EntityContext,
     context: &IdlGenerateContext,
 ) -> TokenStream {

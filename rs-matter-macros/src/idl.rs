@@ -94,7 +94,7 @@ fn cluster_internal(
     let attribute_id = cluster::attribute_id(cluster, context);
     let command_id = cluster::command_id(cluster, context);
     let command_response_id = cluster::command_response_id(entities, context);
-    let cluster_meta = cluster::cluster(cluster, context);
+    let cluster_meta = cluster::cluster(cluster, globals, context);
 
     let handler = handler::handler(false, false, cluster, globals, context);
     let handler_inherent_impl = handler::handler(false, true, cluster, globals, context);

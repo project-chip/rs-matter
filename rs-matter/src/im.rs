@@ -187,7 +187,6 @@ pub type KeysetId = u16;
 pub type InteractionModelRevision = u8;
 pub type SubscriptionId = u32;
 pub type SceneId = u8;
-
 pub type Percent = u8;
 pub type Percent100ths = u16;
 pub type EnergyMilliWh = i64;
@@ -199,7 +198,6 @@ pub type PowerMilliVA = i64;
 pub type PowerMilliVAR = i64;
 pub type VoltageMilliV = i64;
 pub type Money = i64;
-
 
 /// A generic (possibly a wildcard) path with endpoint, clusters, and a leaf
 ///

@@ -24,7 +24,7 @@ use super::parser::Enum;
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all enum definitions in the provided IDL cluster.
-pub fn enums(enums: &Vec<Enum>, context: &IdlGenerateContext) -> TokenStream {
+pub fn enums(enums: &[Enum], context: &IdlGenerateContext) -> TokenStream {
     let enums = enums.iter().map(|c| enumeration(c, context));
 
     quote!(

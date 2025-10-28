@@ -26,7 +26,7 @@ use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
 /// all structures in the given IDL entities.
-pub fn struct_tags(structs: &Vec<Struct>, context: &IdlGenerateContext) -> TokenStream {
+pub fn struct_tags(structs: &[Struct], context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
     let struct_tags = structs.iter().map(|s| struct_tag(s, &krate));
@@ -39,7 +39,7 @@ pub fn struct_tags(structs: &Vec<Struct>, context: &IdlGenerateContext) -> Token
 /// Return a token stream containing the structure definitions
 /// for all structures in the given IDL cluster.
 pub fn structs(
-    structs: &Vec<Struct>,
+    structs: &[Struct],
     entities: &EntityContext,
     context: &IdlGenerateContext,
 ) -> TokenStream {

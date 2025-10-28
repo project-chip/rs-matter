@@ -25,7 +25,7 @@ use super::parser::Bitmap;
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all bitmap definitions in the provided IDL cluster.
-pub fn bitmaps(bitmaps: &Vec<Bitmap>, context: &IdlGenerateContext) -> TokenStream {
+pub fn bitmaps(bitmaps: &[Bitmap], context: &IdlGenerateContext) -> TokenStream {
     let bitmaps = bitmaps.iter().map(|c| bitmap(c, context));
 
     quote!(

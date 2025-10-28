@@ -23,7 +23,7 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_attribute_name_to_enum_variant_name};
-use super::parser::{AccessPrivilege, Cluster, EntityContext, StructType};
+use super::parser::{AccessPrivilege, Cluster, Entities, EntityContext, StructType};
 use super::IdlGenerateContext;
 
 pub(crate) const NO_RESPONSE: &str = "DefaultSuccess";
@@ -340,7 +340,7 @@ pub fn command_response_id(entities: &EntityContext, context: &IdlGenerateContex
 ///
 /// The `Cluster` instance contains the cluster ID, revision, feature map, attributes, accepted commands, and generated commands
 /// - basically, the cluster meta-data that `rs-matter` needs in order do path expansion and access checks on the cluster.
-pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
     let attributes = cluster.attributes.iter().map(|attr| {
@@ -445,9 +445,17 @@ pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
 
     let cluster_id = Literal::u32_unsuffixed(cluster.code as u32);
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
+    let import_globals = if !globals.enums.is_empty()
+        && !globals.structs.is_empty()
+        && !globals.bitmaps.is_empty()
+    {
+        quote!("use crate::dm::clusters::decl::globals::*;")
+    } else {
+        quote!()
+    };
 
     quote!(
-        use crate::dm::clusters::decl::globals::*;
+        #import_globals
         #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
         pub const FULL_CLUSTER: #krate::dm::Cluster<'static> = #krate::dm::Cluster::new(
             #cluster_id,
@@ -559,7 +567,7 @@ mod tests {
         // panic!("====\n{}\n====", &cluster(cluster_meta, &context));
 
         assert_tokenstreams_eq!(
-            &cluster(cluster_meta, &context),
+            &cluster(cluster_meta, &idl.globals, &context),
             &quote!(
                 #[doc = "The cluster metadata. By default, all cluster attributes and commands are allowed, and the revision is the latest one. Use `Cluster::with_*` to reconfigure."]
                 pub const FULL_CLUSTER: rs_matter_crate::dm::Cluster<'static> =
