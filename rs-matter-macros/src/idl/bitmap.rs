@@ -148,16 +148,6 @@ mod test {
                 #[cfg(feature = "defmt")]
                 rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct OnOffControlBitmap : u8 { const ACCEPT_ONLY_WHEN_ON = 1 ; const _INTERNAL_ALL_BITS = !0 ; } }
                 rs_matter_crate::bitflags_tlv!(OnOffControlBitmap, u8);
-                #[cfg(not(feature = "defmt"))]
-                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct GlobalBitmap : u8 { const GLOBAL = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                #[cfg(feature = "defmt")]
-                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct GlobalBitmap : u8 { const GLOBAL = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                rs_matter_crate::bitflags_tlv!(GlobalBitmap, u8);
-                #[cfg(not(feature = "defmt"))]
-                rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct SharedBitmap : u8 { const SHARED = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                #[cfg(feature = "defmt")]
-                rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct SharedBitmap : u8 { const SHARED = 1 ; const _INTERNAL_ALL_BITS = ! 0 ; } }
-                rs_matter_crate::bitflags_tlv!(SharedBitmap, u8);
             )
         );
     }
