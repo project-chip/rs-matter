@@ -57,7 +57,8 @@ pub fn idl_id_to_constant_name(s: &str) -> String {
 pub fn idl_id_to_enum_variant_name(s: &str) -> String {
     let str = s.strip_prefix('k').unwrap_or(s).to_string();
     let char = str.chars().next().unwrap();
-    if !char.is_alphabetic() {
+    // Error is used by core::convert::TryFrom & causes a collision
+    if !char.is_alphabetic() || str.eq("Error") {
         format!("V{str}")
     } else {
         str
@@ -125,6 +126,7 @@ pub fn idl_attribute_name_to_enum_variant_name(s: &str) -> String {
 pub fn ident(name: &str) -> Ident {
     match name {
         "type" => Ident::new_raw(name, Span::call_site()), // TODO: Enhance with more Rust keywords
+        "match" => Ident::new_raw(name, Span::call_site()), // TODO: Enhance with more Rust keywords
         _ => Ident::new(name, Span::call_site()),
     }
 }

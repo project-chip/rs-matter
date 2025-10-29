@@ -82,6 +82,7 @@ mod test {
               enum GlobalEnum : enum8 {
                 kDefault = 0 [spec_name = \"Def\"];
                 kOn = 1;
+                kError = 2;
               }
               cluster OnOff = 6 {
                 revision 6;
