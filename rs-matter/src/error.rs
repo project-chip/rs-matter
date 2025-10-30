@@ -115,7 +115,7 @@ pub struct Error {
     #[cfg(all(feature = "std", feature = "backtrace"))]
     backtrace: std::backtrace::Backtrace,
     #[cfg(all(feature = "std", feature = "backtrace"))]
-    inner: Option<Box<dyn std::error::Error + Send>>,
+    inner: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl Error {
@@ -132,7 +132,7 @@ impl Error {
     #[cfg(all(feature = "std", feature = "backtrace"))]
     pub fn new_with_details(
         code: ErrorCode,
-        detailed_err: Box<dyn std::error::Error + Send>,
+        detailed_err: Box<dyn std::error::Error + Send + Sync>,
     ) -> Self {
         Self {
             code,
@@ -153,7 +153,7 @@ impl Error {
     }
 
     #[cfg(all(feature = "std", feature = "backtrace"))]
-    pub fn details(&self) -> Option<&(dyn std::error::Error + Send)> {
+    pub fn details(&self) -> Option<&(dyn std::error::Error + Send + Sync)> {
         self.inner.as_ref().map(|err| err.as_ref())
     }
 }
