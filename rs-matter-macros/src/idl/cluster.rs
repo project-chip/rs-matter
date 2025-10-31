@@ -449,7 +449,7 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
         || !globals.structs.is_empty()
         || !globals.bitmaps.is_empty()
     {
-        quote!("use crate::dm::clusters::decl::globals::*;")
+        quote!(use crate::dm::clusters::decl::globals::*;)
     } else {
         quote!()
     };
