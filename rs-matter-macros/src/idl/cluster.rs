@@ -446,8 +446,8 @@ pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateConte
     let cluster_id = Literal::u32_unsuffixed(cluster.code as u32);
     let cluster_revision = Literal::u16_unsuffixed(cluster.revision as u16);
     let import_globals = if !globals.enums.is_empty()
-        && !globals.structs.is_empty()
-        && !globals.bitmaps.is_empty()
+        || !globals.structs.is_empty()
+        || !globals.bitmaps.is_empty()
     {
         quote!("use crate::dm::clusters::decl::globals::*;")
     } else {
