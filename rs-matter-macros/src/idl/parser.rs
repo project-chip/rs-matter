@@ -1358,16 +1358,28 @@ impl<'a> EntityContext<'a> {
 
     #[allow(unused)]
     pub fn bitmaps(&self) -> impl Iterator<Item = &Bitmap> + '_ {
-        self.local.map(|l|l.bitmaps.iter()).into_iter().flatten().chain(self.global.bitmaps.iter())
+        self.local
+            .map(|l| l.bitmaps.iter())
+            .into_iter()
+            .flatten()
+            .chain(self.global.bitmaps.iter())
     }
 
     #[allow(unused)]
     pub fn enums(&self) -> impl Iterator<Item = &Enum> + '_ {
-        self.local.map(|l|l.enums.iter()).into_iter().flatten().chain(self.global.enums.iter())
+        self.local
+            .map(|l| l.enums.iter())
+            .into_iter()
+            .flatten()
+            .chain(self.global.enums.iter())
     }
 
     pub fn structs(&self) -> impl Iterator<Item = &Struct> + '_ {
-        self.local.map(|l|l.structs.iter()).into_iter().flatten().chain(self.global.structs.iter())
+        self.local
+            .map(|l| l.structs.iter())
+            .into_iter()
+            .flatten()
+            .chain(self.global.structs.iter())
     }
 }
 
