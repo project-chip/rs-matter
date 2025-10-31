@@ -1357,26 +1357,17 @@ impl<'a> EntityContext<'a> {
     }
 
     #[allow(unused)]
-    pub fn bitmaps(&self) -> Box<dyn Iterator<Item = &Bitmap> + '_> {
-        match &self.local {
-            Some(value) => Box::new(value.bitmaps.iter().chain(self.global.bitmaps.iter())),
-            None => Box::new(self.global.bitmaps.iter()),
-        }
+    pub fn bitmaps(&self) -> impl Iterator<Item = &Bitmap> + '_ {
+        self.local.map(|l|l.bitmaps.iter()).into_iter().flatten().chain(self.global.bitmaps.iter())
     }
 
     #[allow(unused)]
-    pub fn enums(&self) -> Box<dyn Iterator<Item = &Enum> + '_> {
-        match &self.local {
-            Some(value) => Box::new(value.enums.iter().chain(self.global.enums.iter())),
-            None => Box::new(self.global.enums.iter()),
-        }
+    pub fn enums(&self) -> impl Iterator<Item = &Enum> + '_ {
+        self.local.map(|l|l.enums.iter()).into_iter().flatten().chain(self.global.enums.iter())
     }
 
-    pub fn structs(&self) -> Box<dyn Iterator<Item = &Struct> + '_> {
-        match &self.local {
-            Some(value) => Box::new(value.structs.iter().chain(self.global.structs.iter())),
-            None => Box::new(self.global.structs.iter()),
-        }
+    pub fn structs(&self) -> impl Iterator<Item = &Struct> + '_ {
+        self.local.map(|l|l.structs.iter()).into_iter().flatten().chain(self.global.structs.iter())
     }
 }
 
