@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use parser::Cluster;
+use parser::{Cluster, EntityContext};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
 
@@ -28,6 +28,7 @@ mod parser;
 mod struct_in;
 mod struct_out;
 
+use crate::idl::parser::Entities;
 pub use parser::Idl;
 
 pub const CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0: &str =
@@ -63,12 +64,13 @@ impl IdlGenerateContext {
 /// Return a token stream containing Rust types corresponding to all definitions
 /// in the provided IDL cluster:
 ///
-pub fn cluster(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    cluster_internal(cluster, true, context)
+pub fn cluster(cluster: &Cluster, globals: &Entities, context: &IdlGenerateContext) -> TokenStream {
+    cluster_internal(cluster, globals, true, context)
 }
 
 fn cluster_internal(
     cluster: &Cluster,
+    globals: &Entities,
     with_async: bool,
     context: &IdlGenerateContext,
 ) -> TokenStream {
@@ -82,20 +84,21 @@ fn cluster_internal(
         cluster.id
     ));
 
-    let bitmaps = bitmap::bitmaps(cluster, context);
-    let enums = enumeration::enums(cluster, context);
-    let struct_tags = struct_in::struct_tags(cluster, context);
-    let structs = struct_in::structs(cluster, context);
-    let struct_builders = struct_out::struct_builders(cluster, context);
+    let entities = &EntityContext::new(Some(&cluster.entities), globals);
+    let bitmaps = bitmap::bitmaps(&cluster.entities.bitmaps, context);
+    let enums = enumeration::enums(&cluster.entities.enums, context);
+    let struct_tags = struct_in::struct_tags(&cluster.entities.structs, context);
+    let structs = struct_in::structs(&cluster.entities.structs, entities, context);
+    let struct_builders = struct_out::struct_builders(&cluster.entities.structs, entities, context);
 
     let attribute_id = cluster::attribute_id(cluster, context);
     let command_id = cluster::command_id(cluster, context);
-    let command_response_id = cluster::command_response_id(cluster, context);
-    let cluster_meta = cluster::cluster(cluster, context);
+    let command_response_id = cluster::command_response_id(entities, context);
+    let cluster_meta = cluster::cluster(cluster, globals, context);
 
-    let handler = handler::handler(false, false, cluster, context);
-    let handler_inherent_impl = handler::handler(false, true, cluster, context);
-    let handler_adaptor = handler::handler_adaptor(false, cluster, context);
+    let handler = handler::handler(false, false, cluster, globals, context);
+    let handler_inherent_impl = handler::handler(false, true, cluster, globals, context);
+    let handler_adaptor = handler::handler_adaptor(false, cluster, globals, context);
 
     let quote = quote!(
         #bitmaps
@@ -124,9 +127,9 @@ fn cluster_internal(
     );
 
     let quote = if with_async {
-        let async_handler = handler::handler(true, false, cluster, context);
-        let async_handler_inherent_impl = handler::handler(true, true, cluster, context);
-        let async_handler_adaptor = handler::handler_adaptor(true, cluster, context);
+        let async_handler = handler::handler(true, false, cluster, globals, context);
+        let async_handler_inherent_impl = handler::handler(true, true, cluster, globals, context);
+        let async_handler_adaptor = handler::handler_adaptor(true, cluster, globals, context);
 
         quote!(
             #quote
@@ -153,19 +156,71 @@ fn cluster_internal(
     )
 }
 
+/// Return a token stream containing Rust types corresponding to all global definitions
+///
+pub fn globals(globals: &Entities, context: &IdlGenerateContext) -> TokenStream {
+    globals_internal(globals, context)
+}
+
+fn globals_internal(globals: &Entities, context: &IdlGenerateContext) -> TokenStream {
+    let module_name = Ident::new("globals", Span::call_site());
+
+    let module_doc = Literal::string("This module contains generated global Rust types");
+
+    let entities = &EntityContext::new(None, globals);
+    let bitmaps = bitmap::bitmaps(&globals.bitmaps, context);
+    let enums = enumeration::enums(&globals.enums, context);
+    let struct_tags = struct_in::struct_tags(&globals.structs, context);
+    let structs = struct_in::structs(&globals.structs, entities, context);
+    let struct_builders = struct_out::struct_builders(&globals.structs, entities, context);
+
+    let quote = quote!(
+        #bitmaps
+
+        #enums
+
+        #struct_tags
+
+        #structs
+
+        #struct_builders
+    );
+
+    quote!(
+        #[doc = #module_doc]
+        #[allow(unknown_lints)]
+        #[allow(clippy::uninlined_format_args)]
+        #[allow(unexpected_cfgs)]
+        pub mod #module_name {
+            #quote
+        }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use assert_tokenstreams_eq::assert_tokenstreams_eq;
 
     use super::Idl;
-    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0};
+    use super::{Cluster, CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0, CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0};
 
     use crate::idl::IdlGenerateContext;
 
-    use super::cluster_internal;
+    use super::{cluster_internal, globals_internal};
 
     pub(crate) fn parse_idl(input: &str) -> Idl {
-        Idl::parse(input.into()).expect("valid input")
+        match crate::idl::Idl::parse(input.into()) {
+            Ok(result) => result,
+            Err(e) => {
+                let span_bytes = &input.as_bytes()[e.error_location.offset()..];
+
+                panic!(
+                    "Parser failed with {:?}, at\n===\n{}\n===\n",
+                    e,
+                    core::str::from_utf8(&span_bytes[..span_bytes.len().min(256)]).unwrap()
+                );
+            }
+        }
     }
 
     pub(crate) fn get_cluster_named<'a>(idl: &'a Idl, name: &str) -> Option<&'a Cluster> {
@@ -181,14 +236,786 @@ mod tests {
 
         // panic!(
         //     "====\n{}\n====",
-        //     &cluster_internal(cluster, false, &context)
+        //     &cluster_internal(cluster, &idl.globals, false, &context)
         // );
 
         assert_tokenstreams_eq!(
-            &cluster_internal(cluster, false, &context),
+            &cluster_internal(cluster, &idl.globals, false, &context),
             &TOKEN_STREAM_OUTPUT
         );
     }
+
+    #[test]
+    fn test_globals() {
+        let mut idl = parse_idl(CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0);
+        let context = IdlGenerateContext::new("rs_matter_crate");
+
+        // Take only the first few for testing
+        idl.globals.bitmaps.truncate(3);
+        idl.globals.enums.truncate(3);
+        idl.globals.structs.truncate(3);
+
+        // panic!(
+        //     "====\n{}\n====",
+        //     &globals_internal(&idl.globals, &context)
+        // );
+
+        assert_tokenstreams_eq!(&globals_internal(&idl.globals, &context), &GLOBALS_OUTPUT);
+    }
+
+    const GLOBALS_OUTPUT: &str = r#"
+#[doc = "This module contains generated global Rust types"]
+#[allow(unknown_lints)]
+#[allow(clippy::uninlined_format_args)]
+#[allow(unexpected_cfgs)]
+pub mod globals {
+    #[cfg(not(feature = "defmt"))] rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct TestGlobalBitmap : u32 { const FIRST_BIT = 1 ; const SECOND_BIT = 2 ; const _INTERNAL_ALL_BITS = ! 0 ; } } #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::bitflags! { # [repr (transparent)] # [derive (Default)] pub struct TestGlobalBitmap : u32 { const FIRST_BIT = 1 ; const SECOND_BIT = 2 ; const _INTERNAL_ALL_BITS = ! 0 ; } } rs_matter_crate::bitflags_tlv!(TestGlobalBitmap , u32); #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, rs_matter_crate :: tlv :: FromTLV, rs_matter_crate :: tlv :: ToTLV)]
+    #[tlvargs(datatype = "u8")]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum AreaTypeTag {
+        #[enumval(0)] Aisle = 0,
+        #[enumval(1)] Attic = 1,
+        #[enumval(2)] BackDoor = 2,
+        #[enumval(3)] BackYard = 3,
+        #[enumval(4)] Balcony = 4,
+        #[enumval(5)] Ballroom = 5,
+        #[enumval(6)] Bathroom = 6,
+        #[enumval(7)] Bedroom = 7,
+        #[enumval(8)] Border = 8,
+        #[enumval(9)] Boxroom = 9,
+        #[enumval(10)] BreakfastRoom = 10,
+        #[enumval(11)] Carport = 11,
+        #[enumval(12)] Cellar = 12,
+        #[enumval(13)] Cloakroom = 13,
+        #[enumval(14)] Closet = 14,
+        #[enumval(15)] Conservatory = 15,
+        #[enumval(16)] Corridor = 16,
+        #[enumval(17)] CraftRoom = 17,
+        #[enumval(18)] Cupboard = 18,
+        #[enumval(19)] Deck = 19,
+        #[enumval(20)] Den = 20,
+        #[enumval(21)] Dining = 21,
+        #[enumval(22)] DrawingRoom = 22,
+        #[enumval(23)] DressingRoom = 23,
+        #[enumval(24)] Driveway = 24,
+        #[enumval(25)] Elevator = 25,
+        #[enumval(26)] Ensuite = 26,
+        #[enumval(27)] Entrance = 27,
+        #[enumval(28)] Entryway = 28,
+        #[enumval(29)] FamilyRoom = 29,
+        #[enumval(30)] Foyer = 30,
+        #[enumval(31)] FrontDoor = 31,
+        #[enumval(32)] FrontYard = 32,
+        #[enumval(33)] GameRoom = 33,
+        #[enumval(34)] Garage = 34,
+        #[enumval(35)] GarageDoor = 35,
+        #[enumval(36)] Garden = 36,
+        #[enumval(37)] GardenDoor = 37,
+        #[enumval(38)] GuestBathroom = 38,
+        #[enumval(39)] GuestBedroom = 39,
+        #[enumval(41)] GuestRoom = 41,
+        #[enumval(42)] Gym = 42,
+        #[enumval(43)] Hallway = 43,
+        #[enumval(44)] HearthRoom = 44,
+        #[enumval(45)] KidsRoom = 45,
+        #[enumval(46)] KidsBedroom = 46,
+        #[enumval(47)] Kitchen = 47,
+        #[enumval(49)] LaundryRoom = 49,
+        #[enumval(50)] Lawn = 50,
+        #[enumval(51)] Library = 51,
+        #[enumval(52)] LivingRoom = 52,
+        #[enumval(53)] Lounge = 53,
+        #[enumval(54)] MediaTVRoom = 54,
+        #[enumval(55)] MudRoom = 55,
+        #[enumval(56)] MusicRoom = 56,
+        #[enumval(57)] Nursery = 57,
+        #[enumval(58)] Office = 58,
+        #[enumval(59)] OutdoorKitchen = 59,
+        #[enumval(60)] Outside = 60,
+        #[enumval(61)] Pantry = 61,
+        #[enumval(62)] ParkingLot = 62,
+        #[enumval(63)] Parlor = 63,
+        #[enumval(64)] Patio = 64,
+        #[enumval(65)] PlayRoom = 65,
+        #[enumval(66)] PoolRoom = 66,
+        #[enumval(67)] Porch = 67,
+        #[enumval(68)] PrimaryBathroom = 68,
+        #[enumval(69)] PrimaryBedroom = 69,
+        #[enumval(70)] Ramp = 70,
+        #[enumval(71)] ReceptionRoom = 71,
+        #[enumval(72)] RecreationRoom = 72,
+        #[enumval(74)] Roof = 74,
+        #[enumval(75)] Sauna = 75,
+        #[enumval(76)] Scullery = 76,
+        #[enumval(77)] SewingRoom = 77,
+        #[enumval(78)] Shed = 78,
+        #[enumval(79)] SideDoor = 79,
+        #[enumval(80)] SideYard = 80,
+        #[enumval(81)] SittingRoom = 81,
+        #[enumval(82)] Snug = 82,
+        #[enumval(83)] Spa = 83,
+        #[enumval(84)] Staircase = 84,
+        #[enumval(85)] SteamRoom = 85,
+        #[enumval(86)] StorageRoom = 86,
+        #[enumval(87)] Studio = 87,
+        #[enumval(88)] Study = 88,
+        #[enumval(89)] SunRoom = 89,
+        #[enumval(90)] SwimmingPool = 90,
+        #[enumval(91)] Terrace = 91,
+        #[enumval(92)] UtilityRoom = 92,
+        #[enumval(93)] Ward = 93,
+        #[enumval(94)] Workshop = 94,
+        #[enumval(95)] Toilet = 95,
+    }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, rs_matter_crate :: tlv :: FromTLV, rs_matter_crate :: tlv :: ToTLV)]
+    #[tlvargs(datatype = "u8")]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum AtomicRequestTypeEnum { #[enumval(0)] BeginWrite = 0, #[enumval(1)] CommitWrite = 1, #[enumval(2)] RollbackWrite = 2 }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash, rs_matter_crate :: tlv :: FromTLV, rs_matter_crate :: tlv :: ToTLV)]
+    #[tlvargs(datatype = "u8")]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum LandmarkTag {
+        #[enumval(0)] AirConditioner = 0,
+        #[enumval(1)] AirPurifier = 1,
+        #[enumval(2)] BackDoor = 2,
+        #[enumval(3)] BarStool = 3,
+        #[enumval(4)] BathMat = 4,
+        #[enumval(5)] Bathtub = 5,
+        #[enumval(6)] Bed = 6,
+        #[enumval(7)] Bookshelf = 7,
+        #[enumval(8)] Chair = 8,
+        #[enumval(9)] ChristmasTree = 9,
+        #[enumval(10)] CoatRack = 10,
+        #[enumval(11)] CoffeeTable = 11,
+        #[enumval(12)] CookingRange = 12,
+        #[enumval(13)] Couch = 13,
+        #[enumval(14)] Countertop = 14,
+        #[enumval(15)] Cradle = 15,
+        #[enumval(16)] Crib = 16,
+        #[enumval(17)] Desk = 17,
+        #[enumval(18)] DiningTable = 18,
+        #[enumval(19)] Dishwasher = 19,
+        #[enumval(20)] Door = 20,
+        #[enumval(21)] Dresser = 21,
+        #[enumval(22)] LaundryDryer = 22,
+        #[enumval(23)] Fan = 23,
+        #[enumval(24)] Fireplace = 24,
+        #[enumval(25)] Freezer = 25,
+        #[enumval(26)] FrontDoor = 26,
+        #[enumval(27)] HighChair = 27,
+        #[enumval(28)] KitchenIsland = 28,
+        #[enumval(29)] Lamp = 29,
+        #[enumval(30)] LitterBox = 30,
+        #[enumval(31)] Mirror = 31,
+        #[enumval(32)] Nightstand = 32,
+        #[enumval(33)] Oven = 33,
+        #[enumval(34)] PetBed = 34,
+        #[enumval(35)] PetBowl = 35,
+        #[enumval(36)] PetCrate = 36,
+        #[enumval(37)] Refrigerator = 37,
+        #[enumval(38)] ScratchingPost = 38,
+        #[enumval(39)] ShoeRack = 39,
+        #[enumval(40)] Shower = 40,
+        #[enumval(41)] SideDoor = 41,
+        #[enumval(42)] Sink = 42,
+        #[enumval(43)] Sofa = 43,
+        #[enumval(44)] Stove = 44,
+        #[enumval(45)] Table = 45,
+        #[enumval(46)] Toilet = 46,
+        #[enumval(47)] TrashCan = 47,
+        #[enumval(48)] LaundryWasher = 48,
+        #[enumval(49)] Window = 49,
+        #[enumval(50)] WineCooler = 50,
+    }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum CurrencyStructTag { Currency = 0, DecimalPoints = 1 }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum PriceStructTag { Amount = 0, Currency = 1 }
+    #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+    #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
+    #[repr(u8)]
+    pub enum MeasurementAccuracyRangeStructTag { RangeMin = 0, RangeMax = 1, PercentMax = 2, PercentMin = 3, PercentTypical = 4, FixedMax = 5, FixedMin = 6, FixedTypical = 7 }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct CurrencyStruct<'a> (rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> CurrencyStruct<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self { Self(element) }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
+        pub fn currency(&self) -> Result<u16, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?) }
+        pub fn decimal_points(&self) -> Result<u8, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for CurrencyStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::error::Error> { Ok(Self::new(element.clone())) } }
+    impl rs_matter_crate::tlv::ToTLV for CurrencyStruct<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
+        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
+    }
+    impl core::fmt::Debug for CurrencyStruct<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "CurrencyStruct")?;
+            match self.currency() {
+                Ok(value) => write!(f, "{}: {:?},", "currency", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "currency", e.code())?,
+            }
+            match self.decimal_points() {
+                Ok(value) => write!(f, "{}: {:?},", "decimal_points", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "decimal_points", e.code())?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for CurrencyStruct<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "CurrencyStruct");
+            match self.currency() {
+                Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "currency", value),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "currency", e.code()),
+            }
+            match self.decimal_points() {
+                Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "decimal_points", value),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "decimal_points", e.code()),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct PriceStruct<'a> (rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> PriceStruct<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self { Self(element) }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
+        pub fn amount(&self) -> Result<money, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?) }
+        pub fn currency(&self) -> Result<CurrencyStruct<'_>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for PriceStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::error::Error> { Ok(Self::new(element.clone())) } }
+    impl rs_matter_crate::tlv::ToTLV for PriceStruct<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
+        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
+    }
+    impl core::fmt::Debug for PriceStruct<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "PriceStruct")?;
+            match self.amount() {
+                Ok(value) => write!(f, "{}: {:?},", "amount", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "amount", e.code())?,
+            }
+            match self.currency() {
+                Ok(value) => write!(f, "{}: {:?},", "currency", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "currency", e.code())?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for PriceStruct<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "PriceStruct");
+            match self.amount() {
+                Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "amount", value),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "amount", e.code()),
+            }
+            match self.currency() {
+                Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "currency", value),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "currency", e.code()),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    #[derive(PartialEq, Eq, Clone, Hash)]
+    pub struct MeasurementAccuracyRangeStruct<'a> (rs_matter_crate::tlv::TLVElement<'a>);
+    impl<'a> MeasurementAccuracyRangeStruct<'a> {
+        #[doc = "Create a new instance"]
+        pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self { Self(element) }
+        #[doc = "Return the underlying TLV element"]
+        pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
+        pub fn range_min(&self) -> Result<i64, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?) }
+        pub fn range_max(&self) -> Result<i64, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
+        pub fn percent_max(&self) -> Result<Option<u16>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(2)?;
+            if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
+        }
+        pub fn percent_min(&self) -> Result<Option<u16>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(3)?;
+            if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
+        }
+        pub fn percent_typical(&self) -> Result<Option<u16>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(4)?;
+            if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
+        }
+        pub fn fixed_max(&self) -> Result<Option<u64>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(5)?;
+            if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
+        }
+        pub fn fixed_min(&self) -> Result<Option<u64>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(6)?;
+            if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
+        }
+        pub fn fixed_typical(&self) -> Result<Option<u64>, rs_matter_crate::error::Error> {
+            let element = self.0.structure()?.find_ctx(7)?;
+            if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
+        }
+    }
+    impl<'a> rs_matter_crate::tlv::FromTLV<'a> for MeasurementAccuracyRangeStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::error::Error> { Ok(Self::new(element.clone())) } }
+    impl rs_matter_crate::tlv::ToTLV for MeasurementAccuracyRangeStruct<'_> {
+        fn to_tlv<W: rs_matter_crate::tlv::TLVWrite>(&self, tag: &rs_matter_crate::tlv::TLVTag, tw: W) -> Result<(), rs_matter_crate::error::Error> { self.0.to_tlv(tag, tw) }
+        fn tlv_iter(&self, tag: rs_matter_crate::tlv::TLVTag) -> impl Iterator<Item=Result<rs_matter_crate::tlv::TLV, rs_matter_crate::error::Error>> { self.0.tlv_iter(tag) }
+    }
+    impl core::fmt::Debug for MeasurementAccuracyRangeStruct<'_> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} {{", "MeasurementAccuracyRangeStruct")?;
+            match self.range_min() {
+                Ok(value) => write!(f, "{}: {:?},", "range_min", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "range_min", e.code())?,
+            }
+            match self.range_max() {
+                Ok(value) => write!(f, "{}: {:?},", "range_max", value)?,
+                Err(e) => write!(f, "{}: ??? {:?},", "range_max", e.code())?,
+            }
+            match self.percent_max() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "percent_max", value)?,
+                Ok(None) => write!(f, "{}: None,", "percent_max")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "percent_max", e.code())?,
+            }
+            match self.percent_min() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "percent_min", value)?,
+                Ok(None) => write!(f, "{}: None,", "percent_min")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "percent_min", e.code())?,
+            }
+            match self.percent_typical() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "percent_typical", value)?,
+                Ok(None) => write!(f, "{}: None,", "percent_typical")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "percent_typical", e.code())?,
+            }
+            match self.fixed_max() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fixed_max", value)?,
+                Ok(None) => write!(f, "{}: None,", "fixed_max")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fixed_max", e.code())?,
+            }
+            match self.fixed_min() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fixed_min", value)?,
+                Ok(None) => write!(f, "{}: None,", "fixed_min")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fixed_min", e.code())?,
+            }
+            match self.fixed_typical() {
+                Ok(Some(value)) => write!(f, "{}: Some({:?}),", "fixed_typical", value)?,
+                Ok(None) => write!(f, "{}: None,", "fixed_typical")?,
+                Err(e) => write!(f, "{}: ??? {:?},", "fixed_typical", e.code())?,
+            }
+            write!(f, "}}")
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl rs_matter_crate::reexport::defmt::Format for MeasurementAccuracyRangeStruct<'_> {
+        fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) {
+            rs_matter_crate::reexport::defmt::write!(f, "{} {{", "MeasurementAccuracyRangeStruct");
+            match self.range_min() {
+                Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "range_min", value),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "range_min", e.code()),
+            }
+            match self.range_max() {
+                Ok(value) => rs_matter_crate::reexport::defmt::write!(f, "{}: {:?},", "range_max", value),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "range_max", e.code()),
+            }
+            match self.percent_max() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "percent_max", value),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "percent_max"),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "percent_max", e.code()),
+            }
+            match self.percent_min() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "percent_min", value),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "percent_min"),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "percent_min", e.code()),
+            }
+            match self.percent_typical() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "percent_typical", value),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "percent_typical"),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "percent_typical", e.code()),
+            }
+            match self.fixed_max() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "fixed_max", value),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "fixed_max"),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "fixed_max", e.code()),
+            }
+            match self.fixed_min() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "fixed_min", value),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "fixed_min"),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "fixed_min", e.code()),
+            }
+            match self.fixed_typical() {
+                Ok(Some(value)) => rs_matter_crate::reexport::defmt::write!(f, "{}: Some({:?}),", "fixed_typical", value),
+                Ok(None) => rs_matter_crate::reexport::defmt::write!(f, "{}: None,", "fixed_typical"),
+                Err(e) => rs_matter_crate::reexport::defmt::write!(f, "{}: ??? {:?},", "fixed_typical", e.code()),
+            }
+            rs_matter_crate::reexport::defmt::write!(f, "}}")
+        }
+    }
+    pub struct CurrencyStructBuilder<P, const F: usize = 0usize> (P);
+    impl<P> CurrencyStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Create a new instance"]
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> CurrencyStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn currency(mut self, value: u16) -> Result<CurrencyStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "currency" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "currency" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
+            Ok(CurrencyStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> CurrencyStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn currency(mut self, value: u16) -> Result<CurrencyStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "currency" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
+            Ok(CurrencyStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> CurrencyStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn decimal_points(mut self, value: u8) -> Result<CurrencyStructBuilder<P, 2usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "decimalPoints" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "decimalPoints" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(1), self.0.writer())?;
+            Ok(CurrencyStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> CurrencyStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn decimal_points(mut self, value: u8) -> Result<CurrencyStructBuilder<P, 2usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "decimalPoints" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(1), self.0.writer())?;
+            Ok(CurrencyStructBuilder(self.0))
+        }
+    }
+    impl<P> CurrencyStructBuilder<P, 2usize> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for CurrencyStructBuilder<P, F> where P: core::fmt::Debug, { fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "{:?}::{}", self.0, "CurrencyStruct") } }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for CurrencyStructBuilder<P, F> where P: rs_matter_crate::reexport::defmt::Format, { fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) { rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "CurrencyStruct") } }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for CurrencyStructBuilder<P, F> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write { self.0.writer() }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for CurrencyStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn unchecked_into_parent(self) -> P { self.0 }
+    }
+    pub struct CurrencyStructArrayBuilder<P> (P);
+    impl<P> CurrencyStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Create a new instance"]
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(self) -> Result<CurrencyStructBuilder<CurrencyStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(CurrencyStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous) }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for CurrencyStructArrayBuilder<P> where P: core::fmt::Debug, { fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "{:?}::{}", self.0, "CurrencyStruct[]") } }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for CurrencyStructArrayBuilder<P> where P: rs_matter_crate::reexport::defmt::Format, { fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) { rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "CurrencyStruct[]") } }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for CurrencyStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write { self.0.writer() }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for CurrencyStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn unchecked_into_parent(self) -> P { self.0 }
+    }
+    pub struct PriceStructBuilder<P, const F: usize = 0usize> (P);
+    impl<P> PriceStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Create a new instance"]
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> PriceStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn amount(mut self, value: money) -> Result<PriceStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "amount" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "amount" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
+            Ok(PriceStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> PriceStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn amount(mut self, value: money) -> Result<PriceStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "amount" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
+            Ok(PriceStructBuilder(self.0))
+        }
+    }
+    impl<P> PriceStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent, { pub fn currency(self) -> Result<CurrencyStructBuilder<PriceStructBuilder<P, 2usize>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(PriceStructBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Context(1)) } }
+    impl<P> PriceStructBuilder<P, 2usize> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for PriceStructBuilder<P, F> where P: core::fmt::Debug, { fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "{:?}::{}", self.0, "PriceStruct") } }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for PriceStructBuilder<P, F> where P: rs_matter_crate::reexport::defmt::Format, { fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) { rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "PriceStruct") } }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for PriceStructBuilder<P, F> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write { self.0.writer() }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for PriceStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn unchecked_into_parent(self) -> P { self.0 }
+    }
+    pub struct PriceStructArrayBuilder<P> (P);
+    impl<P> PriceStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Create a new instance"]
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(self) -> Result<PriceStructBuilder<PriceStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(PriceStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous) }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for PriceStructArrayBuilder<P> where P: core::fmt::Debug, { fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "{:?}::{}", self.0, "PriceStruct[]") } }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for PriceStructArrayBuilder<P> where P: rs_matter_crate::reexport::defmt::Format, { fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) { rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "PriceStruct[]") } }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for PriceStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write { self.0.writer() }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for PriceStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn unchecked_into_parent(self) -> P { self.0 }
+    }
+    pub struct MeasurementAccuracyRangeStructBuilder<P, const F: usize = 0usize> (P);
+    impl<P> MeasurementAccuracyRangeStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Create a new instance"]
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_struct(tag)?;
+            Ok(Self(parent))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn range_min(mut self, value: i64) -> Result<MeasurementAccuracyRangeStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "rangeMin" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "rangeMin" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn range_min(mut self, value: i64) -> Result<MeasurementAccuracyRangeStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "rangeMin" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn range_max(mut self, value: i64) -> Result<MeasurementAccuracyRangeStructBuilder<P, 2usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "rangeMax" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "rangeMax" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(1), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 1> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn range_max(mut self, value: i64) -> Result<MeasurementAccuracyRangeStructBuilder<P, 2usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "rangeMax" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(1), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 2> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn percent_max(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 3usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "percentMax" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMax" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(2), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 2> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn percent_max(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 3usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMax" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(2), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 3> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn percent_min(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 4usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "percentMin" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMin" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(3), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 3> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn percent_min(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 4usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMin" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(3), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 4> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn percent_typical(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 5usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "percentTypical" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentTypical" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(4), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 4> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn percent_typical(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 5usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentTypical" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(4), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 5> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn fixed_max(mut self, value: Option<u64>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 6usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "fixedMax" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "fixedMax" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(5), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 5> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn fixed_max(mut self, value: Option<u64>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 6usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "fixedMax" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(5), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 6> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn fixed_min(mut self, value: Option<u64>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 7usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "fixedMin" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "fixedMin" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(6), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 6> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn fixed_min(mut self, value: Option<u64>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 7usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "fixedMin" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(6), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(feature = "defmt")]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 7> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
+        pub fn fixed_typical(mut self, value: Option<u64>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 8usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "fixedTypical" , value);
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "fixedTypical" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(7), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    #[cfg(not(feature = "defmt"))]
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 7> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
+        pub fn fixed_typical(mut self, value: Option<u64>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 8usize>, rs_matter_crate::error::Error> {
+            #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "fixedTypical" , value);
+            rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(7), self.0.writer())?;
+            Ok(MeasurementAccuracyRangeStructBuilder(self.0))
+        }
+    }
+    impl<P> MeasurementAccuracyRangeStructBuilder<P, 8usize> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Finish the struct and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P, const F: usize> core::fmt::Debug for MeasurementAccuracyRangeStructBuilder<P, F> where P: core::fmt::Debug, { fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "{:?}::{}", self.0, "MeasurementAccuracyRangeStruct") } }
+    #[cfg(feature = "defmt")]
+    impl<P, const F: usize> rs_matter_crate::reexport::defmt::Format for MeasurementAccuracyRangeStructBuilder<P, F> where P: rs_matter_crate::reexport::defmt::Format, { fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) { rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "MeasurementAccuracyRangeStruct") } }
+    impl<P, const F: usize> rs_matter_crate::tlv::TLVBuilderParent for MeasurementAccuracyRangeStructBuilder<P, F> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write { self.0.writer() }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for MeasurementAccuracyRangeStructBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn unchecked_into_parent(self) -> P { self.0 }
+    }
+    pub struct MeasurementAccuracyRangeStructArrayBuilder<P> (P);
+    impl<P> MeasurementAccuracyRangeStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        #[doc = "Create a new instance"]
+        pub fn new(mut parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            parent.writer().start_array(tag)?;
+            Ok(Self(parent))
+        }
+        #[doc = "Push a new element into the array"]
+        pub fn push(self) -> Result<MeasurementAccuracyRangeStructBuilder<MeasurementAccuracyRangeStructArrayBuilder<P>>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::TLVBuilder::new(MeasurementAccuracyRangeStructArrayBuilder(self.0), &rs_matter_crate::tlv::TLVTag::Anonymous) }
+        #[doc = "Finish the array and return the parent"]
+        pub fn end(mut self) -> Result<P, rs_matter_crate::error::Error> {
+            use rs_matter_crate::tlv::TLVWrite;
+            self.0.writer().end_container()?;
+            Ok(self.0)
+        }
+    }
+    impl<P> core::fmt::Debug for MeasurementAccuracyRangeStructArrayBuilder<P> where P: core::fmt::Debug, { fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "{:?}::{}", self.0, "MeasurementAccuracyRangeStruct[]") } }
+    #[cfg(feature = "defmt")]
+    impl<P> rs_matter_crate::reexport::defmt::Format for MeasurementAccuracyRangeStructArrayBuilder<P> where P: rs_matter_crate::reexport::defmt::Format, { fn format(&self, f: rs_matter_crate::reexport::defmt::Formatter<'_>) { rs_matter_crate::reexport::defmt::write!(f, "{:?}::{}", self.0, "MeasurementAccuracyRangeStruct[]") } }
+    impl<P> rs_matter_crate::tlv::TLVBuilderParent for MeasurementAccuracyRangeStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        type Write = P::Write;
+        fn writer(&mut self) -> &mut P::Write { self.0.writer() }
+    }
+    impl<P> rs_matter_crate::tlv::TLVBuilder<P> for MeasurementAccuracyRangeStructArrayBuilder<P> where P: rs_matter_crate::tlv::TLVBuilderParent, {
+        fn new(parent: P, tag: &rs_matter_crate::tlv::TLVTag) -> Result<Self, rs_matter_crate::error::Error> { Self::new(parent, tag) }
+        fn unchecked_into_parent(self) -> P { self.0 }
+    }
+}
+"#;
 
     const TOKEN_STREAM_OUTPUT: &str = r#"
 #[doc = "This module contains generated Rust types for the \"UnitTesting\" cluster"]

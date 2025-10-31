@@ -20,12 +20,12 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_id_to_enum_variant_name};
-use super::parser::{Cluster, Enum};
+use super::parser::Enum;
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all enum definitions in the provided IDL cluster.
-pub fn enums(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    let enums = cluster.enums.iter().map(|c| enumeration(c, context));
+pub fn enums(enums: &[Enum], context: &IdlGenerateContext) -> TokenStream {
+    let enums = enums.iter().map(|c| enumeration(c, context));
 
     quote!(
         #(#enums)*
@@ -79,6 +79,11 @@ mod test {
     fn test_enums() {
         let idl = parse_idl(
             "
+              enum GlobalEnum : enum8 {
+                kDefault = 0 [spec_name = \"Def\"];
+                kOn = 1;
+                kError = 2;
+              }
               cluster OnOff = 6 {
                 revision 6;
 
@@ -98,9 +103,14 @@ mod test {
                 }
 
                 enum StartUpOnOffEnum : enum8 {
-                  kOff = 0;
+                  kOff = 0 [spec_name = \"Def\"];
                   kOn = 1;
                   kToggle = 2;
+                }
+
+                shared enum SharedEnum : enum8 {
+                  kSharedOff = 0;
+                  kSharedOn = 1;
                 }
             }
         ",
@@ -108,10 +118,10 @@ mod test {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &enums(cluster, &context));
+        // panic!("====\n{}\n====", &enums(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
-            &enums(cluster, &context),
+            &enums(&cluster.entities.enums, &context),
             &quote!(
                 #[derive(
                     Debug,

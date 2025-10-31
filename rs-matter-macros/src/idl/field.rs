@@ -20,7 +20,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use super::id::ident;
-use super::parser::{Cluster, DataType};
+use super::parser::{DataType, EntityContext};
 
 /// Return a stream representing the Rust type that corresponds to the given
 /// IDL type.
@@ -29,19 +29,19 @@ use super::parser::{Cluster, DataType};
 /// - `f`: The IDL type.
 /// - `nullable`: Whether the type is nullable.
 /// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
-/// - `cluster`: The cluster to which the type belongs.
+/// - `entities`: The context of entities to which the type belongs.
 /// - `krate`: The crate name.
 pub fn field_type(
     f: &DataType,
     nullable: bool,
     optional: bool,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let mut field_type = field_type_builtin(f, krate, true).unwrap_or_else(|| {
         let ident = ident(f.name.as_str());
 
-        let structure = cluster.structs.iter().any(|s| s.id == f.name);
+        let structure = entities.structs().any(|s| s.id == f.name);
         if structure {
             quote!(#ident<'_>)
         } else {
@@ -84,7 +84,7 @@ pub enum BuilderPolicy {
 /// - `optional`: Whether the type is optional (applicable only for struct members and attributes).
 /// - `policy`: The policy for determining how to convert the IDL type to a Rust builder.
 /// - `parent`: The parent type for the returned builder (usually `P`)
-/// - `cluster`: The cluster to which the type belongs.
+/// - `entities`: Entities scoped to the type.
 /// - `krate`: The crate name.
 ///
 /// # Returns
@@ -99,7 +99,7 @@ pub fn field_type_builder(
     optional: bool,
     policy: BuilderPolicy,
     parent: TokenStream,
-    cluster: &Cluster,
+    entities: &EntityContext,
     krate: &Ident,
 ) -> (TokenStream, bool) {
     let (mut typ, builder) = if data_type.is_octet_string()
@@ -130,7 +130,7 @@ pub fn field_type_builder(
             },
             true,
         )
-    } else if let Some(copy) = field_type_copy(data_type, cluster, krate) {
+    } else if let Some(copy) = field_type_copy(data_type, entities, krate) {
         if data_type.is_list {
             (quote!(#krate::tlv::ToTLVArrayBuilder<#parent, #copy>), true)
         } else if matches!(policy, BuilderPolicy::All) {
@@ -183,12 +183,12 @@ pub fn field_type_builder(
 ///
 /// Note that this function always treats IDL Utf8 and octet strings as `Copy` types,
 /// however callers should be careful as in some contexts this is fine, while in others - it isn't.
-fn field_type_copy(f: &DataType, cluster: &Cluster, krate: &Ident) -> Option<TokenStream> {
+fn field_type_copy(f: &DataType, entities: &EntityContext, krate: &Ident) -> Option<TokenStream> {
     if let Some(stream) = field_type_builtin(f, krate, true) {
         return Some(stream);
     }
 
-    if cluster.structs.iter().all(|s| s.id != f.name) {
+    if entities.structs().all(|s| s.id != f.name) {
         let ident = ident(f.name.as_str());
         return Some(quote!(#ident));
     }
@@ -228,8 +228,8 @@ fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Optio
         // Spec section 7.19.2 - derived data types
         "priority" => quote!(u8),
         "status" => quote!(u8),
-        "percent" => quote!(u8),
-        "percent100ths" => quote!(u16),
+        "percent" => quote!(#krate::im::Percent),
+        "percent100ths" => quote!(#krate::im::Percent100ths),
         "epoch_us" => quote!(u64),
         "epoch_s" => quote!(u32),
         "utc" => quote!(u32), // deprecated in the spec
@@ -239,16 +239,16 @@ fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Optio
         "elapsed_s" => quote!(u32),
         "temperature" => quote!(i16),
         "group_id" => quote!(u16),
-        "endpoint_no" => quote!(u16),
+        "endpoint_no" => quote!(#krate::im::EndptId),
         "vendor_id" => quote!(u16),
         "devtype_id" => quote!(u32),
-        "fabric_id" => quote!(u64),
-        "fabric_idx" => quote!(u8),
-        "cluster_id" => quote!(u32),
-        "attrib_id" => quote!(u32),
-        "field_id" => quote!(u32),
+        "fabric_id" => quote!(#krate::im::FabricId),
+        "fabric_idx" => quote!(#krate::im::FabricIndex),
+        "cluster_id" => quote!(#krate::im::ClusterId),
+        "attrib_id" => quote!(#krate::im::AttrId),
+        "field_id" => quote!(#krate::im::FieldId),
         "event_id" => quote!(u32),
-        "command_id" => quote!(u32),
+        "command_id" => quote!(#krate::im::CmdId),
         "action_id" => quote!(u8),
         "trans_id" => quote!(u32),
         "node_id" => quote!(u64),
@@ -257,6 +257,15 @@ fn field_type_builtin(f: &DataType, krate: &Ident, anon_lifetime: bool) -> Optio
         "event_no" => quote!(u64),
         "namespace" => quote!(u8),
         "tag" => quote!(u8),
+        "energy_mwh" => quote!(#krate::im::EnergyMilliWh),
+        "energy_mvah" => quote!(#krate::im::EnergyMilliVAh),
+        "energy_mvarh" => quote!(#krate::im::EnergyMilliVARh),
+        "amperage_ma" => quote!(#krate::im::AmperageMilliA),
+        "power_mw" => quote!(#krate::im::PowerMilliW),
+        "power_mva" => quote!(#krate::im::PowerMilliVA),
+        "power_mvar" => quote!(#krate::im::PowerMilliVAR),
+        "voltage_mv" => quote!(#krate::im::VoltageMilliV),
+        "money" => quote!(#krate::im::Money),
 
         // Items with lifetime. If updating this, remember to add things to
         // [needs_lifetime]

@@ -23,7 +23,7 @@ use proc_macro2::{Ident, Punct};
 use quote::quote;
 
 use crate::idl::{
-    cluster, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
+    cluster, globals, IdlGenerateContext, CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
     CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2, CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
     CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0, CSA_STANDARD_CLUSTERS_IDL_V1_4_0_0,
     CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
@@ -78,7 +78,18 @@ pub fn import(item: TokenStream) -> TokenStream {
         Some(other) => panic!("Unknown Matter specification version: {other}"),
     };
 
-    let idl = crate::idl::Idl::parse(idl_file.into()).unwrap();
+    let idl = match crate::idl::Idl::parse(idl_file.into()) {
+        Ok(result) => result,
+        Err(e) => {
+            let span_bytes = &idl_file.as_bytes()[e.error_location.offset()..];
+
+            panic!(
+                "Parser failed with {:?}, at\n===\n{}\n===\n",
+                e,
+                core::str::from_utf8(&span_bytes[..span_bytes.len().min(256)]).unwrap()
+            );
+        }
+    };
 
     let elapsed = time
         .elapsed()
@@ -111,10 +122,13 @@ pub fn import(item: TokenStream) -> TokenStream {
         .clusters
         .iter()
         .filter(|c| input.clusters.is_empty() || input.clusters.contains(&c.id))
-        .map(|c| cluster(c, &context));
+        .map(|c| cluster(c, &idl.globals, &context));
+    let globals = globals(&idl.globals, &context);
 
     let result = quote!(
         // IDL-generated code:
+        #globals
+
         #(#clusters)*
     )
     .into();

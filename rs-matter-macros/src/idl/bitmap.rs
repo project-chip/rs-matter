@@ -21,12 +21,12 @@ use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
 use super::id::{ident, idl_id_to_constant_name};
-use super::parser::{Bitmap, Cluster};
+use super::parser::Bitmap;
 use super::IdlGenerateContext;
 
 /// Create the token stream corresponding to all bitmap definitions in the provided IDL cluster.
-pub fn bitmaps(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    let bitmaps = cluster.bitmaps.iter().map(|c| bitmap(c, context));
+pub fn bitmaps(bitmaps: &[Bitmap], context: &IdlGenerateContext) -> TokenStream {
+    let bitmaps = bitmaps.iter().map(|c| bitmap(c, context));
 
     quote!(
         #(#bitmaps)*
@@ -100,15 +100,17 @@ mod test {
 
     use quote::quote;
 
+    use super::bitmaps;
     use crate::idl::tests::{get_cluster_named, parse_idl};
     use crate::idl::IdlGenerateContext;
-
-    use super::bitmaps;
 
     #[test]
     fn test_bitmaps() {
         let idl = parse_idl(
             "
+              bitmap GlobalBitmap : bitmap8 {
+                kGlobal = 0x1;
+              }
               cluster OnOff = 6 {
                 revision 6;
 
@@ -121,6 +123,10 @@ mod test {
                 bitmap OnOffControlBitmap : bitmap8 {
                   kAcceptOnlyWhenOn = 0x1;
                 }
+
+                shared bitmap SharedBitmap : bitmap8 {
+                  kShared = 0x1;
+                }
               }
         ",
         );
@@ -130,7 +136,7 @@ mod test {
         // panic!("====\n{}\n====", &bitmaps(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &bitmaps(cluster, &context),
+            &bitmaps(&cluster.entities.bitmaps, &context),
             &quote!(
                 #[cfg(not(feature = "defmt"))]
                 rs_matter_crate::reexport::bitflags::bitflags! { # [repr (transparent)] # [derive (Default , Debug , Copy , Clone , Eq , PartialEq , Hash)] pub struct Feature : u32 { const LIGHTING = 1 ; const DEAD_FRONT_BEHAVIOR = 2 ; const OFF_ONLY = 4 ; const _INTERNAL_ALL_BITS = !0 ; } }

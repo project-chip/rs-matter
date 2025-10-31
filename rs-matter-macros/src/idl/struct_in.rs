@@ -21,15 +21,15 @@ use quote::quote;
 
 use super::field::field_type;
 use super::id::{ident, idl_field_name_to_rs_name, idl_field_name_to_rs_type_name};
-use super::parser::{ApiMaturity, Cluster, Struct, StructField};
+use super::parser::{ApiMaturity, EntityContext, Struct, StructField};
 use super::IdlGenerateContext;
 
 /// Return a token stream containing simple enums with the tag IDs of
-/// all structures in the given IDL cluster.
-pub fn struct_tags(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+/// all structures in the given IDL entities.
+pub fn struct_tags(structs: &[Struct], context: &IdlGenerateContext) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let struct_tags = cluster.structs.iter().map(|s| struct_tag(s, &krate));
+    let struct_tags = structs.iter().map(|s| struct_tag(s, &krate));
 
     quote!(
         #(#struct_tags)*
@@ -38,11 +38,12 @@ pub fn struct_tags(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStre
 
 /// Return a token stream containing the structure definitions
 /// for all structures in the given IDL cluster.
-pub fn structs(cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
-    let structs = cluster
-        .structs
-        .iter()
-        .map(|s| structure(s, cluster, context));
+pub fn structs(
+    structs: &[Struct],
+    entities: &EntityContext,
+    context: &IdlGenerateContext,
+) -> TokenStream {
+    let structs = structs.iter().map(|s| structure(s, entities, context));
 
     quote!(
         #(#structs)*
@@ -70,7 +71,7 @@ fn struct_tag(s: &Struct, krate: &Ident) -> TokenStream {
 /// definition.
 ///
 /// Provide the raw `struct Foo<'a>(TLVElement<'a>); impl<'a> Foo<'a> { ... }` declaration.
-fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+fn structure(s: &Struct, entities: &EntityContext, context: &IdlGenerateContext) -> TokenStream {
     // NOTE: s.is_fabric_scoped not directly handled as the IDL
     //       will have fabric_idx with ID 254 automatically added.
 
@@ -79,7 +80,7 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
     let name = ident(&s.id);
     let name_str = Literal::string(&s.id);
 
-    let fields = s.fields.iter().map(|f| struct_field(f, cluster, context));
+    let fields = s.fields.iter().map(|f| struct_field(f, entities, context));
     let fields_debug = s
         .fields
         .iter()
@@ -144,7 +145,11 @@ fn structure(s: &Struct, cluster: &Cluster, context: &IdlGenerateContext) -> Tok
 }
 
 /// Create the token stream corresponding to a field inside a structure
-fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext) -> TokenStream {
+fn struct_field(
+    f: &StructField,
+    entities: &EntityContext,
+    context: &IdlGenerateContext,
+) -> TokenStream {
     // f.fabric_sensitive does not seem to have any specific meaning so we ignore it
     // fabric_sensitive seems to be specific to fabric_scoped structs
 
@@ -156,7 +161,7 @@ fn struct_field(f: &StructField, cluster: &Cluster, context: &IdlGenerateContext
         &f.field.data_type,
         f.is_nullable,
         f.is_optional(),
-        cluster,
+        entities,
         &krate,
     );
     let name = ident(&idl_field_name_to_rs_name(&f.field.id));
@@ -242,6 +247,7 @@ pub(crate) fn struct_field_comment(f: &StructField) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use crate::idl::{
+        parser::EntityContext,
         struct_in::{struct_tags, structs},
         tests::{get_cluster_named, parse_idl},
         IdlGenerateContext,
@@ -254,6 +260,9 @@ mod tests {
     fn test_structs() {
         let idl = parse_idl(
             "
+              struct GlobalStruct {
+                boolean global = 1;
+              }
               cluster TestForStructs = 1 {
 
                 // a somewhat complex struct
@@ -282,6 +291,10 @@ mod tests {
                   enum8 status = 0;
                   group_id groupID = 12;
                 }
+
+                shared struct SharedStruct {
+                  boolean shared = 1;
+                }
               }
             ",
         );
@@ -289,10 +302,14 @@ mod tests {
         let cluster = get_cluster_named(&idl, "TestForStructs").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &structs(cluster, &context));
+        // panic!("====\n{}\n====", &structs(&EntityContext::new(Some(&cluster.entities), &idl.globals), &context));
 
         assert_tokenstreams_eq!(
-            &structs(cluster, &context),
+            &structs(
+                &cluster.entities.structs,
+                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &context
+            ),
             &quote!(
                 #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct NetworkInfoStruct<'a>(rs_matter_crate::tlv::TLVElement<'a>);
@@ -698,10 +715,10 @@ mod tests {
             )
         );
 
-        // panic!("====\n{}\n====", &struct_tags(cluster, &context));
+        // panic!("====\n{}\n====", struct_tags(&cluster.entities.structs, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster, &context),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -768,7 +785,11 @@ mod tests {
         // panic!("====\n{}\n====", &structs(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &structs(cluster, &context),
+            &structs(
+                &cluster.entities.structs,
+                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &context
+            ),
             &quote!(
                 #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct OffWithEffectRequest<'a>(rs_matter_crate::tlv::TLVElement<'a>);
@@ -957,7 +978,7 @@ mod tests {
         // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster, &context),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -1000,7 +1021,11 @@ mod tests {
         // panic!("====\n{}\n====", &structs(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &structs(cluster, &context),
+            &structs(
+                &cluster.entities.structs,
+                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &context
+            ),
             &quote!(
                 #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct WithStringMember<'a>(rs_matter_crate::tlv::TLVElement<'a>);
@@ -1150,7 +1175,7 @@ mod tests {
         // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster, &context),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -1186,7 +1211,11 @@ mod tests {
         // panic!("====\n{}\n====", &structs(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &structs(cluster, &context),
+            &structs(
+                &cluster.entities.structs,
+                &EntityContext::new(Some(&cluster.entities), &idl.globals),
+                &context
+            ),
             &quote!(
                 #[derive(PartialEq, Eq, Clone, Hash)]
                 pub struct WithStringMember<'a>(rs_matter_crate::tlv::TLVElement<'a>);
@@ -1336,7 +1365,7 @@ mod tests {
         // panic!("====\n{}\n====", &struct_tags(cluster, &context));
 
         assert_tokenstreams_eq!(
-            &struct_tags(cluster, &context),
+            &struct_tags(&cluster.entities.structs, &context),
             &quote!(
                 #[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
