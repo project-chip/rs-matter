@@ -59,6 +59,9 @@ pub enum OutOfBandMessage {
     /// Indicates to the handler that a request to change the state to Off has been made.
     /// This will change the state of the device if and when appropriate according to the Matter logic.
     Off,
+    /// Indicates to the handler that a request to toggle the OnOff state has been made.
+    /// This will change the state of the device if and when appropriate according to the Matter logic.
+    Toggle,
 }
 
 /// A rust friendly combined enum that groups the effect and its variant.
@@ -594,6 +597,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
             OutOfBandMessage::Update => self.state_change_signal.signal(OnOffCommand::Update),
             OutOfBandMessage::On => self.state_change_signal.signal(OnOffCommand::On),
             OutOfBandMessage::Off => self.state_change_signal.signal(OnOffCommand::Off),
+            OutOfBandMessage::Toggle => self.state_change_signal.signal(OnOffCommand::Toggle),
         }
     }
 
@@ -998,16 +1002,8 @@ pub mod test {
                 loop {
                     // In a real example we wait for physical interaction.
                     Timer::after(Duration::from_secs(5)).await;
-                    match self.on_off() {
-                        true => {
-                            info!("Emulation: out of band switch off");
-                            notify(OutOfBandMessage::Off);
-                        }
-                        false => {
-                            info!("Emulation: out of band switch on");
-                            notify(OutOfBandMessage::On);
-                        }
-                    }
+                    info!("Emulation: out of band toggle request");
+                    notify(OutOfBandMessage::Toggle);
                 }
             } else {
                 core::future::pending::<()>().await
