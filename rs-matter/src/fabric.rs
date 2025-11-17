@@ -463,9 +463,12 @@ impl FabricMgr {
     }
 
     /// Removes all fabrics
-    pub fn reset(&mut self) {
+    ///
+    /// # Arguments
+    /// - `flag_changed`: Whether to mark the fabrics as changed
+    pub fn reset(&mut self, flag_changed: bool) {
         self.fabrics.clear();
-        self.changed = false;
+        self.changed = flag_changed;
     }
 
     /// Load the fabrics from the provided buffer as TLV data.
