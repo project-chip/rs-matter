@@ -20,6 +20,8 @@
 use rs_matter::error::Error;
 use rs_matter::Matter;
 
+use socket2::{Domain, Protocol, Socket, Type};
+
 pub async fn run_mdns(matter: &Matter<'_>) -> Result<(), Error> {
     #[cfg(feature = "astro-dnssd")]
     rs_matter::transport::network::mdns::astro::AstroMdnsResponder::new(matter)
@@ -122,7 +124,11 @@ async fn run_builtin_mdns(matter: &Matter<'_>) -> Result<(), Error> {
     // NOTE:
     // When using a custom UDP stack (e.g. for `no_std` environments), replace with a UDP socket bind + multicast join for your custom UDP stack
     // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
-    let socket = async_io::Async::<UdpSocket>::bind(MDNS_SOCKET_DEFAULT_BIND_ADDR)?;
+    let mut socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    socket.bind(&MDNS_SOCKET_DEFAULT_BIND_ADDR.into())?;
+    let socket = async_io::Async::<UdpSocket>::new_nonblocking(socket.into())?;
+
     socket
         .get_ref()
         .join_multicast_v6(&MDNS_IPV6_BROADCAST_ADDR, interface)?;
