@@ -22,6 +22,7 @@ use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::KeyPair;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
+use crate::group_keys::KeySetKey;
 use crate::im::IMStatusCode;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
@@ -279,7 +280,7 @@ impl FailSafe {
         vendor_id: u16,
         icac: Option<&[u8]>,
         noc: &[u8],
-        ipk: &[u8],
+        ipk: &KeySetKey,
         case_admin_subject: u64,
         buf: &mut [u8],
         mdns_notif: &mut dyn FnMut(),

@@ -431,7 +431,11 @@ impl ClusterHandler for NocHandler {
                 request.admin_vendor_id()?,
                 icac,
                 request.noc_value()?.0,
-                request.ipk_value()?.0,
+                request
+                    .ipk_value()?
+                    .0
+                    .try_into()
+                    .map_err(|_| ErrorCode::ConstraintError)?,
                 request.case_admin_subject()?,
                 buf,
                 &mut || ctx.exchange().matter().notify_mdns(),
