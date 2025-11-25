@@ -126,6 +126,7 @@ async fn run_builtin_mdns(matter: &Matter<'_>) -> Result<(), Error> {
     // The returned socket should be splittable into two halves, where each half implements `UdpSend` and `UdpReceive` respectively
     let mut socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
+    socket.set_only_v6(false)?;
     socket.bind(&MDNS_SOCKET_DEFAULT_BIND_ADDR.into())?;
     let socket = async_io::Async::<UdpSocket>::new_nonblocking(socket.into())?;
 
