@@ -198,7 +198,7 @@ pub trait ThreadDiag: WirelessDiag {
         f(None)
     }
 
-    fn neightbor_table(
+    fn neighbor_table(
         &self,
         _f: &mut dyn FnMut(&NeighborTable) -> Result<(), Error>,
     ) -> Result<(), Error> {
@@ -295,11 +295,11 @@ where
         (*self).mesh_local_prefix(f)
     }
 
-    fn neightbor_table(
+    fn neighbor_table(
         &self,
         f: &mut dyn FnMut(&NeighborTable) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        (*self).neightbor_table(f)
+        (*self).neighbor_table(f)
     }
 
     fn route_table(
@@ -461,7 +461,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
             ArrayAttributeRead::ReadAll(builder) => {
                 let mut builder = Some(builder);
 
-                self.diag.neightbor_table(&mut |item| {
+                self.diag.neighbor_table(&mut |item| {
                     builder = Some(item.read_into(unwrap!(builder.take()).push()?)?);
 
                     Ok(())
@@ -474,7 +474,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
                 let mut parent = None;
                 let mut current = 0;
 
-                self.diag.neightbor_table(&mut |item| {
+                self.diag.neighbor_table(&mut |item| {
                     if index == current {
                         parent = Some(item.read_into(unwrap!(builder.take()))?);
                     }
