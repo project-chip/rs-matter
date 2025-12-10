@@ -1025,11 +1025,11 @@ where
         self.net_ctl.mesh_local_prefix(f)
     }
 
-    fn neightbor_table(
+    fn neighbor_table(
         &self,
         f: &mut dyn FnMut(&thread_diag::NeighborTable) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        self.net_ctl.neightbor_table(f)
+        self.net_ctl.neighbor_table(f)
     }
 
     fn route_table(
