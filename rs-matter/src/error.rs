@@ -18,7 +18,7 @@
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
 #[cfg(feature = "alloc")]
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::ToString};
 
 // TODO: The error code enum is in a need of an overhaul
 //
@@ -310,9 +310,10 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(feature = "alloc")]
         {
-            let err_msg = self.inner.as_ref().map_or(Default::default(), |err| {
-                alloc::string::ToString::to_string(err)
-            });
+            let err_msg = self
+                .inner
+                .as_ref()
+                .map_or(Default::default(), |err| err.to_string());
 
             if err_msg.is_empty() {
                 write!(f, "{:?}", self.code())
@@ -334,4 +335,11 @@ impl defmt::Format for Error {
     }
 }
 
-impl core::error::Error for Error {}
+impl core::error::Error for Error {
+    #[cfg(feature = "alloc")]
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        self.inner
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn core::error::Error + 'static))
+    }
+}
