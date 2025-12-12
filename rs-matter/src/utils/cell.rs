@@ -112,7 +112,7 @@ impl defmt::Format for BorrowMutError {
 }
 
 // This ensures the panicking code is outlined from `borrow_mut` for `RefCell`.
-#[cfg_attr(not(feature = "panic_immediate_abort"), inline(never))]
+#[inline(never)]
 #[track_caller]
 #[cold]
 fn panic_already_borrowed(err: BorrowMutError) -> ! {
@@ -120,7 +120,7 @@ fn panic_already_borrowed(err: BorrowMutError) -> ! {
 }
 
 // This ensures the panicking code is outlined from `borrow` for `RefCell`.
-#[cfg_attr(not(feature = "panic_immediate_abort"), inline(never))]
+#[inline(never)]
 #[track_caller]
 #[cold]
 fn panic_already_mutably_borrowed(err: BorrowError) -> ! {
@@ -345,7 +345,6 @@ impl<T: ?Sized> RefCell<T> {
     /// }
     /// ```
     #[inline]
-    #[cfg_attr(feature = "debug_refcell", track_caller)]
     pub fn try_borrow(&self) -> Result<Ref<'_, T>, BorrowError> {
         match BorrowRef::new(&self.borrow) {
             Some(b) => {
@@ -436,7 +435,6 @@ impl<T: ?Sized> RefCell<T> {
     /// assert!(c.try_borrow_mut().is_ok());
     /// ```
     #[inline]
-    #[cfg_attr(feature = "debug_refcell", track_caller)]
     pub fn try_borrow_mut(&self) -> Result<RefMut<'_, T>, BorrowMutError> {
         match BorrowRefMut::new(&self.borrow) {
             Some(b) => {
