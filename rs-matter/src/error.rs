@@ -17,6 +17,9 @@
 
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 // TODO: The error code enum is in a need of an overhaul
 //
 // We need separate error enums per chunks of functionality
@@ -114,8 +117,8 @@ pub struct Error {
     code: ErrorCode,
     #[cfg(all(feature = "std", feature = "backtrace"))]
     backtrace: std::backtrace::Backtrace,
-    #[cfg(all(feature = "std", feature = "backtrace"))]
-    inner: Option<Box<dyn std::error::Error + Send + Sync>>,
+    #[cfg(feature = "alloc")]
+    inner: Option<Box<dyn core::error::Error + Send + Sync>>,
 }
 
 impl Error {
@@ -124,21 +127,21 @@ impl Error {
             code,
             #[cfg(all(feature = "std", feature = "backtrace"))]
             backtrace: std::backtrace::Backtrace::capture(),
-            #[cfg(all(feature = "std", feature = "backtrace"))]
+            #[cfg(feature = "alloc")]
             inner: None,
         }
     }
 
-    #[cfg(all(feature = "std", feature = "backtrace"))]
+    #[cfg(feature = "alloc")]
     pub fn new_with_details(
         code: ErrorCode,
-        detailed_err: Box<dyn std::error::Error + Send + Sync>,
+        detailed_err: Box<dyn core::error::Error + Send + Sync>,
     ) -> Self {
         Self {
             code,
             #[cfg(all(feature = "std", feature = "backtrace"))]
             backtrace: std::backtrace::Backtrace::capture(),
-            #[cfg(all(feature = "std", feature = "backtrace"))]
+            #[cfg(feature = "alloc")]
             inner: Some(detailed_err),
         }
     }
@@ -152,8 +155,8 @@ impl Error {
         &self.backtrace
     }
 
-    #[cfg(all(feature = "std", feature = "backtrace"))]
-    pub fn details(&self) -> Option<&(dyn std::error::Error + Send + Sync)> {
+    #[cfg(feature = "alloc")]
+    pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync)> {
         self.inner.as_ref().map(|err| err.as_ref())
     }
 }
@@ -305,12 +308,11 @@ impl fmt::Debug for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(all(feature = "std", feature = "backtrace"))]
+        #[cfg(feature = "alloc")]
         {
-            let err_msg = self
-                .inner
-                .as_ref()
-                .map_or(String::new(), |err| err.to_string());
+            let err_msg = self.inner.as_ref().map_or(Default::default(), |err| {
+                alloc::string::ToString::to_string(err)
+            });
 
             if err_msg.is_empty() {
                 write!(f, "{:?}", self.code())
@@ -318,7 +320,7 @@ impl fmt::Display for Error {
                 write!(f, "{:?}: {}", self.code(), err_msg)
             }
         }
-        #[cfg(not(all(feature = "std", feature = "backtrace")))]
+        #[cfg(not(feature = "alloc"))]
         {
             write!(f, "{:?}", self.code())
         }
@@ -332,5 +334,4 @@ impl defmt::Format for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
