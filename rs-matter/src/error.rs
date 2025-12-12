@@ -17,7 +17,7 @@
 
 use core::{array::TryFromSliceError, fmt, str::Utf8Error};
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", feature = "backtrace"))]
 use alloc::{boxed::Box, string::ToString};
 
 // TODO: The error code enum is in a need of an overhaul
@@ -117,7 +117,7 @@ pub struct Error {
     code: ErrorCode,
     #[cfg(all(feature = "std", feature = "backtrace"))]
     backtrace: std::backtrace::Backtrace,
-    #[cfg(feature = "alloc")]
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
     inner: Option<Box<dyn core::error::Error + Send + Sync>>,
 }
 
@@ -127,21 +127,20 @@ impl Error {
             code,
             #[cfg(all(feature = "std", feature = "backtrace"))]
             backtrace: std::backtrace::Backtrace::capture(),
-            #[cfg(feature = "alloc")]
+            #[cfg(all(feature = "alloc", feature = "backtrace"))]
             inner: None,
         }
     }
 
-    #[cfg(feature = "alloc")]
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
     pub fn new_with_details(
         code: ErrorCode,
         detailed_err: Box<dyn core::error::Error + Send + Sync>,
     ) -> Self {
         Self {
             code,
-            #[cfg(all(feature = "std", feature = "backtrace"))]
+            #[cfg(feature = "std")]
             backtrace: std::backtrace::Backtrace::capture(),
-            #[cfg(feature = "alloc")]
             inner: Some(detailed_err),
         }
     }
@@ -155,7 +154,7 @@ impl Error {
         &self.backtrace
     }
 
-    #[cfg(feature = "alloc")]
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
     pub fn details(&self) -> Option<&(dyn core::error::Error + Send + Sync)> {
         self.inner.as_ref().map(|err| err.as_ref())
     }
@@ -308,7 +307,7 @@ impl fmt::Debug for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(feature = "alloc")]
+        #[cfg(all(feature = "alloc", feature = "backtrace"))]
         {
             let err_msg = self
                 .inner
@@ -321,7 +320,7 @@ impl fmt::Display for Error {
                 write!(f, "{:?}: {}", self.code(), err_msg)
             }
         }
-        #[cfg(not(feature = "alloc"))]
+        #[cfg(not(all(feature = "alloc", feature = "backtrace")))]
         {
             write!(f, "{:?}", self.code())
         }
@@ -336,7 +335,7 @@ impl defmt::Format for Error {
 }
 
 impl core::error::Error for Error {
-    #[cfg(feature = "alloc")]
+    #[cfg(all(feature = "alloc", feature = "backtrace"))]
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         self.inner
             .as_ref()
