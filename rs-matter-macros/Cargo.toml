@@ -23,7 +23,7 @@ syn = { version = "2", features = ["extra-traits", "parsing"] }
 quote = "1"
 proc-macro2 = "1"
 proc-macro-crate = "3"
-miette = { version = "5", features = ["fancy"] }
+miette = { version = "7", features = ["fancy"] }
 nom = "7"
 nom-greedyerror = "0.5"
 nom-supreme = "0.8"

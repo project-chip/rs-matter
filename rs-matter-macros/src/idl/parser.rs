@@ -1391,7 +1391,7 @@ impl<'a> EntityContext<'a> {
 )]
 pub struct IdlParsingError {
     #[source_code]
-    pub src: NamedSource,
+    pub src: NamedSource<String>,
 
     #[label("Parse error location")]
     pub error_location: SourceSpan,
