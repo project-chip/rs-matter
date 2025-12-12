@@ -35,6 +35,8 @@ zeroconf = ["rs-matter/zeroconf"]
 avahi = ["rs-matter/zbus"]
 resolve = ["rs-matter/zbus"]
 chip-test = []
+# Temporary fix for unexpected cfgs lint
+defmt = []
 
 [dependencies]
 log = "0.4"
