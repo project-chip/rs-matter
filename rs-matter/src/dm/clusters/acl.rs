@@ -200,7 +200,8 @@ impl ClusterHandler for AclHandler {
         _request: ReviewFabricRestrictionsRequest<'_>,
         _response: ReviewFabricRestrictionsResponseBuilder<P>,
     ) -> Result<P, Error> {
-        todo!()
+        // Only necessary with MNGD feature (ManagedDevice)
+        unimplemented!()
     }
 }
 
