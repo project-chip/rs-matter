@@ -75,9 +75,10 @@ pub fn idl_id_to_enum_variant_name(s: &str) -> String {
 ///
 /// assert_eq!(idl_field_name_to_rs_name("test"), "test");
 /// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "another_test");
+/// assert_eq!(idl_field_name_to_rs_name("NOCs"), "nocs");
 /// ```
 pub fn idl_field_name_to_rs_name(s: &str) -> String {
-    s.to_case(Case::Snake)
+    s.replace("NOCs", "nocs-").to_case(Case::Snake)
 }
 
 /// Convert an IDL identifier (like `anotherTest`) into a name suitable for
@@ -86,12 +87,12 @@ pub fn idl_field_name_to_rs_name(s: &str) -> String {
 /// Examples:
 ///
 /// ```ignore
-/// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_name;
+/// use rs_matter_macros_impl::idl::id::idl_field_name_to_rs_type_name;
 ///
-/// assert_eq!(idl_field_name_to_rs_name("test"), "Test");
-/// assert_eq!(idl_field_name_to_rs_name("anotherTest"), "AnotherTest");
-/// assert_eq!(idl_field_name_to_rs_name("another_test"), "AnotherTest");
-/// assert_eq!(idl_field_name_to_rs_name("Identity"), "Identity");
+/// assert_eq!(idl_field_name_to_rs_type_name("test"), "Test");
+/// assert_eq!(idl_field_name_to_rs_type_name("anotherTest"), "AnotherTest");
+/// assert_eq!(idl_field_name_to_rs_type_name("another_test"), "AnotherTest");
+/// assert_eq!(idl_field_name_to_rs_type_name("Identity"), "Identity");
 /// ```
 pub fn idl_field_name_to_rs_type_name(s: &str) -> String {
     let s = s.to_case(Case::Camel);

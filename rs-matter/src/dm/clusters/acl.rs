@@ -19,14 +19,15 @@
 
 use core::num::NonZeroU8;
 
-use crate::acl::{self, AclEntry};
+use crate::acl::{self, AclEntry, MAX_ACL_ENTRIES_PER_FABRIC};
 use crate::dm::{
-    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, ReadContext,
-    WriteContext,
+    ArrayAttributeRead, ArrayAttributeWrite, AttrDetails, Cluster, Dataver, InvokeContext,
+    ReadContext, WriteContext,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::tlv::{TLVArray, TLVBuilderParent};
+use crate::utils::storage::Vec;
 use crate::with;
 
 pub use crate::dm::clusters::decl::access_control::*;
@@ -98,22 +99,26 @@ impl AclHandler {
     ) -> Result<(), Error> {
         match value {
             ArrayAttributeWrite::Replace(list) => {
-                // Check the well-formedness of the list first
-                for entry in &list {
-                    let entry = entry?;
-                    entry.check()?;
-                }
-                if list.iter().count() > acl::MAX_ACL_ENTRIES_PER_FABRIC {
-                    Err(ErrorCode::ConstraintError)?;
-                }
+                let mut processed: Vec<AclEntry, MAX_ACL_ENTRIES_PER_FABRIC> = Vec::new();
 
-                // Now add everything
+                // Check the well-formedness of the list first & init to check validity
+                let mut count: usize = 0;
+                for entry in &list {
+                    count += 1;
+                    if count > MAX_ACL_ENTRIES_PER_FABRIC {
+                        return Err(ErrorCode::ResourceExhausted)?;
+                    }
+                    let entry = entry?;
+                    entry.check().map_err(|_| ErrorCode::ConstraintError)?;
+
+                    processed.push_init(AclEntry::init_with(fab_idx, &entry), || {
+                        ErrorCode::ResourceExhausted.into()
+                    })?;
+                }
+                // Now add everything once we know all are valid
                 fabric_mgr.acl_remove_all(fab_idx)?;
-                for entry in list {
-                    // unwrap! calls below can't fail because we already checked that the entry is well-formed
-                    // and the length of the list is within the limit
-                    let entry = unwrap!(entry);
-                    unwrap!(fabric_mgr.acl_add_init(fab_idx, AclEntry::init_with(fab_idx, &entry)));
+                for p in processed {
+                    unwrap!(fabric_mgr.acl_add(fab_idx, p));
                 }
             }
             ArrayAttributeWrite::Add(entry) => {
@@ -187,6 +192,15 @@ impl ClusterHandler for AclHandler {
             fab_idx,
             value,
         )
+    }
+
+    fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: ReviewFabricRestrictionsRequest<'_>,
+        _response: ReviewFabricRestrictionsResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        todo!()
     }
 }
 

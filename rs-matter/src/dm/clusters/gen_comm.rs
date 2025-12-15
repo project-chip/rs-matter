@@ -231,4 +231,14 @@ impl ClusterHandler for GenCommHandler<'_> {
 
         response.error_code(status)?.debug_text("")?.end()
     }
+
+    fn handle_set_tc_acknowledgements<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: SetTCAcknowledgementsRequest,
+        response: SetTCAcknowledgementsResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        // TODO
+        response.error_code(CommissioningErrorEnum::OK)?.end()
+    }
 }

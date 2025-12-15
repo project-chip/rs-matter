@@ -590,7 +590,7 @@ where
         Ok(timeout_instant)
     }
 
-    /// A utility to check whether a timed request has timed out, and if so, send a timout status response
+    /// A utility to check whether a timed request has timed out, and if so, send a timeout status response
     async fn timed_out(
         &self,
         exchange: &mut Exchange<'_>,
@@ -604,7 +604,7 @@ where
                 .map(|timeout_instant| (exchange.matter().epoch())() > timeout_instant)
                 .unwrap_or(false)
             {
-                Some(IMStatusCode::UnsupportedAccess)
+                Some(IMStatusCode::Timeout)
             } else {
                 None
             }
