@@ -529,7 +529,7 @@ impl ITests {
     }
 
     fn test_exe_path(&self, profile: &str, target: &str) -> PathBuf {
-       self.workspace_dir.join("target").join(profile).join(target)
+        self.workspace_dir.join("target").join(profile).join(target)
     }
 
     fn test_pics_path(&self, target: &str) -> PathBuf {
