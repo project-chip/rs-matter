@@ -44,17 +44,21 @@ pub mod decl {
         AdministratorCommissioning,
         AccessControl,
         BasicInformation,
+        BridgedDeviceBasicInformation, // TODO: Fix with #342
+        ContentLauncher,               // TODO: Fix with #342
         Descriptor,
         EthernetNetworkDiagnostics,
         GeneralDiagnostics,
         GeneralCommissioning,
         GroupKeyManagement,
-        LevelControl,
+        KeypadInput,   // TODO: Fix with #342
+        LevelControl,  // TODO: Fix with #342
+        MediaPlayback, // TODO: Fix with #342
         NetworkCommissioning,
-        OnOff,
+        OnOff, // TODO: Fix with #342
         OperationalCredentials,
         ThreadNetworkDiagnostics,
-        UnitTesting,
+        UnitTesting, // TODO: Fix with #342
         WiFiNetworkDiagnostics,
     );
 }

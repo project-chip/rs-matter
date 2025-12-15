@@ -37,7 +37,7 @@ use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
     Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, Node, ReadContext,
+    EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -45,14 +45,15 @@ use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
 use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::tlv::{TLVBuilderParent, Utf8StrBuilder};
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
 
-use crate::bridged_device_basic_information::ClusterHandler as _;
-
-rs_matter::import!(BridgedDeviceBasicInformation);
+pub use rs_matter::dm::clusters::decl::bridged_device_basic_information::{
+    self, ClusterHandler as _, KeepActiveRequest,
+};
 
 #[path = "../common/mdns.rs"]
 mod mdns;
@@ -298,6 +299,22 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         // however - in production setup - the user might want to implement
         // true reachability logic here.
         Ok(true)
+    }
+
+    fn unique_id<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        _builder: Utf8StrBuilder<P>,
+    ) -> Result<P, Error> {
+        todo!()
+    }
+
+    fn handle_keep_active(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: KeepActiveRequest<'_>,
+    ) -> Result<(), Error> {
+        todo!()
     }
 
     // Note that at least the `node_label` optional attribute is also good to implement,

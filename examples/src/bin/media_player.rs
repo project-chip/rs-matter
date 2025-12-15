@@ -32,15 +32,21 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
-use content_launcher::{
-    ClusterAsyncHandler as _, LaunchContentRequest, LaunchURLRequest, LauncherResponseBuilder,
-    SupportedProtocolsBitmap,
+// Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
+//
+// User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
+// so as to handle the requests from the controller.
+use rs_matter::dm::clusters::decl::content_launcher::{
+    self, ClusterAsyncHandler as _, LaunchContentRequest, LaunchURLRequest,
+    LauncherResponseBuilder, SupportedProtocolsBitmap,
 };
 
-use keypad_input::{ClusterAsyncHandler as _, SendKeyRequest, SendKeyResponseBuilder};
+use rs_matter::dm::clusters::decl::keypad_input::{
+    self, ClusterAsyncHandler as _, SendKeyRequest, SendKeyResponseBuilder,
+};
 
-use media_playback::{
-    ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
+use rs_matter::dm::clusters::decl::media_playback::{
+    self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
     FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
     SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
@@ -69,15 +75,6 @@ use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::select::Coalesce;
 use rs_matter::utils::storage::pooled::PooledBuffers;
 use rs_matter::{clusters, devices, with, Matter, MATTER_PORT};
-
-// Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
-//
-// This will auto-generate all Rust types related to the MediaPlayback cluster
-// in a module named `media_playback`.
-//
-// User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
-// so as to handle the requests from the controller.
-rs_matter::import!(MediaPlayback, ContentLauncher, KeypadInput);
 
 #[path = "../common/mdns.rs"]
 mod mdns;
