@@ -354,8 +354,8 @@ impl ITests {
             Ok(()) => info!("Test `{test_name}` completed successfully"),
             Err(err) => {
                 info!("Command failed: {}", test_command);
-                return Err(err)
-            },
+                return Err(err);
+            }
         };
 
         Ok(())
