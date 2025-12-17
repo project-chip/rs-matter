@@ -15,7 +15,7 @@ rs_matter::import!(
     ThreadNetworkDiagnostics,
     WiFiNetworkDiagnostics;
     print_timings,
-    cap_parse = 180,
+    cap_parse = 300,
     cap_codegen = 400
 );
 
