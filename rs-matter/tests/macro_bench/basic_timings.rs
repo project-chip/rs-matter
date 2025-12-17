@@ -1,7 +1,8 @@
 //! This test is used to benchmark the time it takes to parse and codegen the `import!` macro.
 
+ // TODO: No longer necessary with #342
 rs_matter::import!(
-    AdministratorCommissioning,
+    // AdministratorCommissioning, Removed due to use of globals
     AccessControl,
     BasicInformation,
     Descriptor,
@@ -11,7 +12,7 @@ rs_matter::import!(
     GroupKeyManagement,
     NetworkCommissioning,
     OnOff,
-    OperationalCredentials,
+    // OperationalCredentials, Removed due to use of globals
     ThreadNetworkDiagnostics,
     WiFiNetworkDiagnostics;
     print_timings,
