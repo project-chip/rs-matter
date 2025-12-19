@@ -6,4 +6,3 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
-backend: nix
