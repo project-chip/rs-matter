@@ -21,7 +21,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::Instant;
 
-use crate::dm::{ClusterId, EndptId};
+use crate::dm::{AttrId, ClusterId, EndptId};
 use crate::fabric::MAX_FABRICS;
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
@@ -127,16 +127,22 @@ where
         })
     }
 
-    /// Notify the instance that the data of a specific cluster had changed and that it should re-evaluate the subscriptions
+    /// Notify the instance that the data of a specific attribute has changed and that it should re-evaluate the subscriptions
     /// and report on those that are interested in the changed data.
     ///
-    /// This method is supposed to be called by the application code whenever it changes the data of a cluster.
+    /// This method is supposed to be called by the application code whenever it changes the data of an attribute.
     ///
     /// # Arguments
     /// - `endpoint_id`: The endpoint ID of the cluster that had changed.
     /// - `cluster_id`: The cluster ID of the cluster that had changed.
-    pub fn notify_cluster_changed(&self, _endpoint_id: EndptId, _cluster_id: ClusterId) {
-        // TODO: Make use of the endpoint_id and cluster_id parameters
+    /// - `attr_id`: The attribute ID of the attribute that changed.
+    pub fn notify_attribute_changed(
+        &self,
+        _endpoint_id: EndptId,
+        _cluster_id: ClusterId,
+        _attr_id: AttrId,
+    ) {
+        // TODO: Make use of the endpoint_id, cluster_id, and attr_id parameters
         // to implement more intelligent reporting on subscriptions
 
         self.state.lock(|internal| {

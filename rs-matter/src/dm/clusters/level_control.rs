@@ -587,7 +587,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 let (level, should_notify) = self.set_level(H::MIN_LEVEL, false, true)?;
                 if should_notify {
                     self.dataver_changed();
-                    ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                    ctx.notify_attribute_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::CurrentLevel as _,
+                    );
                 }
                 if level.is_none() {
                     return Err(ErrorCode::Failure.into());
@@ -865,7 +869,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                         .write_remaining_time_quietly(Duration::from_millis(0), is_transition_start)
                 {
                     self.dataver_changed();
-                    ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                    ctx.notify_attribute_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::CurrentLevel as _,
+                    );
                 }
                 return Ok(());
             }
@@ -882,7 +890,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 || self.write_remaining_time_quietly(remaining_time, is_transition_start)
             {
                 self.dataver_changed();
-                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                ctx.notify_attribute_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::CurrentLevel as _,
+                );
             }
 
             let latency = match is_transition_start {
@@ -992,7 +1004,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 self.set_level(new_level, is_end_of_transition, true)?;
             if should_notify {
                 self.dataver_changed();
-                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                ctx.notify_attribute_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::CurrentLevel as _,
+                );
             }
             let new_level = match new_level {
                 Some(level) => level,
@@ -1088,7 +1104,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         self.task_signal.signal(Task::Stop);
         if self.write_remaining_time_quietly(Duration::from_millis(0), false) {
             self.dataver_changed();
-            ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+            ctx.notify_attribute_changed(
+                self.endpoint_id,
+                Self::CLUSTER.id,
+                AttributeId::RemainingTime as _,
+            );
         }
 
         Ok(())
@@ -1105,7 +1125,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                             || self.write_remaining_time_quietly(Duration::from_millis(0), false)
                         {
                             self.dataver_changed();
-                            ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                            ctx.notify_attribute_changed(
+                                self.endpoint_id,
+                                Self::CLUSTER.id,
+                                AttributeId::CurrentLevel as _,
+                            );
                         }
                     }
                     Err(e) => {
@@ -1175,7 +1199,11 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
                 self.task_signal.signal(Task::Stop);
                 if self.write_remaining_time_quietly(Duration::from_millis(0), false) {
                     self.dataver_changed();
-                    ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                    ctx.notify_attribute_changed(
+                        self.endpoint_id,
+                        Self::CLUSTER.id,
+                        AttributeId::RemainingTime as _,
+                    );
                 }
             }
         }

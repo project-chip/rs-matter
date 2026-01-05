@@ -301,7 +301,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         let _ = self.update_attr_on();
 
         self.dataver_changed();
-        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+        ctx.notify_attribute_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
 
         // LevelControl coupling logic defined in section 1.6.4.1.1
         if !level_control_initiated {
@@ -359,7 +359,11 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
 
             if attr_updated {
                 self.dataver_changed();
-                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                ctx.notify_attribute_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::OnOff as _,
+                );
             }
 
             // When calling the LevelControl with false (off), the levelControl cluster will call
@@ -372,7 +376,7 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
         // On receipt of the Off command, a server SHALL set the OnOff attribute to FALSE.
         self.hooks.set_on_off(false);
         self.dataver_changed();
-        ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+        ctx.notify_attribute_changed(self.endpoint_id, Self::CLUSTER.id, AttributeId::OnOff as _);
 
         true
     }
@@ -429,7 +433,11 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 let _ = self.update_attr_on();
 
                 self.dataver_changed();
-                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                ctx.notify_attribute_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::OnOff as _,
+                );
             }
             false => {
                 if self.state.get() == OnOffClusterState::Off {
@@ -441,7 +449,11 @@ impl<'a, H: OnOffHooks, LH: LevelControlHooks> OnOffHandler<'a, H, LH> {
                 let _ = self.update_attr_off();
 
                 self.dataver_changed();
-                ctx.notify_cluster_changed(self.endpoint_id, Self::CLUSTER.id);
+                ctx.notify_attribute_changed(
+                    self.endpoint_id,
+                    Self::CLUSTER.id,
+                    AttributeId::OnOff as _,
+                );
             }
         }
     }

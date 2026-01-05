@@ -24,26 +24,70 @@ use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
 use crate::Matter;
 
-use super::{AttrDetails, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
+use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
 
 pub use asynch::*;
 
 pub trait ChangeNotify {
-    fn notify(&self, endpt: EndptId, clust: ClusterId);
+    fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId);
 }
 
 impl<T> ChangeNotify for &T
 where
     T: ChangeNotify,
 {
-    fn notify(&self, endpt: EndptId, clust: ClusterId) {
-        (**self).notify(endpt, clust)
+    fn notify(&self, endpt: EndptId, clust: ClusterId, attr: AttrId) {
+        (**self).notify(endpt, clust, attr)
     }
 }
 
 impl ChangeNotify for () {
-    fn notify(&self, _endpt: EndptId, _clust: ClusterId) {
+    fn notify(&self, _endpt: EndptId, _clust: ClusterId, _attr: AttrId) {
         // No-op
+    }
+}
+
+/// A HandlerContext super-type that is used to access core Matter functionality.
+///
+/// It provides access to the Matter instance and attribute changed notifications.
+pub trait BasicContext {
+    /// Return the Matter object that is associated with this handler
+    fn matter(&self) -> &Matter<'_>;
+
+    /// Notify that the state of an attribute has changed.
+    ///
+    /// # Arguments
+    /// - `endpoint_id`: The endpoint ID of the cluster that has changed.
+    /// - `cluster_id`: The cluster ID of the cluster that has changed.
+    /// - `attr_id`: The attribute ID of the attribute that has changed.
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    );
+
+    /// Notify that the state of an attribute has changed.
+    fn notify_attribute_path_changed(&self, attr: &AttrDetails) {
+        self.notify_attribute_changed(attr.endpoint_id, attr.cluster_id, attr.attr_id);
+    }
+}
+
+impl<T> BasicContext for &T
+where
+    T: BasicContext,
+{
+    fn matter(&self) -> &Matter<'_> {
+        (**self).matter()
+    }
+
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        (**self).notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 }
 
@@ -51,10 +95,7 @@ impl ChangeNotify for () {
 ///
 /// It provides access to the Matter instance and to Data Model-related objects,
 /// which could be useful in the context of executing background tasks specific for the concrete handler.
-pub trait HandlerContext {
-    /// Return the Matter object that is associated with this handler
-    fn matter(&self) -> &Matter<'_>;
-
+pub trait HandlerContext: BasicContext {
     /// Return the global handler that this handler is part of.
     ///
     /// Useful in case a concrete cluster handler (say, the Scenes one) needs to
@@ -66,33 +107,18 @@ pub trait HandlerContext {
     /// Useful in case e.g. a concrete cluster handler needs to invoke read/write/invoke operations on
     /// other clusters, and the TLV input/output data for those operations is non-trivial in size.
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_;
-
-    /// Notify that the state of a cluster has changed.
-    ///
-    /// # Arguments
-    /// - `endpoint_id`: The endpoint ID of the cluster that has changed.
-    /// - `cluster_id`: The cluster ID of the cluster that has changed.
-    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId);
 }
 
 impl<T> HandlerContext for &T
 where
     T: HandlerContext,
 {
-    fn matter(&self) -> &Matter<'_> {
-        (**self).matter()
-    }
-
     fn handler(&self) -> impl AsyncHandler + '_ {
         (**self).handler()
     }
 
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         (**self).buffers()
-    }
-
-    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
-        (**self).notify_cluster_changed(endpoint_id, cluster_id);
     }
 }
 
@@ -101,14 +127,12 @@ pub trait Context: HandlerContext {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
 
-    /// Notify that the state of the cluster whose read/write/invoke operation is processed has changed.
+    /// Notify that the state of the attribute whose read/write/invoke operation is processed has changed.
     fn notify_changed(&self) {
         if let Some(ctx) = self.as_read_ctx() {
-            self.notify_cluster_changed(ctx.attr().endpoint_id, ctx.attr().cluster_id);
+            self.notify_attribute_path_changed(ctx.attr());
         } else if let Some(ctx) = self.as_write_ctx() {
-            self.notify_cluster_changed(ctx.attr().endpoint_id, ctx.attr().cluster_id);
-        } else if let Some(ctx) = self.as_invoke_ctx() {
-            self.notify_cluster_changed(ctx.cmd().endpoint_id, ctx.cmd().cluster_id);
+            self.notify_attribute_path_changed(ctx.attr());
         } else {
             unreachable!()
         }
@@ -220,6 +244,35 @@ where
     }
 }
 
+/// A concrete implementation of the `BasicContext` trait
+pub(crate) struct BasicContextInstance<'a> {
+    matter: &'a Matter<'a>,
+    pub(crate) notify: &'a dyn ChangeNotify,
+}
+
+impl<'a> BasicContextInstance<'a> {
+    /// Construct a new instance.
+    #[inline(always)]
+    pub(crate) const fn new(matter: &'a Matter<'a>, notify: &'a dyn ChangeNotify) -> Self {
+        Self { matter, notify }
+    }
+}
+
+impl BasicContext for BasicContextInstance<'_> {
+    fn matter(&self) -> &Matter<'_> {
+        self.matter
+    }
+
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        self.notify.notify(endpoint_id, cluster_id, attr_id);
+    }
+}
+
 /// A concrete implementation of the `HandlerContext` trait
 pub(crate) struct HandlerContextInstance<'a, T, B> {
     matter: &'a Matter<'a>,
@@ -250,7 +303,7 @@ where
     }
 }
 
-impl<T, B> HandlerContext for HandlerContextInstance<'_, T, B>
+impl<T, B> BasicContext for HandlerContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -259,16 +312,27 @@ where
         self.matter
     }
 
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        self.notify.notify(endpoint_id, cluster_id, attr_id);
+    }
+}
+
+impl<T, B> HandlerContext for HandlerContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
     fn handler(&self) -> impl AsyncHandler + '_ {
         &self.handler
     }
 
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         &self.buffers
-    }
-
-    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
-        self.notify.notify(endpoint_id, cluster_id);
     }
 }
 
@@ -305,7 +369,7 @@ where
     }
 }
 
-impl<T, B> HandlerContext for ReadContextInstance<'_, T, B>
+impl<T, B> BasicContext for ReadContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -314,16 +378,27 @@ where
         self.exchange().matter()
     }
 
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        self.notify.notify(endpoint_id, cluster_id, attr_id);
+    }
+}
+
+impl<T, B> HandlerContext for ReadContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
     fn handler(&self) -> impl AsyncHandler + '_ {
         &self.handler
     }
 
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         &self.buffers
-    }
-
-    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
-        self.notify.notify(endpoint_id, cluster_id);
     }
 }
 
@@ -387,7 +462,7 @@ where
     }
 }
 
-impl<T, B> HandlerContext for WriteContextInstance<'_, T, B>
+impl<T, B> BasicContext for WriteContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -396,16 +471,27 @@ where
         self.exchange().matter()
     }
 
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        self.notify.notify(endpoint_id, cluster_id, attr_id);
+    }
+}
+
+impl<T, B> HandlerContext for WriteContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
     fn handler(&self) -> impl AsyncHandler + '_ {
         &self.handler
     }
 
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         &self.buffers
-    }
-
-    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
-        self.notify.notify(endpoint_id, cluster_id);
     }
 }
 
@@ -473,7 +559,7 @@ where
     }
 }
 
-impl<T, B> HandlerContext for InvokeContextInstance<'_, T, B>
+impl<T, B> BasicContext for InvokeContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -482,16 +568,27 @@ where
         self.exchange().matter()
     }
 
+    fn notify_attribute_changed(
+        &self,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        attr_id: AttrId,
+    ) {
+        self.notify.notify(endpoint_id, cluster_id, attr_id);
+    }
+}
+
+impl<T, B> HandlerContext for InvokeContextInstance<'_, T, B>
+where
+    T: AsyncHandler,
+    B: BufferAccess<IMBuffer>,
+{
     fn handler(&self) -> impl AsyncHandler + '_ {
         &self.handler
     }
 
     fn buffers(&self) -> impl BufferAccess<IMBuffer> + '_ {
         &self.buffers
-    }
-
-    fn notify_cluster_changed(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
-        self.notify.notify(endpoint_id, cluster_id);
     }
 }
 
