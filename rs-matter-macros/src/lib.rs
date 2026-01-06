@@ -74,7 +74,7 @@ pub fn import(item: TokenStream) -> TokenStream {
         Some("1.2") | Some("1.2.0") | Some("1.2.0.1") => CSA_STANDARD_CLUSTERS_IDL_V1_2_0_1,
         Some("1.1") | Some("1.1.0") | Some("1.1.0.2") => CSA_STANDARD_CLUSTERS_IDL_V1_1_0_2,
         Some("1.0") | Some("1.0.0") | Some("1.0.0.2") => CSA_STANDARD_CLUSTERS_IDL_V1_0_0_2,
-        None => CSA_STANDARD_CLUSTERS_IDL_V1_3_0_0,
+        None => CSA_STANDARD_CLUSTERS_IDL_V1_4_2_0,
         Some(other) => panic!("Unknown Matter specification version: {other}"),
     };
 
@@ -130,8 +130,7 @@ pub fn import(item: TokenStream) -> TokenStream {
         #globals
 
         #(#clusters)*
-    )
-    .into();
+    );
 
     let elapsed = time
         .elapsed()
@@ -150,7 +149,12 @@ pub fn import(item: TokenStream) -> TokenStream {
         }
     }
 
-    result
+    // Print the output before returning it
+    // println!("--- Generated Code Output ---");
+    // println!("{}", result.to_string()); // Print as a String for easy reading
+    // println!("-----------------------------");
+
+    result.into()
 }
 
 #[derive(Debug)]

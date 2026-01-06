@@ -538,10 +538,10 @@ impl AclEntry {
         Self::init(Some(fab_idx), Privilege::empty(), AuthMode::Pase)
             .into_fallible()
             .chain(|e| {
-                let auth_mode = entry.auth_mode()?.ok_or(ErrorCode::ConstraintError)?;
-                let privilege = entry.privilege()?.ok_or(ErrorCode::ConstraintError)?;
-                let subjects = entry.subjects()?.ok_or(ErrorCode::ConstraintError)?;
-                let targets = entry.targets()?.ok_or(ErrorCode::ConstraintError)?;
+                let auth_mode = entry.auth_mode().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+                let privilege = entry.privilege().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+                let subjects = entry.subjects().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
+                let targets = entry.targets().map_err(|_| ErrorCode::ConstraintError)?.ok_or(ErrorCode::ConstraintError)?;
 
                 if
                     // As per spec, PASE auth mode is reserved for future use

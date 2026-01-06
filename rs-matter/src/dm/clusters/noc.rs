@@ -110,23 +110,21 @@ impl ClusterHandler for NocHandler {
         self.dataver.changed();
     }
 
-    fn no_cs<P: TLVBuilderParent>(
+    fn nocs<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<NOCStructArrayBuilder<P>, NOCStructBuilder<P>>,
     ) -> Result<P, Error> {
         fn read_into<P: TLVBuilderParent>(
-            accessing_fab_idx: u8,
             fabric: &Fabric,
             builder: NOCStructBuilder<P>,
         ) -> Result<P, Error> {
-            let same_fab_idx = accessing_fab_idx == fabric.fab_idx().get();
-
             builder
-                .noc(same_fab_idx.then(|| Octets::new(fabric.noc())))?
-                .icac(same_fab_idx.then(|| {
-                    Nullable::new((!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())))
-                }))?
+                .noc(Octets::new(fabric.noc()))?
+                .icac(Nullable::new(
+                    (!fabric.icac().is_empty()).then(|| Octets::new(fabric.icac())),
+                ))?
+                .vvsc(None)?
                 .fabric_index(Some(fabric.fab_idx().get()))?
                 .end()
         }
@@ -141,7 +139,11 @@ impl ClusterHandler for NocHandler {
         match builder {
             ArrayAttributeRead::ReadAll(mut builder) => {
                 for fabric in fabrics {
-                    builder = read_into(attr.fab_idx, fabric, builder.push()?)?;
+                    if attr.fab_idx != fabric.fab_idx().get() {
+                        continue;
+                    }
+
+                    builder = read_into(fabric, builder.push()?)?;
                 }
 
                 builder.end()
@@ -150,7 +152,11 @@ impl ClusterHandler for NocHandler {
                 let fabric = fabrics.nth(index as _);
 
                 if let Some(fabric) = fabric {
-                    read_into(attr.fab_idx, fabric, builder)
+                    if attr.fab_idx != fabric.fab_idx().get() {
+                        Err(ErrorCode::ConstraintError.into())
+                    } else {
+                        read_into(fabric, builder)
+                    }
                 } else {
                     Err(ErrorCode::ConstraintError.into())
                 }
@@ -180,6 +186,7 @@ impl ClusterHandler for NocHandler {
                 .fabric_id(fabric.fabric_id())?
                 .node_id(fabric.node_id())?
                 .label(fabric.label())?
+                .vid_verification_statement(None)?
                 .fabric_index(Some(fabric.fab_idx().get()))?
                 .end()
         }
@@ -623,5 +630,22 @@ impl ClusterHandler for NocHandler {
                 .borrow_mut()
                 .add_trusted_root_cert(sess.get_session_mode(), request.root_ca_certificate()?.0)
         })
+    }
+
+    fn handle_set_vid_verification_statement(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: SetVIDVerificationStatementRequest<'_>,
+    ) -> Result<(), Error> {
+        Ok(()) // TODO
+    }
+
+    fn handle_sign_vid_verification_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        _request: SignVIDVerificationRequestRequest<'_>,
+        _response: SignVIDVerificationResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        todo!()
     }
 }

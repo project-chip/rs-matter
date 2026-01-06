@@ -232,6 +232,14 @@ pub trait ThreadDiag: WirelessDiag {
         Ok(None)
     }
 
+    fn ext_address(&self) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
+    fn rloc_16(&self) -> Result<Option<u16>, Error> {
+        Ok(None)
+    }
+
     fn security_policy(&self) -> Result<Option<SecurityPolicy>, Error> {
         Ok(None)
     }
@@ -327,6 +335,14 @@ where
 
     fn leader_router_id(&self) -> Result<Option<u8>, Error> {
         (*self).leader_router_id()
+    }
+
+    fn ext_address(&self) -> Result<Option<u64>, Error> {
+        (*self).ext_address()
+    }
+
+    fn rloc_16(&self) -> Result<Option<u16>, Error> {
+        (*self).rloc_16()
     }
 
     fn security_policy(&self) -> Result<Option<SecurityPolicy>, Error> {
@@ -658,6 +674,13 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
             }
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
+    }
+    fn ext_address(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+        Ok(Nullable::new(self.diag.ext_address()?))
+    }
+
+    fn rloc_16(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+        Ok(Nullable::new(self.diag.rloc_16()?))
     }
 
     fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {

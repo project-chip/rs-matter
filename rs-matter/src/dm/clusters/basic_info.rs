@@ -36,8 +36,8 @@ pub use crate::dm::clusters::decl::basic_information::*;
 
 /// The default Matter App Clusters specification version
 ///
-/// Currently set to V1.3.0.0
-pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01030000;
+/// Currently set to V1.4.2.0
+pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01040200;
 
 /// The default Matter Data Model revision
 ///
@@ -125,6 +125,8 @@ bitflags! {
     }
 }
 
+pub const DEFAULT_MATTER_CONFIGURATION_VERSION: u32 = 1;
+
 /// Basic information which is immutable
 /// (i.e. valid for the lifetime of the device firmware)
 ///
@@ -173,6 +175,7 @@ pub struct BasicInfoConfig<'a> {
     pub data_model_revision: u16,
     /// Max Paths Per Invoke
     pub max_paths_per_invoke: u16,
+    pub configuration_version: u32,
     /// Device Name
     ///
     /// Not a real attribute; used in the mDNS commissioning advertisement
@@ -223,6 +226,7 @@ impl BasicInfoConfig<'_> {
             specification_version: DEFAULT_MATTER_SPEC_VERSION,
             data_model_revision: DEFAULT_DATA_MODEL_REVISION,
             max_paths_per_invoke: DEFAULT_MAX_PATHS_PER_INVOKE,
+            configuration_version: DEFAULT_MATTER_CONFIGURATION_VERSION,
             device_name: "",
             device_type: None,
             pairing_hint: PairingHintFlags::empty(),
@@ -529,6 +533,10 @@ impl ClusterHandler for BasicInfoHandler {
 
     fn max_paths_per_invoke(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).max_paths_per_invoke)
+    }
+
+    fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
+        Ok(Self::config(ctx.exchange()).configuration_version)
     }
 
     fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {

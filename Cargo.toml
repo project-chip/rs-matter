@@ -10,7 +10,7 @@ exclude = ["tools/tlv", "xtask"]
 
 [profile.dev]
 debug = true
-opt-level = "z"
+# opt-level = "z"
 
 [profile.release]
 opt-level = "z"

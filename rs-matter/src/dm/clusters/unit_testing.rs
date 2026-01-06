@@ -33,6 +33,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::storage::Vec;
 
+pub use crate::dm::clusters::decl::globals::*;
 pub use crate::dm::clusters::decl::unit_testing::*;
 use crate::{except, with};
 
@@ -54,6 +55,7 @@ struct SimpleStructOwned {
     f: SimpleBitmap,
     g: f32,
     h: f64,
+    i: Option<TestGlobalEnum>,
 }
 
 impl SimpleStructOwned {
@@ -67,6 +69,25 @@ impl SimpleStructOwned {
             f: SimpleBitmap::empty(),
             g: 0.0,
             h: 0.0,
+            i: Some(TestGlobalEnum::SomeValue),
+        })
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct TestGlobalStructOwned {
+    name: heapless::String<10>,
+    my_bitmap: Nullable<TestGlobalBitmap>,
+    my_enum: Option<Nullable<TestGlobalEnum>>,
+}
+
+impl TestGlobalStructOwned {
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            name: heapless::String::new(),
+            my_bitmap <- Nullable::init_none(),
+            my_enum: None,
         })
     }
 }
@@ -142,6 +163,7 @@ impl NullablesAndOptionalsStructOwned {
                 f: s.f()?,
                 g: s.g()?,
                 h: s.h()?,
+                i: s.i()?,
             })
         } else {
             Nullable::none()
@@ -159,6 +181,7 @@ impl NullablesAndOptionalsStructOwned {
                 f: s.f()?,
                 g: s.g()?,
                 h: s.h()?,
+                i: s.i()?,
             })
         } else {
             None
@@ -177,6 +200,7 @@ impl NullablesAndOptionalsStructOwned {
                     f: s.f()?,
                     g: s.g()?,
                     h: s.h()?,
+                    i: s.i()?,
                 })
             } else {
                 Nullable::none()
@@ -362,6 +386,10 @@ pub struct UnitTestingHandlerData {
     nullable_range_restricted_int_16_u: Nullable<u16>,
     nullable_range_restricted_int_16_s: Nullable<i16>,
     mei_int_8_u: u8,
+    global_enum: TestGlobalEnum,
+    global_struct: TestGlobalStructOwned,
+    nullable_global_enum: Nullable<TestGlobalEnum>,
+    nullable_global_struct: Nullable<TestGlobalStructOwned>,
 }
 
 impl UnitTestingHandlerData {
@@ -462,6 +490,10 @@ impl UnitTestingHandlerData {
             nullable_range_restricted_int_16_u: Nullable::some(200),
             nullable_range_restricted_int_16_s: Nullable::some(-100),
             mei_int_8_u: 0,
+            global_enum: TestGlobalEnum::SomeValue,
+            global_struct <- TestGlobalStructOwned::init(),
+            nullable_global_enum <- Nullable::init_none(),
+            nullable_global_struct <- Nullable::init_none(),
         })
     }
 }
@@ -766,6 +798,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         .f(ss.f)?
                         .g(ss.g)?
                         .h(ss.h)?
+                        .i(ss.i)?
                         .end()
                 })?
                 .optional_struct()?
@@ -779,6 +812,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         .f(ss.f)?
                         .g(ss.g)?
                         .h(ss.h)?
+                        .i(ss.i)?
                         .end()
                 })?
                 .nullable_optional_struct()?
@@ -793,6 +827,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                             .f(ss.f)?
                             .g(ss.g)?
                             .h(ss.h)?
+                            .i(ss.i)?
                             .end()
                     })
                 })?
@@ -870,6 +905,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .f(s.f)?
             .g(s.g)?
             .h(s.h)?
+            .i(s.i)?
             .end()
     }
 
@@ -960,6 +996,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         .f(s.fabric_sensitive_struct.f)?
                         .g(s.fabric_sensitive_struct.g)?
                         .h(s.fabric_sensitive_struct.h)?
+                        .i(s.fabric_sensitive_struct.i)?
                         .end()
                 })?
                 .fabric_sensitive_int_8_u_list()?
@@ -1164,6 +1201,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 .f(s.f)?
                 .g(s.g)?
                 .h(s.h)?
+                .i(s.i)?
                 .end()
         } else {
             builder.null()
@@ -1204,6 +1242,48 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .borrow()
             .nullable_range_restricted_int_16_s
             .clone())
+    }
+
+    fn global_enum(&self, _ctx: impl ReadContext) -> Result<TestGlobalEnum, Error> {
+        Ok(self.data.borrow().global_enum)
+    }
+
+    fn global_struct<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: TestGlobalStructBuilder<P>,
+    ) -> Result<P, Error> {
+        let s = &self.data.borrow().global_struct;
+        builder
+            .name(s.name.as_str())?
+            .my_bitmap(s.my_bitmap.clone())?
+            .my_enum(s.my_enum.clone())?
+            .end()
+    }
+
+    fn nullable_global_enum(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<Nullable<TestGlobalEnum>, Error> {
+        Ok(Nullable::some(self.data.borrow().global_enum))
+    }
+
+    fn nullable_global_struct<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl ReadContext,
+        builder: NullableBuilder<P, TestGlobalStructBuilder<P>>,
+    ) -> Result<P, Error> {
+        if let Some(s) = self.data.borrow().nullable_global_struct.as_opt_ref() {
+            let builder = builder.non_null()?;
+
+            builder
+                .name(s.name.as_str())?
+                .my_bitmap(s.my_bitmap.clone())?
+                .my_enum(s.my_enum.clone())?
+                .end()
+        } else {
+            builder.null()
+        }
     }
 
     fn set_boolean(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {
@@ -2142,6 +2222,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 f: s.f()?,
                 g: s.g()?,
                 h: s.h()?,
+                i: s.i()?,
             };
 
             data.nullable_struct = Nullable::some(ns);
@@ -2239,6 +2320,57 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                 .borrow_mut()
                 .nullable_range_restricted_int_16_s
                 .clear();
+        }
+
+        Ok(())
+    }
+
+    fn set_global_enum(&self, _ctx: impl WriteContext, value: TestGlobalEnum) -> Result<(), Error> {
+        self.data.borrow_mut().global_enum = value;
+        Ok(())
+    }
+
+    fn set_global_struct(
+        &self,
+        _ctx: impl WriteContext,
+        value: TestGlobalStruct<'_>,
+    ) -> Result<(), Error> {
+        self.data.borrow_mut().global_struct = TestGlobalStructOwned {
+            name: value
+                .name()?
+                .try_into()
+                .map_err(|_| ErrorCode::InvalidAction)?,
+            my_bitmap: value.my_bitmap()?,
+            my_enum: value.my_enum()?,
+        };
+        Ok(())
+    }
+
+    fn set_nullable_global_enum(
+        &self,
+        _ctx: impl WriteContext,
+        value: Nullable<TestGlobalEnum>,
+    ) -> Result<(), Error> {
+        self.data.borrow_mut().nullable_global_enum = value;
+        Ok(())
+    }
+
+    fn set_nullable_global_struct(
+        &self,
+        _ctx: impl WriteContext,
+        value: Nullable<TestGlobalStruct<'_>>,
+    ) -> Result<(), Error> {
+        if let Some(s) = value.into_option() {
+            let mut data = self.data.borrow_mut();
+            let ns = TestGlobalStructOwned {
+                name: s.name()?.try_into().map_err(|_| ErrorCode::InvalidAction)?,
+                my_bitmap: s.my_bitmap()?,
+                my_enum: s.my_enum()?,
+            };
+
+            data.nullable_global_struct = Nullable::some(ns);
+        } else {
+            self.data.borrow_mut().nullable_global_struct = Nullable::none();
         }
 
         Ok(())
@@ -2643,6 +2775,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     .f(i.f()?)?
                     .g(i.g()?)?
                     .h(i.h()?)?
+                    .i(i.i()?)?
                     .end()
             })?
             .optional_struct_was_present(request.optional_struct()?.is_some())?
@@ -2656,6 +2789,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                     .f(i.f()?)?
                     .g(i.g()?)?
                     .h(i.h()?)?
+                    .i(i.i()?)?
                     .end()
             })?
             .nullable_optional_struct_was_present(request.nullable_optional_struct()?.is_some())?
@@ -2679,6 +2813,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
                         .f(i.f()?)?
                         .g(i.g()?)?
                         .h(i.h()?)?
+                        .i(i.i()?)?
                         .end()
                 },
             )?
@@ -2741,6 +2876,7 @@ impl ClusterHandler for UnitTestingHandler<'_> {
             .f(s.f()?)?
             .g(s.g()?)?
             .h(s.h()?)?
+            .i(s.i()?)?
             .end()?
             .end()
     }
@@ -2850,5 +2986,35 @@ impl ClusterHandler for UnitTestingHandler<'_> {
         let arg = request.arg_1()?;
 
         response.arg_1(arg)?.event_number(0)?.end()
+    }
+
+    fn handle_string_echo_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: StringEchoRequestRequest<'_>,
+        response: StringEchoResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        response.payload(request.payload()?)?.end()
+    }
+
+    fn handle_global_echo_request<P: TLVBuilderParent>(
+        &self,
+        _ctx: impl InvokeContext,
+        request: GlobalEchoRequestRequest<'_>,
+        response: GlobalEchoResponseBuilder<P>,
+    ) -> Result<P, Error> {
+        let s = request.field_1()?;
+        response
+            .field_1()?
+            .name(s.name()?)?
+            .my_bitmap(s.my_bitmap()?)?
+            .my_enum(s.my_enum()?)?
+            .end()?
+            .field_2(request.field_2()?)?
+            .end()
+    }
+
+    fn handle_test_check_command_flags(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+        todo!()
     }
 }
