@@ -36,6 +36,8 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestArmFailSafe",
     "TestAttributesById",
     "TestBasicInformation",
+    // "TestBinding", // TODO: specific cluster, to be implemented with all others
+    "TestCASERecovery",
     "TestCluster",
     "TestClusterComplexTypes",
     "TestClusterMultiFabric",
@@ -46,11 +48,26 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestConstraints",
     "TestDelayCommands",
     //"TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
+    // "TestDiagnosticLogs", // TODO: specific cluster, to be implemented with all others
+    "TestDiscovery",
     "TestEqualities",
+    // "TestEvents", // TODO: specific cluster, to be implemented with all others
+    // "TestEventsById", // TODO: specific cluster, to be implemented with all others
     "TestFabricRemovalWhileSubscribed",
+    "TestGeneralCommissioning",
+    // "TestGroupMessaging", // TODO: specific cluster, to be implemented with all others
+    // "TestGroupsCluster", // TODO: specific cluster, to be implemented with all others
+    // "TestIdentifyCluster", // TODO: specific cluster, to be implemented with all others
+    "TestLogCommands",
+    // "TestMultiAdmin", // TODO: Involved fix to not add duplicate NOC, see failsafe.rs & FabricTable::FindExistingFabricByNocChaining
+    "TestOperationalCredentialsCluster",
+    // "TestOperationalState", // TODO: specific cluster, to be implemented with all others
     "TestSelfFabricRemoval",
     "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",
+    "TestSystemCommands",
+    "TestUserLabelCluster",
+    "TestUserLabelClusterConstraints",
 ];
 
 /// The default Git reference to use for the Chip repository

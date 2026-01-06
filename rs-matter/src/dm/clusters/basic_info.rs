@@ -33,6 +33,7 @@ use crate::utils::storage::WriteBuf;
 use crate::{except, with};
 
 pub use crate::dm::clusters::decl::basic_information::*;
+pub use crate::dm::clusters::decl::general_commissioning::RegulatoryLocationTypeEnum;
 
 /// The default Matter App Clusters specification version
 ///
@@ -41,8 +42,8 @@ pub const DEFAULT_MATTER_SPEC_VERSION: u32 = 0x01040200;
 
 /// The default Matter Data Model revision
 ///
-/// Currently set to V16, which was released with Matter Core spec V1.3
-pub const DEFAULT_DATA_MODEL_REVISION: u16 = 16;
+/// Currently set to V19, which was released with Matter Core spec V1.4.2
+pub const DEFAULT_DATA_MODEL_REVISION: u16 = 19;
 
 /// The default maximum number of paths that can be included in an Invoke request
 ///
@@ -303,6 +304,7 @@ impl Default for ProductAppearance {
 pub struct BasicInfoSettings {
     pub node_label: heapless::String<32>, // Max node-label as per the spec
     pub location: Option<heapless::String<2>>, // Max location as per the spec
+    pub location_type: RegulatoryLocationTypeEnum,
     pub local_config_disabled: bool,
     pub changed: bool,
 }
@@ -313,6 +315,7 @@ impl BasicInfoSettings {
         Self {
             node_label: heapless::String::new(),
             location: None,
+            location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
             changed: false,
         }
@@ -323,6 +326,7 @@ impl BasicInfoSettings {
         init!(Self {
             node_label: heapless::String::new(),
             location: None,
+            location_type: RegulatoryLocationTypeEnum::IndoorOutdoor,
             local_config_disabled: false,
             changed: false,
         })
@@ -360,6 +364,15 @@ impl BasicInfoSettings {
         let len = wb.get_tail();
 
         Ok(len)
+    }
+
+    pub fn set_location(&mut self, location: &str) {
+        if location == "XX" {
+            self.location = None;
+        } else {
+            self.location = Some(unwrap!(heapless::String::<2>::from_str(location)));
+        }
+        self.changed = true;
     }
 }
 
@@ -502,12 +515,7 @@ impl ClusterHandler for BasicInfoHandler {
 
         let mut settings = Self::settings(ctx.exchange()).borrow_mut();
 
-        if location == "XX" {
-            settings.location = None;
-        } else {
-            settings.location = Some(unwrap!(heapless::String::<2>::from_str(location)));
-        }
-        settings.changed = true;
+        settings.set_location(location);
 
         ctx.exchange().matter().notify_persist();
 

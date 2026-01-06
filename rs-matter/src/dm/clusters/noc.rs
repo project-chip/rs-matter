@@ -432,6 +432,7 @@ impl ClusterHandler for NocHandler {
         let buf = response.writer().available_space();
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
+            let matter = ctx.exchange().matter();
             let fab_idx = ctx.exchange().matter().failsafe.borrow_mut().add_noc(
                 &ctx.exchange().matter().fabric_mgr,
                 sess.get_session_mode(),
@@ -441,7 +442,7 @@ impl ClusterHandler for NocHandler {
                 request.ipk_value()?.0,
                 request.case_admin_subject()?,
                 buf,
-                &mut || ctx.exchange().matter().notify_mdns(),
+                &mut || matter.notify_mdns(),
             )?;
 
             let succeeded = Cell::new(false);
@@ -451,9 +452,7 @@ impl ClusterHandler for NocHandler {
                     // Remove the fabric if we fail further down this function
                     warn!("Removing fabric {} due to failure", fab_idx.get());
 
-                    unwrap!(ctx
-                        .exchange()
-                        .matter()
+                    unwrap!(matter
                         .fabric_mgr
                         .borrow_mut()
                         .remove(fab_idx, &mut || ctx.exchange().matter().notify_mdns()));
