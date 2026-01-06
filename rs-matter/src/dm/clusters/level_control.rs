@@ -515,7 +515,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     }
 
     /// Handles asynchronous tasks for level transitions and moves.
-    async fn task_manager(&self, ctx: &impl HandlerContext, task: Task) {
+    async fn task_manager(&self, ctx: impl HandlerContext, task: Task) {
         match task {
             Task::MoveToLevel {
                 with_on_off,
@@ -567,7 +567,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     // If OnLevel is not defined, set the CurrentLevel to the stored level.
     async fn handle_on_off_state_change(
         &self,
-        ctx: &impl HandlerContext,
+        ctx: impl HandlerContext,
         on: bool,
     ) -> Result<(), Error> {
         info!("handle_on_off_state_change");
@@ -773,7 +773,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     /// * options_override: The options override in the command attributes.
     async fn move_to_level_blocking(
         &self,
-        ctx: &impl HandlerContext,
+        ctx: impl HandlerContext,
         with_on_off: bool,
         mut level: u8,
         transition_time: Option<u16>,
@@ -808,7 +808,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     /// Note: This will try to update the OnOff cluster's OnOff attribute at the start and end of the transition.
     async fn move_to_level_transition(
         &self,
-        ctx: &impl HandlerContext,
+        ctx: impl HandlerContext,
         with_on_off: bool,
         target_level: u8,
         transition_time: u16,
@@ -970,7 +970,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     /// Asynchronously moves the current level up or down at a specified rate.
     async fn move_transition(
         &self,
-        ctx: &impl HandlerContext,
+        ctx: impl HandlerContext,
         with_on_off: bool,
         move_mode: MoveModeEnum,
         event_duration: Duration,
@@ -1093,7 +1093,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     /// Stops any ongoing transitions and resets the remaining time.
     fn stop(
         &self,
-        ctx: &impl HandlerContext,
+        ctx: impl HandlerContext,
         with_on_off: bool,
         options_mask: OptionsBitmap,
         options_override: OptionsBitmap,
@@ -1114,7 +1114,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
         Ok(())
     }
 
-    fn handle_out_of_band_message(&self, ctx: &impl HandlerContext, message: OutOfBandMessage) {
+    fn handle_out_of_band_message(&self, ctx: impl HandlerContext, message: OutOfBandMessage) {
         match message {
             OutOfBandMessage::Update(current_level) => {
                 self.task_signal.signal(Task::Stop);

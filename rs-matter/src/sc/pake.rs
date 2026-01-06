@@ -207,7 +207,7 @@ impl PaseMgr {
         })
     }
 
-    pub fn comm_window(&mut self, ctx: &impl BasicContext) -> Result<Option<&CommWindow>, Error> {
+    pub fn comm_window(&mut self, ctx: impl BasicContext) -> Result<Option<&CommWindow>, Error> {
         let expired = self
             .comm_window
             .as_opt_ref()
@@ -245,9 +245,9 @@ impl PaseMgr {
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: &impl BasicContext,
+        ctx: impl BasicContext,
     ) -> Result<(), Error> {
-        if self.comm_window(ctx)?.is_some() {
+        if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
 
@@ -304,9 +304,9 @@ impl PaseMgr {
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: &impl BasicContext,
+        ctx: impl BasicContext,
     ) -> Result<(), Error> {
-        if self.comm_window(ctx)?.is_some() {
+        if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
 
@@ -348,7 +348,7 @@ impl PaseMgr {
     /// # Returns
     /// - `Ok(true)` if a commissioning window was closed
     /// - `Ok(false)` if there was no commissioning window to close
-    pub fn close_comm_window(&mut self, ctx: &impl BasicContext) -> Result<bool, Error> {
+    pub fn close_comm_window(&mut self, ctx: impl BasicContext) -> Result<bool, Error> {
         if self.comm_window.is_some() {
             self.comm_window.clear();
             ctx.matter().notify_mdns();
