@@ -556,7 +556,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.discriminator,
             timeout_secs,
             None,
-            &BasicContextInstance::new(self, self),
+            BasicContextInstance::new(self, self),
         )
     }
 
@@ -566,7 +566,7 @@ impl<'a> Matter<'a> {
     pub fn close_comm_window(&self) -> Result<bool, Error> {
         self.pase_mgr
             .borrow_mut()
-            .close_comm_window(&BasicContextInstance::new(self, self))
+            .close_comm_window(BasicContextInstance::new(self, self))
     }
 
     /// Run the transport layer
@@ -694,7 +694,7 @@ impl<'a> Matter<'a> {
         let mut pase_mgr = self.pase_mgr.borrow_mut();
         let fabric_mgr = self.fabric_mgr.borrow();
 
-        if let Some(comm_window) = pase_mgr.comm_window(&BasicContextInstance::new(self, self))? {
+        if let Some(comm_window) = pase_mgr.comm_window(BasicContextInstance::new(self, self))? {
             // Do not remove this logging line or change its formatting.
             // C++ E2E tests rely on this log line to determine when the mDNS service is published
             debug!("mDNS service published: {:?}", comm_window.mdns_service());
