@@ -32,7 +32,7 @@ use log::{debug, info, warn};
 const DEFAULT_TESTS: &[&str] = &[
     "Test_AddNewFabricFromExistingFabric",
     "TestAccessControlCluster",
-    //"TestAccessControlConstraints", TODO: Check why it fails
+    "TestAccessControlConstraints",
     "TestArmFailSafe",
     "TestAttributesById",
     "TestBasicInformation",
@@ -43,13 +43,13 @@ const DEFAULT_TESTS: &[&str] = &[
     "TestCommissionerNodeId",
     "TestCommissioningWindow",
     "TestConfigVariables",
-    //"TestConstraints", TODO: Check why it fails
+    "TestConstraints",
     "TestDelayCommands",
     //"TestDescriptorCluster", // TODO: Assumes a Power Source device type and expects a lot of clusters to be there
     "TestEqualities",
     "TestFabricRemovalWhileSubscribed",
     "TestSelfFabricRemoval",
-    // "TestSubscribe_AdministratorCommissioning", // TODO: New tests added in 1.4.2 fail with a timeout
+    "TestSubscribe_AdministratorCommissioning",
     "TestSubscribe_OnOff",
 ];
 

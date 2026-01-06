@@ -75,7 +75,7 @@ impl ClusterHandler for AdminCommHandler {
     fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();
-        let comm_window = pase_mgr.comm_window(&mut || matter.notify_mdns())?;
+        let comm_window = pase_mgr.comm_window(&ctx)?;
 
         let window_type = comm_window.map(|comm_window| comm_window.comm_window_type());
 
@@ -89,7 +89,7 @@ impl ClusterHandler for AdminCommHandler {
     fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();
-        let comm_window = pase_mgr.comm_window(&mut || matter.notify_mdns())?;
+        let comm_window = pase_mgr.comm_window(&ctx)?;
 
         if let Some(opener) = comm_window.and_then(|comm_window| comm_window.opener()) {
             if ctx
@@ -112,7 +112,7 @@ impl ClusterHandler for AdminCommHandler {
     fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();
-        let comm_window = pase_mgr.comm_window(&mut || matter.notify_mdns())?;
+        let comm_window = pase_mgr.comm_window(&ctx)?;
 
         Ok(Nullable::new(
             comm_window
@@ -127,7 +127,7 @@ impl ClusterHandler for AdminCommHandler {
         request: OpenCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
         let opener = self.current_window_opener(&ctx)?;
-        let matter = ctx.exchange().matter();
+        let matter = ctx.matter();
 
         matter.pase_mgr.borrow_mut().open_comm_window(
             request.pake_passcode_verifier()?.0,
@@ -136,7 +136,7 @@ impl ClusterHandler for AdminCommHandler {
             request.discriminator()?,
             request.commissioning_timeout()?,
             opener,
-            &mut || matter.notify_mdns(),
+            &ctx,
         )
     }
 
@@ -146,24 +146,19 @@ impl ClusterHandler for AdminCommHandler {
         request: OpenBasicCommissioningWindowRequest<'_>,
     ) -> Result<(), Error> {
         let opener = self.current_window_opener(&ctx)?;
-        let matter = ctx.exchange().matter();
+        let matter = ctx.matter();
 
         matter.pase_mgr.borrow_mut().open_basic_comm_window(
             matter.dev_comm().password,
             matter.dev_comm().discriminator,
             request.commissioning_timeout()?,
             opener,
-            &mut || matter.notify_mdns(),
+            &ctx,
         )
     }
 
     fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
-        let matter = ctx.exchange().matter();
-
-        matter
-            .pase_mgr
-            .borrow_mut()
-            .close_comm_window(&mut || matter.notify_mdns())?;
+        ctx.matter().pase_mgr.borrow_mut().close_comm_window(&ctx)?;
 
         // TODO: Send status code if no commissioning window is open?
 

@@ -207,6 +207,7 @@ const MAX_ACCESSOR_SUBJECTS: usize = 1 + MAX_CAT_IDS_PER_NOC;
 
 /// The CAT Prefix used in Subjects
 pub const NOC_CAT_SUBJECT_PREFIX: u64 = 0xFFFF_FFFD_0000_0000;
+pub const NOC_CAT_SUBJECT_MASK: u64 = 0xFFFF_FFFF_0000_0000;
 
 const NOC_CAT_ID_MASK: u64 = 0xFFFF_0000;
 const NOC_CAT_VERSION_MASK: u64 = 0xFFFF;
@@ -216,7 +217,8 @@ const NODE_ID_RANGE: RangeInclusive<u64> = 1..=0xFFFF_FFEF_FFFF_FFFF;
 
 /// Is this identifier a NOC CAT
 fn is_noc_cat(id: u64) -> bool {
-    (id & NOC_CAT_SUBJECT_PREFIX) == NOC_CAT_SUBJECT_PREFIX
+    ((id & NOC_CAT_SUBJECT_MASK) == NOC_CAT_SUBJECT_PREFIX)
+        && ((id & (NOC_CAT_ID_MASK | NOC_CAT_VERSION_MASK)) > 0)
 }
 
 /// Get the 16-bit NOC CAT id from the identifier

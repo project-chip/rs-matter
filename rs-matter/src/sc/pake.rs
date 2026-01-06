@@ -21,6 +21,9 @@ use core::time::Duration;
 
 use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
+use crate::dm::clusters::adm_comm::{self};
+use crate::dm::endpoints::ROOT_ENDPOINT_ID;
+use crate::dm::{BasicContext, BasicContextInstance};
 use crate::error::{Error, ErrorCode};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
@@ -204,10 +207,7 @@ impl PaseMgr {
         })
     }
 
-    pub fn comm_window(
-        &mut self,
-        mdns_notif: &mut dyn FnMut(),
-    ) -> Result<Option<&CommWindow>, Error> {
+    pub fn comm_window(&mut self, ctx: impl BasicContext) -> Result<Option<&CommWindow>, Error> {
         let expired = self
             .comm_window
             .as_opt_ref()
@@ -217,7 +217,7 @@ impl PaseMgr {
         if expired {
             warn!("PASE Commissioning Window expired, closing");
 
-            self.close_comm_window(mdns_notif)?;
+            self.close_comm_window(ctx)?;
 
             Ok(None)
         } else {
@@ -245,9 +245,9 @@ impl PaseMgr {
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        mdns_notif: &mut dyn FnMut(),
+        ctx: impl BasicContext,
     ) -> Result<(), Error> {
-        if self.comm_window(mdns_notif)?.is_some() {
+        if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
 
@@ -266,7 +266,13 @@ impl PaseMgr {
                 self.rand,
             )));
 
-        mdns_notif();
+        ctx.matter().notify_mdns();
+
+        ctx.notify_attribute_changed(
+            ROOT_ENDPOINT_ID,
+            adm_comm::FULL_CLUSTER.id,
+            adm_comm::AttributeId::WindowStatus as _,
+        );
 
         info!("PASE Basic Commissioning Window opened");
 
@@ -298,9 +304,9 @@ impl PaseMgr {
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        mdns_notif: &mut dyn FnMut(),
+        ctx: impl BasicContext,
     ) -> Result<(), Error> {
-        if self.comm_window(mdns_notif)?.is_some() {
+        if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
         }
 
@@ -321,7 +327,13 @@ impl PaseMgr {
                 self.rand,
             )))?;
 
-        mdns_notif();
+        ctx.matter().notify_mdns();
+
+        ctx.notify_attribute_changed(
+            ROOT_ENDPOINT_ID,
+            adm_comm::FULL_CLUSTER.id,
+            adm_comm::AttributeId::WindowStatus as _,
+        );
 
         info!("PASE Commissioning Window opened");
 
@@ -331,15 +343,21 @@ impl PaseMgr {
     /// Close the opened commissioning window, if any
     ///
     /// # Arguments
-    /// - `mdns_notif` - The mDNS notification callback
+    /// - `ctx` - The handler context
     ///
     /// # Returns
     /// - `Ok(true)` if a commissioning window was closed
     /// - `Ok(false)` if there was no commissioning window to close
-    pub fn close_comm_window(&mut self, mdns_notif: &mut dyn FnMut()) -> Result<bool, Error> {
+    pub fn close_comm_window(&mut self, ctx: impl BasicContext) -> Result<bool, Error> {
         if self.comm_window.is_some() {
             self.comm_window.clear();
-            mdns_notif();
+            ctx.matter().notify_mdns();
+
+            ctx.notify_attribute_changed(
+                ROOT_ENDPOINT_ID,
+                adm_comm::FULL_CLUSTER.id,
+                adm_comm::AttributeId::WindowStatus as _,
+            );
 
             info!("PASE Commissioning Window closed");
 
@@ -510,13 +528,12 @@ impl Pake {
         let mut salt = [0; MAX_SALT_SIZE_BYTES];
         let mut count = 0;
 
+        let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
 
-            if let Some(comm_window) =
-                pase.comm_window(&mut || matter.mdns_notification.notify())?
-            {
+            if let Some(comm_window) = pase.comm_window(&ctx)? {
                 salt.copy_from_slice(&comm_window.verifier.salt);
                 count = comm_window.verifier.count;
 
@@ -606,10 +623,9 @@ impl Pake {
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
+            let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
 
-            if let Some(comm_window) =
-                pase.comm_window(&mut || matter.mdns_notification.notify())?
-            {
+            if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
                 self.spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
 

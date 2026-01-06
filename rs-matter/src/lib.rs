@@ -99,6 +99,7 @@ use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
 use crate::utils::sync::Notification;
 
+use crate::dm::{AttrId, BasicContextInstance, ChangeNotify, ClusterId, EndptId};
 /// Re-export the `rs_matter_macros::import` proc-macro
 pub use rs_matter_macros::import;
 
@@ -555,7 +556,7 @@ impl<'a> Matter<'a> {
             self.dev_comm.discriminator,
             timeout_secs,
             None,
-            &mut || self.notify_mdns(),
+            BasicContextInstance::new(self, self),
         )
     }
 
@@ -565,7 +566,7 @@ impl<'a> Matter<'a> {
     pub fn close_comm_window(&self) -> Result<bool, Error> {
         self.pase_mgr
             .borrow_mut()
-            .close_comm_window(&mut || self.notify_mdns())
+            .close_comm_window(BasicContextInstance::new(self, self))
     }
 
     /// Run the transport layer
@@ -693,7 +694,7 @@ impl<'a> Matter<'a> {
         let mut pase_mgr = self.pase_mgr.borrow_mut();
         let fabric_mgr = self.fabric_mgr.borrow();
 
-        if let Some(comm_window) = pase_mgr.comm_window(&mut || self.mdns_notification.notify())? {
+        if let Some(comm_window) = pase_mgr.comm_window(BasicContextInstance::new(self, self))? {
             // Do not remove this logging line or change its formatting.
             // C++ E2E tests rely on this log line to determine when the mDNS service is published
             debug!("mDNS service published: {:?}", comm_window.mdns_service());
@@ -727,5 +728,12 @@ impl<'a> Matter<'a> {
     /// if there are changes, re-publish the changed mDNS services in an mDNS responder accordingly.
     pub fn wait_mdns(&self) -> impl Future<Output = ()> + '_ {
         self.mdns_notification.wait()
+    }
+}
+
+impl ChangeNotify for Matter<'_> {
+    fn notify(&self, _endpoint_id: EndptId, _cluster_id: ClusterId, _attr_id: AttrId) {
+        // TODO: We're going to need some centralized way to notify subscriptions of attribute changes
+        // Specifically, this is about internal changes - see for example usage in PaseMgr
     }
 }

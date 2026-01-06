@@ -796,9 +796,9 @@ where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
 {
-    fn notify(&self, endpoint_id: EndptId, cluster_id: ClusterId) {
+    fn notify(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.subscriptions
-            .notify_cluster_changed(endpoint_id, cluster_id);
+            .notify_attribute_changed(endpoint_id, cluster_id, attr_id);
     }
 }
 
