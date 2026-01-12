@@ -486,7 +486,32 @@ impl ITests {
                     .arg("-r")
                     .arg("scripts/tests/requirements.txt"),
             )?;
+
+             self.run_command(
+                Command::new(&pip_path)
+                    .env("PW_PROJECT_ROOT", chip_dir)
+                    .current_dir(chip_dir)
+                    .arg("install")
+                    .arg("-r")
+                    .arg("scripts/tests/requirements.txt"),
+            )?;
         }
+
+        let bootstrap_script = chip_dir.join("scripts/bootstrap.sh");
+        let run_bootstrap = format!(
+            r#"
+            source "{}"
+            "#,
+            bootstrap_script.display(),
+        );
+
+        self.run_command_with(
+            Command::new("bash")
+                .current_dir(chip_dir)
+                .arg("-c")
+                .arg(&run_bootstrap),
+            !self.print_cmd_output,
+        )?;
 
         Ok(())
     }
