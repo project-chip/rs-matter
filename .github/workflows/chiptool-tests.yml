@@ -74,7 +74,7 @@ jobs:
 
       - name: Run LevelControl and OnOff YAML Integration Tests for dimmable_light
         run: |
-          cargo xtask itest --target dimmable_light --timeout 500 --features chip-test Test_TC_LVL_1_1 Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_4_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1 Test_TC_OO_1_1 Test_TC_OO_2_1 Test_TC_OO_2_2 Test_TC_OO_2_3 Test_TC_OO_2_4
+          cargo xtask itest --target dimmable_light --timeout 500 --features chip-test Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_4_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1 Test_TC_LVL_7_1 Test_TC_LVL_9_1 Test_TC_OO_2_1 Test_TC_OO_2_2 Test_TC_OO_2_4 Test_TC_OO_2_6 Test_TC_OO_2_7
 
       - name: Upload test results on failure
         if: failure()
