@@ -24,7 +24,9 @@ env:
 
 jobs:
   yaml_integration_tests:
-    runs-on: ubuntu-latest
+    # Downgrade to 22.04 so that `activate.sh` does not fail with "ModuleNotFoundError: No module named 'pip'"
+    # runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
