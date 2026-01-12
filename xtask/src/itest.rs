@@ -20,7 +20,7 @@
 use core::iter::once;
 
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -208,10 +208,12 @@ impl ITests {
             }
 
             self.run_command(&mut cmd)?;
+
+            File::create(chip_dir.join(chip_gitref))?;
         } else {
             info!("Chip repository already exists");
 
-            if force_rebuild {
+            if force_rebuild || !chip_dir.join(chip_gitref).exists() {
                 info!("Force rebuild requested, cleaning build artifacts...");
 
                 let out_dir = chip_dir.join("out");
