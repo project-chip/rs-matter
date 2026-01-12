@@ -463,7 +463,7 @@ impl ITests {
         }
 
         // Install requirements
-        let requirements_path = chip_dir.join("scripts/requirements.txt");
+        let requirements_path = chip_dir.join("scripts/setup/requirements.all.txt");
         if requirements_path.exists() {
             let pip_path = venv_dir.join("bin/pip");
 
@@ -481,7 +481,15 @@ impl ITests {
                     .current_dir(chip_dir)
                     .arg("install")
                     .arg("-r")
-                    .arg("scripts/requirements.txt"),
+                    .arg("scripts/setup/requirements.all.txt"),
+            )?;
+
+            self.run_command(
+                Command::new(&pip_path)
+                    .current_dir(chip_dir)
+                    .arg("install")
+                    .arg("-r")
+                    .arg("scripts/setup/requirements.build.txt"),
             )?;
         }
 
