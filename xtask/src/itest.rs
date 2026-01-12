@@ -424,16 +424,13 @@ impl ITests {
     fn build_chip_tool(&self, chip_dir: &Path) -> anyhow::Result<()> {
         warn!("Building `chip-tool`...");
 
-        // Source the activation script and build
-        let activate_script = chip_dir.join("scripts/activate.sh");
+        // Source the activation script and build; both done by gn_build_example.sh
         let build_script = chip_dir.join("scripts/examples/gn_build_example.sh");
 
         let build_script = format!(
             r#"
-            source "{}" &&
             {} examples/chip-tool out/host
             "#,
-            activate_script.display(),
             build_script.display(),
         );
 
