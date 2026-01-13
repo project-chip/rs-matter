@@ -17,19 +17,18 @@
 
 use core::mem::MaybeUninit;
 
-use crate::{
-    error::{Error, ErrorCode},
-    tlv::{FromTLV, TLVTag, TLVWrite, ToTLV, TLV},
-    utils::init::InitMaybeUninit,
-};
+use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::utils::init::InitMaybeUninit;
 
-#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+#[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 pub use self::dummy::*;
-#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
-pub use self::esp_mbedtls::*;
-#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]
 pub use self::mbedtls::*;
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(any(feature = "rustcrypto", feature = "mbedtls"))
+))]
 pub use self::openssl::*;
 #[cfg(feature = "rustcrypto")]
 pub use self::rustcrypto::*;
@@ -52,13 +51,14 @@ pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
 
 pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
 
-#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+#[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 mod dummy;
-#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
-mod esp_mbedtls;
-#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]
 mod mbedtls;
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(any(feature = "rustcrypto", feature = "mbedtls"))
+))]
 mod openssl;
 #[cfg(feature = "rustcrypto")]
 mod rustcrypto;
