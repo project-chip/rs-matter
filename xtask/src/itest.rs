@@ -484,7 +484,7 @@ impl ITests {
                     .arg("scripts/tests/requirements.txt"),
             )?;
 
-             self.run_command(
+            self.run_command(
                 Command::new(&pip_path)
                     .env("PW_PROJECT_ROOT", chip_dir)
                     .current_dir(chip_dir)
