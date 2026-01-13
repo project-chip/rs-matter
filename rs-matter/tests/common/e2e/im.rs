@@ -29,8 +29,10 @@ use super::tlv::{TLVTest, TestToTLV};
 
 use attributes::{TestAttrData, TestAttrResp};
 use commands::{TestCmdData, TestCmdResp};
+use events ::{TestEventResp};
 
 pub mod attributes;
+pub mod events;
 pub mod commands;
 pub mod echo_cluster;
 pub mod handler;
@@ -64,6 +66,14 @@ impl<'a> TestReadReq<'a> {
     pub const fn reqs(reqs: &'a [AttrPath]) -> Self {
         Self {
             attr_requests: Some(reqs),
+            ..Self::new()
+        }
+    }
+
+    /// Create a new `TestReadReq` instance with the provided event requests.
+    pub const fn event_reqs(reqs: &'a [EventPath]) -> Self {
+        Self {
+            event_requests: Some(reqs),
             ..Self::new()
         }
     }
@@ -209,8 +219,7 @@ impl<'a> TestSubscribeReq<'a> {
 pub struct TestReportDataMsg<'a> {
     pub subscription_id: Option<u32>,
     pub attr_reports: Option<&'a [TestAttrResp<'a>]>,
-    // TODO
-    pub event_reports: Option<bool>,
+    pub event_reports: Option<&'a [TestEventResp<'a>]>,
     pub more_chunks: Option<bool>,
     pub suppress_response: Option<bool>,
 }
@@ -235,6 +244,15 @@ impl<'a> TestReportDataMsg<'a> {
             ..Self::new()
         }
     }
+
+    pub const fn event_reports(reports: &'a [TestEventResp<'a>]) -> Self {
+        Self {
+            event_reports: Some(reports),
+            // TODO(events): What does this do
+            suppress_response: Some(true),
+            ..Self::new()
+        }
+    }
 }
 
 impl TestToTLV for TestReportDataMsg<'_> {
@@ -254,7 +272,11 @@ impl TestToTLV for TestReportDataMsg<'_> {
         }
 
         if let Some(event_reports) = self.event_reports {
-            tw.bool(&TLVTag::Context(2), event_reports)?;
+            tw.start_array(&TLVTag::Context(1))?;
+            for event_report in event_reports {
+                event_report.test_to_tlv(&TLVTag::Anonymous, tw)?;
+            }
+            tw.end_container()?;
         }
 
         if let Some(more_chunks) = self.more_chunks {
@@ -629,6 +651,15 @@ impl<'a>
         Self::read(
             TestReadReq::reqs(input),
             TestReportDataMsg::reports(expected),
+            ReplyProcessor::remove_attr_dataver,
+        )
+    }
+
+    /// TODO(events): Write docs here
+    pub const fn read_events(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) -> Self {
+        Self::read(
+            TestReadReq::event_reqs(input), 
+            TestReportDataMsg::event_reports(expected),
             ReplyProcessor::remove_attr_dataver,
         )
     }
