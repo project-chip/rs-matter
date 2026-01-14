@@ -21,6 +21,7 @@ use core::time::Duration;
 
 use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
+use crate::crypto::Crypto;
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{BasicContext, BasicContextInstance};
@@ -33,7 +34,7 @@ use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, try_init, Init};
 use crate::utils::maybe::Maybe;
 use crate::utils::rand::Rand;
-use crate::{crypto, MatterMdnsService};
+use crate::MatterMdnsService;
 
 use super::SCStatusCodes;
 
@@ -460,22 +461,22 @@ struct Pake1Resp<'a> {
 }
 
 /// The PASE PAKE handler
-pub struct Pake {
-    spake2p: Spake2P,
+pub struct Pake<'a, C: Crypto> {
+    spake2p: Spake2P<'a, C>,
 }
 
-impl Pake {
+impl<'a, C: Crypto> Pake<'a, C> {
     /// Create a new PASE PAKE handler
-    pub const fn new() -> Self {
+    pub const fn new(crypto: &'a C) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
-            spake2p: Spake2P::new(),
+            spake2p: Spake2P::new(crypto),
         }
     }
 
-    pub fn init() -> impl Init<Self> {
+    pub fn init(crypto: &'a C) -> impl Init<Self> {
         init!(Self {
-            spake2p <- Spake2P::init(),
+            spake2p <- Spake2P::init(crypto),
         })
     }
 
@@ -484,7 +485,7 @@ impl Pake {
     /// # Arguments
     /// - `exchange` - The exchange
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter()).await?;
+        let session = ReservedSession::reserve(exchange.matter(), self.spake2p.crypto).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(());
@@ -528,7 +529,8 @@ impl Pake {
         let mut salt = [0; MAX_SALT_SIZE_BYTES];
         let mut count = 0;
 
-        let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
+        let ctx =
+            BasicContextInstance::new(exchange.matter(), self.spake2p.crypto, exchange.matter());
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
@@ -623,7 +625,11 @@ impl Pake {
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
+            let ctx = BasicContextInstance::new(
+                exchange.matter(),
+                self.spake2p.crypto,
+                exchange.matter(),
+            );
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
@@ -672,7 +678,10 @@ impl Pake {
             // Get the keys
             let ke = ke.ok_or(ErrorCode::Invalid)?;
             let mut session_keys: [u8; 48] = [0; 48];
-            crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+            self.spake2p
+                .crypto
+                .hkdf_sha256()
+                .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
                 .map_err(|_x| ErrorCode::InvalidData)?;
 
             // Create a session
@@ -784,11 +793,5 @@ impl Pake {
         let root = get_root_node_struct(buf)?;
         let pA = root.structure()?.ctx(1)?.str()?;
         Ok(pA)
-    }
-}
-
-impl Default for Pake {
-    fn default() -> Self {
-        Self::new()
     }
 }

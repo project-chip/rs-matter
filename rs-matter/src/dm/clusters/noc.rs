@@ -22,7 +22,7 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use crate::cert::CertRef;
-use crate::crypto::{self, KeyPair};
+use crate::crypto::{self, Crypto, SecretKey};
 use crate::dm::clusters::dev_att;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
@@ -72,30 +72,26 @@ impl NocHandler {
     }
 
     /// Computes the attestation signature using the provided `DevAttDataFetcher`
-    fn compute_attestation_signature<'a>(
+    fn compute_attestation_signature<'a, C: Crypto>(
         dev_att: &dyn DevAttDataFetcher,
         attest_element: &mut WriteBuf,
         attest_challenge: &[u8],
         signature_buf: &'a mut [u8],
+        crypto: C,
     ) -> Result<&'a [u8], Error> {
         let dac_key = {
-            let mut pubkey_buf = MaybeUninit::<[u8; crypto::EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-            let pubkey_buf = pubkey_buf.init_zeroed();
+            let mut buf = MaybeUninit::<[u8; crypto::BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+            let buf = buf.init_zeroed();
 
-            let mut privkey_buf = MaybeUninit::<[u8; crypto::BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-            let privkey_buf = privkey_buf.init_zeroed();
+            let secret_key = dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, buf)?;
 
-            let pubkey_len = dev_att.get_devatt_data(dev_att::DataType::DACPubKey, pubkey_buf)?;
-            let privkey_len =
-                dev_att.get_devatt_data(dev_att::DataType::DACPrivKey, privkey_buf)?;
-
-            KeyPair::new_from_components(&pubkey_buf[..pubkey_len], &privkey_buf[..privkey_len])
+            crypto.secret_key_secp256r1_hydrate(secret_key)
         }?;
 
         attest_element.copy_from_slice(attest_challenge)?;
-        let len = dac_key.sign_msg(attest_element.as_slice(), signature_buf)?;
+        let signature = dac_key.sign(attest_element.as_slice(), signature_buf)?;
 
-        Ok(&signature_buf[..len])
+        Ok(signature)
     }
 }
 
@@ -295,7 +291,9 @@ impl ClusterHandler for NocHandler {
                 let mut wb = WriteBuf::new(buf);
                 wb.start_struct(&TLVTag::Anonymous)?;
                 wb.str_cb(&TLVTag::Context(1), |buf| {
-                    dev_att.get_devatt_data(dev_att::DataType::CertDeclaration, buf)
+                    dev_att
+                        .get_devatt_data(dev_att::DataType::CertDeclaration, buf)
+                        .map(|slice| slice.len())
                 })?;
                 wb.str(&TLVTag::Context(2), request.attestation_nonce()?.0)?;
                 wb.u32(&TLVTag::Context(3), epoch)?;
@@ -308,6 +306,7 @@ impl ClusterHandler for NocHandler {
                     &mut wb,
                     sess.get_att_challenge(),
                     signature_buf,
+                    ctx.crypto(),
                 )?
                 .len();
 
@@ -340,13 +339,17 @@ impl ClusterHandler for NocHandler {
         // writer.start_struct(&CmdDataWriter::TAG)?;
 
         writer.str_cb(&TLVTag::Context(0), |buf| {
-            ctx.exchange().matter().dev_att().get_devatt_data(
-                match request.certificate_type()? {
-                    CertificateChainTypeEnum::DACCertificate => DataType::DAC,
-                    CertificateChainTypeEnum::PAICertificate => DataType::PAI,
-                },
-                buf,
-            )
+            ctx.exchange()
+                .matter()
+                .dev_att()
+                .get_devatt_data(
+                    match request.certificate_type()? {
+                        CertificateChainTypeEnum::DACCertificate => DataType::DAC,
+                        CertificateChainTypeEnum::PAICertificate => DataType::PAI,
+                    },
+                    buf,
+                )
+                .map(|slice| slice.len())
         })?;
 
         writer.end_container()?;
@@ -365,10 +368,10 @@ impl ClusterHandler for NocHandler {
         ctx.exchange().with_session(|sess| {
             let mut failsafe = ctx.exchange().matter().failsafe.borrow_mut();
 
-            let key_pair = if request.is_for_update_noc()?.unwrap_or(false) {
-                failsafe.update_csr_req(sess.get_session_mode())
+            let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
+                failsafe.update_csr_req(sess.get_session_mode(), ctx.crypto())
             } else {
-                failsafe.add_csr_req(sess.get_session_mode())
+                failsafe.add_csr_req(sess.get_session_mode(), ctx.crypto())
             }?;
 
             // Switch to raw writer for the response
@@ -388,7 +391,12 @@ impl ClusterHandler for NocHandler {
                 let mut wb = WriteBuf::new(buf);
 
                 wb.start_struct(&TLVTag::Anonymous)?;
-                wb.str_cb(&TLVTag::Context(1), |buf| Ok(key_pair.get_csr(buf)?.len()))?;
+                wb.str_cb(&TLVTag::Context(1), |buf| {
+                    ctx.crypto()
+                        .secret_key_secp256r1_hydrate(secret_key)?
+                        .csr(buf)
+                        .map(|slice| slice.len())
+                })?;
                 wb.str(&TLVTag::Context(2), request.csr_nonce()?.0)?;
                 wb.end_container()?;
 
@@ -399,6 +407,7 @@ impl ClusterHandler for NocHandler {
                     &mut wb,
                     sess.get_att_challenge(),
                     signature_buf,
+                    ctx.crypto(),
                 )?
                 .len();
 
@@ -443,6 +452,7 @@ impl ClusterHandler for NocHandler {
                 request.case_admin_subject()?,
                 buf,
                 &mut || matter.notify_mdns(),
+                ctx.crypto(),
             )?;
 
             let succeeded = Cell::new(false);
@@ -501,6 +511,7 @@ impl ClusterHandler for NocHandler {
                 request.noc_value()?.0,
                 buf,
                 &mut || ctx.exchange().matter().notify_mdns(),
+                ctx.crypto(),
             )?;
 
             Ok(())

@@ -17,7 +17,7 @@
 
 use subtle::ConstantTimeEq;
 
-use crate::crypto::{self, pbkdf2_hmac, HmacSha256, Sha256};
+use crate::crypto::{self, Crypto};
 use crate::error::{Error, ErrorCode};
 use crate::sc::crypto::CryptoSpake2;
 use crate::sc::SCStatusCodes;
@@ -64,21 +64,23 @@ pub enum Spake2Mode {
 }
 
 #[allow(non_snake_case)]
-pub struct Spake2P {
+pub struct Spake2P<'a, C: Crypto + 'a> {
     mode: Spake2Mode,
-    context: Option<Sha256>,
+    pub(crate) crypto: &'a C,
+    context: Option<C::Sha256<'a>>,
+    spake2: Option<C::Spake2<'a>>,
     Ke: [u8; 16],
     cA: [u8; 32],
-    crypto_spake2: Option<CryptoSpake2>,
     app_data: u32,
 }
 
-impl Spake2P {
-    pub const fn new() -> Self {
+impl<'a, C: Crypto + 'a> Spake2P<'a, C> {
+    pub const fn new(crypto: &'a C) -> Self {
         Self {
             mode: Spake2Mode::Unknown,
+            crypto,
             context: None,
-            crypto_spake2: None,
+            spake2: None,
             Ke: [0; 16],
             cA: [0; 32],
             app_data: 0,
@@ -86,11 +88,12 @@ impl Spake2P {
     }
 
     #[allow(non_snake_case)]
-    pub fn init() -> impl Init<Self> {
+    pub fn init(crypto: &'a C) -> impl Init<Self> {
         init!(Self {
             mode: Spake2Mode::Unknown,
+            crypto,
             context: None,
-            crypto_spake2: None,
+            spake2: None,
             Ke <- zeroed(),
             cA <- zeroed(),
             app_data: 0,
@@ -106,7 +109,7 @@ impl Spake2P {
     }
 
     pub fn set_context(&mut self) -> Result<(), Error> {
-        let mut context = Sha256::new()?;
+        let mut context = self.crypto.sha256()?;
         context.update(SPAKE2P_CONTEXT_PREFIX)?;
         self.context = Some(context);
         Ok(())
@@ -116,22 +119,26 @@ impl Spake2P {
         unwrap!(self.context.as_mut()).update(buf)
     }
 
-    #[inline(always)]
-    fn get_w0w1s(pw: u32, iter: u32, salt: &[u8], w0w1s: &mut [u8]) {
-        let _ = pbkdf2_hmac(&pw.to_le_bytes(), iter as usize, salt, w0w1s);
+    fn get_w0w1s(&self, pw: u32, iter: u32, salt: &[u8], w0w1s: &mut [u8]) {
+        unwrap!(self.crypto.pbkdf2_hmac_sha256()).derive(
+            &pw.to_le_bytes(),
+            iter as usize,
+            salt,
+            w0w1s,
+        );
     }
 
     pub(crate) fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
-        self.crypto_spake2 = Some(CryptoSpake2::new()?);
+        self.spake2 = Some(self.crypto.spake2()?);
         if let Some(pw) = verifier.password {
             // Derive w0 and L from the password
             let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
-            Spake2P::get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
+            self.get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
             let w0s_len = w0w1s.len() / 2;
-            if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-                crypto_spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
-                crypto_spake2.set_L_from_w1s(&w0w1s[w0s_len..])?;
+            if let Some(spake2) = &mut self.spake2 {
+                spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
+                spake2.set_l_from_w1s(&w0w1s[w0s_len..])?;
             }
         } else {
             // Extract w0 and L from the verifier
@@ -140,9 +147,9 @@ impl Spake2P {
                 CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES
             );
 
-            if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-                crypto_spake2.set_w0(&verifier.verifier[0..CRYPTO_GROUP_SIZE_BYTES])?;
-                crypto_spake2.set_L(&verifier.verifier[CRYPTO_GROUP_SIZE_BYTES..])?;
+            if let Some(spake2) = &mut self.spake2 {
+                spake2.set_w0(&verifier.verifier[0..CRYPTO_GROUP_SIZE_BYTES])?;
+                spake2.set_l(&verifier.verifier[CRYPTO_GROUP_SIZE_BYTES..])?;
             }
         }
 
@@ -170,7 +177,7 @@ impl Spake2P {
                 let mut TT = [0u8; crypto::SHA256_HASH_LEN_BYTES];
                 crypto_spake2.get_TT_as_verifier(&hash, pA, pB, &mut TT)?;
 
-                Spake2P::get_Ke_and_cAcB(&TT, pA, pB, &mut self.Ke, &mut self.cA, cB)?;
+                self.get_Ke_and_cAcB(&TT, pA, pB, &mut self.Ke, &mut self.cA, cB)?;
             }
         }
 
@@ -193,10 +200,10 @@ impl Spake2P {
         }
     }
 
-    #[inline(always)]
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     fn get_Ke_and_cAcB(
+        &self,
         TT: &[u8],
         pA: &[u8],
         pB: &[u8],
@@ -217,7 +224,9 @@ impl Spake2P {
 
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
         let mut KcAKcB: [u8; 32] = [0; 32];
-        crypto::hkdf_sha256(&[], Ka, SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
+        self.crypto
+            .hkdf_sha256()
+            .expand(&[], Ka, SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
             .map_err(|_x| ErrorCode::InvalidData)?;
 
         let KcA = &KcAKcB[0..(KcAKcB.len() / 2)];
@@ -232,12 +241,6 @@ impl Spake2P {
         mac.update(pA)?;
         mac.finish(cB)?;
         Ok(())
-    }
-}
-
-impl Default for Spake2P {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

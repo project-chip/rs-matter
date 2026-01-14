@@ -21,6 +21,7 @@ use core::time::Duration;
 
 use cfg_if::cfg_if;
 
+use crate::crypto::Crypto;
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
@@ -242,6 +243,10 @@ impl Session {
             && !self.reserved
     }
 
+    pub(crate) fn is_for_tx(&self, session_id: u32) -> bool {
+        self.id == session_id
+    }
+
     /// Return `true` if the session is expired.
     pub(crate) fn is_expired(&self) -> bool {
         self.expired
@@ -352,15 +357,17 @@ impl Session {
     /// instance as it no longer would be necessary.
     ///
     /// Returns the range of the decoded packet payload
-    pub(crate) fn decode_remaining(
+    pub(crate) fn decode_remaining<C: Crypto>(
         &self,
         rx_header: &mut PacketHdr,
         mut pb: ParseBuf,
+        crypto: C,
     ) -> Result<(usize, usize), Error> {
         rx_header.decode_remaining(
             &mut pb,
             self.peer_nodeid.unwrap_or_default(),
             self.get_dec_key(),
+            crypto,
         )?;
 
         rx_header.proto.adjust_reliability(true, &self.peer_addr);
@@ -368,8 +375,13 @@ impl Session {
         Ok(pb.slice_range())
     }
 
-    pub(crate) fn encode(&self, tx: &PacketHdr, wb: &mut WriteBuf) -> Result<(), Error> {
-        tx.encode(wb, self.local_nodeid, self.get_enc_key())
+    pub(crate) fn encode<C: Crypto>(
+        &self,
+        tx: &PacketHdr,
+        wb: &mut WriteBuf,
+        crypto: C,
+    ) -> Result<(), Error> {
+        tx.encode(wb, self.local_nodeid, self.get_enc_key(), crypto)
     }
 
     fn update_last_used(&mut self, epoch: Epoch) {
@@ -494,13 +506,16 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    pub async fn reserve(matter: &'a Matter<'a>) -> Result<ReservedSession<'a>, Error> {
+    pub async fn reserve<C: Crypto>(
+        matter: &'a Matter<'a>,
+        crypto: C,
+    ) -> Result<ReservedSession<'a>, Error> {
         let session = Self::reserve_now(matter);
 
         if let Ok(session) = session {
             Ok(session)
         } else {
-            matter.transport_mgr.evict_some_session().await?;
+            matter.transport_mgr.evict_some_session(crypto).await?;
 
             Self::reserve_now(matter)
         }
@@ -856,6 +871,19 @@ impl SessionMgr {
             .sessions
             .iter_mut()
             .find(|sess| sess.is_for_rx(rx_peer, rx_plain));
+
+        if let Some(session) = session.as_mut() {
+            session.update_last_used(self.epoch);
+        }
+
+        session
+    }
+
+    pub(crate) fn get_for_tx(&mut self, session_id: u32) -> Option<&mut Session> {
+        let mut session = self
+            .sessions
+            .iter_mut()
+            .find(|sess| sess.is_for_tx(session_id));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used(self.epoch);

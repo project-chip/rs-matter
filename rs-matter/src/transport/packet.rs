@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::crypto::AEAD_MIC_LEN_BYTES;
+use crate::crypto::{Crypto, AEAD_MIC_LEN_BYTES};
 use crate::error::Error;
 use crate::fmt::Bytes;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -60,21 +60,23 @@ impl PacketHdr {
         self.plain.decode(pb)
     }
 
-    pub fn decode_remaining(
+    pub fn decode_remaining<C: Crypto>(
         &mut self,
         pb: &mut ParseBuf,
         peer_nodeid: u64,
         dec_key: Option<&[u8]>,
+        crypto: C,
     ) -> Result<(), Error> {
         self.proto
-            .decrypt_and_decode(&self.plain, pb, peer_nodeid, dec_key)
+            .decrypt_and_decode(&self.plain, pb, peer_nodeid, dec_key, crypto)
     }
 
-    pub fn encode(
+    pub fn encode<C: Crypto>(
         &self,
         wb: &mut WriteBuf,
         local_nodeid: u64,
         enc_key: Option<&[u8]>,
+        crypto: C,
     ) -> Result<(), Error> {
         // Generate encrypted header
         let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
@@ -90,7 +92,7 @@ impl PacketHdr {
         trace!("Unencrypted packet: {}", Bytes(wb.as_slice()));
         let ctr = self.plain.ctr;
         if let Some(e) = enc_key {
-            proto_hdr::encrypt_in_place(ctr, local_nodeid, plain_hdr_bytes, wb, e)?;
+            proto_hdr::encrypt_in_place(ctr, local_nodeid, plain_hdr_bytes, wb, e, crypto)?;
         }
 
         wb.prepend(plain_hdr_bytes)?;

@@ -17,6 +17,8 @@
 
 use core::mem::MaybeUninit;
 
+use rand_core::CryptoRngCore;
+
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::utils::init::InitMaybeUninit;
@@ -65,43 +67,96 @@ mod rustcrypto;
 
 pub const SHA256_HASH_LEN: usize = 32;
 
+pub type FabricSecretKey = [u8; EC_POINT_LEN_BYTES];
+pub const FABRIC_SECRET_KEY_BUF_DEFAULT: FabricSecretKey = [0u8; EC_POINT_LEN_BYTES];
+
 pub trait Crypto {
-    type Sha256<'a>: Digest<SHA256_HASH_LEN> where Self: 'a;
-    type HmacSha256<'a>: Digest<SHA256_HASH_LEN> where Self: 'a;
-    type HkdfSha256<'a>: Digest<SHA256_HASH_LEN> where Self: 'a;
-    // type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac where Self: 'a;
-    // type AeadAesCcm16p64p128<'a>: Aead where Self: 'a;
-    // type KeyPairSecp256r1<'a>: KeyPair where Self: 'a;
-    // type Spake2Secp256r1Sha256<'a>: Spake2 where Self: 'a;
+    type Sha256<'a>: Digest<SHA256_HASH_LEN>
+    where
+        Self: 'a;
+    type HmacSha256<'a>: Digest<SHA256_HASH_LEN>
+    where
+        Self: 'a;
+    type HkdfSha256<'a>: Hkdf<SHA256_HASH_LEN>
+    where
+        Self: 'a;
+    type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac<SHA256_HASH_LEN>
+    where
+        Self: 'a;
+    type AeadAesCcm16p64p128<'a>: Aead
+    where
+        Self: 'a;
+    type PublicKeySecp256r1<'a>: PublicKey
+    where
+        Self: 'a;
+    type SecretKeySecp256r1<'a>: SecretKey<PublicKey<'a> = Self::PublicKeySecp256r1<'a>>
+    where
+        Self: 'a;
+    type Spake2<'a>: Spake2
+    where
+        Self: 'a;
 
     fn sha256(&self) -> Result<Self::Sha256<'_>, Error>;
 
     fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error>;
 
-    fn hkdf_sha256(&self, key: &[u8]) -> Result<Self::HkdfSha256<'_>, Error>;
+    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error>;
 
-    // fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error>;
+    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error>;
 
-    // fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error>;
+    fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error>;
 
-    // fn keypair_secp256r1_generate(&self) -> Result<Self::KeyPairSecp256r1<'_>, Error>;
+    fn public_key_secp256r1_hydrate(
+        &self,
+        dehydrated_public_key: &[u8],
+    ) -> Result<Self::PublicKeySecp256r1<'_>, Error>;
 
-    // fn keypair_secp256r1_materialize(&self, priv_key: &[u8]) -> Result<Self::KeyPairSecp256r1<'_>, Error>;
+    fn secret_key_secp256r1(&self) -> Result<Self::SecretKeySecp256r1<'_>, Error>;
 
-    // fn spake2_secp256r1_sha256(&self) -> Result<Self::Spake2Secp256r1Sha256<'_>, Error>;    
+    fn secret_key_secp256r1_hydrate(
+        &self,
+        dehydrated_secret_key: &[u8],
+    ) -> Result<Self::SecretKeySecp256r1<'_>, Error>;
+
+    fn spake2(&self) -> Result<Self::Spake2<'_>, Error>;
 }
 
-impl<T> Crypto for &T 
+impl<T> Crypto for &T
 where
     T: Crypto,
 {
-    type Sha256<'a> = T::Sha256<'a> where Self: 'a;
-    type HmacSha256<'a> = T::HmacSha256<'a> where Self: 'a;
-    type HkdfSha256<'a> = T::HkdfSha256<'a> where Self: 'a;
-    // type Pbkdf2HmacSha256<'a> = T::Pbkdf2HmacSha256<'a> where Self: 'a;
-    // type AeadAesCcm16p64p128<'a> = T::AeadAesCcm16p64p128<'a> where Self: 'a;
-    // type KeyPairSecp256r1<'a> = T::KeyPairSecp256r1<'a> where Self: 'a;
-    // type Spake2Secp256r1Sha256<'a> = T::Spake2Secp256r1Sha256<'a> where Self: 'a;
+    type Sha256<'a>
+        = T::Sha256<'a>
+    where
+        Self: 'a;
+    type HmacSha256<'a>
+        = T::HmacSha256<'a>
+    where
+        Self: 'a;
+    type HkdfSha256<'a>
+        = T::HkdfSha256<'a>
+    where
+        Self: 'a;
+    type Pbkdf2HmacSha256<'a>
+        = T::Pbkdf2HmacSha256<'a>
+    where
+        Self: 'a;
+    type AeadAesCcm16p64p128<'a>
+        = T::AeadAesCcm16p64p128<'a>
+    where
+        Self: 'a;
+    type PublicKeySecp256r1<'a>
+        = T::PublicKeySecp256r1<'a>
+    where
+        Self: 'a;
+    type SecretKeySecp256r1<'a>
+        = T::SecretKeySecp256r1<'a>
+    where
+        Self: 'a;
+    type Spake2<'a>
+        = T::Spake2<'a>
+    where
+        Self: 'a;
 
     fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
         (*self).sha256()
@@ -111,29 +166,39 @@ where
         (*self).hmac_sha256(key)
     }
 
-    fn hkdf_sha256(&self, key: &[u8]) -> Result<Self::HkdfSha256<'_>, Error> {
-        (*self).hkdf_sha256(key)
+    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error> {
+        (*self).hkdf_sha256()
     }
 
-    // fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
-    //     (*self).pbkdf2_hmac_sha256()
-    // }
+    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
+        (*self).pbkdf2_hmac_sha256()
+    }
 
-    // fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error> {
-    //     (*self).aead_aes_ccm_16_64_128(key)
-    // }
+    fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error> {
+        (*self).aead_aes_ccm_16_64_128(key)
+    }
 
-    // fn keypair_secp256r1_generate(&self) -> Result<Self::KeyPairSecp256r1<'_>, Error> {
-    //     (*self).keypair_secp256r1_generate()
-    // }
+    fn public_key_secp256r1_hydrate(
+        &self,
+        dehydrated_public_key: &[u8],
+    ) -> Result<Self::PublicKeySecp256r1<'_>, Error> {
+        (*self).public_key_secp256r1_hydrate(dehydrated_public_key)
+    }
 
-    // fn keypair_secp256r1_materialize(&self, priv_key: &[u8]) -> Result<Self::KeyPairSecp256r1<'_>, Error> {
-    //     (*self).keypair_secp256r1_materialize(priv_key)
-    // }
+    fn secret_key_secp256r1(&self) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
+        (*self).secret_key_secp256r1()
+    }
 
-    // fn spake2_secp256r1_sha256(&self) -> Result<Self::Spake2Secp256r1Sha256<'_>, Error> {
-    //     (*self).spake2_secp256r1_sha256()
-    // }
+    fn secret_key_secp256r1_hydrate(
+        &self,
+        dehydrated_secret_key: &[u8],
+    ) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
+        (*self).secret_key_secp256r1_hydrate(dehydrated_secret_key)
+    }
+
+    fn spake2(&self) -> Result<Self::Spake2<'_>, Error> {
+        (*self).spake2()
+    }
 }
 
 pub trait Digest<const HASH_LEN: usize> {
@@ -142,14 +207,13 @@ pub trait Digest<const HASH_LEN: usize> {
     fn finish(self, hash: &mut [u8; HASH_LEN]);
 }
 
-pub trait Hkdf {
-    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]);
+pub trait Hkdf<const IKM_LEN: usize> {
+    fn expand(self, salt: &[u8], ikm: &[u8; IKM_LEN], info: &[u8], key: &mut [u8]);
 }
 
-pub trait Pbkdf2Hmac {
-    fn pbkdf2_hmac<'a>(&mut self, pass: &[u8], iter: usize, salt: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+pub trait Pbkdf2Hmac<const KEY_LEN: usize> {
+    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8; KEY_LEN]);
 }
-
 
 pub trait Aead {
     fn encrypt_in_place<'a>(
@@ -168,18 +232,30 @@ pub trait Aead {
     ) -> Result<&'a [u8], Error>;
 }
 
-pub trait KeyPair2 {
+pub trait SecretKey {
+    type PublicKey<'a>: PublicKey
+    where
+        Self: 'a;
+
     fn csr<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
 
-    fn pub_key<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error>;
 
-    fn priv_key<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
 
-    fn derive_secret<'a>(self, peer_pub_key: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn derive_shared_secret<'a>(
+        self,
+        peer_pub_key: &Self::PublicKey<'_>,
+        buf: &'a mut [u8],
+    ) -> Result<&'a [u8], Error>;
 
-    fn sign_msg<'a>(&self, msg: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn sign<'a>(&self, data: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+}
 
-    fn verify_msg(&self, msg: &[u8], buf: &[u8]) -> Result<(), Error>;
+pub trait PublicKey {
+    fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn verify(&self, signature: &[u8], data: &[u8]) -> Result<(), Error>;
 }
 
 pub trait Spake2 {
@@ -195,7 +271,7 @@ pub trait Spake2 {
 
     fn set_l_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error>;
 
-    fn get_pp<'a>(&mut self, rand: Rand, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn get_pp<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
 
     fn get_tt_as_verifier<'a>(
         &mut self,
@@ -206,59 +282,16 @@ pub trait Spake2 {
     ) -> Result<&'a [u8], Error>;
 }
 
-impl<'a> FromTLV<'a> for KeyPair {
-    fn from_tlv(t: &crate::tlv::TLVElement<'a>) -> Result<Self, Error>
-    where
-        Self: Sized,
-    {
-        let array = t.array()?;
-        let mut iter = array.iter();
-
-        let pub_key = iter.next().ok_or(ErrorCode::Invalid)??.str()?;
-        let priv_key = iter.next().ok_or(ErrorCode::Invalid)??.str()?;
-
-        KeyPair::new_from_components(pub_key, priv_key)
-    }
-}
-
-impl ToTLV for KeyPair {
-    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
-        let mut pubkey_buf = MaybeUninit::<[u8; EC_POINT_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-        let pubkey_buf = pubkey_buf.init_zeroed();
-
-        let mut privkey_buf = MaybeUninit::<[u8; BIGNUM_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
-        let privkey_buf = privkey_buf.init_zeroed();
-
-        let pubkey_len = self.get_public_key(pubkey_buf)?;
-        let privkey_len = self.get_private_key(privkey_buf)?;
-
-        tw.start_array(tag)?;
-
-        tw.str(&TLVTag::Anonymous, &pubkey_buf[..pubkey_len])?;
-        tw.str(&TLVTag::Anonymous, &privkey_buf[..privkey_len])?;
-
-        tw.end_container()
-    }
-
-    fn tlv_iter(&self, _tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
-        unimplemented!("Not implemented for `KeyPair`");
-
-        #[allow(unreachable_code)]
-        core::iter::empty()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::error::ErrorCode;
-
-    use super::KeyPair;
 
     #[test]
     fn test_verify_msg_success() {
         let key = unwrap!(KeyPair::new_from_public(&test_vectors::PUB_KEY1));
         unwrap!(key.verify_msg(&test_vectors::MSG1_SUCCESS, &test_vectors::SIGNATURE1));
     }
+
     #[test]
     fn test_verify_msg_fail() {
         let key = unwrap!(KeyPair::new_from_public(&test_vectors::PUB_KEY1));

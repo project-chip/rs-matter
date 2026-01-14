@@ -20,7 +20,7 @@ use core::fmt::{self, Write};
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
-use crate::crypto::KeyPair;
+use crate::crypto::{Crypto, KeyPair, PublicKey};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
@@ -680,8 +680,8 @@ impl<'a> CertRef<'a> {
         Ok(w.as_slice().len())
     }
 
-    pub fn verify_chain_start(&self) -> CertVerifier<'_> {
-        CertVerifier::new(self)
+    pub fn verify_chain_start<C: Crypto>(&self, crypto: C) -> CertVerifier<'_, C> {
+        CertVerifier::new(self, crypto)
     }
 
     fn encode(&self, w: &mut dyn CertConsumer) -> Result<(), Error> {
@@ -754,35 +754,44 @@ impl fmt::Display for CertRef<'_> {
     }
 }
 
-pub struct CertVerifier<'a> {
+pub struct CertVerifier<'a, C> {
     cert: &'a CertRef<'a>,
+    crypto: C,
 }
 
-impl<'a> CertVerifier<'a> {
-    pub fn new(cert: &'a CertRef<'a>) -> Self {
-        Self { cert }
+impl<'a, C: Crypto> CertVerifier<'a, C> {
+    pub fn new(cert: &'a CertRef<'a>, crypto: C) -> Self {
+        Self { cert, crypto }
     }
 
-    pub fn add_cert(self, parent: &'a CertRef<'a>, buf: &mut [u8]) -> Result<Self, Error> {
+    pub fn add_cert<'p>(
+        self,
+        parent: &'p CertRef<'p>,
+        buf: &mut [u8],
+    ) -> Result<CertVerifier<'p, C>, Error> {
         if !self.cert.is_authority(parent)? {
             Err(ErrorCode::InvalidAuthKey)?;
         }
-        let len = self.cert.as_asn1(buf)?;
-        let asn1 = &buf[..len];
 
-        let k = KeyPair::new_from_public(parent.pubkey()?)?;
-        k.verify_msg(asn1, self.cert.signature()?)
-            .inspect_err(|e| {
-                error!(
-                    "Error {} in signature verification of certificate: {:?} by {:?}",
-                    e,
-                    self.cert.get_subject_key_id().map(Bytes),
-                    parent.get_subject_key_id().map(Bytes)
-                );
-            })?;
+        {
+            let len = self.cert.as_asn1(buf)?;
+            let asn1 = &buf[..len];
+
+            let pub_key = self.crypto.public_key_secp256r1_hydrate(parent.pubkey()?)?;
+            pub_key
+                .verify(self.cert.signature()?, asn1)
+                .inspect_err(|e| {
+                    error!(
+                        "Error {} in signature verification of certificate: {:?} by {:?}",
+                        e,
+                        self.cert.get_subject_key_id().map(Bytes),
+                        parent.get_subject_key_id().map(Bytes)
+                    );
+                })?;
+        }
 
         // TODO: other validation checks
-        Ok(CertVerifier::new(parent))
+        Ok(CertVerifier::new(parent, self.crypto))
     }
 
     pub fn finalise(self, buf: &mut [u8]) -> Result<(), Error> {
@@ -815,6 +824,7 @@ pub trait CertConsumer {
 
 #[cfg(test)]
 mod tests {
+    use crate::error::ErrorCode;
     use crate::tlv::{FromTLV, TLVElement, TagType, ToTLV};
     use crate::utils::storage::WriteBuf;
 
@@ -861,7 +871,6 @@ mod tests {
     fn test_verify_chain_incomplete() {
         // The chain doesn't lead up to a self-signed certificate
 
-        use crate::error::ErrorCode;
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(&test_vectors::NOC1_SUCCESS));
         let icac = CertRef::new(TLVElement::new(&test_vectors::ICAC1_SUCCESS));
@@ -876,8 +885,6 @@ mod tests {
 
     #[test]
     fn test_auth_key_chain_incorrect() {
-        use crate::error::ErrorCode;
-
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(&test_vectors::NOC1_AUTH_KEY_FAIL));
         let icac = CertRef::new(TLVElement::new(&test_vectors::ICAC1_SUCCESS));
@@ -903,8 +910,6 @@ mod tests {
 
     #[test]
     fn test_cert_corrupted() {
-        use crate::error::ErrorCode;
-
         let mut buf = [0; 1000];
         let noc = CertRef::new(TLVElement::new(&test_vectors::NOC1_CORRUPT_CERT));
         let icac = CertRef::new(TLVElement::new(&test_vectors::ICAC1_SUCCESS));

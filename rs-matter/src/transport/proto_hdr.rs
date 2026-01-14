@@ -17,6 +17,7 @@
 
 use core::fmt;
 
+use crate::crypto::{Aead, Crypto};
 use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -234,16 +235,17 @@ impl ProtoHdr {
         }
     }
 
-    pub fn decrypt_and_decode(
+    pub fn decrypt_and_decode<C: Crypto>(
         &mut self,
         plain_hdr: &plain_hdr::PlainHdr,
         parsebuf: &mut ParseBuf,
         peer_nodeid: u64,
         dec_key: Option<&[u8]>,
+        crypto: C,
     ) -> Result<(), Error> {
         if let Some(d) = dec_key {
             // We decrypt only if the decryption key is valid
-            decrypt_in_place(plain_hdr.ctr, peer_nodeid, parsebuf, d)?;
+            decrypt_in_place(plain_hdr.ctr, peer_nodeid, parsebuf, d, crypto)?;
         }
 
         self.exch_flags = ExchFlags::from_bits(parsebuf.le_u8()?).ok_or(ErrorCode::Invalid)?;
@@ -353,12 +355,13 @@ fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut [u8]) -> Result<(), Error> 
     Ok(())
 }
 
-pub fn encrypt_in_place(
+pub fn encrypt_in_place<C: Crypto>(
     send_ctr: u32,
     peer_nodeid: u64,
     plain_hdr: &[u8],
     writebuf: &mut WriteBuf,
     key: &[u8],
+    crypto: C,
 ) -> Result<(), Error> {
     // IV
     let mut iv = [0_u8; crypto::AEAD_NONCE_LEN_BYTES];
@@ -369,8 +372,9 @@ pub fn encrypt_in_place(
     writebuf.append(&tag_space)?;
     let cipher_text = writebuf.as_mut_slice();
 
-    crypto::encrypt_in_place(
-        key,
+    let mut cypher = crypto.aead_aes_ccm_16_64_128(key)?;
+
+    cypher.encrypt_in_place(
         &iv,
         plain_hdr,
         cipher_text,
@@ -381,11 +385,12 @@ pub fn encrypt_in_place(
     Ok(())
 }
 
-fn decrypt_in_place(
+fn decrypt_in_place<C: Crypto>(
     recvd_ctr: u32,
     peer_nodeid: u64,
     parsebuf: &mut ParseBuf,
     key: &[u8],
+    crypto: C,
 ) -> Result<(), Error> {
     // AAD:
     //    the unencrypted header of this packet
@@ -410,7 +415,9 @@ fn decrypt_in_place(
     //println!("IV: {:x?}", iv);
     //println!("Key: {:x?}", key);
 
-    crypto::decrypt_in_place(key, &iv, &aad, cipher_text)?;
+    let mut cypher = crypto.aead_aes_ccm_16_64_128(key)?;
+
+    cypher.decrypt_in_place(&iv, &aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);
     parsebuf.tail(crypto::AEAD_MIC_LEN_BYTES)?;
     Ok(())

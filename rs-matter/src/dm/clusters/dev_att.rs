@@ -39,14 +39,22 @@ pub enum DataType {
 /// for the Device Attestation data that is programmed in the Matter device.
 pub trait DevAttDataFetcher {
     /// Get the data in the provided buffer
-    fn get_devatt_data(&self, data_type: DataType, buf: &mut [u8]) -> Result<usize, Error>;
+    fn get_devatt_data<'a>(
+        &self,
+        data_type: DataType,
+        buf: &'a mut [u8],
+    ) -> Result<&'a [u8], Error>;
 }
 
 impl<T> DevAttDataFetcher for &T
 where
     T: DevAttDataFetcher,
 {
-    fn get_devatt_data(&self, data_type: DataType, buf: &mut [u8]) -> Result<usize, Error> {
+    fn get_devatt_data<'a>(
+        &self,
+        data_type: DataType,
+        buf: &'a mut [u8],
+    ) -> Result<&'a [u8], Error> {
         (*self).get_devatt_data(data_type, buf)
     }
 }

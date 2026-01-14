@@ -35,7 +35,7 @@ use super::packet::PacketHdr;
 use super::plain_hdr::PlainHdr;
 use super::proto_hdr::ProtoHdr;
 use super::session::Session;
-use super::{Packet, PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
+use super::{PacketAccess, MAX_RX_BUF_SIZE, MAX_TX_BUF_SIZE};
 
 /// Minimum buffer which should be allocated by user code that wants to pull RX messages via `Exchange::recv_into`
 // TODO: Revisit with large packets
@@ -655,7 +655,7 @@ impl TxMessage<'_> {
             .get(self.exchange_id.session_id())
             .ok_or(ErrorCode::NoSession)?;
 
-        let (peer, retransmission) = session.pre_send(
+        let (peer, retansmit) = session.pre_send(
             Some(self.exchange_id.exchange_index()),
             &mut self.packet.header,
             // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
@@ -668,52 +668,12 @@ impl TxMessage<'_> {
             self.matter.dev_det().sii,
         )?;
 
+        self.packet.tx_session_id = Some(session.id);
+        self.packet.tx_retransmit = retansmit;
         self.packet.peer = peer;
-
-        debug!(
-            "\n<<SND {}\n      => {}",
-            Packet::<0>::display(&self.packet.peer, &self.packet.header),
-            if retransmission {
-                "Re-sending"
-            } else {
-                "Sending"
-            },
-        );
-
-        #[cfg(feature = "debug-tlv-payload")]
-        debug!(
-            "{}",
-            Packet::<0>::display_payload(
-                &self.packet.header.proto,
-                &self.packet.buf
-                    [PacketHdr::HDR_RESERVE + payload_start..PacketHdr::HDR_RESERVE + payload_end]
-            )
-        );
-
-        #[cfg(not(feature = "debug-tlv-payload"))]
-        trace!(
-            "{}",
-            Packet::<0>::display_payload(
-                &self.packet.header.proto,
-                &self.packet.buf
-                    [PacketHdr::HDR_RESERVE + payload_start..PacketHdr::HDR_RESERVE + payload_end]
-            )
-        );
-
-        let packet = &mut *self.packet;
-
-        let mut writebuf = WriteBuf::new_with(
-            &mut packet.buf,
-            PacketHdr::HDR_RESERVE + payload_start,
-            PacketHdr::HDR_RESERVE + payload_end,
-        );
-        session.encode(&packet.header, &mut writebuf)?;
-
-        let encoded_payload_start = writebuf.get_start();
-        let encoded_payload_end = writebuf.get_tail();
-
-        self.packet.payload_start = encoded_payload_start;
-        self.packet.buf.truncate(encoded_payload_end);
+        self.packet
+            .buf
+            .truncate(PacketHdr::HDR_RESERVE + payload_end);
         self.packet.clear_on_drop(false);
 
         Ok(())

@@ -21,6 +21,7 @@ use core::mem::MaybeUninit;
 
 use num_derive::FromPrimitive;
 
+use crate::crypto::Crypto;
 use crate::error::*;
 use crate::respond::ExchangeHandler;
 use crate::tlv::{FromTLV, ToTLV};
@@ -221,12 +222,12 @@ impl<'a> StatusReport<'a> {
 }
 
 /// Handle messages related to the Secure Channel
-pub struct SecureChannel(());
+pub struct SecureChannel<C>(C);
 
-impl SecureChannel {
+impl<C: Crypto> SecureChannel<C> {
     #[inline(always)]
-    pub const fn new() -> Self {
-        Self(())
+    pub const fn new(crypto: C) -> Self {
+        Self(crypto)
     }
 
     pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
@@ -246,7 +247,7 @@ impl SecureChannel {
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                case.init_with(Case::init()).handle(exchange).await
+                case.init_with(Case::init(&self.0)).handle(exchange).await
             }
             opcode => {
                 error!("Invalid opcode: {:?}", opcode);
@@ -256,13 +257,7 @@ impl SecureChannel {
     }
 }
 
-impl Default for SecureChannel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ExchangeHandler for SecureChannel {
+impl<C: Crypto> ExchangeHandler for SecureChannel<C> {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         SecureChannel::handle(self, exchange)
     }
