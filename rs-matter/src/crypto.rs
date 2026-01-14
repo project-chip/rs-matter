@@ -63,6 +63,149 @@ mod openssl;
 #[cfg(feature = "rustcrypto")]
 mod rustcrypto;
 
+pub const SHA256_HASH_LEN: usize = 32;
+
+pub trait Crypto {
+    type Sha256<'a>: Digest<SHA256_HASH_LEN> where Self: 'a;
+    type HmacSha256<'a>: Digest<SHA256_HASH_LEN> where Self: 'a;
+    type HkdfSha256<'a>: Digest<SHA256_HASH_LEN> where Self: 'a;
+    // type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac where Self: 'a;
+    // type AeadAesCcm16p64p128<'a>: Aead where Self: 'a;
+    // type KeyPairSecp256r1<'a>: KeyPair where Self: 'a;
+    // type Spake2Secp256r1Sha256<'a>: Spake2 where Self: 'a;
+
+    fn sha256(&self) -> Result<Self::Sha256<'_>, Error>;
+
+    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error>;
+
+    fn hkdf_sha256(&self, key: &[u8]) -> Result<Self::HkdfSha256<'_>, Error>;
+
+    // fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error>;
+
+    // fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error>;
+
+    // fn keypair_secp256r1_generate(&self) -> Result<Self::KeyPairSecp256r1<'_>, Error>;
+
+    // fn keypair_secp256r1_materialize(&self, priv_key: &[u8]) -> Result<Self::KeyPairSecp256r1<'_>, Error>;
+
+    // fn spake2_secp256r1_sha256(&self) -> Result<Self::Spake2Secp256r1Sha256<'_>, Error>;    
+}
+
+impl<T> Crypto for &T 
+where
+    T: Crypto,
+{
+    type Sha256<'a> = T::Sha256<'a> where Self: 'a;
+    type HmacSha256<'a> = T::HmacSha256<'a> where Self: 'a;
+    type HkdfSha256<'a> = T::HkdfSha256<'a> where Self: 'a;
+    // type Pbkdf2HmacSha256<'a> = T::Pbkdf2HmacSha256<'a> where Self: 'a;
+    // type AeadAesCcm16p64p128<'a> = T::AeadAesCcm16p64p128<'a> where Self: 'a;
+    // type KeyPairSecp256r1<'a> = T::KeyPairSecp256r1<'a> where Self: 'a;
+    // type Spake2Secp256r1Sha256<'a> = T::Spake2Secp256r1Sha256<'a> where Self: 'a;
+
+    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
+        (*self).sha256()
+    }
+
+    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
+        (*self).hmac_sha256(key)
+    }
+
+    fn hkdf_sha256(&self, key: &[u8]) -> Result<Self::HkdfSha256<'_>, Error> {
+        (*self).hkdf_sha256(key)
+    }
+
+    // fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
+    //     (*self).pbkdf2_hmac_sha256()
+    // }
+
+    // fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error> {
+    //     (*self).aead_aes_ccm_16_64_128(key)
+    // }
+
+    // fn keypair_secp256r1_generate(&self) -> Result<Self::KeyPairSecp256r1<'_>, Error> {
+    //     (*self).keypair_secp256r1_generate()
+    // }
+
+    // fn keypair_secp256r1_materialize(&self, priv_key: &[u8]) -> Result<Self::KeyPairSecp256r1<'_>, Error> {
+    //     (*self).keypair_secp256r1_materialize(priv_key)
+    // }
+
+    // fn spake2_secp256r1_sha256(&self) -> Result<Self::Spake2Secp256r1Sha256<'_>, Error> {
+    //     (*self).spake2_secp256r1_sha256()
+    // }
+}
+
+pub trait Digest<const HASH_LEN: usize> {
+    fn update(&mut self, data: &[u8]);
+
+    fn finish(self, hash: &mut [u8; HASH_LEN]);
+}
+
+pub trait Hkdf {
+    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]);
+}
+
+pub trait Pbkdf2Hmac {
+    fn pbkdf2_hmac<'a>(&mut self, pass: &[u8], iter: usize, salt: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+}
+
+
+pub trait Aead {
+    fn encrypt_in_place<'a>(
+        &mut self,
+        nonce: &[u8],
+        ad: &[u8],
+        data: &'a mut [u8],
+        data_len: usize,
+    ) -> Result<&'a [u8], Error>;
+
+    fn decrypt_in_place<'a>(
+        &mut self,
+        nonce: &[u8],
+        ad: &[u8],
+        data: &'a mut [u8],
+    ) -> Result<&'a [u8], Error>;
+}
+
+pub trait KeyPair2 {
+    fn csr<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn pub_key<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn priv_key<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn derive_secret<'a>(self, peer_pub_key: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn sign_msg<'a>(&self, msg: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn verify_msg(&self, msg: &[u8], buf: &[u8]) -> Result<(), Error>;
+}
+
+pub trait Spake2 {
+    fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error>;
+
+    fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error>;
+
+    fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error>;
+
+    fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error>;
+
+    fn set_l(&mut self, l: &[u8]) -> Result<(), Error>;
+
+    fn set_l_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error>;
+
+    fn get_pp<'a>(&mut self, rand: Rand, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+
+    fn get_tt_as_verifier<'a>(
+        &mut self,
+        context: &[u8],
+        pa: &[u8],
+        pb: &[u8],
+        buf: &'a mut [u8],
+    ) -> Result<&'a [u8], Error>;
+}
+
 impl<'a> FromTLV<'a> for KeyPair {
     fn from_tlv(t: &crate::tlv::TLVElement<'a>) -> Result<Self, Error>
     where

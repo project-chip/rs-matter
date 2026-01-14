@@ -15,6 +15,9 @@
  *    limitations under the License.
  */
 
+use crate::error::Error;
+use crate::utils::rand::Rand;
+
 #[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 pub use self::dummy::CryptoSpake2;
 #[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]

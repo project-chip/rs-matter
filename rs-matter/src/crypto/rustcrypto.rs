@@ -27,7 +27,9 @@ use ccm::{
     consts::{U13, U16},
     Ccm,
 };
+use digest::OutputSizeUser;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use hkdf::HmacImpl;
 use hmac::Mac;
 use p256::{
     ecdsa::{Signature, SigningKey, VerifyingKey},
@@ -43,6 +45,7 @@ use x509_cert::{
     spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned},
 };
 
+use crate::crypto::Crypto;
 use crate::{
     error::{Error, ErrorCode},
     utils::{init::InitMaybeUninit, rand::Rand},
@@ -81,6 +84,60 @@ impl RngCore for RandRngCore {
 }
 
 impl CryptoRng for RandRngCore {}
+
+pub struct RustCrypto(());
+
+impl RustCrypto {
+}
+
+impl Crypto for RustCrypto {
+    type Sha256<'a> = sha2::Sha256 where Self: 'a;
+    type HmacSha256<'a> = hmac::Hmac<sha2::Sha256> where Self: 'a;
+    type HkdfSha256<'a> = hmac::Hmac<sha2::Sha256> where Self: 'a;
+
+    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
+        Ok(Self::Sha256::new())
+    }
+
+    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
+        hmac::Hmac::<sha2::Sha256>::new_from_slice(key).map_err(|e| {
+            error!("Error creating HmacSha256 {:?}", display2format!(&e));
+            ErrorCode::TLSStack.into()
+        })
+    }
+
+    fn hkdf_sha256(&self, key: &[u8]) -> Result<Self::HkdfSha256<'_>, Error> {
+        hmac::Hmac::<sha2::Sha256>::new_from_slice(key).map_err(|e| {
+            error!("Error creating HmacSha256 {:?}", display2format!(&e));
+            ErrorCode::TLSStack.into()
+        })
+    }
+}
+
+impl<const HASH_LEN: usize, T> super::Digest<HASH_LEN> for T 
+where 
+    T: digest::Update + digest::FixedOutput,
+{
+    fn update(&mut self, data: &[u8]) {
+        digest::Update::update(self, data);
+    }
+
+    fn finish(self, buf: &mut [u8; HASH_LEN]) {
+        let output = digest::FixedOutput::finalize_fixed(self);
+        buf.copy_from_slice(output.as_slice());
+    }
+}
+
+impl<H: OutputSizeUser, I: HmacImpl<H>> super::Hkdf for hkdf::Hkdf::<H, I> {
+    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) {
+        hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm)
+            .expand(info, key)
+            .map_err(|e| {
+                error!("Error with hkdf_sha256 {:?}", display2format!(&e));
+                ErrorCode::TLSStack.into()
+            })
+    }
+}
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
