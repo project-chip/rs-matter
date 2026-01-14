@@ -241,7 +241,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     fn validate(&self) {
         if H::CLUSTER.revision != 6 {
             panic!(
-                "LevelControl validation: incorrect version number: expected 5 got {}",
+                "LevelControl validation: incorrect version number: expected 6 got {}",
                 H::CLUSTER.revision
             );
         }
