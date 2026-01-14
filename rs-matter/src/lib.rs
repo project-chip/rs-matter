@@ -79,6 +79,7 @@ use core::future::Future;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
 use crate::dm::clusters::dev_att::DevAttDataFetcher;
 use crate::error::{Error, ErrorCode};
@@ -550,23 +551,27 @@ impl<'a> Matter<'a> {
     ///
     /// # Arguments
     /// - `timeout_secs`: The timeout in seconds for the basic commissioning window
-    pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
+    pub fn open_basic_comm_window<C: Crypto>(
+        &self,
+        timeout_secs: u16,
+        crypto: C,
+    ) -> Result<(), Error> {
         self.pase_mgr.borrow_mut().open_basic_comm_window(
             self.dev_comm.password,
             self.dev_comm.discriminator,
             timeout_secs,
             None,
-            BasicContextInstance::new(self, self),
+            BasicContextInstance::new(self, crypto, self),
         )
     }
 
     /// Close the basic commissioning window
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
-    pub fn close_comm_window(&self) -> Result<bool, Error> {
+    pub fn close_comm_window<C: Crypto>(&self, crypto: C) -> Result<bool, Error> {
         self.pase_mgr
             .borrow_mut()
-            .close_comm_window(BasicContextInstance::new(self, self))
+            .close_comm_window(BasicContextInstance::new(self, crypto, self))
     }
 
     /// Run the transport layer
@@ -574,12 +579,14 @@ impl<'a> Matter<'a> {
     /// # Arguments
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
-    pub async fn run<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    /// - `crypto`: The crypto backend
+    pub async fn run<S, R, C>(&self, send: S, recv: R, crypto: C) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
+        C: Crypto,
     {
-        self.run_transport(send, recv).await
+        self.run_transport(send, recv, crypto).await
     }
 
     /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -589,16 +596,23 @@ impl<'a> Matter<'a> {
     }
 
     /// Run the transport layer
-    pub fn run_transport<'t, S, R>(
+    ///
+    /// # Arguments
+    /// - `send`: The network send interface
+    /// - `recv`: The network receive interface
+    /// - `crypto`: The crypto backend
+    pub fn run_transport<'t, S, R, C>(
         &'t self,
         send: S,
         recv: R,
+        crypto: C,
     ) -> impl Future<Output = Result<(), Error>> + 't
     where
         S: NetworkSend + 't,
         R: NetworkReceive + 't,
+        C: Crypto + 't,
     {
-        self.transport_mgr.run(send, recv)
+        self.transport_mgr.run(send, recv, crypto)
     }
 
     /// Reset the Matter state by removing all fabrics and resetting basic info settings
@@ -685,8 +699,9 @@ impl<'a> Matter<'a> {
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
-    pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
+    pub fn mdns_services<C, F>(&self, crypto: C, mut f: F) -> Result<(), Error>
     where
+        C: Crypto,
         F: FnMut(MatterMdnsService) -> Result<(), Error>,
     {
         debug!("=== Currently published mDNS services");
@@ -694,7 +709,9 @@ impl<'a> Matter<'a> {
         let mut pase_mgr = self.pase_mgr.borrow_mut();
         let fabric_mgr = self.fabric_mgr.borrow();
 
-        if let Some(comm_window) = pase_mgr.comm_window(BasicContextInstance::new(self, self))? {
+        if let Some(comm_window) =
+            pase_mgr.comm_window(BasicContextInstance::new(self, crypto, self))?
+        {
             // Do not remove this logging line or change its formatting.
             // C++ E2E tests rely on this log line to determine when the mDNS service is published
             debug!("mDNS service published: {:?}", comm_window.mdns_service());

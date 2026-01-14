@@ -23,6 +23,7 @@ use embassy_futures::select::{select, select3};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::Timer;
 
+use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::BasicInfoConfig;
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
@@ -262,18 +263,19 @@ impl TransportMgr {
         Ok(exchange)
     }
 
-    pub async fn run<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    pub async fn run<S, R, C>(&self, send: S, recv: R, crypto: C) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
+        C: Crypto,
     {
         info!("Running Matter transport");
 
         let send = IfMutex::new(send);
 
-        let mut rx = pin!(self.process_rx(recv, &send));
-        let mut tx = pin!(self.process_tx(&send));
-        let mut orphaned = pin!(self.process_orphaned());
+        let mut rx = pin!(self.process_rx(recv, &send, &crypto));
+        let mut tx = pin!(self.process_tx(&send, &crypto));
+        let mut orphaned = pin!(self.process_orphaned(&crypto));
 
         select3(&mut rx, &mut tx, &mut orphaned).coalesce().await
     }
@@ -316,9 +318,14 @@ impl TransportMgr {
         packet_mutex.with(f).await
     }
 
-    async fn process_tx<S>(&self, send: &IfMutex<NoopRawMutex, S>) -> Result<(), Error>
+    async fn process_tx<S, C>(
+        &self,
+        send: &IfMutex<NoopRawMutex, S>,
+        crypto: C,
+    ) -> Result<(), Error>
     where
         S: NetworkSend,
+        C: Crypto,
     {
         loop {
             trace!("Waiting for outgoing packet");
@@ -326,18 +333,38 @@ impl TransportMgr {
             let mut tx = self.get_if(&self.tx, |packet| !packet.buf.is_empty()).await;
             tx.clear_on_drop(true);
 
+            let Some(session_id) = tx.tx_session_id else {
+                error!("TX packet has no session associated with it, dropping");
+                continue;
+            };
+
+            {
+                let mut session_mgr = self.session_mgr.borrow_mut();
+                let Some(session) = session_mgr.get_for_tx(session_id) else {
+                    error!(
+                        "TX packet has session ID {}, but no such session exists, dropping",
+                        session_id
+                    );
+                    continue;
+                };
+
+                self.encode_packet0(&mut tx, Some(session), &crypto)?;
+            }
+
             Self::netw_send(send, tx.peer, &tx.buf[tx.payload_start..], false).await?;
         }
     }
 
-    async fn process_rx<R, S>(
+    async fn process_rx<R, S, C>(
         &self,
         mut recv: R,
         send: &IfMutex<NoopRawMutex, S>,
+        crypto: C,
     ) -> Result<(), Error>
     where
         R: NetworkReceive,
         S: NetworkSend,
+        C: Crypto,
     {
         loop {
             trace!("Waiting for incoming packet");
@@ -357,7 +384,7 @@ impl TransportMgr {
             rx.buf.truncate(len);
             rx.payload_start = 0;
 
-            match self.handle_rx_packet(&mut rx, send).await {
+            match self.handle_rx_packet(&mut rx, send, &crypto).await {
                 Ok(true) => {
                     // Leave the packet in place for accepting by responders
                     rx.clear_on_drop(false);
@@ -373,10 +400,10 @@ impl TransportMgr {
         }
     }
 
-    async fn process_orphaned(&self) -> Result<(), Error> {
+    async fn process_orphaned<C: Crypto>(&self, crypto: C) -> Result<(), Error> {
         let mut rx_accept_timeout = pin!(self.process_accept_timeout_rx());
         let mut rx_orphaned = pin!(self.process_orphaned_rx());
-        let mut exch_dropped = pin!(self.process_dropped_exchanges());
+        let mut exch_dropped = pin!(self.process_dropped_exchanges(crypto));
 
         select3(&mut rx_accept_timeout, &mut rx_orphaned, &mut exch_dropped)
             .coalesce()
@@ -408,14 +435,14 @@ impl TransportMgr {
         }
     }
 
-    async fn process_dropped_exchanges(&self) -> Result<(), Error> {
+    async fn process_dropped_exchanges<C: Crypto>(&self, crypto: C) -> Result<(), Error> {
         loop {
             trace!("Waiting for dropped exchanges");
 
             let mut tx = self.get_if(&self.tx, |packet| packet.buf.is_empty()).await;
             tx.clear_on_drop(true); // In case of error, or if the future is dropped
 
-            let wait = match self.handle_dropped_exchange(&mut tx) {
+            let wait = match self.handle_dropped_exchange(&mut tx, &crypto) {
                 Ok(wait) => {
                     tx.clear_on_drop(false);
                     wait
@@ -437,15 +464,16 @@ impl TransportMgr {
         }
     }
 
-    async fn handle_rx_packet<const N: usize, S>(
+    async fn handle_rx_packet<const N: usize, S, C: Crypto>(
         &self,
         packet: &mut Packet<N>,
         send: &IfMutex<NoopRawMutex, S>,
+        crypto: C,
     ) -> Result<bool, Error>
     where
         S: NetworkSend,
     {
-        let result = self.decode_packet(packet);
+        let result = self.decode_packet(packet, &crypto);
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
                 if !packet.peer.is_reliable()
@@ -469,7 +497,7 @@ impl TransportMgr {
                         packet.header.proto.toggle_initiator();
                         packet.header.proto.set_ack(Some(ack));
 
-                        self.encode_packet(packet, Some(session), None, |_| {
+                        self.encode_packet(packet, Some(session), None, &crypto, |_| {
                             Ok(Some(OpCode::MRPStandAloneAck.into()))
                         })?;
                     }
@@ -494,14 +522,14 @@ impl TransportMgr {
                     packet.header.proto.toggle_initiator();
                     packet.header.proto.set_ack(Some(ack));
 
-                    self.encode_packet(packet, None, None, |wb| {
+                    self.encode_packet(packet, None, None, &crypto, |wb| {
                         sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
                     })?;
 
                     Self::netw_send(send, packet.peer, &packet.buf[packet.payload_start..], true)
                         .await?;
 
-                    if self.encode_evict_some_session(packet)? {
+                    if self.encode_evict_some_session(packet, &crypto)? {
                         Self::netw_send(
                             send,
                             packet.peer,
@@ -547,7 +575,7 @@ impl TransportMgr {
                     let mut session = unwrap!(session_mgr.remove(session_id));
                     self.session_removed.notify();
 
-                    self.encode_packet(packet, Some(&mut session), None, |wb| {
+                    self.encode_packet(packet, Some(&mut session), None, &crypto, |wb| {
                         sc_write(wb, SCStatusCodes::CloseSession, &[])
                     })?;
                 }
@@ -705,9 +733,10 @@ impl TransportMgr {
         false
     }
 
-    fn handle_dropped_exchange<const N: usize>(
+    fn handle_dropped_exchange<const N: usize, C: Crypto>(
         &self,
         packet: &mut Packet<N>,
+        crypto: C,
     ) -> Result<bool, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
@@ -737,7 +766,7 @@ impl TransportMgr {
                 exchange_id.display(unwrap!(session_mgr.get(session_id))) // Session exists or else we wouldn't be here
             );
 
-            self.encode_evict_session(packet, &mut session_mgr, session_id)?;
+            self.encode_evict_session(packet, &mut session_mgr, session_id, &crypto)?;
         } else {
             // Found a dropped exchange which has no outstanding (re)transmission
             // Send a standalone ACK if necessary and then close it
@@ -748,7 +777,7 @@ impl TransportMgr {
             let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
             if exchange.mrp.is_ack_pending() {
-                self.encode_packet(packet, Some(session), Some(exch_index), |_| {
+                self.encode_packet(packet, Some(session), Some(exch_index), &crypto, |_| {
                     Ok(Some(OpCode::MRPStandAloneAck.into()))
                 })?;
             }
@@ -760,11 +789,11 @@ impl TransportMgr {
         Ok(exch.is_none())
     }
 
-    pub(crate) async fn evict_some_session(&self) -> Result<(), Error> {
+    pub(crate) async fn evict_some_session<C: Crypto>(&self, crypto: C) -> Result<(), Error> {
         let mut tx = self.get_if(&self.tx, |packet| packet.buf.is_empty()).await;
         tx.clear_on_drop(true); // By default, if an error occurs
 
-        let evicted = self.encode_evict_some_session(&mut tx)?;
+        let evicted = self.encode_evict_some_session(&mut tx, crypto)?;
 
         if evicted {
             // Send it
@@ -776,7 +805,11 @@ impl TransportMgr {
         }
     }
 
-    fn decode_packet<const N: usize>(&self, packet: &mut Packet<N>) -> Result<bool, Error> {
+    fn decode_packet<const N: usize, C: Crypto>(
+        &self,
+        packet: &mut Packet<N>,
+        crypto: C,
+    ) -> Result<bool, Error> {
         packet.header.reset();
 
         let mut pb = ParseBuf::new(&mut packet.buf[packet.payload_start..]);
@@ -793,7 +826,7 @@ impl TransportMgr {
         if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
             // Found existing session: decode, indicate packet payload slice and process further
 
-            let payload_range = session.decode_remaining(&mut packet.header, pb)?;
+            let payload_range = session.decode_remaining(&mut packet.header, pb, &crypto)?;
             set_payload(packet, payload_range);
 
             return session.post_recv(&packet.header, epoch);
@@ -804,7 +837,7 @@ impl TransportMgr {
         if !packet.header.plain.is_encrypted() {
             // Unencrypted packets can be decoded without a session, and we need to anyway do that
             // in order to determine (based on proto hdr data) whether to create a new session or not
-            packet.header.decode_remaining(&mut pb, 0, None)?;
+            packet.header.decode_remaining(&mut pb, 0, None, crypto)?;
             packet.header.proto.adjust_reliability(true, &packet.peer);
 
             let payload_range = pb.slice_range();
@@ -828,11 +861,70 @@ impl TransportMgr {
         Err(ErrorCode::NoSession.into())
     }
 
-    fn encode_packet<const N: usize, F>(
+    fn encode_packet0<const N: usize, C: Crypto>(
+        &self,
+        packet: &mut Packet<N>,
+        session: Option<&mut Session>,
+        crypto: C,
+    ) -> Result<(), Error> {
+        let payload_end = packet.buf.len();
+
+        debug!(
+            "\n<<SND {}\n      => {}",
+            Packet::<0>::display(&packet.peer, &packet.header),
+            if packet.tx_retransmit {
+                "Re-sending"
+            } else {
+                "Sending"
+            }
+        );
+
+        #[cfg(feature = "debug-tlv-payload")]
+        debug!(
+            "{}",
+            Packet::<0>::display_payload(
+                &packet.header.proto,
+                &packet.buf[PacketHdr::HDR_RESERVE + packet.payload_start..payload_end]
+            )
+        );
+
+        #[cfg(not(feature = "debug-tlv-payload"))]
+        trace!(
+            "{}",
+            Packet::<0>::display_payload(
+                &packet.header.proto,
+                &packet.buf[PacketHdr::HDR_RESERVE + packet.payload_start..payload_end]
+            )
+        );
+
+        unwrap!(packet.buf.resize_default(N));
+
+        let mut wb = WriteBuf::new_with(
+            &mut packet.buf,
+            PacketHdr::HDR_RESERVE + packet.payload_start,
+            payload_end,
+        );
+        if let Some(session) = session {
+            session.encode(&packet.header, &mut wb, crypto)?;
+        } else {
+            packet.header.encode(&mut wb, 0, None, crypto)?;
+        }
+
+        let encoded_payload_start = wb.get_start();
+        let encoded_payload_end = wb.get_tail();
+
+        packet.payload_start = encoded_payload_start;
+        packet.buf.truncate(encoded_payload_end);
+
+        Ok(())
+    }
+
+    fn encode_packet<const N: usize, F, C: Crypto>(
         &self,
         packet: &mut Packet<N>,
         mut session: Option<&mut Session>,
         exchange_index: Option<usize>,
+        crypto: C,
         payload_writer: F,
     ) -> Result<(), Error>
     where
@@ -851,9 +943,14 @@ impl TransportMgr {
             return Ok(());
         };
 
+        let (start, end) = (wb.get_start(), wb.get_tail());
+
+        packet.payload_start = start;
+        packet.buf.truncate(PacketHdr::HDR_RESERVE + end);
+
         meta.set_into(&mut packet.header.proto);
 
-        let retransmission = if let Some(session) = &mut session {
+        if let Some(session) = &mut session {
             packet.header.plain = Default::default();
 
             let (peer, retransmission) = session.pre_send(
@@ -864,8 +961,8 @@ impl TransportMgr {
             )?;
 
             packet.peer = peer;
-
-            retransmission
+            packet.tx_retransmit = retransmission;
+            packet.tx_session_id = Some(session.id);
         } else {
             if packet.header.plain.is_encrypted()
                 || packet.header.plain.get_src_nodeid().is_none()
@@ -887,53 +984,22 @@ impl TransportMgr {
             packet.header.proto.unset_initiator();
             packet.header.proto.adjust_reliability(false, &packet.peer);
 
-            false
-        };
-
-        debug!(
-            "\n<<SND {}\n      => {} (system)",
-            Packet::<0>::display(&packet.peer, &packet.header),
-            if retransmission {
-                "Re-sending"
-            } else {
-                "Sending"
-            }
-        );
-
-        #[cfg(feature = "debug-tlv-payload")]
-        debug!(
-            "{}",
-            Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
-        );
-
-        #[cfg(not(feature = "debug-tlv-payload"))]
-        trace!(
-            "{}",
-            Packet::<0>::display_payload(&packet.header.proto, wb.as_slice())
-        );
-
-        if let Some(session) = session {
-            session.encode(&packet.header, &mut wb)?;
-        } else {
-            packet.header.encode(&mut wb, 0, None)?;
+            packet.tx_retransmit = false;
+            packet.tx_session_id = None;
         }
 
-        let range = (wb.get_start(), wb.get_tail());
-
-        packet.payload_start = range.0;
-        packet.buf.truncate(range.1);
-
-        Ok(())
+        self.encode_packet0(packet, session, crypto)
     }
 
-    fn encode_evict_some_session<const N: usize>(
+    fn encode_evict_some_session<const N: usize, C: Crypto>(
         &self,
         packet: &mut Packet<N>,
+        crypto: C,
     ) -> Result<bool, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
         let id = session_mgr.get_session_for_eviction().map(|sess| sess.id);
         if let Some(id) = id {
-            self.encode_evict_session(packet, &mut session_mgr, id)?;
+            self.encode_evict_session(packet, &mut session_mgr, id, crypto)?;
 
             Ok(true)
         } else {
@@ -943,11 +1009,12 @@ impl TransportMgr {
         }
     }
 
-    fn encode_evict_session<const N: usize>(
+    fn encode_evict_session<const N: usize, C: Crypto>(
         &self,
         packet: &mut Packet<N>,
         session_mgr: &mut SessionMgr,
         id: u32,
+        crypto: C,
     ) -> Result<(), Error> {
         packet.header.proto.exch_id = session_mgr.get_next_exch_id();
         packet.header.proto.set_initiator();
@@ -963,7 +1030,7 @@ impl TransportMgr {
             session.get_peer_sess_id()
         );
 
-        self.encode_packet(packet, Some(&mut session), None, |wb| {
+        self.encode_packet(packet, Some(&mut session), None, &crypto, |wb| {
             sc_write(wb, SCStatusCodes::CloseSession, &[])
         })?;
 
@@ -1042,6 +1109,8 @@ impl TransportMgr {
 //
 // This type is only known and used by `TransportMgr` and the `exchange` module
 pub(crate) struct Packet<const N: usize> {
+    pub(crate) tx_session_id: Option<u32>,
+    pub(crate) tx_retransmit: bool,
     pub(crate) peer: Address,
     pub(crate) header: PacketHdr,
     pub(crate) buf: PacketBuffer<N>,
@@ -1052,6 +1121,8 @@ impl<const N: usize> Packet<N> {
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self {
+            tx_session_id: None,
+            tx_retransmit: false,
             peer: Address::new(),
             header: PacketHdr::new(),
             buf: PacketBuffer::new(),
@@ -1061,6 +1132,8 @@ impl<const N: usize> Packet<N> {
 
     pub(crate) fn init() -> impl Init<Self> {
         init!(Self {
+            tx_session_id: None,
+            tx_retransmit: false,
             peer: Address::new(),
             header: PacketHdr::new(),
             buf <- PacketBuffer::init(),
