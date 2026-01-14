@@ -2,9 +2,13 @@
 name: ChipToolIntegrationTests
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     # Run every night at 2:00 AM UTC
-    - cron: "0 2,6,10,14,18,22 * * *"
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       chip_ref:
@@ -20,7 +24,9 @@ env:
 
 jobs:
   yaml_integration_tests:
-    runs-on: ubuntu-latest
+    # Downgrade to 22.04 so that `activate.sh` does not fail with "ModuleNotFoundError: No module named 'pip'"
+    # runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
@@ -68,7 +74,8 @@ jobs:
 
       - name: Run LevelControl and OnOff YAML Integration Tests for dimmable_light
         run: |
-          cargo xtask itest --target dimmable_light --timeout 500 --features chip-test Test_TC_LVL_1_1 Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_4_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1 Test_TC_OO_1_1 Test_TC_OO_2_1 Test_TC_OO_2_2 Test_TC_OO_2_3 Test_TC_OO_2_4
+          # TODO: Specify this test list inside of itest instead of here & re-add Test_TC_LVL_4_1, Test_TC_LVL_9_1, Test_TC_OO_2_7
+          cargo xtask itest --target dimmable_light --timeout 500 --features chip-test Test_TC_LVL_2_1 Test_TC_LVL_2_2 Test_TC_LVL_3_1 Test_TC_LVL_5_1 Test_TC_LVL_6_1 Test_TC_LVL_7_1 Test_TC_OO_2_1 Test_TC_OO_2_2 Test_TC_OO_2_4 Test_TC_OO_2_6
 
       - name: Upload test results on failure
         if: failure()

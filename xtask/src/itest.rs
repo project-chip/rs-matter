@@ -20,7 +20,7 @@
 use core::iter::once;
 
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -208,10 +208,12 @@ impl ITests {
             }
 
             self.run_command(&mut cmd)?;
+
+            File::create(chip_dir.join(chip_gitref))?;
         } else {
             info!("Chip repository already exists");
 
-            if force_rebuild {
+            if force_rebuild || !chip_dir.join(chip_gitref).exists() {
                 info!("Force rebuild requested, cleaning build artifacts...");
 
                 let out_dir = chip_dir.join("out");
@@ -328,6 +330,19 @@ impl ITests {
 
         let chip_dir = self.chip_dir();
 
+        info!("Killing all netns processes in app namespace to clean previous runs");
+        // If this fails, that's ok; best-effort
+        _ = self.run_command(
+                Command::new("ip")
+                    .arg("netns")
+                    .arg("exec")
+                    .arg("app")
+                    .arg("pkill")
+                    .arg("-f")
+                    .arg(".*")
+                    .current_dir(&chip_dir),
+            );
+
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = chip_dir.join("out/host/chip-tool");
         let test_exe_path = self.test_exe_path(profile, target);
@@ -422,16 +437,13 @@ impl ITests {
     fn build_chip_tool(&self, chip_dir: &Path) -> anyhow::Result<()> {
         warn!("Building `chip-tool`...");
 
-        // Source the activation script and build
-        let activate_script = chip_dir.join("scripts/activate.sh");
+        // Source the activation script and build; both done by gn_build_example.sh
         let build_script = chip_dir.join("scripts/examples/gn_build_example.sh");
 
         let build_script = format!(
             r#"
-            source "{}" &&
             {} examples/chip-tool out/host
             "#,
-            activate_script.display(),
             build_script.display(),
         );
 
@@ -463,7 +475,7 @@ impl ITests {
         }
 
         // Install requirements
-        let requirements_path = chip_dir.join("scripts/requirements.txt");
+        let requirements_path = chip_dir.join("scripts/tests/requirements.txt");
         if requirements_path.exists() {
             let pip_path = venv_dir.join("bin/pip");
 
@@ -478,12 +490,38 @@ impl ITests {
 
             self.run_command(
                 Command::new(&pip_path)
+                    .env("PW_PROJECT_ROOT", chip_dir)
                     .current_dir(chip_dir)
                     .arg("install")
                     .arg("-r")
-                    .arg("scripts/requirements.txt"),
+                    .arg("scripts/tests/requirements.txt"),
+            )?;
+
+            self.run_command(
+                Command::new(&pip_path)
+                    .env("PW_PROJECT_ROOT", chip_dir)
+                    .current_dir(chip_dir)
+                    .arg("install")
+                    .arg("-r")
+                    .arg("scripts/tests/requirements.txt"),
             )?;
         }
+
+        let bootstrap_script = chip_dir.join("scripts/bootstrap.sh");
+        let run_bootstrap = format!(
+            r#"
+            source "{}"
+            "#,
+            bootstrap_script.display(),
+        );
+
+        self.run_command_with(
+            Command::new("bash")
+                .current_dir(chip_dir)
+                .arg("-c")
+                .arg(&run_bootstrap),
+            !self.print_cmd_output,
+        )?;
 
         Ok(())
     }
