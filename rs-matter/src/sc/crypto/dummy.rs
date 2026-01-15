@@ -15,51 +15,57 @@
  *    limitations under the License.
  */
 
-use crate::{
-    error::{Error, ErrorCode},
-    utils::rand::Rand,
-};
+//! A dummy crypto-spake2 backend
+//!
+//! NOTE: The dummy backend _cannot_ be used for running `rs-matter`, even in test mode.
+//! The moment any crypto operation is invoked, it will panic.
+//!
+//! The module has a limited use for measuring `rs-matter` flash and RAM footprint without
+//! pulling in any crypto dependencies. Note that this module might be retired in future
+//! and `rustcrypto` might be used as the default backend.
+
+use crate::error::Error;
+use crate::utils::rand::Rand;
 
 #[allow(non_snake_case)]
-pub struct CryptoSpake2 {}
+pub struct CryptoSpake2(());
 
 impl CryptoSpake2 {
     #[allow(non_snake_case)]
     pub fn new() -> Result<Self, Error> {
-        Ok(Self {})
+        Ok(Self(()))
     }
 
-    // Computes w0 from w0s respectively
     pub fn set_w0_from_w0s(&mut self, _w0s: &[u8]) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     pub fn set_w1_from_w1s(&mut self, _w1s: &[u8]) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     pub fn set_w0(&mut self, _w0: &[u8]) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     pub fn set_w1(&mut self, _w1: &[u8]) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     #[allow(non_snake_case)]
     pub fn set_L(&mut self, _l: &[u8]) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     pub fn set_L_from_w1s(&mut self, _w1s: &[u8]) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     #[allow(non_snake_case)]
     pub fn get_pB(&mut self, _pB: &mut [u8], _rand: Rand) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     #[allow(non_snake_case)]
@@ -70,6 +76,6 @@ impl CryptoSpake2 {
         _pB: &[u8],
         _out: &mut [u8],
     ) -> Result<(), Error> {
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 }

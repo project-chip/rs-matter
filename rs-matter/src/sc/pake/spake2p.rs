@@ -305,6 +305,7 @@ impl VerifierData {
 pub mod test_vectors {
     // Based on vectors used in the RFC
     #[allow(non_snake_case)]
+    #[allow(unused)]
     pub struct RFCTestVector {
         pub w0: [u8; 32],
         pub w1: [u8; 32],

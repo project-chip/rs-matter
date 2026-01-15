@@ -15,105 +15,100 @@
  *    limitations under the License.
  */
 
-use crate::{
-    error::{Error, ErrorCode},
-    utils::rand::Rand,
-};
+//! A dummy crypto backend
+//!
+//! NOTE: The dummy backend _cannot_ be used for running `rs-matter`, even in test mode.
+//! The moment any crypto operation is invoked, it will panic.
+//!
+//! The module has a limited use for measuring `rs-matter` flash and RAM footprint without
+//! pulling in any crypto dependencies. Note that this module might be retired in future
+//! and `rustcrypto` might be used as the default backend.
+
+use crate::error::Error;
+use crate::utils::rand::Rand;
 
 pub fn hkdf_sha256(_salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> Result<(), Error> {
-    error!("This API should never get called");
-    Ok(())
+    unimplemented!()
 }
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct Sha256 {}
+pub struct Sha256(());
 
 impl Sha256 {
     pub fn new() -> Result<Self, Error> {
-        Ok(Self {})
+        Ok(Self(()))
     }
 
     pub fn update(&mut self, _data: &[u8]) -> Result<(), Error> {
-        Ok(())
+        unimplemented!()
     }
 
     pub fn finish(self, _digest: &mut [u8]) -> Result<(), Error> {
-        Ok(())
+        unimplemented!()
     }
 }
 
-pub struct HmacSha256 {}
+pub struct HmacSha256(());
 
 impl HmacSha256 {
     pub fn new(_key: &[u8]) -> Result<Self, Error> {
-        error!("This API should never get called");
-        Ok(Self {})
+        Ok(Self(()))
     }
 
     pub fn update(&mut self, _data: &[u8]) -> Result<(), Error> {
-        error!("This API should never get called");
-        Ok(())
+        unimplemented!()
     }
 
     pub fn finish(self, _out: &mut [u8]) -> Result<(), Error> {
-        error!("This API should never get called");
-        Ok(())
+        unimplemented!()
     }
 }
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct KeyPair;
+pub struct KeyPair(());
 
 impl KeyPair {
     pub fn new(_rand: Rand) -> Result<Self, Error> {
-        Ok(Self)
+        Ok(Self(()))
     }
 
     pub fn new_from_components(_pub_key: &[u8], _priv_key: &[u8]) -> Result<Self, Error> {
-        Ok(Self {})
+        Ok(Self(()))
     }
 
     pub fn new_from_public(_pub_key: &[u8]) -> Result<Self, Error> {
-        error!("This API should never get called");
-
-        Ok(Self {})
+        Ok(Self(()))
     }
 
     pub fn get_csr<'a>(&self, _out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
-        error!("This API should never get called");
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     pub fn get_public_key(&self, _pub_key: &mut [u8]) -> Result<usize, Error> {
-        Ok(0)
+        unimplemented!()
     }
 
     pub fn get_private_key(&self, _pub_key: &mut [u8]) -> Result<usize, Error> {
-        Ok(0)
+        unimplemented!()
     }
 
     pub fn derive_secret(self, _peer_pub_key: &[u8], _secret: &mut [u8]) -> Result<usize, Error> {
-        error!("This API should never get called");
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     pub fn sign_msg(&self, _msg: &[u8], _signature: &mut [u8]) -> Result<usize, Error> {
-        error!("This API should never get called");
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 
     pub fn verify_msg(&self, _msg: &[u8], _signature: &[u8]) -> Result<(), Error> {
-        error!("This API should never get called");
-        Err(ErrorCode::Invalid.into())
+        unimplemented!()
     }
 }
 
 pub fn pbkdf2_hmac(_pass: &[u8], _iter: usize, _salt: &[u8], _key: &mut [u8]) -> Result<(), Error> {
-    error!("This API should never get called");
-
-    Ok(())
+    unimplemented!()
 }
 
 pub fn encrypt_in_place(
@@ -123,7 +118,7 @@ pub fn encrypt_in_place(
     _data: &mut [u8],
     _data_len: usize,
 ) -> Result<usize, Error> {
-    Ok(0)
+    unimplemented!()
 }
 
 pub fn decrypt_in_place(
@@ -132,5 +127,5 @@ pub fn decrypt_in_place(
     _ad: &[u8],
     _data: &mut [u8],
 ) -> Result<usize, Error> {
-    Ok(0)
+    unimplemented!()
 }

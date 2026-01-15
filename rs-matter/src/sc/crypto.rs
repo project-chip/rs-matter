@@ -15,24 +15,26 @@
  *    limitations under the License.
  */
 
-#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+#[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 pub use self::dummy::CryptoSpake2;
-#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
-pub use self::esp_mbedtls::CryptoSpake2;
-#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]
 pub use self::mbedtls::CryptoSpake2;
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(any(feature = "rustcrypto", feature = "mbedtls"))
+))]
 pub use self::openssl::CryptoSpake2;
 #[cfg(feature = "rustcrypto")]
 pub use self::rustcrypto::CryptoSpake2;
 
-#[cfg(not(any(feature = "openssl", feature = "mbedtls", feature = "rustcrypto")))]
+#[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 mod dummy;
-#[cfg(all(feature = "mbedtls", target_os = "espidf"))]
-mod esp_mbedtls;
-#[cfg(all(feature = "mbedtls", not(target_os = "espidf")))]
+#[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]
 mod mbedtls;
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(any(feature = "rustcrypto", feature = "mbedtls"))
+))]
 mod openssl;
 #[cfg(feature = "rustcrypto")]
 mod rustcrypto;

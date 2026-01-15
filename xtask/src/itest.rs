@@ -333,15 +333,15 @@ impl ITests {
         info!("Killing all netns processes in app namespace to clean previous runs");
         // If this fails, that's ok; best-effort
         _ = self.run_command(
-                Command::new("ip")
-                    .arg("netns")
-                    .arg("exec")
-                    .arg("app")
-                    .arg("pkill")
-                    .arg("-f")
-                    .arg(".*")
-                    .current_dir(&chip_dir),
-            );
+            Command::new("ip")
+                .arg("netns")
+                .arg("exec")
+                .arg("app")
+                .arg("pkill")
+                .arg("-f")
+                .arg(".*")
+                .current_dir(&chip_dir),
+        );
 
         let test_suite_path = chip_dir.join("scripts/tests/run_test_suite.py");
         let chip_tool_path = chip_dir.join("out/host/chip-tool");
