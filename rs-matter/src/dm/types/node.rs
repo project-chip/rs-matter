@@ -21,12 +21,12 @@ use crate::acl::Accessor;
 use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, GenericPath,
-    IMStatusCode, InvReq, ReportDataReq, WriteReq,
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, 
+    EventPath, EventStatus, GenericPath, IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
 
-use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
+use super::{AttrDetails, ClusterId, CmdDetails, EventDetails, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
@@ -207,6 +207,15 @@ struct AttrReadPath<'a> {
     fabric_filtered: bool,
 }
 
+/// TODO(events): A helper type for `EventPath` matching the AttrReadPath dito, currently
+/// not adding anything but added to keep things uniform with attr read code paths
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct EventReadPath {
+    path: EventPath,
+}
+
+
 /// A helper type for `PathExpander` that captures what type of expansion is being done:
 /// Read requests, write requests, or invoke requests.
 #[derive(Debug)]
@@ -285,6 +294,46 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
         AttrStatus::new(self.path, status, None)
+    }
+}
+
+
+/// `PathExpansionItem` implementation for `AttrReadPath` (attr read requests expansion).
+impl<'a> PathExpansionItem<'a> for EventReadPath {
+    const OPERATION: Operation = Operation::Read;
+
+    type Expanded<'n> = EventDetails<'n>;
+    type Status = EventStatus;
+
+    fn path(&self) -> GenericPath {
+        self.path.to_gp()
+    }
+
+    fn expand(
+        &self,
+        node: &'a Node<'a>,
+        accessor: &'a Accessor<'a>,
+        endpoint_id: EndptId,
+        cluster_id: ClusterId,
+        leaf_id: u32,
+    ) -> Result<Self::Expanded<'a>, Error> {
+        Ok(EventDetails {
+            node,
+            endpoint_id,
+            cluster_id,
+            event_id: leaf_id as _,
+            // TODO(events): Lets see if we need these
+            // wildcard: self.path.to_gp().is_wildcard(),
+            // list_index: self.path.list_index.clone(),
+            // list_chunked: false,
+            // fab_idx: accessor.fab_idx,
+            // fab_filter: self.fabric_filtered,
+            // dataver: dataver(self.dataver_filters.as_ref(), endpoint_id, cluster_id)?,
+        })
+    }
+
+    fn into_status(self, status: IMStatusCode) -> Self::Status {
+        EventStatus::new(self.path, status, None)
     }
 }
 
