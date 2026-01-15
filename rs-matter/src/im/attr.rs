@@ -18,7 +18,7 @@
 use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
-use super::{AttrId, ClusterId, EndptId, GenericPath, IMStatusCode, Status, EventResp};
+use super::{AttrId, ClusterId, EndptId, EventPath, GenericPath, IMStatusCode, Status, EventResp};
 
 pub use read::*;
 pub use subscribe::*;
@@ -210,6 +210,13 @@ impl<'a> ReportDataReq<'a> {
         match self {
             Self::Read(req) => req.attr_requests(),
             Self::Subscribe(req) | Self::SubscribeReport(req) => req.attr_requests(),
+        }
+    }
+
+    pub fn event_requests(&self) -> Result<Option<TLVArray<'a, EventPath>>, Error> {
+        match self {
+            Self::Read(req) => req.event_requests(),
+            Self::Subscribe(req) | Self::SubscribeReport(req) => req.event_requests(),
         }
     }
 

@@ -49,7 +49,7 @@ impl<'a> Node<'a> {
         self.endpoints.iter().find(|endpoint| endpoint.id == id)
     }
 
-    /// Expand (potentially wildcard) read requests into concrete attribute details
+    /// Expand (potentially wildcard) read requests into concrete attribute & event details
     /// using the node metadata.
     ///
     /// As part of the expansion, the method will check whether the attributes are
@@ -60,12 +60,12 @@ impl<'a> Node<'a> {
         &'m self,
         req: &'m ReportDataReq,
         accessor: &'m Accessor<'m>,
-    ) -> Result<impl Iterator<Item = Result<Result<AttrDetails<'m>, AttrStatus>, Error>> + 'm, Error>
+    ) -> Result<impl Iterator<Item = Result<ReadResultEntry<'m>, Error>> + 'm, Error>
     {
+        // First expand any attribute reads
         let dataver_filters = req.dataver_filters()?;
         let fabric_filtered = req.fabric_filtered()?;
-
-        Ok(PathExpander::new(
+        let attr_expander = PathExpander::new(
             self,
             accessor,
             false,
@@ -78,7 +78,25 @@ impl<'a> Node<'a> {
                     })
                 })
             }),
-        ))
+        ).into_iter().map(|r| Ok(ReadResultEntry::Attr(r?)));
+
+        // Next expand any event reads
+        // TODO(events): Is there a performance cost to doing this to consider? 
+        //               Usually people don't access events, presumably
+        let event_expander = PathExpander::new(
+            self,
+            accessor,
+            false,
+            req.event_requests()?.map(|reqs| {
+                reqs.into_iter().map(move |path_result| {
+                    path_result.map(|path| EventReadPath {
+                        path,
+                    })
+                })
+            }),
+        ).into_iter().map(|r| Ok(ReadResultEntry::Event(r?)));
+        
+        Ok(attr_expander.chain(event_expander))
     }
 
     /// Expand (potentially wildcard) write requests into concrete attribute details
@@ -193,6 +211,13 @@ impl<const N: usize> core::fmt::Display for DynamicNode<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.node().fmt(f)
     }
+}
+
+/// A read operation can request a combination of attribute and event
+/// paths to read. This represents the result of one such path entry.
+pub enum ReadResultEntry<'m> {
+    Attr(Result<AttrDetails<'m>, AttrStatus>),
+    Event(Result<EventDetails<'m>, EventStatus>),
 }
 
 /// A helper type for `AttrPath` that enriches it with the request-scope information

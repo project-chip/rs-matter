@@ -27,9 +27,7 @@ use crate::utils::maybe::Maybe;
 use super::{Access, AttrId, Cluster, ClusterId, EventId, EndptId, Node, Quality};
 
 
-/// The `EventDetails` type captures all necessary information to perform an Attribute Read or Write operation
-///
-/// This type is built by the Data Model during the expansion of the attributes in the `Read` and `Write` IM actions
+/// TODO(events) docs
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EventDetails<'a> {

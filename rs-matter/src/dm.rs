@@ -26,7 +26,7 @@ use embassy_time::{Instant, Timer};
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
+    AttrStatus, IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
     StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq, WriteRespTag,
     PROTO_ID_INTERACTION_MODEL,
 };
@@ -864,23 +864,29 @@ where
             let item = item?;
 
             loop {
-                let result = self.invoker.process_read(&item, &mut *wb, notify).await;
+                let result = match &item {
+                    ReadResultEntry::Attr(attr_item) => self.invoker.process_read(attr_item, &mut *wb, notify).await,
+                    ReadResultEntry::Event(event_item) => todo!(),
+                };
 
                 match result {
                     Ok(()) => break,
                     Err(err) if err.code() == ErrorCode::NoSpace => {
-                        let array_attr = item.as_ref().ok().filter(|attr| {
-                            attr.list_index.is_none()
-                                // The whole attribute is requested
-                                // Check if it is an array, and if so, send it as individual items instead
-                                && self
-                                    .node
-                                    .endpoint(attr.endpoint_id)
-                                    .and_then(|e| e.cluster(attr.cluster_id))
-                                    .and_then(|c| c.attribute(attr.attr_id))
-                                    .map(|a| a.quality.contains(Quality::ARRAY))
-                                    .unwrap_or(false)
-                        });
+                        let array_attr = match &item { 
+                            ReadResultEntry::Attr(attr_item) => attr_item.as_ref().ok().filter(|attr| {
+                                attr.list_index.is_none()
+                                    // The whole attribute is requested
+                                    // Check if it is an array, and if so, send it as individual items instead
+                                    && self
+                                        .node
+                                        .endpoint(attr.endpoint_id)
+                                        .and_then(|e| e.cluster(attr.cluster_id))
+                                        .and_then(|c| c.attribute(attr.attr_id))
+                                        .map(|a| a.quality.contains(Quality::ARRAY))
+                                        .unwrap_or(false)
+                            }),
+                            _ => None,
+                        };
 
                         if let Some(array_attr) = array_attr {
                             if self.send_array_items(array_attr, wb, notify).await? {
