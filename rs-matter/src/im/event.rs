@@ -22,17 +22,29 @@ use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
 use super::{AttrId, EventId, ClusterId, EndptId, GenericPath, IMStatusCode, Status};
 
-/// A path to an event in the Interaction Model.
+
+
+/// Event Filter
+///
+/// Corresponds to the `EventFilterIB` TLV structure in the Interaction Model.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct EventFilter {
+    pub node: Option<u64>,
+    pub event_min: Option<u64>,
+}
+
+/// Event Path
 ///
 /// Corresponds to the `EventPathIB` TLV structure in the Interaction Model.
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash, FromTLV, ToTLV)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[tlvargs(datatype = "list")]
 pub struct EventPath {
     pub node: Option<u64>,
     pub endpoint: Option<EndptId>,
     pub cluster: Option<ClusterId>,
-    pub event: Option<EventId>,
+    pub event: Option<u32>,
     pub is_urgent: Option<bool>,
 }
 
@@ -41,21 +53,19 @@ impl EventPath {
     /// filling all fields which are not provided with their default values.
     pub const fn from_gp(path: &GenericPath) -> Self {
         Self {
-            // TODO(events) validate that this is the correct way to map from GP
+            node: None,
             endpoint: path.endpoint,
             cluster: path.cluster,
             event: path.leaf,
-            node: None,
             is_urgent: None,
         }
     }
 
     /// Convert this `EventPath` to a `GenericPath`.
     pub const fn to_gp(&self) -> GenericPath {
-        GenericPath::new(self.endpoint, self.cluster, self.attr)
+        GenericPath::new(self.endpoint, self.cluster, self.event)
     }
 }
-
 
 /// A status response for an event in the Interaction Model.
 ///
@@ -91,4 +101,63 @@ impl EventStatus {
     ) -> Self {
         Self::new(EventPath::from_gp(path), status, cluster_status)
     }
+}
+
+
+/// Event Response
+///
+/// Corresponds to the `EventReportIB` TLV structure in the Interaction Model.
+#[derive(Clone, FromTLV, ToTLV, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a")] // TODO(events): What is this?
+pub enum EventResp<'a> {
+    Status(EventStatus),
+    Data(EventData<'a>),
+}
+
+
+/// A data response for an event in the Interaction Model.
+///
+/// Corresponds to the `EventDataIB` TLV structure in the Interaction Model.
+#[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[tlvargs(lifetime = "'a")]
+pub struct EventData<'a> {
+    /// The path to the event.
+    pub path: EventPath,
+    /// The event number counter for the node. While the node is running it is 
+    /// monotonically increasing, but the spec allows for (large) incremental jumps
+    /// on node reboot
+    pub event_number: u64,
+    // Event priority, lower means higher priority
+    pub priority: u8,
+    // Event timestamp, one of multiple mutually exclusive options
+    pub timestamp: EventDataTimestamp,
+    /// The data for the event, represented as a TLV element.
+    pub data: TLVElement<'a>,
+}
+
+impl<'a> EventData<'a> {
+    /// Create a new `EventData` with the given data version, path, and data.
+    pub const fn new(path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp, data: TLVElement<'a>) -> Self {
+        Self {
+            path,
+            event_number,
+            priority,
+            timestamp,
+            data,
+        }
+    }
+}
+
+// Timestamp on an EventData, corresponds to the mutually exclusive timestamp
+// options on EventDataIB in the Interaction Model
+#[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum EventDataTimestamp {
+    // TODO(events) docstrings, see section 10.6.9.1->10.6.9.3
+    EpochTimestamp(u64),
+    SystemTimestamp(u64),
+    DeltaEpochTimestamp(u64),
+    DeltaSystemTimestamp(u64),
 }

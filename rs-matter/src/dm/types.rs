@@ -18,6 +18,7 @@
 use crate::tlv::ToTLV;
 
 pub use attribute::*;
+pub use event::*;
 pub use cluster::*;
 pub use command::*;
 pub use dataver::*;
@@ -29,6 +30,7 @@ pub use privilege::*;
 pub use reply::*;
 
 mod attribute;
+mod event;
 mod cluster;
 mod command;
 mod dataver;
@@ -42,6 +44,7 @@ mod reply;
 pub type EndptId = crate::im::EndptId;
 pub type ClusterId = crate::im::ClusterId;
 pub type AttrId = crate::im::AttrId;
+pub type EventId = crate::im::EventId;
 pub type CmdId = crate::im::CmdId;
 pub type FabricId = crate::im::FabricId;
 

@@ -18,7 +18,7 @@
 use bitflags::bitflags;
 
 use rs_matter::error::Error;
-use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath};
+use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath, EventResp};
 use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
 use rs_matter::im::{ReportDataResp, WriteReqTag};
 use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
@@ -451,7 +451,22 @@ impl ReplyProcessor {
         }
 
         if let Some(event_reports) = report_data.event_reports {
-            wb.bool(&TLVTag::Context(2), event_reports)?;
+            wb.start_array(&TLVTag::Context(2))?;
+
+            for event_report in event_reports {
+                let mut event_report = event_report?;
+
+                if let EventResp::Data(data) = &mut event_report {
+                    // TODO(events): We may need to strip out the event countere here if we can't make it deterministic?
+                    // if self.contains(Self::REMOVE_ATTRDATA_DATAVER) {
+                    //     data.data_ver = None;
+                    // }
+                }
+
+                event_report.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+            }
+
+            wb.end_container()?;
         }
 
         if let Some(more_chunks) = report_data.more_chunks {

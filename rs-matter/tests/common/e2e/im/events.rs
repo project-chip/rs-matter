@@ -17,8 +17,7 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::{EventPath, GenericPath};
-use rs_matter::im::{AttrPath, AttrStatus};
+use rs_matter::im::{AttrPath, AttrStatus, EventStatus, EventPath, GenericPath};
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
@@ -70,26 +69,25 @@ macro_rules! event_data_req {
     ($path:expr, $data:expr) => {
         $crate::common::e2e::im::events::TestEventData {
             data_ver: None,
-            path: rs_matter::im::AttrPath::from_gp(&$path),
+            path: rs_matter::im::EventPath::from_gp(&$path),
             data: $data,
         }
     };
 }
 
-/// Same as `attr_data_req!`, but generates a path for one concrete
+/// Same as `event_data_req!`, but generates a path for one concrete
 /// array element in an array attribute
 #[macro_export]
 macro_rules! event_data_req_lel {
     ($path:expr, $data:expr) => {
         $crate::common::e2e::im::attributes::TestEventData {
             data_ver: None,
-            path: rs_matter::im::AttrPath {
-                tag_compression: None,
+            path: rs_matter::im::EventPath {
                 node: None,
                 endpoint: $path.endpoint,
                 cluster: $path.cluster,
-                attr: $path.leaf,
-                list_index: Some(rs_matter::tlv::Nullable::none()),
+                event: $path.leaf,
+                is_urgent: None,
             },
             data: $data,
         }
@@ -107,12 +105,12 @@ macro_rules! event_data_path {
     };
 }
 
-/// Same as `attr_data_path!`, but generates a path for one concrete
+/// Same as `event_data_path!`, but generates a path for one concrete
 /// array element in an array attribute
 #[macro_export]
 macro_rules! event_data_lel_path {
     ($path:expr, $data:expr) => {
-        $crate::common::e2e::im::attributes::TestEventResp::EventData($crate::attr_data_req_lel!(
+        $crate::common::e2e::im::attributes::TestEventResp::EventData($crate::event_data_req_lel!(
             $path, $data
         ))
     };
@@ -121,12 +119,12 @@ macro_rules! event_data_lel_path {
 /// A macro for creating a `TestEventResp` instance of variant `EventData` taking
 /// an endpoint, cluster, attribute, and data.
 ///
-/// Unlike the `attr_data_path` variant, this one does not support wildcards,
+/// Unlike the `event_data_path` variant, this one does not support wildcards,
 /// but has a shorter syntax.
 #[macro_export]
 macro_rules! event_data {
     ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
-        $crate::attr_data_path!(
+        $crate::event_data_path!(
             rs_matter::im::GenericPath::new(
                 Some($endpoint as u16),
                 Some($cluster as u32),
@@ -137,12 +135,12 @@ macro_rules! event_data {
     };
 }
 
-/// Same as `attr_data!`, but generates data for one concrete
+/// Same as `event_data!`, but generates data for one concrete
 /// array element in an array attribute
 #[macro_export]
 macro_rules! event_data_lel {
     ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
-        $crate::attr_data_lel_path!(
+        $crate::event_data_lel_path!(
             rs_matter::im::GenericPath::new(
                 Some($endpoint as u16),
                 Some($cluster as u32),
@@ -161,13 +159,13 @@ macro_rules! event_data_lel {
 pub struct TestEventData<'a> {
     // TODO this is bogus
     pub data_ver: Option<u32>,
-    pub path: AttrPath,
+    pub path: EventPath,
     pub data: Option<&'a dyn TestToTLV>,
 }
 
 impl<'a> TestEventData<'a> {
     /// Create a new `TestEventData` instance.
-    pub const fn new(data_ver: Option<u32>, path: AttrPath, data: &'a dyn TestToTLV) -> Self {
+    pub const fn new(data_ver: Option<u32>, path: EventPath, data: &'a dyn TestToTLV) -> Self {
         Self {
             data_ver,
             path,
@@ -200,15 +198,14 @@ impl TestToTLV for TestEventData<'_> {
 /// `TestEventResp::EventData` variant uses `TestEventData` instead of `EventData`.
 #[derive(Debug)]
 pub enum TestEventResp<'a> {
-    // TODO(events) these are from attr read stuff, check what the outcomes are for event reads
-    EventStatus(AttrStatus),
+    EventStatus(EventStatus),
     EventData(TestEventData<'a>),
 }
 
 impl<'a> TestEventResp<'a> {
     /// Create a new `TestEventResp` instance with an `EventData` value.
     pub fn data(path: &GenericPath, data: &'a dyn TestToTLV) -> Self {
-        Self::EventData(TestEventData::new(None, AttrPath::from_gp(path), data))
+        Self::EventData(TestEventData::new(None, EventPath::from_gp(path), data))
     }
 }
 
