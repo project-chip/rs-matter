@@ -84,7 +84,6 @@ impl MetadataGuard for Node<'_> {
         Node {
             id: self.id,
             endpoints: self.endpoints,
-            events: self.events,
         }
     }
 }
@@ -99,7 +98,6 @@ impl Metadata for Node<'_> {
         Node {
             id: self.id,
             endpoints: self.endpoints,
-            events: self.events,
         }
     }
 }

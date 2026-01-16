@@ -17,11 +17,10 @@
 
 use core::future::Future;
 
-use crate::dm::{AsyncHandler, IMBuffer};
+use crate::dm::{AsyncHandler, EventDetails, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, IMStatusCode,
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventStatus, IMStatusCode
 };
 use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -29,7 +28,7 @@ use crate::utils::storage::pooled::BufferAccess;
 
 use super::{
     AttrDetails, ChangeNotify, CmdDetails, InvokeContextInstance, ReadContextInstance,
-    WriteContextInstance,
+    WriteContextInstance, EventQueue,
 };
 
 // A type for writing the outcome of an attribute-read or command-invoke operation.
@@ -310,6 +309,24 @@ where
             ),
             InvokeReplyInstance::new(cmd, tw),
         )
+    }
+}
+
+pub struct EventReader<'a, 'b> {
+    events: &'b EventQueue<'a>
+}
+
+impl<'a, 'b> EventReader<'a, 'b> {
+    pub fn new(events: &'b EventQueue<'a>) -> Self {
+        Self { events }
+    }
+
+    pub async fn process_read<T: TLVWrite>(
+        &mut self,
+        _item: &Result<EventDetails<'_>, EventStatus>,
+        _tw: T,
+    ) -> Result<(), Error> {
+        todo!()
     }
 }
 

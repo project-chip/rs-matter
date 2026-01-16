@@ -14,17 +14,10 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use core::fmt::{self, Debug};
+use core::fmt::{Debug};
 
-use strum::FromRepr;
-
-use crate::attribute_enum;
-use crate::error::{Error, ErrorCode};
-use crate::im::{AttrPath, AttrStatus, IMStatusCode, EventData};
-use crate::tlv::{AsNullable, FromTLV, Nullable, TLVBuilder, TLVBuilderParent, TLVElement, TLVTag};
-use crate::utils::maybe::Maybe;
-
-use super::{Access, AttrId, Cluster, ClusterId, EventId, EndptId, Node, Quality};
+use crate::im::{EventData};
+use super::{ClusterId, EventId, EndptId, Node};
 
 
 /// TODO(events) docs
@@ -140,19 +133,27 @@ pub struct EventQueue<'a> {
     free: Option<EventEntryIdx>,
     // Event number sequencer
     next_event_no: u64,
-    // Actual event entry structs
+    // All event entry structs, free and in use
     pool: [EventEntry<'a>; 16],
 }
 
 // TODO(events): This obviously needs extensive testing
 // TODO(events): What are the concurrency semantics / rules in rs-matter, do we assume single thread?
 impl<'a> EventQueue<'a> {
+
     pub const fn new() -> Self {
-        let mut pool = core::array::from_fn(|idx| EventEntry {
+        // Create the pool of event entries and link them up to each other into a free-list
+        let mut pool = [const { EventEntry {
             event: None,
-            next: Some((idx + 1) as u8),
-        });
-        pool[15].next = None;
+            next: None,
+        }
+        }; 16];
+
+        let mut i = 0;
+        while i < 15 {
+            pool[i].next = Some(i as u8 + 1);
+            i += 1;
+        }
 
         Self {
             head: None,
@@ -207,13 +208,15 @@ impl<'a> EventQueue<'a> {
         // Traverse the active list to find the next eviction target 
         while let Some(idx) = curr_idx {
             let entry = &self.pool[idx as usize];
-            
-            // See 7.14.2 in the spec for this rule
-            if entry.event.priority >= max_prio && (lowest_idx.is_none() || entry.event.priority >= lowest_prio_val) {
-                lowest_prio_val = entry.event.priority;
-                lowest_idx = Some(idx);
-                lowest_prev_idx = prev_idx;
-            }
+
+            if let Some(event) = &entry.event {
+                // See 7.14.2 in the spec for this rule
+                if event.priority >= max_prio && (lowest_idx.is_none() || event.priority >= lowest_prio_val) {
+                    lowest_prio_val = event.priority;
+                    lowest_idx = Some(idx);
+                    lowest_prev_idx = prev_idx;
+                }
+            } 
             
             prev_idx = curr_idx;
             curr_idx = entry.next;

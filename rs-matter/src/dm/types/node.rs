@@ -26,7 +26,7 @@ use crate::im::{
 };
 use crate::tlv::{TLVArray, TLVElement};
 
-use super::{AttrDetails, ClusterId, CmdDetails, EventDetails, EventQueue, EndptId};
+use super::{AttrDetails, ClusterId, CmdDetails, EventDetails, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
@@ -36,15 +36,12 @@ pub struct Node<'a> {
     pub id: u16,
     /// The endpoints of the node.
     pub endpoints: &'a [Endpoint<'a>],
-    /// The outbound event queue for this node
-    /// TODO(events): Is this the right place for this, and should it be a borrow like endpoints? 
-    pub events: &'a EventQueue<'a>,
 }
 
 impl<'a> Node<'a> {
     /// Create a new node with the given ID and endpoints.
     pub const fn new(id: u16, endpoints: &'a [Endpoint<'a>]) -> Self {
-        Self { id, endpoints, events: EventQueue::new() }
+        Self { id, endpoints }
     }
 
     /// Return a reference to the endpoint with the given ID, if it exists.
@@ -182,10 +179,6 @@ impl<'a, const N: usize> DynamicNode<'a, N> {
         Node {
             id: self.id,
             endpoints: &self.endpoints,
-             // TODO(events): Obviously wrong; I guess this means we need events to somehow be
-             //               owned.. elsewhere? Here it could be owned by the DynamicNode, but
-             //               for a normal Node it couldn't.. where should the owner be?
-            events: EventQueue::new(),
         }
     }
 
@@ -344,7 +337,7 @@ impl<'a> PathExpansionItem<'a> for EventReadPath {
     fn expand(
         &self,
         node: &'a Node<'a>,
-        accessor: &'a Accessor<'a>,
+        _accessor: &'a Accessor<'a>,
         endpoint_id: EndptId,
         cluster_id: ClusterId,
         leaf_id: u32,

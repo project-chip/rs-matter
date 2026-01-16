@@ -26,7 +26,7 @@ use embassy_time::{Instant, Timer};
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrStatus, IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
+    IMStatusCode, InvReq, InvRespTag, OpCode, ReadReq, ReportDataReq, ReportDataRespTag,
     StatusResp, SubscribeReq, SubscribeResp, TimedReq, WriteReq, WriteRespTag,
     PROTO_ID_INTERACTION_MODEL,
 };
@@ -74,6 +74,11 @@ where
     buffers: &'a B,
     subscriptions: &'a Subscriptions<N>,
     subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, N>>,
+    // TODO(events): Is this the right place for this? The spec says there should be one queue per node... can we get away with
+    //               one queue per DM instance? And how should we set this up? It'd be nice if apps that don't need events can just
+    //               set a const generic to zero to have this not take up space for no reason, for instance
+    // TODO(events): This needs rewriting to handle concurrency safely, just hacked together to get rough code flow "feel"
+    events: EventQueue<'a>,
     handler: T,
 }
 
@@ -104,6 +109,7 @@ where
             buffers,
             subscriptions,
             subscriptions_buffers: RefCell::new(heapless::Vec::new()),
+            events: EventQueue::new(),
             handler,
         }
     }
@@ -121,7 +127,7 @@ where
     }
 
     /// Answer a responding exchange using the `DataModelHandler` instance wrapped by this exchange handler.
-    pub async fn handle(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    pub async fn handle(&self, exchange: &mut Exchange<'a>) -> Result<(), Error> {
         let fetch_meta = |exchange: &mut Exchange| {
             let meta = exchange.rx()?.meta();
             if meta.proto_id != PROTO_ID_INTERACTION_MODEL {
@@ -172,7 +178,7 @@ where
     }
 
     /// Respond to a `ReadReq` request.
-    async fn read(&self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
+    async fn read(&self, exchange: &mut Exchange<'a>) -> Result<(), Error> {
         let Some((mut tx, rx)) = self.buffers(exchange).await? else {
             return Ok(());
         };
@@ -192,6 +198,7 @@ where
             &node,
             None,
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
+            EventReader::new(&self.events),
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -637,7 +644,7 @@ where
         peer_node_id: u64,
         rx: &[u8],
         tx: &mut [u8],
-        exchange: &mut Exchange<'_>,
+        exchange: &mut Exchange<'a>,
         with_dataver: bool,
     ) -> Result<bool, Error>
     where
@@ -654,12 +661,13 @@ where
 
         let metadata = self.handler.lock().await;
         let node = metadata.node();
-
+        
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
             Some(id),
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
+            EventReader::new(&self.events),
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
@@ -815,6 +823,7 @@ struct ReportDataResponder<'a, 'b, 'c, D, B> {
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, D, B>,
+    event_reader: EventReader<'b, 'c>,
 }
 
 impl<'a, 'b, 'c, D, B> ReportDataResponder<'a, 'b, 'c, D, B>
@@ -832,12 +841,14 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, D, B>,
+        event_reader: EventReader<'b, 'c>,
     ) -> Self {
         Self {
             req,
             node,
             subscription_id,
             invoker,
+            event_reader,
         }
     }
 
@@ -860,21 +871,13 @@ where
 
         self.start_reply(wb)?;
 
-        // Reading attributes is 1-1, for each attribute you request you get one response.
-        // Reading events is not 1-1; the event paths you request are an OR filter, you get every event that matches at least one requested path
-        // As such, we need to be able to iterate over the expanded event reads multiple times, once for each event in our queue
-        // hrm. Unless we flip it around. Most of the time you'd expect there to be more events than event reqs, eg. the 
-        // request is asking for a particular event path and we need to iterate N events in the queue.
-        // If we kept a thin structure of which event ids we've emitted already, we can de-duplicate and skip events
-
-
         for item in self.node.read(self.req, &accessor)? {
             let item = item?;
 
             loop {
                 let result = match &item {
                     ReadResultEntry::Attr(attr_item) => self.invoker.process_read(attr_item, &mut *wb, notify).await,
-                    ReadResultEntry::Event(event_item) => todo!(),
+                    ReadResultEntry::Event(event_item) => self.event_reader.process_read(event_item, &mut *wb).await,
                 };
 
                 match result {
