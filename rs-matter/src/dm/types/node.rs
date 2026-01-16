@@ -26,7 +26,7 @@ use crate::im::{
 };
 use crate::tlv::{TLVArray, TLVElement};
 
-use super::{AttrDetails, ClusterId, CmdDetails, EventDetails, EndptId};
+use super::{AttrDetails, ClusterId, CmdDetails, EventDetails, EventQueue, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
@@ -36,12 +36,15 @@ pub struct Node<'a> {
     pub id: u16,
     /// The endpoints of the node.
     pub endpoints: &'a [Endpoint<'a>],
+    /// The outbound event queue for this node
+    /// TODO(events): Is this the right place for this, and should it be a borrow like endpoints? 
+    pub events: &'a EventQueue<'a>,
 }
 
 impl<'a> Node<'a> {
     /// Create a new node with the given ID and endpoints.
     pub const fn new(id: u16, endpoints: &'a [Endpoint<'a>]) -> Self {
-        Self { id, endpoints }
+        Self { id, endpoints, events: EventQueue::new() }
     }
 
     /// Return a reference to the endpoint with the given ID, if it exists.
@@ -179,6 +182,10 @@ impl<'a, const N: usize> DynamicNode<'a, N> {
         Node {
             id: self.id,
             endpoints: &self.endpoints,
+             // TODO(events): Obviously wrong; I guess this means we need events to somehow be
+             //               owned.. elsewhere? Here it could be owned by the DynamicNode, but
+             //               for a normal Node it couldn't.. where should the owner be?
+            events: EventQueue::new(),
         }
     }
 

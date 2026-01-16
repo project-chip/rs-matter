@@ -860,6 +860,14 @@ where
 
         self.start_reply(wb)?;
 
+        // Reading attributes is 1-1, for each attribute you request you get one response.
+        // Reading events is not 1-1; the event paths you request are an OR filter, you get every event that matches at least one requested path
+        // As such, we need to be able to iterate over the expanded event reads multiple times, once for each event in our queue
+        // hrm. Unless we flip it around. Most of the time you'd expect there to be more events than event reqs, eg. the 
+        // request is asking for a particular event path and we need to iterate N events in the queue.
+        // If we kept a thin structure of which event ids we've emitted already, we can de-duplicate and skip events
+
+
         for item in self.node.read(self.req, &accessor)? {
             let item = item?;
 
