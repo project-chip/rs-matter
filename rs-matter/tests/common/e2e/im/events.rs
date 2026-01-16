@@ -17,7 +17,7 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::{AttrPath, AttrStatus, EventStatus, EventPath, GenericPath};
+use rs_matter::im::{EventStatus, EventPath, EventDataTimestamp};
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
@@ -68,8 +68,10 @@ macro_rules! event_read_status_resp {
 macro_rules! event_data_req {
     ($path:expr, $data:expr) => {
         $crate::common::e2e::im::events::TestEventData {
-            data_ver: None,
             path: rs_matter::im::EventPath::from_gp(&$path),
+            event_number: 0,
+            priority: 0,
+            timestamp: rs_matter::im::EventDataTimestamp::EpochTimestamp(0),
             data: $data,
         }
     };
@@ -157,18 +159,22 @@ macro_rules! event_data_lel {
 /// `EventData::data` is a `TLVElement`.
 #[derive(Debug, Clone)]
 pub struct TestEventData<'a> {
-    // TODO this is bogus
-    pub data_ver: Option<u32>,
+    /// The path to the event.
     pub path: EventPath,
+    pub event_number: u64,
+    pub priority: u8,
+    pub timestamp: EventDataTimestamp,
     pub data: Option<&'a dyn TestToTLV>,
 }
 
 impl<'a> TestEventData<'a> {
     /// Create a new `TestEventData` instance.
-    pub const fn new(data_ver: Option<u32>, path: EventPath, data: &'a dyn TestToTLV) -> Self {
+    pub const fn new(path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp, data: &'a dyn TestToTLV) -> Self {
         Self {
-            data_ver,
             path,
+            event_number,
+            priority,
+            timestamp,
             data: Some(data),
         }
     }
@@ -178,14 +184,20 @@ impl TestToTLV for TestEventData<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
 
-        if let Some(data_ver) = self.data_ver {
-            tw.u32(&TLVTag::Context(0), data_ver)?;
+        self.path.test_to_tlv(&TLVTag::Context(0), tw)?;
+
+        tw.u64(&TLVTag::Context(1),  self.event_number)?;
+        tw.u8(&TLVTag::Context(2),  self.priority)?;
+
+        match self.timestamp {
+            EventDataTimestamp::EpochTimestamp(ts) => tw.u64(&TLVTag::Context(3), ts)?,
+            EventDataTimestamp::SystemTimestamp(ts) => tw.u64(&TLVTag::Context(4), ts)?,
+            EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(&TLVTag::Context(5), ts)?,
+            EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(&TLVTag::Context(6), ts)?,
         }
 
-        self.path.test_to_tlv(&TLVTag::Context(1), tw)?;
-
         if let Some(data) = self.data {
-            data.test_to_tlv(&TLVTag::Context(2), tw)?;
+            data.test_to_tlv(&TLVTag::Context(7), tw)?;
         }
 
         tw.end_container()?;
@@ -194,7 +206,7 @@ impl TestToTLV for TestEventData<'_> {
     }
 }
 
-/// An `AttrResp` alternative more suitable for testing, in that the
+/// An `EventResp` alternative more suitable for testing, in that the
 /// `TestEventResp::EventData` variant uses `TestEventData` instead of `EventData`.
 #[derive(Debug)]
 pub enum TestEventResp<'a> {
@@ -203,10 +215,10 @@ pub enum TestEventResp<'a> {
 }
 
 impl<'a> TestEventResp<'a> {
-    /// Create a new `TestEventResp` instance with an `EventData` value.
-    pub fn data(path: &GenericPath, data: &'a dyn TestToTLV) -> Self {
-        Self::EventData(TestEventData::new(None, EventPath::from_gp(path), data))
-    }
+    // Create a new `TestEventResp` instance with an `EventData` value.
+    // pub fn data(path: &GenericPath, data: &'a dyn TestToTLV) -> Self {
+    //     Self::EventData(TestEventData::new(EventPath::from_gp(path), data))
+    // }
 }
 
 impl TestToTLV for TestEventResp<'_> {

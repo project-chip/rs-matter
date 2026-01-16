@@ -155,6 +155,7 @@ impl<'a> EventData<'a> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EventDataTimestamp {
     // TODO(events) docstrings, see section 10.6.9.1->10.6.9.3
+    // TODO(events) how do we ensure these get TLV-encoded correctly? They should have fields 3,4,5 or 6, see 10.6.9 in the spec
     EpochTimestamp(u64),
     SystemTimestamp(u64),
     DeltaEpochTimestamp(u64),

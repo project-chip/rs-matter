@@ -17,10 +17,10 @@
 
 use core::future::Future;
 
-use crate::dm::{AsyncHandler, EventDetails, IMBuffer};
+use crate::dm::{AsyncHandler, EventDetails, IMBuffer, Events};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventStatus, IMStatusCode
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventResp, EventStatus, IMStatusCode
 };
 use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -28,7 +28,7 @@ use crate::utils::storage::pooled::BufferAccess;
 
 use super::{
     AttrDetails, ChangeNotify, CmdDetails, InvokeContextInstance, ReadContextInstance,
-    WriteContextInstance, EventQueue,
+    WriteContextInstance
 };
 
 // A type for writing the outcome of an attribute-read or command-invoke operation.
@@ -312,21 +312,54 @@ where
     }
 }
 
-pub struct EventReader<'a, 'b> {
-    events: &'b EventQueue<'a>
+pub struct EventReader<'a, 'b, const NE: usize> {
+    events: &'b Events<'a, NE>
 }
 
-impl<'a, 'b> EventReader<'a, 'b> {
-    pub fn new(events: &'b EventQueue<'a>) -> Self {
+impl<'a, 'b, const NE: usize> EventReader<'a, 'b, NE> {
+    pub fn new(events: &'b Events<'a, NE>) -> Self {
         Self { events }
     }
 
     pub async fn process_read<T: TLVWrite>(
         &mut self,
-        _item: &Result<EventDetails<'_>, EventStatus>,
-        _tw: T,
+        item: &Result<EventDetails<'_>, EventStatus>,
+        mut tw: T,
     ) -> Result<(), Error> {
-        todo!()
+        let tail = tw.get_tail();
+
+        let result = self.do_process_read(item, &mut tw).await;
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data.
+            tw.rewind_to(tail);
+        }
+
+        result
+    }
+
+    async fn do_process_read<T: TLVWrite>(
+        &mut self,
+        item: &Result<EventDetails<'_>, EventStatus>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        let result = match item {
+            Ok(_event_details) => {
+                self.events.for_each(|event| event.to_tlv(&TagType::Anonymous, &mut tw))?;
+
+                Ok(None)
+            }
+            Err(status) => {
+                error!("Error processing event read: {:?}", status);
+                Ok(Some(status.clone()))
+            }
+        };
+
+        match result {
+            Ok(Some(status)) => EventResp::Status(status).to_tlv(&TagType::Anonymous, tw),
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        }
     }
 }
 

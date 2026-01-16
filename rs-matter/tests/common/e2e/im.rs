@@ -456,7 +456,7 @@ impl ReplyProcessor {
             for event_report in event_reports {
                 let mut event_report = event_report?;
 
-                if let EventResp::Data(data) = &mut event_report {
+                if let EventResp::Data(_data) = &mut event_report {
                     // TODO(events): We may need to strip out the event countere here if we can't make it deterministic?
                     // if self.contains(Self::REMOVE_ATTRDATA_DATAVER) {
                     //     data.data_ver = None;
@@ -670,12 +670,12 @@ impl<'a>
         )
     }
 
-    /// TODO(events): Write docs here
+    /// TODO(events): Docs
     pub const fn read_events(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) -> Self {
         Self::read(
             TestReadReq::event_reqs(input), 
             TestReportDataMsg::event_reports(expected),
-            ReplyProcessor::remove_attr_dataver,
+            ReplyProcessor::none,
         )
     }
 }

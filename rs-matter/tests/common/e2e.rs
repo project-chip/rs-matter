@@ -28,6 +28,7 @@ use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::KeyPair;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::subscriptions::Subscriptions;
+use rs_matter::dm::events::Events;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::dm::{DataModel, IMBuffer};
 use rs_matter::error::Error;
@@ -64,7 +65,8 @@ pub struct E2eRunner {
     pub matter: Matter<'static>,
     matter_client: Matter<'static>,
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
-    subscriptions: Subscriptions<1>,
+    subscriptions: Subscriptions<3>,
+    events: Events<'static, 1>,
     cat_ids: NocCatIds,
 }
 
@@ -89,6 +91,7 @@ impl E2eRunner {
             matter_client: Self::new_matter(),
             buffers: PooledBuffers::new(0),
             subscriptions: Subscriptions::new(),
+            events: Events::new(),
             cat_ids,
         }
     }
@@ -165,7 +168,7 @@ impl E2eRunner {
 
         let responder = Responder::new(
             "Default",
-            DataModel::new(&self.matter, &self.buffers, &self.subscriptions, handler),
+            DataModel::new(&self.matter, &self.buffers, &self.subscriptions, &self.events, handler),
             &self.matter,
             0,
         );

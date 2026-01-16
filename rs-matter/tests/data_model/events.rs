@@ -25,39 +25,21 @@ use crate::{event_data_path};
 
 #[test]
 fn test_read_success() {
-    // 3 Event Read Requests
-    // - first on endpoint 0, att1
-    // - second on endpoint 1, att2
-    // - third on endpoint 1, attcustom a custom attribute
     init_env_logger();
 
-    let ep0_att1 = GenericPath::new(
+    let ep0_event1 = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
-        Some(echo_cluster::AttributesDiscriminants::Att1 as u32),
-    );
-    let ep1_att2 = GenericPath::new(
-        Some(1),
-        Some(echo_cluster::ID),
-        Some(echo_cluster::AttributesDiscriminants::Att2 as u32),
-    );
-    let ep1_attcustom = GenericPath::new(
-        Some(1),
-        Some(echo_cluster::ID),
-        Some(echo_cluster::AttributesDiscriminants::AttCustom as u32),
+        Some(1), // TODO need to implement macros like  attribute_enum!() for events
     );
     let input = &[
         // TODO(events): make these fake attributes match some real events
         // TODO(events): How does the stubbing/real stuff here work wrt the queue? We need to test the queue..
-        EventPath::from_gp(&ep0_att1),
-        EventPath::from_gp(&ep1_att2),
-        EventPath::from_gp(&ep1_attcustom),
+        EventPath::from_gp(&ep0_event1),
     ];
     let expected = &[
         // TODO(events): These are not right
-        event_data_path!(ep0_att1, Some(&0x1234u16)),
-        event_data_path!(ep1_att2, Some(&0x5678u16)),
-        event_data_path!(ep1_attcustom, Some(&echo_cluster::ATTR_CUSTOM_VALUE)),
+        event_data_path!(ep0_event1, Some(&0x1234u16)),
     ];
     ImEngine::read_event_reqs(input, expected);
 }
