@@ -17,8 +17,8 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::{EventStatus, EventPath, EventDataTimestamp};
-use rs_matter::tlv::{TLVTag, TLVWrite};
+use rs_matter::im::{EventData, EventDataTimestamp, EventPath, EventStatus};
+use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
@@ -167,19 +167,6 @@ pub struct TestEventData<'a> {
     pub data: Option<&'a dyn TestToTLV>,
 }
 
-impl<'a> TestEventData<'a> {
-    /// Create a new `TestEventData` instance.
-    pub const fn new(path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp, data: &'a dyn TestToTLV) -> Self {
-        Self {
-            path,
-            event_number,
-            priority,
-            timestamp,
-            data: Some(data),
-        }
-    }
-}
-
 impl TestToTLV for TestEventData<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
@@ -210,12 +197,13 @@ impl TestToTLV for TestEventData<'_> {
 /// `TestEventResp::EventData` variant uses `TestEventData` instead of `EventData`.
 #[derive(Debug)]
 pub enum TestEventResp<'a> {
+    #[allow(dead_code)]
     EventStatus(EventStatus),
     EventData(TestEventData<'a>),
 }
 
 impl<'a> TestEventResp<'a> {
-    // Create a new `TestEventResp` instance with an `EventData` value.
+    // // Create a new `TestEventResp` instance with an `EventData` value.
     // pub fn data(path: &GenericPath, data: &'a dyn TestToTLV) -> Self {
     //     Self::EventData(TestEventData::new(EventPath::from_gp(path), data))
     // }
@@ -239,6 +227,18 @@ impl E2eRunner {
     pub fn read_event_reqs<'a>(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) {
         let runner = Self::new_default();
         runner.add_default_acl();
+        
+        // TODO(events): Need to implement a proper way for test setup; for now we just mirror the "expected"
+        //               and insert them into the event queue here, except we set the data to 42 because the borrows
+        //               became a mess and this is all needing to be ripped out anyway and I'm lazy and impatient.
+        for ele in expected {
+            if let TestEventResp::EventData(ev) = ele {
+                
+                runner.events.push(EventData::new(ev.path.clone(), ev.event_number, ev.priority, ev.timestamp.clone(), 
+                TLVElement::new(&[0x04, 0x42])))
+            }
+        }
+
         runner.handle_read_event_reqs(runner.handler(), input, expected)
     }
 

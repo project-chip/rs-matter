@@ -20,7 +20,7 @@ use core::future::Future;
 use crate::dm::{AsyncHandler, EventDetails, IMBuffer, Events};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventResp, EventStatus, IMStatusCode
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventResp, EventRespTag, EventDataTag, EventStatus, IMStatusCode
 };
 use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -345,7 +345,25 @@ impl<'a, 'b, const NE: usize> EventReader<'a, 'b, NE> {
     ) -> Result<(), Error> {
         let result = match item {
             Ok(_event_details) => {
-                self.events.for_each(|event| event.to_tlv(&TagType::Anonymous, &mut tw))?;
+                // TODO(events) handle tw reset on failure
+                self.events.for_each(|event| {
+                    // TODO(events) reason for manually doing this is I can't figure out how to make the one-of field work with the ToTLV derives..
+                    //              but either way this will need revising depending on how we want to store the associated event data
+                    tw.start_struct(&TLVTag::Anonymous)?;
+                    tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
+                    event.path.to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+                    tw.u64(&TagType::Context(EventDataTag::EventNumber as _), event.event_number)?;
+                    tw.u8(&TagType::Context(EventDataTag::Priority as _), event.priority)?;
+                    match event.timestamp {
+                        crate::im::EventDataTimestamp::EpochTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?,
+                        crate::im::EventDataTimestamp::SystemTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?,
+                        crate::im::EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::DeltaEpochTimestamp as _), ts)?,
+                        crate::im::EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::DeltaSystemTimestamp as _), ts)?,
+                    };
+                    event.data.to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
+                    tw.end_container()?;
+                    tw.end_container()
+                })?;
 
                 Ok(None)
             }

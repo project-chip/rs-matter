@@ -66,6 +66,36 @@ impl EventPath {
     }
 }
 
+/// Tags corresponding to the fields in the `EventReportIB` TLV structure.
+///
+/// Used when there is a need to perform low-level TLV serde on
+/// `EventReportIB` structures.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum EventRespTag {
+    Status = 0,
+    Data = 1,
+}
+
+/// Tags corresponding to the fields in the `EventDataIB` TLV structure.
+///
+/// Used when there is a need to perform low-level TLV serde on
+/// 1AttrDataIB` structures.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum EventDataTag {
+    Path = 0,
+    EventNumber = 1,
+    Priority = 2,
+    EpochTimestamp = 3,
+    SystemTimestamp = 4,
+    DeltaEpochTimestamp = 5,
+    DeltaSystemTimestamp = 6,
+    Data = 7
+}
+
 /// A status response for an event in the Interaction Model.
 ///
 /// Corresponds to the `EventStatusIB` TLV structure in the Interaction Model.

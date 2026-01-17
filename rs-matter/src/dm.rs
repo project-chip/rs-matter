@@ -1075,7 +1075,7 @@ where
             assert!(matches!(self.req, ReportDataReq::Read(_)));
         }
 
-        let has_requests = self.req.attr_requests()?.is_some();
+        let has_requests = self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
 
         if has_requests {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
@@ -1093,7 +1093,7 @@ where
     ) -> Result<(), Error> {
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
 
-        let has_requests = self.req.attr_requests()?.is_some();
+        let has_requests = self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
 
         if has_requests {
             wb.end_container()?;

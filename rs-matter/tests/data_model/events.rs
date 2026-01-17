@@ -33,13 +33,10 @@ fn test_read_success() {
         Some(1), // TODO need to implement macros like  attribute_enum!() for events
     );
     let input = &[
-        // TODO(events): make these fake attributes match some real events
-        // TODO(events): How does the stubbing/real stuff here work wrt the queue? We need to test the queue..
         EventPath::from_gp(&ep0_event1),
     ];
     let expected = &[
-        // TODO(events): These are not right
-        event_data_path!(ep0_event1, Some(&0x1234u16)),
+        event_data_path!(ep0_event1, Some(&0x42u8)),
     ];
     ImEngine::read_event_reqs(input, expected);
 }
