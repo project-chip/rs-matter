@@ -173,8 +173,8 @@ impl TestToTLV for TestEventData<'_> {
 
         self.path.test_to_tlv(&TLVTag::Context(0), tw)?;
 
-        tw.u64(&TLVTag::Context(1),  self.event_number)?;
-        tw.u8(&TLVTag::Context(2),  self.priority)?;
+        tw.u64(&TLVTag::Context(1), self.event_number)?;
+        tw.u8(&TLVTag::Context(2), self.priority)?;
 
         match self.timestamp {
             EventDataTimestamp::EpochTimestamp(ts) => tw.u64(&TLVTag::Context(3), ts)?,
@@ -227,15 +227,19 @@ impl E2eRunner {
     pub fn read_event_reqs<'a>(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) {
         let runner = Self::new_default();
         runner.add_default_acl();
-        
+
         // TODO(events): Need to implement a proper way for test setup; for now we just mirror the "expected"
         //               and insert them into the event queue here, except we set the data to 42 because the borrows
         //               became a mess and this is all needing to be ripped out anyway and I'm lazy and impatient.
         for ele in expected {
             if let TestEventResp::EventData(ev) = ele {
-                
-                runner.events.push(EventData::new(ev.path.clone(), ev.event_number, ev.priority, ev.timestamp.clone(), 
-                TLVElement::new(&[0x04, 0x42])))
+                runner.events.push(EventData::new(
+                    ev.path.clone(),
+                    ev.event_number,
+                    ev.priority,
+                    ev.timestamp.clone(),
+                    TLVElement::new(&[0x04, 0x42]),
+                ))
             }
         }
 
@@ -253,5 +257,4 @@ impl E2eRunner {
     {
         self.test_one(handler, TLVTest::read_events(input, expected))
     }
-
 }

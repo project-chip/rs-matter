@@ -18,7 +18,7 @@
 use crate::error::Error;
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
-use super::{AttrId, ClusterId, EndptId, EventPath, GenericPath, IMStatusCode, Status, EventResp};
+use super::{AttrId, ClusterId, EndptId, EventPath, EventResp, GenericPath, IMStatusCode, Status};
 
 pub use read::*;
 pub use subscribe::*;

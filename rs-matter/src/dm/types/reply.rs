@@ -17,10 +17,11 @@
 
 use core::future::Future;
 
-use crate::dm::{AsyncHandler, EventDetails, IMBuffer, Events};
+use crate::dm::{AsyncHandler, EventDetails, Events, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
-    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp, CmdRespTag, CmdStatus, EventResp, EventRespTag, EventDataTag, EventStatus, IMStatusCode
+    AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
+    CmdRespTag, CmdStatus, EventDataTag, EventResp, EventRespTag, EventStatus, IMStatusCode,
 };
 use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -28,7 +29,7 @@ use crate::utils::storage::pooled::BufferAccess;
 
 use super::{
     AttrDetails, ChangeNotify, CmdDetails, InvokeContextInstance, ReadContextInstance,
-    WriteContextInstance
+    WriteContextInstance,
 };
 
 // A type for writing the outcome of an attribute-read or command-invoke operation.
@@ -313,7 +314,7 @@ where
 }
 
 pub struct EventReader<'a, 'b, const NE: usize> {
-    events: &'b Events<'a, NE>
+    events: &'b Events<'a, NE>,
 }
 
 impl<'a, 'b, const NE: usize> EventReader<'a, 'b, NE> {
@@ -351,16 +352,36 @@ impl<'a, 'b, const NE: usize> EventReader<'a, 'b, NE> {
                     //              but either way this will need revising depending on how we want to store the associated event data
                     tw.start_struct(&TLVTag::Anonymous)?;
                     tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
-                    event.path.to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
-                    tw.u64(&TagType::Context(EventDataTag::EventNumber as _), event.event_number)?;
-                    tw.u8(&TagType::Context(EventDataTag::Priority as _), event.priority)?;
+                    event
+                        .path
+                        .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+                    tw.u64(
+                        &TagType::Context(EventDataTag::EventNumber as _),
+                        event.event_number,
+                    )?;
+                    tw.u8(
+                        &TagType::Context(EventDataTag::Priority as _),
+                        event.priority,
+                    )?;
                     match event.timestamp {
-                        crate::im::EventDataTimestamp::EpochTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?,
-                        crate::im::EventDataTimestamp::SystemTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?,
-                        crate::im::EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::DeltaEpochTimestamp as _), ts)?,
-                        crate::im::EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(&TagType::Context(EventDataTag::DeltaSystemTimestamp as _), ts)?,
+                        crate::im::EventDataTimestamp::EpochTimestamp(ts) => {
+                            tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
+                        }
+                        crate::im::EventDataTimestamp::SystemTimestamp(ts) => {
+                            tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?
+                        }
+                        crate::im::EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(
+                            &TagType::Context(EventDataTag::DeltaEpochTimestamp as _),
+                            ts,
+                        )?,
+                        crate::im::EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
+                            &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
+                            ts,
+                        )?,
                     };
-                    event.data.to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
+                    event
+                        .data
+                        .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
                     tw.end_container()?;
                     tw.end_container()
                 })?;

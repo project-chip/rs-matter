@@ -14,10 +14,9 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use core::fmt::{Debug};
+use core::fmt::Debug;
 
-use super::{ClusterId, EventId, EndptId, Node};
-
+use super::{ClusterId, EndptId, EventId, Node};
 
 /// TODO(events) docs
 #[derive(Debug, Clone)]

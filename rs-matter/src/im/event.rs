@@ -15,13 +15,9 @@
  *    limitations under the License.
  */
 
-
-
 use crate::tlv::{FromTLV, TLVElement, ToTLV};
 
 use super::{ClusterId, EndptId, GenericPath, IMStatusCode, Status};
-
-
 
 /// Event Filter
 ///
@@ -93,7 +89,7 @@ pub enum EventDataTag {
     SystemTimestamp = 4,
     DeltaEpochTimestamp = 5,
     DeltaSystemTimestamp = 6,
-    Data = 7
+    Data = 7,
 }
 
 /// A status response for an event in the Interaction Model.
@@ -132,7 +128,6 @@ impl EventStatus {
     }
 }
 
-
 /// Event Response
 ///
 /// Corresponds to the `EventReportIB` TLV structure in the Interaction Model.
@@ -144,7 +139,6 @@ pub enum EventResp<'a> {
     Data(EventData<'a>),
 }
 
-
 /// A data response for an event in the Interaction Model.
 ///
 /// Corresponds to the `EventDataIB` TLV structure in the Interaction Model.
@@ -154,7 +148,7 @@ pub enum EventResp<'a> {
 pub struct EventData<'a> {
     /// The path to the event.
     pub path: EventPath,
-    /// The event number counter for the node. While the node is running it is 
+    /// The event number counter for the node. While the node is running it is
     /// monotonically increasing, but the spec allows for (large) incremental jumps
     /// on node reboot
     pub event_number: u64,
@@ -168,7 +162,13 @@ pub struct EventData<'a> {
 
 impl<'a> EventData<'a> {
     /// Create a new `EventData` with the given data version, path, and data.
-    pub const fn new(path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp, data: TLVElement<'a>) -> Self {
+    pub const fn new(
+        path: EventPath,
+        event_number: u64,
+        priority: u8,
+        timestamp: EventDataTimestamp,
+        data: TLVElement<'a>,
+    ) -> Self {
         Self {
             path,
             event_number,

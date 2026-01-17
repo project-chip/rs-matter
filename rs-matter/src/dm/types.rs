@@ -18,11 +18,11 @@
 use crate::tlv::ToTLV;
 
 pub use attribute::*;
-pub use event::*;
 pub use cluster::*;
 pub use command::*;
 pub use dataver::*;
 pub use endpoint::*;
+pub use event::*;
 pub use handler::*;
 pub use metadata::*;
 pub use node::*;
@@ -30,11 +30,11 @@ pub use privilege::*;
 pub use reply::*;
 
 mod attribute;
-mod event;
 mod cluster;
 mod command;
 mod dataver;
 mod endpoint;
+mod event;
 mod handler;
 mod metadata;
 mod node;

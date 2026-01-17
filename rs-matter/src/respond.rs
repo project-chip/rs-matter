@@ -239,7 +239,8 @@ where
 pub type DefaultExchangeHandler<'d, 'a, 'b, const NS: usize, const NE: usize, B, T> =
     ChainedExchangeHandler<&'d DataModel<'a, 'b, NS, NE, B, T>, SecureChannel>;
 
-impl<'d, 'a, 'b, const NS: usize, const NE: usize, B, T> Responder<'a, DefaultExchangeHandler<'d, 'a, 'b, NS, NE, B, T>>
+impl<'d, 'a, 'b, const NS: usize, const NE: usize, B, T>
+    Responder<'a, DefaultExchangeHandler<'d, 'a, 'b, NS, NE, B, T>>
 where
     B: BufferAccess<IMBuffer>,
 {
@@ -325,7 +326,8 @@ where
     /// Useful when the user would like to organize its own herd of responders rather than using the `run` method.
     pub const fn responder(
         &self,
-    ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, 'b, NS, NE, B, T>, SecureChannel>> {
+    ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, 'b, NS, NE, B, T>, SecureChannel>>
+    {
         &self.responder
     }
 

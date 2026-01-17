@@ -21,12 +21,12 @@ use crate::acl::Accessor;
 use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, 
-    EventPath, EventStatus, GenericPath, IMStatusCode, InvReq, ReportDataReq, WriteReq,
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventPath, EventStatus,
+    GenericPath, IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
 
-use super::{AttrDetails, ClusterId, CmdDetails, EventDetails, EndptId};
+use super::{AttrDetails, ClusterId, CmdDetails, EndptId, EventDetails};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
@@ -60,8 +60,7 @@ impl<'a> Node<'a> {
         &'m self,
         req: &'m ReportDataReq,
         accessor: &'m Accessor<'m>,
-    ) -> Result<impl Iterator<Item = Result<ReadResultEntry<'m>, Error>> + 'm, Error>
-    {
+    ) -> Result<impl Iterator<Item = Result<ReadResultEntry<'m>, Error>> + 'm, Error> {
         // First expand any attribute reads
         let dataver_filters = req.dataver_filters()?;
         let fabric_filtered = req.fabric_filtered()?;
@@ -78,24 +77,25 @@ impl<'a> Node<'a> {
                     })
                 })
             }),
-        ).into_iter().map(|r| Ok(ReadResultEntry::Attr(r?)));
+        )
+        .into_iter()
+        .map(|r| Ok(ReadResultEntry::Attr(r?)));
 
         // Next expand any event reads
-        // TODO(events): Is there a performance cost to doing this to consider? 
+        // TODO(events): Is there a performance cost to doing this to consider?
         //               Usually people don't access events, presumably
         let event_expander = PathExpander::new(
             self,
             accessor,
             false,
             req.event_requests()?.map(|reqs| {
-                reqs.into_iter().map(move |path_result| {
-                    path_result.map(|path| EventReadPath {
-                        path,
-                    })
-                })
+                reqs.into_iter()
+                    .map(move |path_result| path_result.map(|path| EventReadPath { path }))
             }),
-        ).into_iter().map(|r| Ok(ReadResultEntry::Event(r?)));
-        
+        )
+        .into_iter()
+        .map(|r| Ok(ReadResultEntry::Event(r?)));
+
         Ok(attr_expander.chain(event_expander))
     }
 
@@ -240,7 +240,6 @@ struct EventReadPath {
     path: EventPath,
 }
 
-
 /// A helper type for `PathExpander` that captures what type of expansion is being done:
 /// Read requests, write requests, or invoke requests.
 #[derive(Debug)]
@@ -321,7 +320,6 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
         AttrStatus::new(self.path, status, None)
     }
 }
-
 
 /// `PathExpansionItem` implementation for `AttrReadPath` (attr read requests expansion).
 impl<'a> PathExpansionItem<'a> for EventReadPath {

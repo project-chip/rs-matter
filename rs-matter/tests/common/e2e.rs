@@ -27,8 +27,8 @@ use embassy_sync::{
 use rs_matter::acl::{AclEntry, AuthMode};
 use rs_matter::crypto::KeyPair;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
-use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::events::Events;
+use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
 use rs_matter::dm::{DataModel, IMBuffer};
 use rs_matter::error::Error;
@@ -168,7 +168,13 @@ impl E2eRunner {
 
         let responder = Responder::new(
             "Default",
-            DataModel::new(&self.matter, &self.buffers, &self.subscriptions, &self.events, handler),
+            DataModel::new(
+                &self.matter,
+                &self.buffers,
+                &self.subscriptions,
+                &self.events,
+                handler,
+            ),
             &self.matter,
             0,
         );

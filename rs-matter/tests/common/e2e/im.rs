@@ -18,7 +18,9 @@
 use bitflags::bitflags;
 
 use rs_matter::error::Error;
-use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath, EventResp};
+use rs_matter::im::{
+    AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath, EventResp,
+};
 use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
 use rs_matter::im::{ReportDataResp, WriteReqTag};
 use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
@@ -29,12 +31,12 @@ use super::tlv::{TLVTest, TestToTLV};
 
 use attributes::{TestAttrData, TestAttrResp};
 use commands::{TestCmdData, TestCmdResp};
-use events ::{TestEventResp};
+use events::TestEventResp;
 
 pub mod attributes;
-pub mod events;
 pub mod commands;
 pub mod echo_cluster;
+pub mod events;
 pub mod handler;
 
 /// A `ReadReq` alternative more suitable for testing.
@@ -673,7 +675,7 @@ impl<'a>
     /// TODO(events): Docs
     pub const fn read_events(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) -> Self {
         Self::read(
-            TestReadReq::event_reqs(input), 
+            TestReadReq::event_reqs(input),
             TestReportDataMsg::event_reports(expected),
             ReplyProcessor::none,
         )

@@ -14,15 +14,14 @@
  *    See the License for the specific language governing permissions and
  *    limitations under the License.
  */
-use core::fmt::{Debug};
+use core::fmt::Debug;
 
+use crate::utils::cell::RefCell;
+use crate::utils::sync::blocking::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use crate::utils::sync::blocking::Mutex;
-use crate::utils::cell::RefCell;
 
-use crate::im::{EventData};
-
+use crate::im::EventData;
 
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 16; // TODO(events) what to set this to?
 
@@ -40,7 +39,10 @@ where
     state: Mutex<M, RefCell<EventQueue<'a, N>>>,
 }
 
-impl<'a, const N: usize, M> Events<'a, N, M>  where M: RawMutex {
+impl<'a, const N: usize, M> Events<'a, N, M>
+where
+    M: RawMutex,
+{
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -53,7 +55,8 @@ impl<'a, const N: usize, M> Events<'a, N, M>  where M: RawMutex {
     // want that here too, I would assume.
 
     pub fn push(&self, payload: EventData<'a>) {
-        self.state.lock(|internal| internal.borrow_mut().push(payload));
+        self.state
+            .lock(|internal| internal.borrow_mut().push(payload));
     }
 
     // Iterate over each entry in the queue, aborts if f returns Err
@@ -88,13 +91,13 @@ pub struct EventQueue<'a, const N: usize> {
 // TODO(events): This obviously needs extensive testing
 // TODO(events): What are the concurrency semantics / rules in rs-matter, do we assume single thread?
 impl<'a, const N: usize> EventQueue<'a, N> {
-
     pub const fn new() -> Self {
         // Create the pool of event entries and link them up to each other into a free-list
-        let mut pool = [const { EventEntry {
-            event: None,
-            next: None,
-        }
+        let mut pool = [const {
+            EventEntry {
+                event: None,
+                next: None,
+            }
         }; N];
 
         let mut i = 0;
@@ -130,8 +133,8 @@ impl<'a, const N: usize> EventQueue<'a, N> {
                 None => {
                     // TODO(events): logging here?
                     // There are no equal-or-lower priority events we could evict, drop the event
-                    return
-                },
+                    return;
+                }
             }
         };
 
@@ -153,35 +156,37 @@ impl<'a, const N: usize> EventQueue<'a, N> {
         let mut lowest_idx = None;
         let mut lowest_prev_idx = None;
 
-        // Traverse the active list to find the next eviction target 
+        // Traverse the active list to find the next eviction target
         while let Some(idx) = curr_idx {
             let entry = &self.pool[idx as usize];
 
             if let Some(event) = &entry.event {
                 // See 7.14.2 in the spec for this rule
-                if event.priority >= max_prio && (lowest_idx.is_none() || event.priority >= lowest_prio_val) {
+                if event.priority >= max_prio
+                    && (lowest_idx.is_none() || event.priority >= lowest_prio_val)
+                {
                     lowest_prio_val = event.priority;
                     lowest_idx = Some(idx);
                     lowest_prev_idx = prev_idx;
                 }
-            } 
-            
+            }
+
             prev_idx = curr_idx;
             curr_idx = entry.next;
         }
 
-        match (lowest_prev_idx, lowest_idx) { 
+        match (lowest_prev_idx, lowest_idx) {
             (_, None) => None,
             (Some(victim_prev_idx), Some(victim_idx)) => {
                 // Victim is in middle of linked list, update the prior entry
                 self.pool[victim_prev_idx as usize].next = self.pool[victim_idx as usize].next;
                 Some(victim_idx)
-            },
+            }
             (None, Some(victim_idx)) => {
                 // Victim is at HEAD, update HEAD
                 self.head = self.pool[victim_idx as usize].next;
                 Some(victim_idx)
-            },
+            }
         }
     }
 
@@ -197,7 +202,7 @@ impl<'a, const N: usize> EventQueue<'a, N> {
                     f(event)?
                 }
             } else {
-                return Ok(())
+                return Ok(());
             }
         }
     }

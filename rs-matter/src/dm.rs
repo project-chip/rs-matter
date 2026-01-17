@@ -37,17 +37,17 @@ use crate::utils::storage::pooled::BufferAccess;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
 
-use subscriptions::Subscriptions;
 use events::Events;
+use subscriptions::Subscriptions;
 
 pub use types::*;
 
 pub mod clusters;
 pub mod devices;
 pub mod endpoints;
+pub mod events;
 pub mod networks;
 pub mod subscriptions;
-pub mod events;
 
 mod types;
 
@@ -664,7 +664,7 @@ where
 
         let metadata = self.handler.lock().await;
         let node = metadata.node();
-        
+
         let mut resp = ReportDataResponder::new(
             &req,
             &node,
@@ -881,16 +881,21 @@ where
 
             loop {
                 let result = match &item {
-                    ReadResultEntry::Attr(attr_item) => self.invoker.process_read(attr_item, &mut *wb, notify).await,
-                    ReadResultEntry::Event(event_item) => self.event_reader.process_read(event_item, &mut *wb).await,
+                    ReadResultEntry::Attr(attr_item) => {
+                        self.invoker.process_read(attr_item, &mut *wb, notify).await
+                    }
+                    ReadResultEntry::Event(event_item) => {
+                        self.event_reader.process_read(event_item, &mut *wb).await
+                    }
                 };
 
                 match result {
                     Ok(()) => break,
                     Err(err) if err.code() == ErrorCode::NoSpace => {
-                        let array_attr = match &item { 
-                            ReadResultEntry::Attr(attr_item) => attr_item.as_ref().ok().filter(|attr| {
-                                attr.list_index.is_none()
+                        let array_attr = match &item {
+                            ReadResultEntry::Attr(attr_item) => {
+                                attr_item.as_ref().ok().filter(|attr| {
+                                    attr.list_index.is_none()
                                     // The whole attribute is requested
                                     // Check if it is an array, and if so, send it as individual items instead
                                     && self
@@ -900,7 +905,8 @@ where
                                         .and_then(|c| c.attribute(attr.attr_id))
                                         .map(|a| a.quality.contains(Quality::ARRAY))
                                         .unwrap_or(false)
-                            }),
+                                })
+                            }
                             _ => None,
                         };
 
@@ -1075,7 +1081,8 @@ where
             assert!(matches!(self.req, ReportDataReq::Read(_)));
         }
 
-        let has_requests = self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
+        let has_requests =
+            self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
 
         if has_requests {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
@@ -1093,7 +1100,8 @@ where
     ) -> Result<(), Error> {
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
 
-        let has_requests = self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
+        let has_requests =
+            self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
 
         if has_requests {
             wb.end_container()?;

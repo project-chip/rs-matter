@@ -15,13 +15,13 @@
  *    limitations under the License.
  */
 
+use rs_matter::im::EventPath;
 use rs_matter::im::GenericPath;
-use rs_matter::im::{EventPath};
 
-use crate::common::e2e::im::{echo_cluster};
+use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
-use crate::{event_data_path};
+use crate::event_data_path;
 
 #[test]
 fn test_read_success() {
@@ -32,11 +32,7 @@ fn test_read_success() {
         Some(echo_cluster::ID),
         Some(1), // TODO need to implement macros like  attribute_enum!() for events
     );
-    let input = &[
-        EventPath::from_gp(&ep0_event1),
-    ];
-    let expected = &[
-        event_data_path!(ep0_event1, Some(&0x42u8)),
-    ];
+    let input = &[EventPath::from_gp(&ep0_event1)];
+    let expected = &[event_data_path!(ep0_event1, Some(&0x42u8))];
     ImEngine::read_event_reqs(input, expected);
 }
