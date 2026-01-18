@@ -62,7 +62,7 @@ impl Subscription {
         self.expired(self.max_int_secs, now)
     }
 
-    pub fn next_action_time(&self, _now: Instant) -> Option<Instant> {
+    pub fn next_action_time(&self) -> Option<Instant> {
         let deadline_secs = if self.changed {
             self.min_int_secs
         } else {
@@ -166,13 +166,13 @@ where
         self.notification.notify();
     }
 
-    pub fn next_action_time(&self, now: Instant) -> Option<Instant> {
+    pub fn next_action_time(&self) -> Option<Instant> {
         self.state.lock(|internal| {
             internal
                 .borrow_mut()
                 .subscriptions
                 .iter()
-                .filter_map(|sub| sub.next_action_time(now))
+                .filter_map(|sub| sub.next_action_time())
                 .min()
         })
     }

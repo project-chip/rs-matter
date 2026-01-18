@@ -424,14 +424,8 @@ where
             let now = Instant::now();
             let duration = self
                 .subscriptions
-                .next_action_time(now)
-                .map(|next| {
-                    if next > now {
-                        next - now
-                    } else {
-                        embassy_time::Duration::from_ticks(0)
-                    }
-                })
+                .next_action_time()
+                .map(|next| next.saturating_duration_since(now))
                 .unwrap_or(embassy_time::Duration::from_secs(10)); // Sleep longer if no subscriptions
 
             let mut timeout = pin!(Timer::after(duration));
