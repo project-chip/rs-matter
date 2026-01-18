@@ -372,7 +372,7 @@ pub fn encrypt_in_place<C: Crypto>(
     writebuf.append(&tag_space)?;
     let cipher_text = writebuf.as_mut_slice();
 
-    let mut cypher = crypto.aead_aes_ccm_16_64_128(key)?;
+    let mut cypher = crypto.aes_ccm_16_64_128(key)?;
 
     cypher.encrypt_in_place(
         &iv,
@@ -415,7 +415,7 @@ fn decrypt_in_place<C: Crypto>(
     //println!("IV: {:x?}", iv);
     //println!("Key: {:x?}", key);
 
-    let mut cypher = crypto.aead_aes_ccm_16_64_128(key)?;
+    let mut cypher = crypto.aes_ccm_16_64_128(key)?;
 
     cypher.decrypt_in_place(&iv, &aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);

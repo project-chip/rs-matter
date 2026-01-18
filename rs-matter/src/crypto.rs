@@ -15,13 +15,7 @@
  *    limitations under the License.
  */
 
-use core::mem::MaybeUninit;
-
-use rand_core::CryptoRngCore;
-
-use crate::error::{Error, ErrorCode};
-use crate::tlv::{FromTLV, TLVTag, TLVWrite, ToTLV, TLV};
-use crate::utils::init::InitMaybeUninit;
+use crate::error::Error;
 
 #[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 pub use self::dummy::*;
@@ -35,23 +29,23 @@ pub use self::openssl::*;
 #[cfg(feature = "rustcrypto")]
 pub use self::rustcrypto::*;
 
-pub const SYMM_KEY_LEN_BITS: usize = 128;
-pub const SYMM_KEY_LEN_BYTES: usize = SYMM_KEY_LEN_BITS / 8;
+// pub const SYMM_KEY_LEN_BITS: usize = 128;
+// pub const SYMM_KEY_LEN_BYTES: usize = SYMM_KEY_LEN_BITS / 8;
 
-pub const AEAD_MIC_LEN_BITS: usize = 128;
-pub const AEAD_MIC_LEN_BYTES: usize = AEAD_MIC_LEN_BITS / 8;
+// pub const AEAD_MIC_LEN_BITS: usize = 128;
+// pub const AEAD_MIC_LEN_BYTES: usize = AEAD_MIC_LEN_BITS / 8;
 
-pub const AEAD_NONCE_LEN_BYTES: usize = 13;
-pub const AEAD_AAD_LEN_BYTES: usize = 8;
+// pub const AEAD_NONCE_LEN_BYTES: usize = 13;
+// pub const AEAD_AAD_LEN_BYTES: usize = 8;
 
-pub const SHA256_HASH_LEN_BYTES: usize = 256 / 8;
+// pub const SHA256_HASH_LEN_BYTES: usize = 256 / 8;
 
-pub const BIGNUM_LEN_BYTES: usize = 32;
-pub const EC_POINT_LEN_BYTES: usize = 65;
+// pub const BIGNUM_LEN_BYTES: usize = 32;
+// pub const EC_POINT_LEN_BYTES: usize = 65;
 
-pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
+// pub const ECDH_SHARED_SECRET_LEN_BYTES: usize = 32;
 
-pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
+// pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
 
 #[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 mod dummy;
@@ -67,8 +61,64 @@ mod rustcrypto;
 
 pub const SHA256_HASH_LEN: usize = 32;
 
-pub type FabricSecretKey = [u8; EC_POINT_LEN_BYTES];
-pub const FABRIC_SECRET_KEY_BUF_DEFAULT: FabricSecretKey = [0u8; EC_POINT_LEN_BYTES];
+pub const SECP256R1_SCALAR_LEN: usize = 32;
+pub const SECP256R1_POINT_LEN: usize = 65;
+pub const SECP256R1_SECRET_KEY_LEN: usize = 95;
+pub const SECP256R1_SIGNATURE_LEN: usize = 64;
+pub const SECP256R1_ECDH_SHARED_SECRET_LEN: usize = 32;
+
+pub const UINT384_LEN: usize = 48;
+
+pub const AES128_KEY_LEN: usize = 16;
+pub const AES128_NONCE_LEN: usize = 13;
+pub const AES128_TAG_LEN: usize = 16;
+pub const AES128_AAD_LEN: usize = 8;
+
+pub type Sha256Hash = [u8; SHA256_HASH_LEN];
+pub const SHA256_HASH_ZEROED: Sha256Hash = [0u8; SHA256_HASH_LEN];
+
+pub type Uint384 = [u8; UINT384_LEN];
+pub const UINT384_ZEROED: Uint384 = [0u8; UINT384_LEN];
+
+pub type Aes128Key = [u8; AES128_KEY_LEN];
+pub const AES128_ZEROED: Aes128Key = [0u8; AES128_KEY_LEN];
+
+pub type Aes128Nonce = [u8; AES128_NONCE_LEN];
+pub const AES128_NONCE_ZEROED: Aes128Nonce = [0u8; AES128_NONCE_LEN];
+
+pub type Aes128Tag = [u8; AES128_TAG_LEN];
+pub const AES128_TAG_ZEROED: Aes128Tag = [0u8; AES128_TAG_LEN];
+
+pub type Aes128Aad = [u8; AES128_AAD_LEN];
+pub const AES128_AAD_ZEROED: Aes128Aad = [0u8; AES128_AAD_LEN];
+
+pub type Secp256r1Scalar = [u8; SECP256R1_SCALAR_LEN];
+pub const SECP256R1_SCALAR_ZEROED: Secp256r1Scalar = [0u8; SECP256R1_SCALAR_LEN];
+
+pub type Secp256r1Point = [u8; SECP256R1_POINT_LEN];
+pub const SECP256R1_POINT_ZEROED: Secp256r1Point = [0u8; SECP256R1_POINT_LEN];
+
+pub type Secp256r1SecretKey = [u8; SECP256R1_SECRET_KEY_LEN];
+pub const SECP256R1_SECRET_KEY_ZEROED: Secp256r1SecretKey = [0u8; SECP256R1_SECRET_KEY_LEN];
+
+pub type Secp256r1PublicKey = Secp256r1Point;
+pub const SECP256R1_PUBLIC_KEY_ZEROED: Secp256r1PublicKey = SECP256R1_POINT_ZEROED;
+
+pub type Secp256r1Signature = [u8; SECP256R1_SIGNATURE_LEN];
+pub const SECP256R1_SIGNATURE_ZEROED: Secp256r1Signature = [0u8; SECP256R1_SIGNATURE_LEN];
+
+pub type Secp256r1EcdhSharedSecret = [u8; SECP256R1_ECDH_SHARED_SECRET_LEN];
+pub const SECP256R1_ECDH_SHARED_SECRET_ZEROED: Secp256r1EcdhSharedSecret =
+    [0u8; SECP256R1_ECDH_SHARED_SECRET_LEN];
+
+pub type FabricSecretKey = Secp256r1SecretKey;
+pub const FABRIC_SECRET_KEY_ZEROED: FabricSecretKey = SECP256R1_SECRET_KEY_ZEROED;
+
+pub type FabricPublicKey = Secp256r1PublicKey;
+pub const FABRIC_PUBLIC_KEY_ZEROED: FabricPublicKey = SECP256R1_PUBLIC_KEY_ZEROED;
+
+pub type SessionKey = Aes128Key;
+pub const SESSION_KEY_ZEROED: SessionKey = AES128_ZEROED;
 
 pub trait Crypto {
     type Sha256<'a>: Digest<SHA256_HASH_LEN>
@@ -83,16 +133,33 @@ pub trait Crypto {
     type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac<SHA256_HASH_LEN>
     where
         Self: 'a;
-    type AeadAesCcm16p64p128<'a>: Aead
+    type AesCcm16p64p128<'a>: Aead<AES128_NONCE_LEN>
     where
         Self: 'a;
-    type PublicKeySecp256r1<'a>: PublicKey
+    type PublicKeySecp256r1<'a>: PublicKey<SECP256R1_POINT_LEN, SECP256R1_SIGNATURE_LEN>
     where
         Self: 'a;
-    type SecretKeySecp256r1<'a>: SecretKey<PublicKey<'a> = Self::PublicKeySecp256r1<'a>>
+    type SecretKeySecp256r1<'a>: SecretKey<
+        SECP256R1_SECRET_KEY_LEN,
+        SECP256R1_POINT_LEN,
+        SECP256R1_SIGNATURE_LEN,
+        SECP256R1_ECDH_SHARED_SECRET_LEN,
+        PublicKey<'a> = Self::PublicKeySecp256r1<'a>,
+    >
     where
         Self: 'a;
-    type Spake2<'a>: Spake2
+    type UInt384<'a>: UInt<'a, UINT384_LEN>
+    where
+        Self: 'a;
+    type Secp256r1Scalar<'a>: Scalar<'a, SECP256R1_SCALAR_LEN>
+    where
+        Self: 'a;
+    type Secp256r1Point<'a>: CurvePoint<
+        'a,
+        SECP256R1_POINT_LEN,
+        SECP256R1_SCALAR_LEN,
+        Scalar<'a> = Self::Secp256r1Scalar<'a>,
+    >
     where
         Self: 'a;
 
@@ -104,21 +171,32 @@ pub trait Crypto {
 
     fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error>;
 
-    fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error>;
+    fn aes_ccm_16_64_128(&self, key: &Aes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error>;
 
     fn public_key_secp256r1_hydrate(
         &self,
-        dehydrated_public_key: &[u8],
+        dehydrated_public_key: &Secp256r1PublicKey,
     ) -> Result<Self::PublicKeySecp256r1<'_>, Error>;
 
     fn secret_key_secp256r1(&self) -> Result<Self::SecretKeySecp256r1<'_>, Error>;
 
     fn secret_key_secp256r1_hydrate(
         &self,
-        dehydrated_secret_key: &[u8],
+        dehydrated_secret_key: &Secp256r1SecretKey,
     ) -> Result<Self::SecretKeySecp256r1<'_>, Error>;
 
-    fn spake2(&self) -> Result<Self::Spake2<'_>, Error>;
+    fn uint384(&self, scalar: &Uint384) -> Result<Self::UInt384<'_>, Error>;
+
+    fn secp256r1_scalar(
+        &self,
+        scalar: &Secp256r1Scalar,
+    ) -> Result<Self::Secp256r1Scalar<'_>, Error>;
+
+    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error>;
+
+    fn secpp256r1_point(&self, point: &Secp256r1Point) -> Result<Self::Secp256r1Point<'_>, Error>;
+
+    fn secpp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error>;
 }
 
 impl<T> Crypto for &T
@@ -141,8 +219,8 @@ where
         = T::Pbkdf2HmacSha256<'a>
     where
         Self: 'a;
-    type AeadAesCcm16p64p128<'a>
-        = T::AeadAesCcm16p64p128<'a>
+    type AesCcm16p64p128<'a>
+        = T::AesCcm16p64p128<'a>
     where
         Self: 'a;
     type PublicKeySecp256r1<'a>
@@ -153,8 +231,16 @@ where
         = T::SecretKeySecp256r1<'a>
     where
         Self: 'a;
-    type Spake2<'a>
-        = T::Spake2<'a>
+    type UInt384<'a>
+        = T::UInt384<'a>
+    where
+        Self: 'a;
+    type Secp256r1Scalar<'a>
+        = T::Secp256r1Scalar<'a>
+    where
+        Self: 'a;
+    type Secp256r1Point<'a>
+        = T::Secp256r1Point<'a>
     where
         Self: 'a;
 
@@ -174,13 +260,13 @@ where
         (*self).pbkdf2_hmac_sha256()
     }
 
-    fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error> {
-        (*self).aead_aes_ccm_16_64_128(key)
+    fn aes_ccm_16_64_128(&self, key: &Aes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+        (*self).aes_ccm_16_64_128(key)
     }
 
     fn public_key_secp256r1_hydrate(
         &self,
-        dehydrated_public_key: &[u8],
+        dehydrated_public_key: &Secp256r1PublicKey,
     ) -> Result<Self::PublicKeySecp256r1<'_>, Error> {
         (*self).public_key_secp256r1_hydrate(dehydrated_public_key)
     }
@@ -191,13 +277,32 @@ where
 
     fn secret_key_secp256r1_hydrate(
         &self,
-        dehydrated_secret_key: &[u8],
+        dehydrated_secret_key: &Secp256r1SecretKey,
     ) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
         (*self).secret_key_secp256r1_hydrate(dehydrated_secret_key)
     }
 
-    fn spake2(&self) -> Result<Self::Spake2<'_>, Error> {
-        (*self).spake2()
+    fn uint384(&self, scalar: &Uint384) -> Result<Self::UInt384<'_>, Error> {
+        (*self).uint384(scalar)
+    }
+
+    fn secp256r1_scalar(
+        &self,
+        scalar: &Secp256r1Scalar,
+    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+        (*self).secp256r1_scalar(scalar)
+    }
+
+    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+        (*self).secp256r1_scalar_random()
+    }
+
+    fn secpp256r1_point(&self, point: &Secp256r1Point) -> Result<Self::Secp256r1Point<'_>, Error> {
+        (*self).secpp256r1_point(point)
+    }
+
+    fn secpp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
+        (*self).secpp256r1_generator()
     }
 }
 
@@ -215,10 +320,10 @@ pub trait Pbkdf2Hmac<const KEY_LEN: usize> {
     fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8; KEY_LEN]);
 }
 
-pub trait Aead {
+pub trait Aead<const NONCE_LEN: usize> {
     fn encrypt_in_place<'a>(
         &mut self,
-        nonce: &[u8],
+        nonce: &[u8; NONCE_LEN],
         ad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
@@ -226,14 +331,44 @@ pub trait Aead {
 
     fn decrypt_in_place<'a>(
         &mut self,
-        nonce: &[u8],
+        nonce: &[u8; NONCE_LEN],
         ad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error>;
 }
 
-pub trait SecretKey {
-    type PublicKey<'a>: PublicKey
+impl<const NONCE_LEN: usize, T> Aead<NONCE_LEN> for &mut T
+where
+    T: Aead<NONCE_LEN>,
+{
+    fn encrypt_in_place<'a>(
+        &mut self,
+        nonce: &[u8; NONCE_LEN],
+        ad: &[u8],
+        data: &'a mut [u8],
+        data_len: usize,
+    ) -> Result<&'a [u8], Error> {
+        (*self).encrypt_in_place(nonce, ad, data, data_len)
+    }
+
+    fn decrypt_in_place<'a>(
+        &mut self,
+        nonce: &[u8; NONCE_LEN],
+        ad: &[u8],
+        data: &'a mut [u8],
+    ) -> Result<&'a [u8], Error> {
+        (*self).decrypt_in_place(nonce, ad, data)
+    }
+}
+
+pub trait SecretKey<
+    const KEY_LEN: usize,
+    const PUB_KEY_LEN: usize,
+    const SIGNATURE_LEN: usize,
+    const SHARED_SECRET_LEN: usize,
+>
+{
+    type PublicKey<'a>: PublicKey<PUB_KEY_LEN, SIGNATURE_LEN>
     where
         Self: 'a;
 
@@ -241,45 +376,93 @@ pub trait SecretKey {
 
     fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error>;
 
-    fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn dehydrate(&self, key: &mut [u8; KEY_LEN]) -> Result<(), Error>;
 
-    fn derive_shared_secret<'a>(
-        self,
+    fn derive_shared_secret(
+        &self,
         peer_pub_key: &Self::PublicKey<'_>,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error>;
+        shared_secret: &mut [u8; SHARED_SECRET_LEN],
+    ) -> Result<(), Error>;
 
-    fn sign<'a>(&self, data: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) -> Result<(), Error>;
 }
 
-pub trait PublicKey {
-    fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+// TODO
+// impl<'t, T> SecretKey for &'t T
+// where
+//     T: SecretKey + 't,
+// {
+//     type PublicKey<'a>
+//         = T::PublicKey<'a>
+//     where
+//         Self: 'a;
 
-    fn verify(&self, signature: &[u8], data: &[u8]) -> Result<(), Error>;
+//     fn csr<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
+//         (*self).csr(buf)
+//     }
+
+//     fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error> {
+//         (*self).pub_key()
+//     }
+
+//     fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
+//         (*self).dehydrate(buf)
+//     }
+
+//     fn derive_shared_secret<'a>(
+//         &self,
+//         peer_pub_key: &Self::PublicKey<'_>,
+//         buf: &'a mut [u8],
+//     ) -> Result<&'a [u8], Error> {
+//         (*self).derive_shared_secret(peer_pub_key, buf)
+//     }
+
+//     fn sign<'a>(&self, data: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
+//         (*self).sign(data, buf)
+//     }
+// }
+
+pub trait PublicKey<const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
+    fn dehydrate(&self, key: &mut [u8; KEY_LEN]) -> Result<(), Error>;
+
+    fn verify(&self, signature: &[u8; SIGNATURE_LEN], data: &[u8]) -> Result<(), Error>;
 }
 
-pub trait Spake2 {
-    fn set_w0_from_w0s(&mut self, w0s: &[u8]) -> Result<(), Error>;
+impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<KEY_LEN, SIGNATURE_LEN> for &T
+where
+    T: PublicKey<KEY_LEN, SIGNATURE_LEN>,
+{
+    fn dehydrate(&self, key: &mut [u8; KEY_LEN]) -> Result<(), Error> {
+        (*self).dehydrate(key)
+    }
 
-    fn set_w1_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error>;
+    fn verify(&self, signature: &[u8; SIGNATURE_LEN], data: &[u8]) -> Result<(), Error> {
+        (*self).verify(signature, data)
+    }
+}
 
-    fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error>;
+pub trait UInt<'a, const LEN: usize> {
+    fn rem(&self, other: &Self) -> Self;
 
-    fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error>;
+    fn dehydrate(&self, key: &mut [u8; LEN]) -> Result<(), Error>;
+}
 
-    fn set_l(&mut self, l: &[u8]) -> Result<(), Error>;
+pub trait Scalar<'a, const LEN: usize> {
+    fn mul(&self, other: &Self) -> Self;
 
-    fn set_l_from_w1s(&mut self, w1s: &[u8]) -> Result<(), Error>;
+    fn dehydrate(&self, buf: &mut [u8; LEN]) -> Result<(), Error>;
+}
 
-    fn get_pp<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+pub trait CurvePoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
+    type Scalar<'s>: Scalar<'s, SCALAR_LEN>;
 
-    fn get_tt_as_verifier<'a>(
-        &mut self,
-        context: &[u8],
-        pa: &[u8],
-        pb: &[u8],
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error>;
+    fn neg(&self) -> Self;
+
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Self;
+
+    fn add(&self, other: &Self) -> Self;
+
+    fn dehydrate(&self, buf: &mut [u8; LEN]) -> Result<(), Error>;
 }
 
 #[cfg(test)]
