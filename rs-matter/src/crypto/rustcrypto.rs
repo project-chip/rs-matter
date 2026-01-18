@@ -17,81 +17,61 @@
 
 #![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
 
-use core::convert::{TryFrom, TryInto};
-use core::marker::PhantomData;
+use core::convert::TryInto;
 use core::mem::MaybeUninit;
+use core::ops::{Add, Mul, Neg, Rem};
 
 use aes::Aes128;
 use alloc::vec;
-use ccm::{
-    aead::generic_array::GenericArray,
-    consts::{U13, U16},
-    Ccm,
-};
+use ccm::aead::generic_array::GenericArray;
+use ccm::consts::{U13, U16};
+use ccm::Ccm;
+
 use digest::OutputSizeUser;
+
+use elliptic_curve::bigint::U384;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use elliptic_curve::{AffinePoint, CurveArithmetic, ProjectivePoint, Scalar};
+
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
 use hkdf::HmacImpl;
+
 use hmac::Mac;
-use p256::NistP256;
-use p256::{
-    ecdsa::{Signature, SigningKey, VerifyingKey},
-    AffinePoint, EncodedPoint, PublicKey, SecretKey,
-};
+
+use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use p256::{EncodedPoint, NistP256, PublicKey, SecretKey};
+
 use rand_core::{CryptoRng, CryptoRngCore, RngCore};
+
 use sha2::Digest;
-use x509_cert::{
-    attr::AttributeType,
-    der::{asn1::BitString, Any, Encode, Writer},
-    name::RdnSequence,
-    request::CertReq,
-    spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned},
-};
 
-use crate::crypto::Crypto;
-use crate::{
-    error::{Error, ErrorCode},
-    utils::{init::InitMaybeUninit, rand::Rand},
-};
+use x509_cert::attr::AttributeType;
+use x509_cert::der::{asn1::BitString, Any, Encode, Writer};
+use x509_cert::name::RdnSequence;
+use x509_cert::request::CertReq;
+use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
-type HmacSha256I = hmac::Hmac<sha2::Sha256>;
-type AesCcm = Ccm<Aes128, U16, U13>;
+use crate::crypto::{
+    Aes128Key, Crypto, Secp256r1Point, Secp256r1PublicKey, Secp256r1Scalar, Secp256r1SecretKey,
+    Uint384, SECP256R1_ECDH_SHARED_SECRET_LEN, SECP256R1_POINT_LEN, SECP256R1_SECRET_KEY_LEN,
+    SECP256R1_SIGNATURE_LEN,
+};
+use crate::error::{Error, ErrorCode};
+use crate::utils::cell::RefCell;
+use crate::utils::init::InitMaybeUninit;
+use crate::utils::sync::blocking::Mutex;
 
 extern crate alloc;
 
-pub struct RandRngCore(pub Rand);
+pub struct RustCrypto<M: RawMutex, T>(Mutex<M, RefCell<T>>);
 
-impl RngCore for RandRngCore {
-    fn next_u32(&mut self) -> u32 {
-        let mut buf = [0; 4];
-        self.fill_bytes(&mut buf);
+impl<M: RawMutex, T> RustCrypto<M, T> {}
 
-        u32::from_be_bytes(buf)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut buf = [0; 8];
-        self.fill_bytes(&mut buf);
-
-        u64::from_be_bytes(buf)
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        (self.0)(dest);
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(dest);
-        Ok(())
-    }
-}
-
-impl CryptoRng for RandRngCore {}
-
-pub struct RustCrypto(());
-
-impl RustCrypto {}
-
-impl Crypto for RustCrypto {
+impl<M: RawMutex, T> Crypto for RustCrypto<M, T>
+where
+    T: CryptoRngCore,
+{
     type Sha256<'a>
         = sha2::Sha256
     where
@@ -108,8 +88,8 @@ impl Crypto for RustCrypto {
         = Pbkdf2HmacFactory
     where
         Self: 'a;
-    type AeadAesCcm16p64p128<'a>
-        = AesCcm
+    type AesCcm16p64p128<'a>
+        = Ccm<Aes128, U16, U13>
     where
         Self: 'a;
     type PublicKeySecp256r1<'a>
@@ -118,6 +98,18 @@ impl Crypto for RustCrypto {
         Self: 'a;
     type SecretKeySecp256r1<'a>
         = p256::SecretKey
+    where
+        Self: 'a;
+    type UInt384<'a>
+        = RUInt<crypto_bigint::U384>
+    where
+        Self: 'a;
+    type Secp256r1Scalar<'a>
+        = RCurveScalar<NistP256>
+    where
+        Self: 'a;
+    type Secp256r1Point<'a>
+        = RCurvePoint<NistP256>
     where
         Self: 'a;
 
@@ -140,29 +132,52 @@ impl Crypto for RustCrypto {
         Ok(Pbkdf2HmacFactory(()))
     }
 
-    fn aead_aes_ccm_16_64_128(&self, key: &[u8]) -> Result<Self::AeadAesCcm16p64p128<'_>, Error> {
+    fn aes_ccm_16_64_128(&self, key: &Aes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error> {
         use ccm::KeyInit;
 
-        Ok(AesCcm::new(GenericArray::from_slice(key)))
+        Ok(Ccm::<Aes128, U16, U13>::new(GenericArray::from_slice(key)))
     }
 
     fn public_key_secp256r1_hydrate(
         &self,
-        dehydrated_public_key: &[u8],
+        dehydrated_public_key: &Secp256r1PublicKey,
     ) -> Result<Self::PublicKeySecp256r1<'_>, Error> {
         let encoded_point = EncodedPoint::from_bytes(dehydrated_public_key)?;
         Ok(PublicKey::from_encoded_point(&encoded_point).ok_or(ErrorCode::InvalidData)?)
     }
 
-    fn secret_key_secp256r1(&self, mut rng: R) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
-        Ok(SecretKey::random(&mut rng))
+    fn secret_key_secp256r1(&self) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
+        Ok(self.0.lock(|rng| SecretKey::random(&mut *rng.borrow_mut())))
     }
 
     fn secret_key_secp256r1_hydrate(
         &self,
-        dehydrated_secret_key: &[u8],
+        dehydrated_secret_key: &Secp256r1SecretKey,
     ) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
         Ok(SecretKey::from_slice(dehydrated_secret_key)?)
+    }
+
+    fn uint384(&self, scalar: &Uint384) -> Result<Self::UInt384<'_>, Error> {
+        todo!()
+    }
+
+    fn secp256r1_scalar(
+        &self,
+        scalar: &Secp256r1Scalar,
+    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+        todo!()
+    }
+
+    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+        todo!()
+    }
+
+    fn secpp256r1_point(&self, point: &Secp256r1Point) -> Result<Self::Secp256r1Point<'_>, Error> {
+        todo!()
+    }
+
+    fn secpp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
+        todo!()
     }
 }
 
@@ -174,9 +189,9 @@ where
         digest::Update::update(self, data);
     }
 
-    fn finish(self, buf: &mut [u8; HASH_LEN]) {
+    fn finish(self, hash: &mut [u8; HASH_LEN]) {
         let output = digest::FixedOutput::finalize_fixed(self);
-        buf.copy_from_slice(output.as_slice());
+        hash.copy_from_slice(output.as_slice());
     }
 }
 
@@ -201,10 +216,10 @@ impl<const KEY_LEN: usize> super::Pbkdf2Hmac<KEY_LEN> for Pbkdf2HmacFactory {
 }
 
 // TODO: Generalize for more than Aes128
-impl super::Aead for Ccm<Aes128, U16, U13> {
+impl super::Aead<{ super::AES128_NONCE_LEN }> for Ccm<Aes128, U16, U13> {
     fn encrypt_in_place<'a>(
         &mut self,
-        nonce: &[u8],
+        nonce: &[u8; super::AES128_NONCE_LEN],
         ad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
@@ -219,7 +234,7 @@ impl super::Aead for Ccm<Aes128, U16, U13> {
 
     fn decrypt_in_place<'a>(
         &mut self,
-        nonce: &[u8],
+        nonce: &[u8; super::AES128_NONCE_LEN],
         ad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
@@ -232,21 +247,22 @@ impl super::Aead for Ccm<Aes128, U16, U13> {
     }
 }
 
-impl super::PublicKey for p256::PublicKey {
-    fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
+impl super::PublicKey<{ SECP256R1_POINT_LEN }, { SECP256R1_SIGNATURE_LEN }> for p256::PublicKey {
+    fn dehydrate(&self, key: &mut [u8; SECP256R1_POINT_LEN]) -> Result<(), Error> {
         let point = self.as_affine().to_encoded_point(false);
-
         let slice = point.as_bytes();
-        buf[..slice.len()].copy_from_slice(slice);
 
-        Ok(&buf[..slice.len()])
+        assert_eq!(slice.len(), SECP256R1_POINT_LEN);
+        key[..slice.len()].copy_from_slice(slice);
+
+        Ok(())
     }
 
-    fn verify(&self, signature: &[u8], data: &[u8]) -> Result<(), Error> {
+    fn verify(&self, signature: &[u8; SECP256R1_SIGNATURE_LEN], data: &[u8]) -> Result<(), Error> {
         use p256::ecdsa::signature::Verifier;
 
         let verifying_key = VerifyingKey::from_affine(*self.as_affine())?;
-        let signature = Signature::try_from(signature)?;
+        let signature = Signature::from_slice(signature)?;
 
         verifying_key
             .verify(data, &signature)
@@ -256,7 +272,14 @@ impl super::PublicKey for p256::PublicKey {
     }
 }
 
-impl super::SecretKey for p256::SecretKey {
+impl
+    super::SecretKey<
+        { SECP256R1_SECRET_KEY_LEN },
+        { SECP256R1_POINT_LEN },
+        { SECP256R1_SIGNATURE_LEN },
+        { SECP256R1_ECDH_SHARED_SECRET_LEN },
+    > for p256::SecretKey
+{
     type PublicKey<'a>
         = p256::PublicKey
     where
@@ -288,7 +311,7 @@ impl super::SecretKey for p256::SecretKey {
             "x509 AttrValue creation failed"
         ))]);
 
-        let mut public_key = MaybeUninit::<[u8; 65]>::uninit(); // TODO MEDIUM BUFFER
+        let mut public_key = MaybeUninit::<[u8; SECP256R1_POINT_LEN]>::uninit(); // TODO MEDIUM BUFFER
         let public_key = public_key.init_zeroed();
 
         super::PublicKey::dehydrate(&self.public_key(), public_key)?;
@@ -341,50 +364,109 @@ impl super::SecretKey for p256::SecretKey {
         Ok(self.public_key())
     }
 
-    fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    fn dehydrate(&self, key: &mut [u8; SECP256R1_SECRET_KEY_LEN]) -> Result<(), Error> {
         let bytes = self.to_bytes();
         let slice = bytes.as_slice();
 
-        buf[..slice.len()].copy_from_slice(slice);
+        assert_eq!(slice.len(), SECP256R1_SECRET_KEY_LEN);
+        key[..slice.len()].copy_from_slice(slice);
 
-        Ok(&buf[..slice.len()])
+        Ok(())
     }
 
-    fn derive_shared_secret<'a>(
-        self,
+    fn derive_shared_secret(
+        &self,
         peer_pub_key: &Self::PublicKey<'_>,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
+        shared_secret: &mut [u8; SECP256R1_ECDH_SHARED_SECRET_LEN],
+    ) -> Result<(), Error> {
         // let encoded_point = EncodedPoint::from_bytes(peer_pub_key)?;
         // let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap(); // TODO: defmt
-        let shared_secret = elliptic_curve::ecdh::diffie_hellman(
+        let secret = elliptic_curve::ecdh::diffie_hellman(
             self.to_nonzero_scalar(),
             peer_pub_key.as_affine(),
         );
 
-        let bytes = shared_secret.raw_secret_bytes();
+        let bytes = secret.raw_secret_bytes();
         let slice = bytes.as_slice();
-        assert_eq!(buf.len(), slice.len());
 
-        buf.copy_from_slice(slice);
+        assert_eq!(slice.len(), SECP256R1_ECDH_SHARED_SECRET_LEN);
+        shared_secret[..slice.len()].copy_from_slice(slice);
 
-        Ok(&buf[..slice.len()])
+        Ok(())
     }
 
-    fn sign<'a>(&self, msg: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    fn sign(&self, msg: &[u8], signature: &mut [u8; SECP256R1_SIGNATURE_LEN]) -> Result<(), Error> {
         use p256::ecdsa::signature::Signer;
 
-        if buf.len() < super::EC_SIGNATURE_LEN_BYTES {
-            return Err(ErrorCode::InvalidData.into());
-        }
-
         let signing_key = SigningKey::from(self);
-        let signature: Signature = signing_key.sign(msg);
-        let signature_bytes = signature.to_bytes();
+        let sign: Signature = signing_key.sign(msg);
+        let sign_bytes = sign.to_bytes();
 
-        buf[..signature_bytes.len()].copy_from_slice(&signature_bytes);
+        assert_eq!(sign_bytes.len(), SECP256R1_SIGNATURE_LEN);
+        signature[..sign_bytes.len()].copy_from_slice(&sign_bytes);
 
-        Ok(&buf[..signature_bytes.len()])
+        Ok(())
+    }
+}
+
+pub struct RUInt<T>(T);
+
+impl<'a, T> super::UInt<'a, { super::UINT384_LEN }> for RUInt<T>
+where
+    T: Rem<Output = T> + Clone,
+{
+    fn rem(&self, other: &Self) -> Self {
+        Self(self.0.clone().rem(other.0.clone()))
+    }
+
+    fn dehydrate(&self, buf: &mut [u8; super::UINT384_LEN]) -> Result<(), Error> {
+        todo!()
+    }
+}
+
+pub struct RCurveScalar<C: CurveArithmetic>(Scalar<C>);
+
+impl<'a, C: CurveArithmetic> super::Scalar<'a, { super::SECP256R1_SCALAR_LEN }> for RCurveScalar<C>
+where
+    C::Scalar: Mul<Output = C::Scalar> + Clone,
+{
+    fn mul(&self, other: &Self) -> Self {
+        Self(self.0.mul(other.0.clone()))
+    }
+
+    fn dehydrate(&self, buf: &mut [u8; super::SECP256R1_SCALAR_LEN]) -> Result<(), Error> {
+        todo!()
+    }
+}
+
+pub struct RCurvePoint<C: CurveArithmetic>(ProjectivePoint<C>);
+
+impl<'a, C: CurveArithmetic>
+    super::CurvePoint<'a, { super::SECP256R1_POINT_LEN }, { super::SECP256R1_SCALAR_LEN }>
+    for RCurvePoint<C>
+where
+    C::Scalar: Mul<Output = C::Scalar> + Clone,
+    C::ProjectivePoint: Neg<Output = C::ProjectivePoint>
+        + Mul<C::Scalar, Output = C::ProjectivePoint>
+        + Add<Output = C::ProjectivePoint>
+        + Clone,
+{
+    type Scalar<'s> = RCurveScalar<C>;
+
+    fn neg(&self) -> Self {
+        Self(self.0.neg())
+    }
+
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Self {
+        Self(self.0.mul(scalar.0.clone()))
+    }
+
+    fn add(&self, other: &Self) -> Self {
+        Self(self.0.add(other.0.clone()))
+    }
+
+    fn dehydrate(&self, buf: &mut [u8; super::SECP256R1_POINT_LEN]) -> Result<(), Error> {
+        todo!()
     }
 }
 

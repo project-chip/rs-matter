@@ -23,7 +23,7 @@ use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{self, Crypto, Digest, FabricSecretKey, Hkdf, FABRIC_SECRET_KEY_BUF_DEFAULT};
+use crate::crypto::{self, Crypto, Digest, FabricSecretKey, Hkdf, FABRIC_SECRET_KEY_ZEROED};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;

@@ -17,7 +17,7 @@
 
 use subtle::ConstantTimeEq;
 
-use crate::crypto::{self, Crypto};
+use crate::crypto::{self, Crypto, Digest, Hkdf, Pbkdf2Hmac};
 use crate::error::{Error, ErrorCode};
 use crate::sc::crypto::CryptoSpake2;
 use crate::sc::SCStatusCodes;
@@ -64,17 +64,17 @@ pub enum Spake2Mode {
 }
 
 #[allow(non_snake_case)]
-pub struct Spake2P<'a, C: Crypto + 'a> {
+pub struct Spake2P<'a, C: Crypto> {
     mode: Spake2Mode,
     pub(crate) crypto: &'a C,
     context: Option<C::Sha256<'a>>,
-    spake2: Option<C::Spake2<'a>>,
+    spake2: Option<CryptoSpake2<'a, C>>,
     Ke: [u8; 16],
     cA: [u8; 32],
     app_data: u32,
 }
 
-impl<'a, C: Crypto + 'a> Spake2P<'a, C> {
+impl<'a, C: Crypto> Spake2P<'a, C> {
     pub const fn new(crypto: &'a C) -> Self {
         Self {
             mode: Spake2Mode::Unknown,
@@ -110,13 +110,15 @@ impl<'a, C: Crypto + 'a> Spake2P<'a, C> {
 
     pub fn set_context(&mut self) -> Result<(), Error> {
         let mut context = self.crypto.sha256()?;
-        context.update(SPAKE2P_CONTEXT_PREFIX)?;
+        context.update(SPAKE2P_CONTEXT_PREFIX);
         self.context = Some(context);
         Ok(())
     }
 
     pub fn update_context(&mut self, buf: &[u8]) -> Result<(), Error> {
-        unwrap!(self.context.as_mut()).update(buf)
+        unwrap!(self.context.as_mut()).update(buf);
+
+        Ok(())
     }
 
     fn get_w0w1s(&self, pw: u32, iter: u32, salt: &[u8], w0w1s: &mut [u8]) {
@@ -129,7 +131,7 @@ impl<'a, C: Crypto + 'a> Spake2P<'a, C> {
     }
 
     pub(crate) fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
-        self.spake2 = Some(self.crypto.spake2()?);
+        self.spake2 = Some(CryptoSpake2::new(self.crypto)?);
         if let Some(pw) = verifier.password {
             // Derive w0 and L from the password
             let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
@@ -226,6 +228,7 @@ impl<'a, C: Crypto + 'a> Spake2P<'a, C> {
         let mut KcAKcB: [u8; 32] = [0; 32];
         self.crypto
             .hkdf_sha256()
+            .unwrap()
             .expand(&[], Ka, SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
             .map_err(|_x| ErrorCode::InvalidData)?;
 

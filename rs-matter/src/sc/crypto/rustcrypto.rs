@@ -15,19 +15,8 @@
  *    limitations under the License.
  */
 
-#![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
-
-use crypto_bigint::NonZero;
-use crypto_bigint::U384;
-use elliptic_curve::ops::*;
-use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use elliptic_curve::Field;
-use elliptic_curve::PrimeField;
-use sha2::Digest;
-
-use crate::crypto::RandRngCore;
+use crate::crypto::{Crypto, CurvePoint, Digest, Scalar, UInt};
 use crate::error::Error;
-use crate::utils::rand::Rand;
 
 const MATTER_M_BIN: [u8; 65] = [
     0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
@@ -45,38 +34,38 @@ const MATTER_N_BIN: [u8; 65] = [
 ];
 
 #[allow(non_snake_case)]
-pub struct CryptoSpake2 {
-    xy: p256::Scalar,
-    w0: p256::Scalar,
-    w1: p256::Scalar,
-    M: p256::EncodedPoint,
-    N: p256::EncodedPoint,
-    L: p256::EncodedPoint,
-    pB: p256::EncodedPoint,
+pub struct CryptoSpake2<'a, C: Crypto> {
+    crypto: &'a C,
+    xy: Option<C::Secp256r1Scalar<'a>>,
+    w0: Option<C::Secp256r1Scalar<'a>>,
+    w1: Option<C::Secp256r1Scalar<'a>>,
+    M: C::Secp256r1Point<'a>,
+    N: C::Secp256r1Point<'a>,
+    L: Option<C::Secp256r1Point<'a>>,
+    pB: Option<C::Secp256r1Point<'a>>,
 }
 
-impl CryptoSpake2 {
+impl<'a, C: Crypto> CryptoSpake2<'a, C> {
     #[allow(non_snake_case)]
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(crypto: &'a C) -> Result<Self, Error> {
         let M = unwrap!(
-            p256::EncodedPoint::from_bytes(MATTER_M_BIN),
+            crypto.secpp256r1_point(&MATTER_M_BIN),
             "Failed to create M from bytes"
         );
         let N = unwrap!(
-            p256::EncodedPoint::from_bytes(MATTER_N_BIN),
+            crypto.secpp256r1_point(&MATTER_N_BIN),
             "Failed to create N from bytes"
         );
-        let L = p256::EncodedPoint::default();
-        let pB = p256::EncodedPoint::default();
 
         Ok(Self {
-            xy: p256::Scalar::ZERO,
-            w0: p256::Scalar::ZERO,
-            w1: p256::Scalar::ZERO,
+            crypto,
+            xy: None,
+            w0: None,
+            w1: None,
             M,
             N,
-            L,
-            pB,
+            L: None,
+            pB: None,
         })
     }
 
@@ -92,20 +81,15 @@ impl CryptoSpake2 {
         ];
         let mut expanded = [0u8; 384 / 8];
         expanded[16..].copy_from_slice(&operand);
-        let big_operand = NonZero::new(U384::from_be_slice(&expanded)).unwrap();
+        let big_operand = self.crypto.uint384(&expanded).unwrap();
         let mut expanded = [0u8; 384 / 8];
         expanded[8..].copy_from_slice(w0s);
-        let big_w0 = U384::from_be_slice(&expanded);
-        let w0_res = big_w0.rem(&big_operand);
-        let mut w0_out = [0u8; 32];
-        w0_out.copy_from_slice(&w0_res.to_be_bytes()[16..]);
-
-        let w0s = p256::Scalar::from_repr(
-            *elliptic_curve::generic_array::GenericArray::from_slice(&w0_out),
-        )
-        .unwrap();
+        let big_w0 = self.crypto.uint384(&expanded).unwrap();
+        let w0 = big_w0.rem(&big_operand);
+        let mut w0d = [0; 48];
+        big_w0.dehydrate(&mut w0d).unwrap();
         // Scalar is module the curve's order by definition, no further op needed
-        self.w0 = w0s;
+        self.w0 = Some(self.crypto.secp256r1_scalar(&w0d[16..]).unwrap());
 
         Ok(())
     }
@@ -121,42 +105,34 @@ impl CryptoSpake2 {
         ];
         let mut expanded = [0u8; 384 / 8];
         expanded[16..].copy_from_slice(&operand);
-        let big_operand = NonZero::new(U384::from_be_slice(&expanded)).unwrap();
+        let big_operand = self.crypto.uint384(&expanded).unwrap();
         let mut expanded = [0u8; 384 / 8];
         expanded[8..].copy_from_slice(w1s);
-        let big_w1 = U384::from_be_slice(&expanded);
-        let w1_res = big_w1.rem(&big_operand);
-        let mut w1_out = [0u8; 32];
-        w1_out.copy_from_slice(&w1_res.to_be_bytes()[16..]);
+        let big_w1 = self.crypto.uint384(&expanded).unwrap();
+        let w1 = big_w1.rem(&big_operand);
+        let mut w1d = [0; 48];
+        big_w1.dehydrate(&mut w1d).unwrap();
 
-        let w1s = p256::Scalar::from_repr(
-            *elliptic_curve::generic_array::GenericArray::from_slice(&w1_out),
-        )
-        .unwrap();
         // Scalar is module the curve's order by definition, no further op needed
-        self.w1 = w1s;
+        self.w1 = Some(self.crypto.secp256r1_scalar(&w1d[16..]).unwrap());
 
         Ok(())
     }
 
-    pub fn set_w0(&mut self, w0: &[u8]) -> Result<(), Error> {
-        self.w0 =
-            p256::Scalar::from_repr(*elliptic_curve::generic_array::GenericArray::from_slice(w0))
-                .unwrap();
+    pub(crate) fn set_w0(&mut self, w0: &[u8; 32]) -> Result<(), Error> {
+        self.w0 = Some(self.crypto.secp256r1_scalar(w0).unwrap());
         Ok(())
     }
 
-    pub fn set_w1(&mut self, w1: &[u8]) -> Result<(), Error> {
-        self.w1 =
-            p256::Scalar::from_repr(*elliptic_curve::generic_array::GenericArray::from_slice(w1))
-                .unwrap();
+    pub(crate) fn set_w1(&mut self, w1: &[u8; 32]) -> Result<(), Error> {
+        self.w1 = Some(self.crypto.secp256r1_scalar(w1).unwrap());
         Ok(())
     }
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     pub fn set_L(&mut self, l: &[u8]) -> Result<(), Error> {
-        self.L = p256::EncodedPoint::from_bytes(l)?;
+        self.L = Some(self.crypto.secpp256r1_point(l).unwrap());
         Ok(())
     }
 
@@ -166,25 +142,33 @@ impl CryptoSpake2 {
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
         self.set_w1_from_w1s(w1s)?;
-        self.L = (p256::AffinePoint::GENERATOR * self.w1).to_encoded_point(false);
+        self.L = Some(
+            self.crypto
+                .secpp256r1_generator()
+                .unwrap()
+                .mul(self.w1.as_ref().unwrap()),
+        );
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    pub fn get_pB(&mut self, pB: &mut [u8], rand: Rand) -> Result<(), Error> {
+    pub fn get_pB(&mut self, pB: &mut [u8]) -> Result<(), Error> {
         // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
         //   for y
         //   - select random y between 0 to p
         //   - Y = y*P + w0*N
         //   - pB = Y
-        let mut rand = RandRngCore(rand);
-        self.xy = p256::Scalar::random(&mut rand);
+        let xy = self.crypto.secp256r1_scalar_random().unwrap();
 
-        let P = p256::AffinePoint::GENERATOR;
-        let N = p256::AffinePoint::from_encoded_point(&self.N).unwrap();
-        self.pB = Self::do_add_mul(P, self.xy, N, self.w0)?;
-        let pB_internal = self.pB.as_bytes();
-        pB.copy_from_slice(pB_internal);
+        let a = self.crypto.secpp256r1_generator().unwrap().mul(&xy);
+        let b = self.N.mul(self.w0.as_ref().unwrap());
+
+        let pb = a.add(&b);
+
+        pb.dehydrate(pB).unwrap();
+
+        self.xy = Some(xy);
+        self.pB = Some(pb);
 
         Ok(())
     }
@@ -197,7 +181,8 @@ impl CryptoSpake2 {
         pB: &[u8],
         out: &mut [u8],
     ) -> Result<(), Error> {
-        let mut TT = sha2::Sha256::new();
+        let mut TT = self.crypto.sha256().unwrap();
+
         // Context
         Self::add_to_tt(&mut TT, context)?;
         // 2 empty identifiers
@@ -212,11 +197,14 @@ impl CryptoSpake2 {
         // Y = pB
         Self::add_to_tt(&mut TT, pB)?;
 
-        let X = p256::EncodedPoint::from_bytes(pA)?;
-        let X = p256::AffinePoint::from_encoded_point(&X).unwrap();
-        let L = p256::AffinePoint::from_encoded_point(&self.L).unwrap();
-        let M = p256::AffinePoint::from_encoded_point(&self.M).unwrap();
-        let (Z, V) = Self::get_ZV_as_verifier(self.w0, L, M, X, self.xy)?;
+        let X = self.crypto.secpp256r1_point(pA)?;
+        let (Z, V) = Self::get_ZV_as_verifier(
+            self.w0.as_ref().unwrap(),
+            self.L.as_ref().unwrap(),
+            self.M.as_ref().unwrap(),
+            &X,
+            self.xy.as_ref().unwrap(),
+        )?;
 
         // Z
         Self::add_to_tt(&mut TT, Z.as_bytes())?;
@@ -231,34 +219,34 @@ impl CryptoSpake2 {
         Ok(())
     }
 
-    fn add_to_tt(tt: &mut sha2::Sha256, buf: &[u8]) -> Result<(), Error> {
-        tt.update((buf.len() as u64).to_le_bytes());
+    fn add_to_tt(tt: &mut C::Sha256<'_>, buf: &[u8]) -> Result<(), Error> {
+        tt.update(&(buf.len() as u64).to_le_bytes());
         if !buf.is_empty() {
             tt.update(buf);
         }
         Ok(())
     }
 
-    #[inline(always)]
-    fn do_add_mul(
-        a: p256::AffinePoint,
-        b: p256::Scalar,
-        c: p256::AffinePoint,
-        d: p256::Scalar,
-    ) -> Result<p256::EncodedPoint, Error> {
-        Ok(((a * b) + (c * d)).to_encoded_point(false))
-    }
+    // #[inline(always)]
+    // fn do_add_mul(
+    //     a: p256::AffinePoint,
+    //     b: p256::Scalar,
+    //     c: p256::AffinePoint,
+    //     d: p256::Scalar,
+    // ) -> Result<p256::EncodedPoint, Error> {
+    //     Ok(((a * b) + (c * d)).to_encoded_point(false))
+    // }
 
     #[inline(always)]
     #[allow(non_snake_case)]
     #[allow(dead_code)]
-    fn get_ZV_as_prover(
-        w0: p256::Scalar,
-        w1: p256::Scalar,
-        N: p256::AffinePoint,
-        Y: p256::AffinePoint,
-        x: p256::Scalar,
-    ) -> Result<(p256::EncodedPoint, p256::EncodedPoint), Error> {
+    fn get_ZV_as_prover<'t>(
+        w0: &C::Secp256r1Scalar<'t>,
+        w1: &C::Secp256r1Scalar<'t>,
+        N: &C::Secp256r1Point<'t>,
+        Y: &C::Secp256r1Point<'t>,
+        x: &C::Secp256r1Scalar<'t>,
+    ) -> Result<(C::Secp256r1Point<'t>, C::Secp256r1Point<'t>), Error> {
         // As per the RFC, the operation here is:
         //   Z = h*x*(Y - w0*N)
         //   V = h*w1*(Y - w0*N)
@@ -270,26 +258,33 @@ impl CryptoSpake2 {
         //    Z = x*Y + tmp*N (N is inverted to get the 'negative' effect)
         //    Z = h*Z (cofactor Mul)
 
-        let mut tmp = x * w0;
+        let tmp = x.mul(w0);
         let N_neg = N.neg();
-        let Z = Self::do_add_mul(Y, x, N_neg, tmp)?;
+
+        let a = Y.mul(x);
+        let b = N_neg.mul(&tmp);
+
+        let Z = a.add(&b);
         // Cofactor for P256 is 1, so that is a No-Op
 
-        tmp = w1 * w0;
-        let V = Self::do_add_mul(Y, w1, N_neg, tmp)?;
+        let tmp = w1.mul(w0);
+        let a = Y.mul(w1);
+        let b = N_neg.mul(&tmp);
+
+        let V = a.add(&b);
         Ok((Z, V))
     }
 
     #[inline(always)]
     #[allow(non_snake_case)]
     #[allow(dead_code)]
-    fn get_ZV_as_verifier(
-        w0: p256::Scalar,
-        L: p256::AffinePoint,
-        M: p256::AffinePoint,
-        X: p256::AffinePoint,
-        y: p256::Scalar,
-    ) -> Result<(p256::EncodedPoint, p256::EncodedPoint), Error> {
+    fn get_ZV_as_verifier<'t>(
+        w0: &C::Secp256r1Scalar<'t>,
+        L: &C::Secp256r1Point<'t>,
+        M: &C::Secp256r1Point<'t>,
+        X: &C::Secp256r1Point<'t>,
+        y: &C::Secp256r1Scalar<'t>,
+    ) -> Result<(C::Secp256r1Point<'t>, C::Secp256r1Point<'t>), Error> {
         // As per the RFC, the operation here is:
         //   Z = h*y*(X - w0*M)
         //   V = h*y*L
@@ -301,11 +296,14 @@ impl CryptoSpake2 {
         //    Z = y*X + tmp*M (M is inverted to get the 'negative' effect)
         //    Z = h*Z (cofactor Mul)
 
-        let tmp = y * w0;
+        let tmp = y.mul(w0);
         let M_neg = M.neg();
-        let Z = Self::do_add_mul(X, y, M_neg, tmp)?;
+        let a = X.mul(y);
+        let b = M_neg.mul(&tmp);
+
+        let Z = a.add(&b);
         // Cofactor for P256 is 1, so that is a No-Op
-        let V = (L * y).to_encoded_point(false);
+        let V = L.mul(y);
         Ok((Z, V))
     }
 }

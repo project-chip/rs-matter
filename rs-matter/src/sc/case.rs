@@ -131,7 +131,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         write_buf.append(&tag)?;
         let cipher_text = write_buf.as_mut_slice();
 
-        let mut cypher = self.crypto.aead_aes_ccm_16_64_128(&sigma2_key)?;
+        let mut cypher = self.crypto.aes_ccm_16_64_128(&sigma2_key)?;
 
         cypher.encrypt_in_place(&nonce, &[], cipher_text, cipher_text.len() - TAG_LEN)?;
         Ok(write_buf.as_slice().len())
@@ -345,7 +345,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
 
         let encrypted_len = encrypted.len();
 
-        let mut cypher = self.crypto.aead_aes_ccm_16_64_128(&sigma3_key)?;
+        let mut cypher = self.crypto.aes_ccm_16_64_128(&sigma3_key)?;
 
         cypher.decrypt_in_place(&nonce, &[], encrypted)?;
         Ok(encrypted_len - crypto::AEAD_MIC_LEN_BYTES)
