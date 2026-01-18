@@ -426,7 +426,7 @@ where
                 .subscriptions
                 .next_action_time()
                 .map(|next| next.saturating_duration_since(now))
-                .unwrap_or(embassy_time::Duration::from_secs(10)); // Sleep longer if no subscriptions
+                .unwrap_or(embassy_time::Duration::MAX); // No subscriptions present: sleep indefinitely until explicitly notified.
 
             let mut timeout = pin!(Timer::after(duration));
             let mut notification = pin!(self.subscriptions.notification.wait());

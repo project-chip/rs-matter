@@ -206,6 +206,7 @@ where
                 .ok()
         });
 
+        // Wake up the process_subscriptions loop after adding a new subscription.
         if id.is_some() {
             self.notification.notify();
         }
