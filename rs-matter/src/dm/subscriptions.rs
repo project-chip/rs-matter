@@ -62,6 +62,17 @@ impl Subscription {
         self.expired(self.max_int_secs, now)
     }
 
+    pub fn next_action_time(&self, _now: Instant) -> Option<Instant> {
+        let deadline_secs = if self.changed {
+            self.min_int_secs
+        } else {
+            self.min_int_secs.max(self.max_int_secs / 2)
+        };
+
+        self.reported_at
+            .checked_add(embassy_time::Duration::from_secs(deadline_secs as _))
+    }
+
     fn expired(&self, secs: u16, now: Instant) -> bool {
         self.reported_at
             .checked_add(embassy_time::Duration::from_secs(secs as _))
@@ -155,6 +166,17 @@ where
         self.notification.notify();
     }
 
+    pub fn next_action_time(&self, now: Instant) -> Option<Instant> {
+        self.state.lock(|internal| {
+            internal
+                .borrow_mut()
+                .subscriptions
+                .iter()
+                .filter_map(|sub| sub.next_action_time(now))
+                .min()
+        })
+    }
+
     pub(crate) fn add(
         &self,
         fabric_idx: NonZeroU8,
@@ -163,7 +185,7 @@ where
         min_int_secs: u16,
         max_int_secs: u16,
     ) -> Option<u32> {
-        self.state.lock(|internal| {
+        let id = self.state.lock(|internal| {
             let mut state = internal.borrow_mut();
             let id = state.next_subscription_id;
             state.next_subscription_id += 1;
@@ -182,7 +204,13 @@ where
                 })
                 .map(|_| id)
                 .ok()
-        })
+        });
+
+        if id.is_some() {
+            self.notification.notify();
+        }
+
+        id
     }
 
     /// Mark the subscription with the given ID as reported.

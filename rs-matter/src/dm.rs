@@ -421,8 +421,20 @@ where
     /// and reporting them to the peers.
     pub async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
-            // TODO: Un-hardcode these 4 seconds of waiting when the more precise change detection logic is implemented
-            let mut timeout = pin!(Timer::after(embassy_time::Duration::from_secs(4)));
+            let now = Instant::now();
+            let duration = self
+                .subscriptions
+                .next_action_time(now)
+                .map(|next| {
+                    if next > now {
+                        next - now
+                    } else {
+                        embassy_time::Duration::from_ticks(0)
+                    }
+                })
+                .unwrap_or(embassy_time::Duration::from_secs(10)); // Sleep longer if no subscriptions
+
+            let mut timeout = pin!(Timer::after(duration));
             let mut notification = pin!(self.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.transport_mgr.session_removed.wait());
 
