@@ -422,18 +422,15 @@ where
     pub async fn process_subscriptions(&self, matter: &Matter<'_>) -> Result<(), Error> {
         loop {
             let now = Instant::now();
-            let duration = self
-                .subscriptions
-                .next_action_time()
-                .map(|next| next.saturating_duration_since(now))
-                .unwrap_or(embassy_time::Duration::MAX); // No subscriptions present: sleep indefinitely until explicitly notified.
-
-            let mut timeout = pin!(Timer::after(duration));
+            let mut timeout = pin!(async {
+                match self.subscriptions.next_action_time() {
+                    Some(next) => Timer::after(next.saturating_duration_since(now)).await,
+                    None => core::future::pending().await,  // No subscriptions present: sleep indefinitely until explicitly notified.
+                }
+            });
             let mut notification = pin!(self.subscriptions.notification.wait());
             let mut session_removed = pin!(matter.transport_mgr.session_removed.wait());
-
             select3(&mut notification, &mut timeout, &mut session_removed).await;
-
             while let Some((fabric_idx, peer_node_id, session_id, id)) =
                 self.subscriptions.find_removed_session(|session_id| {
                     matter
