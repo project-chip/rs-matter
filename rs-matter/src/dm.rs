@@ -425,7 +425,7 @@ where
             let mut timeout = pin!(async {
                 match self.subscriptions.next_action_time() {
                     Some(next) => Timer::after(next.saturating_duration_since(now)).await,
-                    None => core::future::pending().await,  // No subscriptions present: sleep indefinitely until explicitly notified.
+                    None => core::future::pending().await, // No subscriptions present: sleep indefinitely until explicitly notified.
                 }
             });
             let mut notification = pin!(self.subscriptions.notification.wait());
