@@ -23,27 +23,22 @@ use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use tokio::io::BufStream;
 
 use crate::im::EventData;
 
-pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 16; // TODO(events) what to set this to?
+pub const DEFAULT_BYTES_PER_BUF: usize = 16; // TODO(events) what to set this to?
 
 /// A type alias for `Events` with the default maximum number of subscriptions.
-/// TODO(events) the lifetime here is because the queued events have TLV data entries.. not sure if there's a way around this?
-pub type DefaultEvents = Events<'static, DEFAULT_MAX_QUEUED_EVENTS>;
+pub type DefaultEvents = Events<DEFAULT_BYTES_PER_BUF>;
 
-// TODO(events): This would be approximately analogue to Subscriptions, except for the event queue,
-// But there are multiple open questions, like how to iterate over the queue while ensuring the iteratee
-// doesn't go off an do something like a network write while we're holding a lock
-pub struct Events<'a, const N: usize = DEFAULT_MAX_QUEUED_EVENTS, M = NoopRawMutex>
+pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
 where
     M: RawMutex,
 {
-    state: Mutex<M, RefCell<EventQueue<'a, N>>>,
+    state: Mutex<M, RefCell<EventQueue<N>>>,
 }
 
-impl<'a, const N: usize, M> Events<'a, N, M>
+impl<const N: usize, M> Events<N, M>
 where
     M: RawMutex,
 {
@@ -58,180 +53,60 @@ where
     // I guess to allow creating these heavy structures and avoid having them be moved? We likely
     // want that here too, I would assume.
 
-    pub fn push(&self, payload: EventData<'a>) {
+    pub fn push(&self, path: EventPath, priority: u8, mut data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>) -> Result<(), Error> {
         self.state
-            .lock(|internal| internal.borrow_mut().push(payload));
+            .lock(|internal| {
+                let mut q = internal.borrow_mut();
+                let event_no = q.next_event_no;
+                q.next_event_no += 1;
+                // TODO(events): actual timestamps
+                let timestamp = EventDataTimestamp::SystemTimestamp(0);
+                let mut tw = q
+                    .push(path, event_no, priority, timestamp)?;
+                data(&mut tw)
+            })
     }
 
     // Iterate over each entry in the queue, aborts if f returns Err
-    pub fn for_each<E>(&self, f: impl FnMut(&EventData<'a>) -> Result<(), E>) -> Result<(), E> {
-        self.state.lock(|internal| internal.borrow().for_each(f))
+    pub fn for_each<'a, F>(&'a self, mut f: F) -> Result<(), Error> 
+    where
+        F: FnMut(&EventData<'_>) -> Result<(), Error>
+    {
+        self.state.lock(|internal| {
+            let q = internal.borrow();
+            for entry in q.iter() {
+                let entry = entry?;
+                f(&entry)?;
+            }
+            Ok(())
+        })
     }
 }
 
-pub type EventEntryIdx = u8;
 
-#[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct EventEntry<'a> {
-    event: Option<EventData<'a>>,
-    next: Option<EventEntryIdx>,
-}
-
-// This implements the per-node bounded priority queue that stores generated events
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct EventQueue<'a, const N: usize> {
-    // Ordered list of events, most recent first
-    head: Option<EventEntryIdx>,
-    // Free-list, if there are any unused entries
-    free: Option<EventEntryIdx>,
-    // Event number sequencer
+
+struct EventQueue<const N: usize> {
+    // TODO(events): Allow per-ring const generics
+    buf_debug: TLVRingBuf<N>,
+    buf_info: TLVRingBuf<N>,
+    buf_critical: TLVRingBuf<N>,
     next_event_no: u64,
-    // All event entry structs, free and in use
-    pool: [EventEntry<'a>; N],
 }
 
-// TODO(events): This obviously needs extensive testing
-// TODO(events): What are the concurrency semantics / rules in rs-matter, do we assume single thread?
-impl<'a, const N: usize> EventQueue<'a, N> {
-    pub const fn new() -> Self {
-        // Create the pool of event entries and link them up to each other into a free-list
-        let mut pool = [const {
-            EventEntry {
-                event: None,
-                next: None,
-            }
-        }; N];
-
-        let mut i = 0;
-        while i < N - 1 {
-            pool[i].next = Some(i as u8 + 1);
-            i += 1;
-        }
-
-        Self {
-            head: None,
-            free: Some(0),
-            next_event_no: 0,
-            pool,
-        }
-    }
-
-    pub fn push(&mut self, mut payload: EventData<'a>) {
-        // First we assign a new event number to the event. We do this even though we are not sure
-        // we can fit this event in the queue yet, creating gaps for consumers to detect missing events
-        // TODO(events): I think above semantics is the right interpretation of the spec, but verify
-        payload.event_number = self.next_event_no;
-        self.next_event_no += 1;
-
-        // Attempt to obtain an entry record to store this event in
-        let entry_idx = if let Some(idx) = self.free {
-            // There were entries on the free list, take from there
-            self.free = self.pool[idx as usize].next;
-            idx
-        } else {
-            // Queue is full: Attempt to evict a same-or-lower prio event
-            match self.evict_one(payload.priority) {
-                Some(victim) => victim,
-                None => {
-                    // TODO(events): logging here?
-                    // There are no equal-or-lower priority events we could evict, drop the event
-                    return;
-                }
-            }
-        };
-
-        // Fill the entry and insert it at the head of the queue
-        self.pool[entry_idx as usize] = EventEntry {
-            event: Some(payload),
-            next: self.head, // New entry points to old head
-        };
-        self.head = Some(entry_idx);
-    }
-
-    /// Evicts one entry in the active queue, if one can be found that meets the eviction rules of the spec
-    /// This is used to insert a new entry, max_prio should be the priority of the event you want to insert.
-    fn evict_one(&mut self, max_prio: u8) -> Option<EventEntryIdx> {
-        let mut prev_idx = None;
-        let mut curr_idx = self.head;
-
-        let mut lowest_prio_val: u8 = 0;
-        let mut lowest_idx = None;
-        let mut lowest_prev_idx = None;
-
-        // Traverse the active list to find the next eviction target
-        while let Some(idx) = curr_idx {
-            let entry = &self.pool[idx as usize];
-
-            if let Some(event) = &entry.event {
-                // See 7.14.2 in the spec for this rule
-                if event.priority >= max_prio
-                    && (lowest_idx.is_none() || event.priority >= lowest_prio_val)
-                {
-                    lowest_prio_val = event.priority;
-                    lowest_idx = Some(idx);
-                    lowest_prev_idx = prev_idx;
-                }
-            }
-
-            prev_idx = curr_idx;
-            curr_idx = entry.next;
-        }
-
-        match (lowest_prev_idx, lowest_idx) {
-            (_, None) => None,
-            (Some(victim_prev_idx), Some(victim_idx)) => {
-                // Victim is in middle of linked list, update the prior entry
-                self.pool[victim_prev_idx as usize].next = self.pool[victim_idx as usize].next;
-                Some(victim_idx)
-            }
-            (None, Some(victim_idx)) => {
-                // Victim is at HEAD, update HEAD
-                self.head = self.pool[victim_idx as usize].next;
-                Some(victim_idx)
-            }
-        }
-    }
-
-    fn for_each<E>(&self, mut f: impl FnMut(&EventData<'a>) -> Result<(), E>) -> Result<(), E> {
-        let mut curr = self.head;
-        loop {
-            if let Some(idx) = curr {
-                let entry = &self.pool[idx as usize];
-                curr = entry.next;
-                // TODO(events): Getting None here is a programming error, it means we have an entry in the queue
-                //               that didn't get it's event field populated; what do? Log at least?
-                if let Some(event) = &entry.event {
-                    f(event)?
-                }
-            } else {
-                return Ok(());
-            }
-        }
-    }
-}
-
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-
-struct EventQueue2 {
-    buf_debug: TLVRingBuf,
-    buf_info: TLVRingBuf,
-    buf_critical: TLVRingBuf,
-}
-
-impl EventQueue2 {
-    fn new() -> Self {
+impl<const N: usize> EventQueue<N> {
+    const fn new() -> Self {
         Self {
             buf_debug: TLVRingBuf::new(),
             buf_info: TLVRingBuf::new(),
             buf_critical: TLVRingBuf::new(),
+            // TODO(events): This needs persistence
+            next_event_no: 0,
         }
     }
 
-    pub fn push<'a>(&'a mut self, path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp) -> Result<EventQueueWriter<'a>, Error> {
+    pub fn push<'a>(&'a mut self, path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp) -> Result<EventQueueWriter<'a, N>, Error> {
         let mut tw = EventQueueWriter::new(self, BufLevel::Debug);
         tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
         path
@@ -264,75 +139,72 @@ impl EventQueue2 {
     }
 
 
-    fn iter<'a>(&'a self) -> EventQueueIter<'a> {
+    fn iter<'a>(&'a self) -> EventQueueIter<'a, N> {
         EventQueueIter{ queue: self, buf_ref: BufLevel::Critical, buf_iter: self.buf_critical.iter() }
     }
 
 }
 
-struct EventQueueIter<'a> {
-    queue: &'a EventQueue2,
-    buf_ref: BufLevel,
-    buf_iter: TLVRingBufIter<'a>,
+struct EventQueueIter<'a, const N: usize> {
+    queue: &'a EventQueue<N>,
+    buf_ref: BufLevel<N>,
+    buf_iter: TLVRingBufIter<'a, N>,
 }
 
-impl<'a> EventQueueIter<'a> {
-
-    fn parse_event(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
-        let mut path = None;
-        let mut event_number = None;
-        let mut priority = None;
-        let mut timestamp = None;
-        let mut data = None;
-
-        tr.structure()?.scan_map(|elem| {
-            if elem.is_empty() {
-                return Ok(Some(elem));
-            }
-            
-            match EventDataTag::try_from(elem.ctx()?) {
-                Ok(EventDataTag::Path) => path = Some(EventPath::from_tlv(&elem)?),
-                Ok(EventDataTag::EventNumber) => event_number = Some(elem.u64()?),
-                Ok(EventDataTag::Priority) => priority = Some(elem.u8()?),
-                Ok(EventDataTag::SystemTimestamp) => timestamp = Some(EventDataTimestamp::SystemTimestamp(elem.u64()?)),
-                Ok(EventDataTag::EpochTimestamp) => timestamp = Some(EventDataTimestamp::EpochTimestamp(elem.u64()?)),
-                Ok(EventDataTag::DeltaSystemTimestamp) => timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(elem.u64()?)),
-                Ok(EventDataTag::DeltaEpochTimestamp) => timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(elem.u64()?)),
-                Ok(EventDataTag::Data) => data = Some(elem.clone()),
-                Err(_) => todo!(),
-            }
-            Ok(None)
-        })?;
-        
-        Ok(EventData::new(
-            path.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-            event_number.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-            priority.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-            timestamp.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-            data.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-        ))
-    }
-}
-
-impl<'a> Iterator for EventQueueIter<'a> {
+impl<'a, const N: usize> Iterator for EventQueueIter<'a, N> {
     type Item = Result<EventData<'a>, Error>;
     
     fn next(&mut self) -> Option<Self::Item> {
         match self.buf_iter.next() {
             None => None,
             Some(Err(e)) => Some(Err(e)),
-            Some(Ok(tr)) => Some(EventQueueIter::parse_event(tr)),
+            Some(Ok(tr)) => Some(parse_event(tr)),
         }
     }
 }
 
-struct EventQueueWriter<'a> {
-    queue: &'a mut EventQueue2,
-    buf_ref: BufLevel,
+fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
+    let mut path = None;
+    let mut event_number = None;
+    let mut priority = None;
+    let mut timestamp = None;
+    let mut data = None;
+
+    tr.structure()?.scan_map(|elem| {
+        if elem.is_empty() {
+            return Ok(Some(elem));
+        }
+        
+        match EventDataTag::try_from(elem.ctx()?) {
+            Ok(EventDataTag::Path) => path = Some(EventPath::from_tlv(&elem)?),
+            Ok(EventDataTag::EventNumber) => event_number = Some(elem.u64()?),
+            Ok(EventDataTag::Priority) => priority = Some(elem.u8()?),
+            Ok(EventDataTag::SystemTimestamp) => timestamp = Some(EventDataTimestamp::SystemTimestamp(elem.u64()?)),
+            Ok(EventDataTag::EpochTimestamp) => timestamp = Some(EventDataTimestamp::EpochTimestamp(elem.u64()?)),
+            Ok(EventDataTag::DeltaSystemTimestamp) => timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(elem.u64()?)),
+            Ok(EventDataTag::DeltaEpochTimestamp) => timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(elem.u64()?)),
+            Ok(EventDataTag::Data) => data = Some(elem.clone()),
+            Err(_) => todo!(),
+        }
+        Ok(None)
+    })?;
+    
+    Ok(EventData::new(
+        path.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
+        event_number.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
+        priority.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
+        timestamp.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
+        data.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
+    ))
 }
 
-impl<'a> EventQueueWriter<'a> {
-    fn new(queue: &'a mut EventQueue2, buf_ref: BufLevel) -> Self {
+pub struct EventQueueWriter<'a, const N: usize> {
+    queue: &'a mut EventQueue<N>,
+    buf_ref: BufLevel<N>,
+}
+
+impl<'a, const N: usize> EventQueueWriter<'a, N> {
+    fn new(queue: &'a mut EventQueue<N>, buf_ref: BufLevel<N>) -> Self {
         Self { queue, buf_ref }
     }
 
@@ -345,7 +217,7 @@ impl<'a> EventQueueWriter<'a> {
     // it meets the priority threshold. If promotion happens the eviction "cascades", until
     // we either evict an event that doesn't meet the next buffers prio level or we run out of
     // ring buffers and drop the oldest critical event.
-    fn evict(&mut self, buf_ref: BufLevel) -> Result<(), Error> {
+    fn evict(&mut self, buf_ref: BufLevel<N>) -> Result<(), Error> {
         let (victim_prio, victim_ref) = self.prepare_eviction(buf_ref.get(self.queue))?;
         
         if let Some(next_buf_ref) = buf_ref.next_level() {
@@ -359,13 +231,13 @@ impl<'a> EventQueueWriter<'a> {
         Ok(())
     }
 
-    fn prepare_eviction(&self, buf: &TLVRingBuf) -> Result<(u8, VictimRef), Error> {
+    fn prepare_eviction(&self, buf: &TLVRingBuf<N>) -> Result<(u8, VictimRef), Error> {
         let victim_ref = buf.prepare_eviction()?;
         let priority = victim_ref.tlv(buf).structure()?.find_ctx(EventDataTag::Priority as _)?.u8()?;
         Ok((priority, victim_ref))
     }
 
-    fn promote(&mut self, src_buf: BufLevel, dst_buf: BufLevel, victim_ref: VictimRef) -> Result<(), Error> {
+    fn promote(&mut self, src_buf: BufLevel<N>, dst_buf: BufLevel<N>, victim_ref: VictimRef) -> Result<(), Error> {
         // Make space
         while dst_buf.get(self.queue).capacity() < victim_ref.len() {
             self.evict(dst_buf)?;
@@ -382,7 +254,7 @@ impl<'a> EventQueueWriter<'a> {
     }
 }
 
-impl<'a> TLVWrite for EventQueueWriter<'a> {
+impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
@@ -401,18 +273,18 @@ impl<'a> TLVWrite for EventQueueWriter<'a> {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct TLVRingBuf {
-    data: [u8; 64],
+struct TLVRingBuf<const N: usize> {
+    data: [u8; N],
     head: usize,
     // n.b. there is no tail. We don't have a way to read streaming TLVs, so we can't have a TLV "wrap around" at the end
     // and continue at the start of data. Instead, tail is always zero, and whenever we evict we left-shift the entire buffer
     // see evict.
 }
 
-impl TLVRingBuf {
-    fn new() -> Self {
+impl<const N: usize> TLVRingBuf<N> {
+    const fn new() -> Self {
         Self {
-            data: [0; 64],
+            data: [0; N],
             head: 0,
         }
     }
@@ -459,7 +331,7 @@ impl TLVRingBuf {
         self.head -= victim.len();
     }
 
-    fn iter(&self) -> TLVRingBufIter<'_> {
+    fn iter(&self) -> TLVRingBufIter<'_, N> {
         TLVRingBufIter { buf: self, pos: 0 }
     }
 }
@@ -473,11 +345,11 @@ struct VictimRef {
 }
 
 impl VictimRef {
-    fn tlv<'a>(&'a self, buf: &'a TLVRingBuf) -> TLVElement<'a> {
+    fn tlv<'a, const N: usize>(&'a self, buf: &'a TLVRingBuf<N>) -> TLVElement<'a> {
         TLVElement::new(self.raw(buf))
     }
 
-    fn raw<'a>(&'a self, buf: &'a TLVRingBuf) -> &'a[u8] {
+    fn raw<'a, const N: usize>(&'a self, buf: &'a TLVRingBuf<N>) -> &'a[u8] {
         &buf.data[0..self.victim_len]
     }
 
@@ -489,12 +361,12 @@ impl VictimRef {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct TLVRingBufIter<'a> {
-    buf: &'a TLVRingBuf,
+struct TLVRingBufIter<'a, const N: usize> {
+    buf: &'a TLVRingBuf<N>,
     pos: usize,
 }
 
-impl<'a> Iterator for TLVRingBufIter<'a> {
+impl<'a, const N: usize> Iterator for TLVRingBufIter<'a, N> {
     type Item = Result<TLVElement<'a>, Error>;
     
     fn next(&mut self) -> Option<Self::Item> {
@@ -524,14 +396,14 @@ enum WriteOutcome {
 // This is how we handle the "levels" of buffers, using this reference we can access the current
 // level and get access to the next level, if there is one
 #[derive(PartialEq, Clone, Copy)]
-enum BufLevel {
+enum BufLevel<const N: usize> {
     Debug,
     Info,
     Critical
 }
 
-impl BufLevel {
-    fn from_prio_level(priority: u8) -> Result<BufLevel, Error> {
+impl<const N: usize> BufLevel<N> {
+    fn from_prio_level(priority: u8) -> Result<BufLevel<N>, Error> {
         // 7.19.2.17
         match priority {
             0 => Ok(BufLevel::Debug),
@@ -550,7 +422,7 @@ impl BufLevel {
         }
     }
 
-    fn get_mut<'a> (&self, queue: &'a mut EventQueue2) -> &'a mut TLVRingBuf {
+    fn get_mut<'a> (&self, queue: &'a mut EventQueue<N>) -> &'a mut TLVRingBuf<N> {
         match self {
             BufLevel::Debug => &mut queue.buf_debug,
             BufLevel::Info => &mut queue.buf_info,
@@ -558,7 +430,7 @@ impl BufLevel {
         }
     }
 
-    fn get<'a> (&self, queue: &'a EventQueue2) -> &'a TLVRingBuf {
+    fn get<'a> (&self, queue: &'a EventQueue<N>) -> &'a TLVRingBuf<N> {
         match self {
             BufLevel::Debug => &queue.buf_debug,
             BufLevel::Info => &queue.buf_info,
@@ -567,7 +439,7 @@ impl BufLevel {
     }
 
     /// Used during promotion, when we need both the src and dst buffers at the same time
-    fn get_mut_and_next<'a> (&self, queue: &'a mut EventQueue2) -> (&'a mut TLVRingBuf, Option<&'a mut TLVRingBuf>) {
+    fn get_mut_and_next<'a> (&self, queue: &'a mut EventQueue<N>) -> (&'a mut TLVRingBuf<N>, Option<&'a mut TLVRingBuf<N>>) {
         match self {
             BufLevel::Debug => (&mut queue.buf_debug, Some(&mut queue.buf_info)),
             BufLevel::Info => (&mut queue.buf_info, Some(&mut queue.buf_critical)),
@@ -575,7 +447,7 @@ impl BufLevel {
         }
     }
 
-    fn next_level(&self) -> Option<BufLevel> {
+    fn next_level(&self) -> Option<BufLevel<N>> {
         match self {
             BufLevel::Debug => Some(BufLevel::Info),
             BufLevel::Info => Some(BufLevel::Critical),
@@ -593,7 +465,7 @@ mod tests {
     #[test]
     fn one_entry() {
         let crit1 = TestEvent::new(1, 2);
-        let mut q = EventQueue2::new();
+        let mut q = EventQueue::new();
         
         crit1.push_into(&mut q).unwrap();
 
@@ -608,7 +480,7 @@ mod tests {
         let crit1 = TestEvent::new(1, 2);
         let crit2 = TestEvent::new(2, 2);
         let crit3 = TestEvent::new(3, 2);
-        let mut q = EventQueue2::new();
+        let mut q = EventQueue::new();
         
         crit1.push_into(&mut q).unwrap();
         crit2.push_into(&mut q).unwrap();
@@ -655,10 +527,10 @@ mod tests {
             }
         }
 
-        fn vec_from(buf: &TLVRingBuf) -> Result<heapless::Vec<TestEvent, 16>, Error> {
+        fn vec_from(buf: &TLVRingBuf<64>) -> Result<heapless::Vec<TestEvent, 16>, Error> {
             let mut out = heapless::Vec::new();
             for tr in buf.iter() {
-                let e = EventQueueIter::parse_event(tr?)?;
+                let e = parse_event(tr?)?;
                 out.push(TestEvent {
                     path: e.path,
                     event_number: e.event_number,
@@ -670,7 +542,7 @@ mod tests {
             Ok(out)
         }
 
-        fn push_into(&self, q: &mut EventQueue2) -> Result<(), Error> {
+        fn push_into(&self, q: &mut EventQueue<64>) -> Result<(), Error> {
             let mut tw = q.push(self.path.clone(), self.event_number, self.priority, self.timestamp.clone())?;
             tw.u64(&TLVTag::Context(EventDataTag::Data as _), self.data)?;
             tw.end()

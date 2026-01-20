@@ -313,12 +313,12 @@ where
     }
 }
 
-pub struct EventReader<'a, 'b, const NE: usize> {
-    events: &'b Events<'a, NE>,
+pub struct EventReader<'a, const NE: usize> {
+    events: &'a Events<NE>,
 }
 
-impl<'a, 'b, const NE: usize> EventReader<'a, 'b, NE> {
-    pub fn new(events: &'b Events<'a, NE>) -> Self {
+impl<'a, const NE: usize> EventReader<'a, NE> {
+    pub fn new(events: &'a Events<NE>) -> Self {
         Self { events }
     }
 
@@ -347,6 +347,7 @@ impl<'a, 'b, const NE: usize> EventReader<'a, 'b, NE> {
         let result = match item {
             Ok(_event_details) => {
                 // TODO(events) handle tw reset on failure
+                // TODO(events) now that events contains serialized TLVs we could just copy these rather than re-write them
                 self.events.for_each(|event| {
                     // TODO(events) reason for manually doing this is I can't figure out how to make the one-of field work with the ToTLV derives..
                     //              but either way this will need revising depending on how we want to store the associated event data

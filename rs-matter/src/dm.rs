@@ -68,7 +68,7 @@ struct SubscriptionBuffer<B> {
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
-pub struct DataModel<'a, 'b, const NS: usize, const NE: usize, B, T>
+pub struct DataModel<'a, const NS: usize, const NE: usize, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
@@ -79,12 +79,11 @@ where
     // TODO(events): Is this the right place for this? The spec says there should be one queue per node... can we get away with
     //               one queue per DM instance? And how should we set this up? It'd be nice if apps that don't need events can just
     //               set a const generic to zero to have this not take up space for no reason, for instance
-    // The reason for the 'b is that Events uses 'b in a RefCell.. would be real nice to get rid of the lifetime there altogether, somehow
-    events: &'a Events<'b, NE>,
+    events: &'a Events<NE>,
     handler: T,
 }
 
-impl<'a, 'b, const NS: usize, const NE: usize, B, T> DataModel<'a, 'b, NS, NE, B, T>
+impl<'a, const NS: usize, const NE: usize, B, T> DataModel<'a, NS, NE, B, T>
 where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
@@ -104,7 +103,7 @@ where
         matter: &'a Matter<'a>,
         buffers: &'a B,
         subscriptions: &'a Subscriptions<NS>,
-        events: &'a Events<'b, NE>,
+        events: &'a Events<NE>,
         handler: T,
     ) -> Self {
         Self {
@@ -792,7 +791,7 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, B, T> ExchangeHandler for DataModel<'_, '_, NS, NE, B, T>
+impl<const NS: usize, const NE: usize, B, T> ExchangeHandler for DataModel<'_, NS, NE, B, T>
 where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
@@ -802,7 +801,7 @@ where
     }
 }
 
-impl<const NS: usize, const NE: usize, B, T> ChangeNotify for DataModel<'_, '_, NS, NE, B, T>
+impl<const NS: usize, const NE: usize, B, T> ChangeNotify for DataModel<'_, NS, NE, B, T>
 where
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
@@ -821,17 +820,17 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, 'd, 'e, D, B, const NE: usize> {
+struct ReportDataResponder<'a, 'b, 'c, 'd, D, B, const NE: usize> {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, D, B>,
-    event_reader: EventReader<'d, 'e, NE>,
+    event_reader: EventReader<'d, NE>,
 }
 
 // TODO(events): Untangle the two new lifetimes here, surely we don't need five of them, I'm just not clever enough to work out why rustc is upset with fewer
 //               also there must be some better structure to avoid these const sizes leaking all the way down here
-impl<'a, 'b, 'c, 'd, 'e, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, 'd, 'e, D, B, NE>
+impl<'a, 'b, 'c, 'd, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, 'd, D, B, NE>
 where
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -846,7 +845,7 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, D, B>,
-        event_reader: EventReader<'d, 'e, NE>,
+        event_reader: EventReader<'d, NE>,
     ) -> Self {
         Self {
             req,
