@@ -23,6 +23,7 @@ use crate::utils::cell::RefCell;
 use crate::utils::sync::blocking::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
+use tokio::io::BufStream;
 
 use crate::im::EventData;
 
@@ -216,22 +217,22 @@ impl<'a, const N: usize> EventQueue<'a, N> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 
 struct EventQueue2 {
-    buf_debug: TLVRingBuffer,
-    buf_info: TLVRingBuffer,
-    buf_critical: TLVRingBuffer,
+    buf_debug: TLVRingBuf,
+    buf_info: TLVRingBuf,
+    buf_critical: TLVRingBuf,
 }
 
 impl EventQueue2 {
     fn new() -> Self {
         Self {
-            buf_debug: TLVRingBuffer::new(),
-            buf_info: TLVRingBuffer::new(),
-            buf_critical: TLVRingBuffer::new(),
+            buf_debug: TLVRingBuf::new(),
+            buf_info: TLVRingBuf::new(),
+            buf_critical: TLVRingBuf::new(),
         }
     }
 
     pub fn push<'a>(&'a mut self, path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp) -> Result<EventQueueWriter<'a>, Error> {
-        let mut tw = EventQueueWriter::new(self, BufferRef::from_prio_level(priority)?);
+        let mut tw = EventQueueWriter::new(self, BufLevel::Debug);
         tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
         path
             .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
@@ -264,14 +265,14 @@ impl EventQueue2 {
 
 
     fn iter<'a>(&'a self) -> EventQueueIter<'a> {
-        EventQueueIter{ queue: self, buf_ref: BufferRef::Critical, buf_iter: self.buf_critical.iter() }
+        EventQueueIter{ queue: self, buf_ref: BufLevel::Critical, buf_iter: self.buf_critical.iter() }
     }
 
 }
 
 struct EventQueueIter<'a> {
     queue: &'a EventQueue2,
-    buf_ref: BufferRef,
+    buf_ref: BufLevel,
     buf_iter: TLVRingBufIter<'a>,
 }
 
@@ -327,79 +328,170 @@ impl<'a> Iterator for EventQueueIter<'a> {
 
 struct EventQueueWriter<'a> {
     queue: &'a mut EventQueue2,
-    buf_ref: BufferRef,
+    buf_ref: BufLevel,
 }
 
 impl<'a> EventQueueWriter<'a> {
-    fn new(queue: &'a mut EventQueue2, buf_ref: BufferRef) -> Self {
+    fn new(queue: &'a mut EventQueue2, buf_ref: BufLevel) -> Self {
         Self { queue, buf_ref }
     }
 
+    // TODO(events): do we need to also call this via a Drop trait? Otherwise wrong API usage would lead to corrupted data
     pub fn end(mut self) -> Result<(), Error> {
         self.end_container()
+    }
+
+    // Evict one entry from the given buffer, potentially promoting it to the next buffer if
+    // it meets the priority threshold. If promotion happens the eviction "cascades", until
+    // we either evict an event that doesn't meet the next buffers prio level or we run out of
+    // ring buffers and drop the oldest critical event.
+    fn evict(&mut self, buf_ref: BufLevel) -> Result<(), Error> {
+        let (victim_prio, victim_ref) = self.prepare_eviction(buf_ref.get(self.queue))?;
+        
+        if let Some(next_buf_ref) = buf_ref.next_level() {
+            if next_buf_ref.threshold() <= victim_prio {
+                // There is another level and our victim record meets the priority threshold, we should promote it
+                self.promote(buf_ref, next_buf_ref, victim_ref)?;
+            }
+        }
+
+        buf_ref.get_mut(self.queue).evict(victim_ref);
+        Ok(())
+    }
+
+    fn prepare_eviction(&self, buf: &TLVRingBuf) -> Result<(u8, VictimRef), Error> {
+        let victim_ref = buf.prepare_eviction()?;
+        let priority = victim_ref.tlv(buf).structure()?.find_ctx(EventDataTag::Priority as _)?.u8()?;
+        Ok((priority, victim_ref))
+    }
+
+    fn promote(&mut self, src_buf: BufLevel, dst_buf: BufLevel, victim_ref: VictimRef) -> Result<(), Error> {
+        // Make space
+        while dst_buf.get(self.queue).capacity() < victim_ref.len() {
+            self.evict(dst_buf)?;
+        }
+
+        let (src, dst) = src_buf.get_mut_and_next(self.queue); 
+        // TODO(events): dst being None here is a programming error, what's the right way to signal that?
+        let dst = dst.expect("there should always be a dst buffer at this point");
+        match dst.write_slice(victim_ref.raw(src)) {
+            WriteOutcome::Ok => Ok(()),
+            // TODO(events)Again this is a programming error, the while further up should have guaranteed space
+            WriteOutcome::Overflow => todo!(),
+        }
     }
 }
 
 impl<'a> TLVWrite for EventQueueWriter<'a> {
-    type Position = (BufferRef, u32);
-
+    type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
-        let mut buf = self.buf_ref.get_mut(self.queue);
-        buf.write(byte);
+        while let WriteOutcome::Overflow = self.buf_ref.get_mut(self.queue).write(byte) {
+            // Overflow, need to evict an entry
+            self.evict(BufLevel::Debug)?;
+        }
         Ok(())
     }
 
     fn get_tail(&self) -> Self::Position {
         // n.b. TLVWrite calls the next position to be written "tail", but our ring buffer calls that position "head"
-        (self.buf_ref.clone(), self.buf_ref.get(self.queue).head)
+        self.queue.buf_debug.head
     }
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct TLVRingBuffer {
+struct TLVRingBuf {
     data: [u8; 64],
-    head: u32,
-    tail: u32,
+    head: usize,
+    // n.b. there is no tail. We don't have a way to read streaming TLVs, so we can't have a TLV "wrap around" at the end
+    // and continue at the start of data. Instead, tail is always zero, and whenever we evict we left-shift the entire buffer
+    // see evict.
 }
 
-impl TLVRingBuffer {
+impl TLVRingBuf {
     fn new() -> Self {
         Self {
             data: [0; 64],
             head: 0,
-            tail: 0,
         }
     }
 
     fn write(&mut self, byte: u8) -> WriteOutcome {
-        self.data[self.head as usize] = byte;
+        if self.capacity() == 0 {
+            return WriteOutcome::Overflow;
+        }
+        self.data[self.head] = byte;
         self.head += 1;
         WriteOutcome::Ok
     }
 
-    fn iter(&self) -> TLVRingBufIter<'_> {
-        TLVRingBufIter { buf: self, pos: self.tail as usize }
+    fn write_slice(&mut self, data: &[u8]) -> WriteOutcome {
+        if self.capacity() < data.len() {
+            return WriteOutcome::Overflow;
+        }
+        self.data[self.head..self.head + data.len()].copy_from_slice(data);
+        self.head += data.len();
+        WriteOutcome::Ok
     }
-}
 
-struct TLVRingBufIter<'a> {
-    buf: &'a TLVRingBuffer,
-    pos: usize,
-}
-
-impl<'a> TLVRingBufIter<'a> {
-    fn peek<'p>(&'p self) -> Result<usize, Error> {
-        let seq = TLVSequence(&self.buf.data[self.pos..]);
-        // TODO(events): We end up reading the whole record here just to tell its size.. 
-        //               only to further up read it again, we could skip one read-through with some smarts
+    // Get the size of the record at the given position; the caller is responsible for ensuring pos is aligned on a record
+    fn record_len(&self, pos: usize) -> Result<usize, Error> {
+        let seq = TLVSequence(&self.data[pos..]);
         // TODO(events): Sooo the +2 is mega shady but: The length I'm getting here is, in the one case I've tested,
         //               off-by-2. I *think* that's the control byte and maybe the struct trailer byte, and the
         //               length then just being the "innards" of the container. But I don't think I can rely on the
         //               struct start/end data being exactly 2 bytes all the time, so this likely needs something better
         Ok(seq.raw_value()?.len() + 2)
     }
+
+    fn capacity(&self) -> usize {
+        self.data.len() - self.head
+    }
+
+    fn prepare_eviction(&self) -> Result<VictimRef, Error> {
+        // TODO(events): Handle empty / wrap-around
+        Ok(VictimRef{ victim_len: self.record_len(0)?})
+    }
+
+    fn evict(&mut self, victim: VictimRef) {
+        self.data.copy_within(victim.len()..self.head, 0);
+        self.head -= victim.len();
+    }
+
+    fn iter(&self) -> TLVRingBufIter<'_> {
+        TLVRingBufIter { buf: self, pos: 0 }
+    }
+}
+
+/// During eviction we need the size of the record to be evicted several times (for promotion and then for actual moving the tail index)
+/// to avoid reading the whole entry lots of times for this we read it once to get its size and store that in this reference
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct VictimRef {
+    victim_len: usize,
+}
+
+impl VictimRef {
+    fn tlv<'a>(&'a self, buf: &'a TLVRingBuf) -> TLVElement<'a> {
+        TLVElement::new(self.raw(buf))
+    }
+
+    fn raw<'a>(&'a self, buf: &'a TLVRingBuf) -> &'a[u8] {
+        &buf.data[0..self.victim_len]
+    }
+
+    fn len(&self) -> usize {
+        self.victim_len
+    }
+}
+
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+struct TLVRingBufIter<'a> {
+    buf: &'a TLVRingBuf,
+    pos: usize,
 }
 
 impl<'a> Iterator for TLVRingBufIter<'a> {
@@ -410,7 +502,7 @@ impl<'a> Iterator for TLVRingBufIter<'a> {
         if self.pos >= self.buf.head as _ {
             return None
         }
-        let record_len = match self.peek() {
+        let record_len = match self.buf.record_len(self.pos) {
             Ok(raw) => raw,
             Err(e) => return Some(Err(e)),
         };
@@ -424,40 +516,70 @@ impl<'a> Iterator for TLVRingBufIter<'a> {
 
 enum WriteOutcome {
     Ok,
-    Wraparound,
+    // The write failed because the head is caught up with the tail, 
+    // evict an entry to move the tail forward and try again
+    Overflow,
 }
 
+// This is how we handle the "levels" of buffers, using this reference we can access the current
+// level and get access to the next level, if there is one
 #[derive(PartialEq, Clone, Copy)]
-enum BufferRef {
+enum BufLevel {
     Debug,
     Info,
     Critical
 }
 
-impl BufferRef {
-    fn from_prio_level(priority: u8) -> Result<BufferRef, Error> {
+impl BufLevel {
+    fn from_prio_level(priority: u8) -> Result<BufLevel, Error> {
+        // 7.19.2.17
         match priority {
-            // 7.19.2.17
-            0 => Ok(BufferRef::Debug),
-            1 => Ok(BufferRef::Info),
-            2 => Ok(BufferRef::Critical),
+            0 => Ok(BufLevel::Debug),
+            1 => Ok(BufLevel::Info),
+            2 => Ok(BufLevel::Critical),
             _ => todo!()
         }
     }
 
-    fn get_mut<'a> (&self, queue: &'a mut EventQueue2) -> &'a mut TLVRingBuffer {
+    fn threshold(&self) -> u8 {
+        // 7.19.2.17
         match self {
-            BufferRef::Debug => &mut queue.buf_debug,
-            BufferRef::Info => &mut queue.buf_info,
-            BufferRef::Critical => &mut queue.buf_critical,
+            BufLevel::Debug => 0,
+            BufLevel::Info => 1,
+            BufLevel::Critical => 2,
         }
     }
 
-    fn get<'a> (&self, queue: &'a EventQueue2) -> &'a TLVRingBuffer {
+    fn get_mut<'a> (&self, queue: &'a mut EventQueue2) -> &'a mut TLVRingBuf {
         match self {
-            BufferRef::Debug => &queue.buf_debug,
-            BufferRef::Info => &queue.buf_info,
-            BufferRef::Critical => &queue.buf_critical,
+            BufLevel::Debug => &mut queue.buf_debug,
+            BufLevel::Info => &mut queue.buf_info,
+            BufLevel::Critical => &mut queue.buf_critical,
+        }
+    }
+
+    fn get<'a> (&self, queue: &'a EventQueue2) -> &'a TLVRingBuf {
+        match self {
+            BufLevel::Debug => &queue.buf_debug,
+            BufLevel::Info => &queue.buf_info,
+            BufLevel::Critical => &queue.buf_critical,
+        }
+    }
+
+    /// Used during promotion, when we need both the src and dst buffers at the same time
+    fn get_mut_and_next<'a> (&self, queue: &'a mut EventQueue2) -> (&'a mut TLVRingBuf, Option<&'a mut TLVRingBuf>) {
+        match self {
+            BufLevel::Debug => (&mut queue.buf_debug, Some(&mut queue.buf_info)),
+            BufLevel::Info => (&mut queue.buf_info, Some(&mut queue.buf_critical)),
+            BufLevel::Critical => (&mut queue.buf_critical, None),
+        }
+    }
+
+    fn next_level(&self) -> Option<BufLevel> {
+        match self {
+            BufLevel::Debug => Some(BufLevel::Info),
+            BufLevel::Info => Some(BufLevel::Critical),
+            BufLevel::Critical => None,
         }
     }
 }
@@ -469,16 +591,89 @@ mod tests {
     const EP1: EventPath = EventPath{ node: Some(1337), endpoint: Some(42), cluster: Some(1), event: Some(0xB33F), is_urgent: Some(true) };
 
     #[test]
-    fn test_first_entry_read_write() {
+    fn one_entry() {
+        let crit1 = TestEvent::new(1, 2);
         let mut q = EventQueue2::new();
+        
+        crit1.push_into(&mut q).unwrap();
 
-        let mut tw = q.push(EP1.clone(), 1, 2, EventDataTimestamp::EpochTimestamp(12345)).unwrap();
-        tw.u64(&TLVTag::Context(EventDataTag::Data as _), 54321).unwrap();
-        tw.end().unwrap();
+        assert_eq!(
+            TestEvent::vec_from(&q.buf_debug).unwrap(), 
+            &[crit1]
+        );
+    }
 
-        let mut it =  q.iter();
-        let ev1 = it.next().unwrap().unwrap();
-        assert_eq!(ev1.event_number, 1);
-        assert!(it.next().is_none());
+    #[test]
+    fn critical_is_promoted() {
+        let crit1 = TestEvent::new(1, 2);
+        let crit2 = TestEvent::new(2, 2);
+        let crit3 = TestEvent::new(3, 2);
+        let mut q = EventQueue2::new();
+        
+        crit1.push_into(&mut q).unwrap();
+        crit2.push_into(&mut q).unwrap();
+        crit3.push_into(&mut q).unwrap();
+
+        assert_eq!(
+            TestEvent::vec_from(&q.buf_debug).unwrap(), 
+            &[crit3]
+        );
+
+        assert_eq!(
+            TestEvent::vec_from(&q.buf_info).unwrap(), 
+            &[crit2]
+        );
+        assert_eq!(
+            TestEvent::vec_from(&q.buf_critical).unwrap(), 
+            &[crit1]
+        );
+    }
+
+    // TODO(events): Need test cases for:
+    // - writing an entry that's bigger than an individual ring buffer
+    // - dropping events that don't meet next prio level
+
+    // Test utilities for this suite
+
+    #[derive(PartialEq, Clone, Debug)]
+    struct TestEvent {
+        path: EventPath,
+        event_number: u64,
+        priority: u8,
+        timestamp: EventDataTimestamp,
+        data: u64, // TODO(events): Need to test mixed-sized, incl zero-sized, payloads
+    }
+
+    impl TestEvent {
+        fn new(event_number: u64, priority: u8) -> Self {
+            Self {
+                path: EP1.clone(),
+                event_number,
+                priority,
+                timestamp: EventDataTimestamp::EpochTimestamp(10_000 + event_number),
+                data: 1337,
+            }
+        }
+
+        fn vec_from(buf: &TLVRingBuf) -> Result<heapless::Vec<TestEvent, 16>, Error> {
+            let mut out = heapless::Vec::new();
+            for tr in buf.iter() {
+                let e = EventQueueIter::parse_event(tr?)?;
+                out.push(TestEvent {
+                    path: e.path,
+                    event_number: e.event_number,
+                    priority: e.priority,
+                    timestamp: e.timestamp,
+                    data: e.data.u64()?,
+                }).unwrap();
+            }
+            Ok(out)
+        }
+
+        fn push_into(&self, q: &mut EventQueue2) -> Result<(), Error> {
+            let mut tw = q.push(self.path.clone(), self.event_number, self.priority, self.timestamp.clone())?;
+            tw.u64(&TLVTag::Context(EventDataTag::Data as _), self.data)?;
+            tw.end()
+        }
     }
 }
