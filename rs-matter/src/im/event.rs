@@ -103,8 +103,12 @@ impl TryFrom<u8> for EventDataTag {
             x if x == EventDataTag::Priority as u8 => Ok(EventDataTag::Priority),
             x if x == EventDataTag::EpochTimestamp as u8 => Ok(EventDataTag::EpochTimestamp),
             x if x == EventDataTag::SystemTimestamp as u8 => Ok(EventDataTag::SystemTimestamp),
-            x if x == EventDataTag::DeltaEpochTimestamp as u8 => Ok(EventDataTag::DeltaEpochTimestamp),
-            x if x == EventDataTag::DeltaSystemTimestamp as u8 => Ok(EventDataTag::DeltaSystemTimestamp),
+            x if x == EventDataTag::DeltaEpochTimestamp as u8 => {
+                Ok(EventDataTag::DeltaEpochTimestamp)
+            }
+            x if x == EventDataTag::DeltaSystemTimestamp as u8 => {
+                Ok(EventDataTag::DeltaSystemTimestamp)
+            }
             x if x == EventDataTag::Data as u8 => Ok(EventDataTag::Data),
             _ => Err(()),
         }

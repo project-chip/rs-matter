@@ -35,7 +35,7 @@ pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
 where
     M: RawMutex,
 {
-    state: Mutex<M, RefCell<EventQueue<N>>>,
+    state: Mutex<M, RefCell<EventsInner<N>>>,
 }
 
 impl<const N: usize, M> Events<N, M>
@@ -45,7 +45,7 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(EventQueue::new())),
+            state: Mutex::new(RefCell::new(EventsInner::new())),
         }
     }
 
@@ -53,25 +53,28 @@ where
     // I guess to allow creating these heavy structures and avoid having them be moved? We likely
     // want that here too, I would assume.
 
-    pub fn push(&self, path: EventPath, priority: u8, data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>) -> Result<(), Error> {
-        self.state
-            .lock(|internal| {
-                let mut q = internal.borrow_mut();
-                let event_no = q.next_event_no;
-                q.next_event_no += 1;
-                // TODO(events): actual timestamps
-                let timestamp = EventDataTimestamp::SystemTimestamp(0);
-                let mut tw = q
-                    .push(path, event_no, priority, timestamp)?;
-                data(&mut tw)?;
-                tw.end()
-            })
+    pub fn push(
+        &self,
+        path: EventPath,
+        priority: u8,
+        data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.state.lock(|internal| {
+            let mut q = internal.borrow_mut();
+            let event_no = q.next_event_no;
+            q.next_event_no += 1;
+            // TODO(events): actual timestamps
+            let timestamp = EventDataTimestamp::SystemTimestamp(0);
+            let mut tw = q.push(path, event_no, priority, timestamp)?;
+            data(&mut tw)?;
+            tw.end()
+        })
     }
 
     // Iterate over each entry in the queue, aborts if f returns Err
-    pub fn for_each<'a, F>(&'a self, mut f: F) -> Result<(), Error> 
+    pub fn for_each<'a, F>(&'a self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(&EventData<'_>) -> Result<(), Error>
+        F: FnMut(&EventData<'_>) -> Result<(), Error>,
     {
         self.state.lock(|internal| {
             let q = internal.borrow();
@@ -84,11 +87,23 @@ where
     }
 }
 
-
+/// This is the central event queue storage system. It's modeled after the tiered ring buffer design
+/// used in the C++ matter SDK. Every new event is written to the next slot in the DEBUG ring buffer.
+/// If there is not space for the new event, events are FIFO evicted from the first ring buffer.
+/// If the evicted event has a priority level as high as or higher than the next ring buffer in the chain,
+/// then the evicted event is promoted to there, surviving to see another day. 
+/// Promotion may in turn require more eviction in the next buffer, and so on up the chain.
+/// The end result is that critical events get to live in any of the ring buffers, making their way through
+/// all three until they finally age out. Info lives in one of the first two, and debug only in the first.
+/// 
+/// TODO(events): Per discussion in PR, I don't understand how this design does not violate the spec; I don't mind 
+///               violating the spec if the C++ impl does so as well, but I'm worried I've misunderstood something about
+///               the C++ implementation. Specifically this design allows critical events to be evicted to make space 
+///               for Debug and/or info events. This happens when the oldest event in the debug and info ring buffers are
+///               Critical events, which will cause promotion to the last buffer and eviction there of the oldest critical event
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-
-struct EventQueue<const N: usize> {
+struct EventsInner<const N: usize> {
     // TODO(events): Allow per-ring const generics
     buf_debug: TLVRingBuf<N>,
     buf_info: TLVRingBuf<N>,
@@ -96,7 +111,7 @@ struct EventQueue<const N: usize> {
     next_event_no: u64,
 }
 
-impl<const N: usize> EventQueue<N> {
+impl<const N: usize> EventsInner<N> {
     const fn new() -> Self {
         Self {
             buf_debug: TLVRingBuf::new(),
@@ -107,19 +122,21 @@ impl<const N: usize> EventQueue<N> {
         }
     }
 
-    pub fn push<'a>(&'a mut self, path: EventPath, event_number: u64, priority: u8, timestamp: EventDataTimestamp) -> Result<EventQueueWriter<'a, N>, Error> {
+    pub fn push<'a>(
+        &'a mut self,
+        path: EventPath,
+        event_number: u64,
+        priority: u8,
+        timestamp: EventDataTimestamp,
+    ) -> Result<EventQueueWriter<'a, N>, Error> {
         let mut tw = EventQueueWriter::new(self, BufLevel::Debug);
         tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
-        path
-            .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+        path.to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
         tw.u64(
             &TagType::Context(EventDataTag::EventNumber as _),
             event_number,
         )?;
-        tw.u8(
-            &TagType::Context(EventDataTag::Priority as _),
-            priority,
-        )?;
+        tw.u8(&TagType::Context(EventDataTag::Priority as _), priority)?;
         match timestamp {
             EventDataTimestamp::EpochTimestamp(ts) => {
                 tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
@@ -139,22 +156,24 @@ impl<const N: usize> EventQueue<N> {
         Ok(tw)
     }
 
-
     fn iter<'a>(&'a self) -> EventQueueIter<'a, N> {
-        EventQueueIter{ queue: self, buf_ref: BufLevel::Debug, buf_iter: self.buf_debug.iter() }
+        EventQueueIter {
+            queue: self,
+            buf_ref: BufLevel::Debug,
+            buf_iter: self.buf_debug.iter(),
+        }
     }
-
 }
 
 struct EventQueueIter<'a, const N: usize> {
-    queue: &'a EventQueue<N>,
+    queue: &'a EventsInner<N>,
     buf_ref: BufLevel<N>,
     buf_iter: TLVRingBufIter<'a, N>,
 }
 
 impl<'a, const N: usize> Iterator for EventQueueIter<'a, N> {
     type Item = Result<EventData<'a>, Error>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(res) = self.buf_iter.next() {
             match res {
@@ -183,40 +202,52 @@ fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
         if elem.is_empty() {
             return Ok(Some(elem));
         }
-        
+
         match EventDataTag::try_from(elem.ctx()?) {
             Ok(EventDataTag::Path) => path = Some(EventPath::from_tlv(&elem)?),
             Ok(EventDataTag::EventNumber) => event_number = Some(elem.u64()?),
             Ok(EventDataTag::Priority) => priority = Some(elem.u8()?),
-            Ok(EventDataTag::SystemTimestamp) => timestamp = Some(EventDataTimestamp::SystemTimestamp(elem.u64()?)),
-            Ok(EventDataTag::EpochTimestamp) => timestamp = Some(EventDataTimestamp::EpochTimestamp(elem.u64()?)),
-            Ok(EventDataTag::DeltaSystemTimestamp) => timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(elem.u64()?)),
-            Ok(EventDataTag::DeltaEpochTimestamp) => timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(elem.u64()?)),
+            Ok(EventDataTag::SystemTimestamp) => {
+                timestamp = Some(EventDataTimestamp::SystemTimestamp(elem.u64()?))
+            }
+            Ok(EventDataTag::EpochTimestamp) => {
+                timestamp = Some(EventDataTimestamp::EpochTimestamp(elem.u64()?))
+            }
+            Ok(EventDataTag::DeltaSystemTimestamp) => {
+                timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(elem.u64()?))
+            }
+            Ok(EventDataTag::DeltaEpochTimestamp) => {
+                timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(elem.u64()?))
+            }
             Ok(EventDataTag::Data) => data = Some(elem.clone()),
             Err(_) => todo!(),
         }
         Ok(None)
     })?;
-    
+
     Ok(EventData::new(
-        path.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-        event_number.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-        priority.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-        timestamp.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
-        data.ok_or(Error::new(ErrorCode::AttributeNotFound))?, 
+        path.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
+        event_number.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
+        priority.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
+        timestamp.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
+        data.ok_or(Error::new(ErrorCode::AttributeNotFound))?,
     ))
 }
 
 pub struct EventQueueWriter<'a, const N: usize> {
-    queue: &'a mut EventQueue<N>,
+    queue: &'a mut EventsInner<N>,
     buf_ref: BufLevel<N>,
     // Used in Drop to ensure clients call end(), otherwise data corruption happens
     ended: bool,
 }
 
 impl<'a, const N: usize> EventQueueWriter<'a, N> {
-    fn new(queue: &'a mut EventQueue<N>, buf_ref: BufLevel<N>) -> Self {
-        Self { queue, buf_ref, ended: false }
+    fn new(queue: &'a mut EventsInner<N>, buf_ref: BufLevel<N>) -> Self {
+        Self {
+            queue,
+            buf_ref,
+            ended: false,
+        }
     }
 
     pub fn end(&mut self) -> Result<(), Error> {
@@ -234,7 +265,7 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
     // ring buffers and drop the oldest critical event.
     fn evict(&mut self, buf_ref: BufLevel<N>) -> Result<(), Error> {
         let (victim_prio, victim_ref) = self.prepare_eviction(buf_ref.get(self.queue))?;
-        
+
         if let Some(next_buf_ref) = buf_ref.next_level() {
             if next_buf_ref.threshold() <= victim_prio {
                 // There is another level and our victim record meets the priority threshold, we should promote it
@@ -246,19 +277,30 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
         Ok(())
     }
 
+    // Work out the size and priority of the next victim in the given buffer
     fn prepare_eviction(&self, buf: &TLVRingBuf<N>) -> Result<(u8, VictimRef), Error> {
         let victim_ref = buf.prepare_eviction()?;
-        let priority = victim_ref.tlv(buf).structure()?.find_ctx(EventDataTag::Priority as _)?.u8()?;
+        let priority = victim_ref
+            .tlv(buf)
+            .structure()?
+            .find_ctx(EventDataTag::Priority as _)?
+            .u8()?;
         Ok((priority, victim_ref))
     }
 
-    fn promote(&mut self, src_buf: BufLevel<N>, dst_buf: BufLevel<N>, victim_ref: VictimRef) -> Result<(), Error> {
+    // Promotes victim_ref from src to dst, making space in dst (potentially cascading) if needed
+    fn promote(
+        &mut self,
+        src_buf: BufLevel<N>,
+        dst_buf: BufLevel<N>,
+        victim_ref: VictimRef,
+    ) -> Result<(), Error> {
         // Make space
         while dst_buf.get(self.queue).capacity() < victim_ref.len() {
             self.evict(dst_buf)?;
         }
 
-        let (src, dst) = src_buf.get_mut_and_next(self.queue); 
+        let (src, dst) = src_buf.get_mut_and_next(self.queue);
         // TODO(events): dst being None here is a programming error, what's the right way to signal that?
         let dst = dst.expect("there should always be a dst buffer at this point");
         match dst.write_slice(victim_ref.raw(src)) {
@@ -351,7 +393,9 @@ impl<const N: usize> TLVRingBuf<N> {
 
     fn prepare_eviction(&self) -> Result<VictimRef, Error> {
         // TODO(events): Handle empty / wrap-around
-        Ok(VictimRef{ victim_len: self.record_len(0)?})
+        Ok(VictimRef {
+            victim_len: self.record_len(0)?,
+        })
     }
 
     fn evict(&mut self, victim: VictimRef) {
@@ -377,7 +421,7 @@ impl VictimRef {
         TLVElement::new(self.raw(buf))
     }
 
-    fn raw<'a, const N: usize>(&'a self, buf: &'a TLVRingBuf<N>) -> &'a[u8] {
+    fn raw<'a, const N: usize>(&'a self, buf: &'a TLVRingBuf<N>) -> &'a [u8] {
         &buf.data[0..self.victim_len]
     }
 
@@ -385,7 +429,6 @@ impl VictimRef {
         self.victim_len
     }
 }
-
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -396,11 +439,11 @@ struct TLVRingBufIter<'a, const N: usize> {
 
 impl<'a, const N: usize> Iterator for TLVRingBufIter<'a, N> {
     type Item = Result<TLVElement<'a>, Error>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         // TODO(events) this doesn't handle wrap-around
         if self.pos >= self.buf.head as _ {
-            return None
+            return None;
         }
         let record_len = match self.buf.record_len(self.pos) {
             Ok(raw) => raw,
@@ -409,15 +452,17 @@ impl<'a, const N: usize> Iterator for TLVRingBufIter<'a, N> {
 
         let start = self.pos;
         self.pos += record_len;
-        
-        Some(Ok(TLVElement::new(&self.buf.data[start..start + record_len])))
+
+        Some(Ok(TLVElement::new(
+            &self.buf.data[start..start + record_len],
+        )))
     }
 }
 
 enum WriteOutcome {
     Ok,
-    // The write failed because the head is caught up with the tail, 
-    // evict an entry to move the tail forward and try again
+    // The write failed because the head is caught up with the tail,
+    // evict an entry and try again
     Overflow,
 }
 
@@ -427,20 +472,10 @@ enum WriteOutcome {
 enum BufLevel<const N: usize> {
     Debug,
     Info,
-    Critical
+    Critical,
 }
 
 impl<const N: usize> BufLevel<N> {
-    fn from_prio_level(priority: u8) -> Result<BufLevel<N>, Error> {
-        // 7.19.2.17
-        match priority {
-            0 => Ok(BufLevel::Debug),
-            1 => Ok(BufLevel::Info),
-            2 => Ok(BufLevel::Critical),
-            _ => todo!()
-        }
-    }
-
     fn threshold(&self) -> u8 {
         // 7.19.2.17
         match self {
@@ -450,7 +485,7 @@ impl<const N: usize> BufLevel<N> {
         }
     }
 
-    fn get_mut<'a> (&self, queue: &'a mut EventQueue<N>) -> &'a mut TLVRingBuf<N> {
+    fn get_mut<'a>(&self, queue: &'a mut EventsInner<N>) -> &'a mut TLVRingBuf<N> {
         match self {
             BufLevel::Debug => &mut queue.buf_debug,
             BufLevel::Info => &mut queue.buf_info,
@@ -458,7 +493,7 @@ impl<const N: usize> BufLevel<N> {
         }
     }
 
-    fn get<'a> (&self, queue: &'a EventQueue<N>) -> &'a TLVRingBuf<N> {
+    fn get<'a>(&self, queue: &'a EventsInner<N>) -> &'a TLVRingBuf<N> {
         match self {
             BufLevel::Debug => &queue.buf_debug,
             BufLevel::Info => &queue.buf_info,
@@ -467,7 +502,10 @@ impl<const N: usize> BufLevel<N> {
     }
 
     /// Used during promotion, when we need both the src and dst buffers at the same time
-    fn get_mut_and_next<'a> (&self, queue: &'a mut EventQueue<N>) -> (&'a mut TLVRingBuf<N>, Option<&'a mut TLVRingBuf<N>>) {
+    fn get_mut_and_next<'a>(
+        &self,
+        queue: &'a mut EventsInner<N>,
+    ) -> (&'a mut TLVRingBuf<N>, Option<&'a mut TLVRingBuf<N>>) {
         match self {
             BufLevel::Debug => (&mut queue.buf_debug, Some(&mut queue.buf_info)),
             BufLevel::Info => (&mut queue.buf_info, Some(&mut queue.buf_critical)),
@@ -488,19 +526,22 @@ impl<const N: usize> BufLevel<N> {
 mod tests {
     use super::*;
 
-    const EP1: EventPath = EventPath{ node: Some(1337), endpoint: Some(42), cluster: Some(1), event: Some(0xB33F), is_urgent: Some(true) };
+    const EP1: EventPath = EventPath {
+        node: Some(1337),
+        endpoint: Some(42),
+        cluster: Some(1),
+        event: Some(0xB33F),
+        is_urgent: Some(true),
+    };
 
     #[test]
     fn one_entry() {
         let crit1 = TestEvent::new(1, 2);
-        let mut q = EventQueue::new();
-        
+        let mut q = EventsInner::new();
+
         crit1.push_into(&mut q).unwrap();
 
-        assert_eq!(
-            TestEvent::vec_from(&q.buf_debug).unwrap(), 
-            &[crit1]
-        );
+        assert_eq!(TestEvent::vec_from(&q.buf_debug).unwrap(), &[crit1]);
     }
 
     #[test]
@@ -508,25 +549,16 @@ mod tests {
         let crit1 = TestEvent::new(1, 2);
         let crit2 = TestEvent::new(2, 2);
         let crit3 = TestEvent::new(3, 2);
-        let mut q = EventQueue::new();
-        
+        let mut q = EventsInner::new();
+
         crit1.push_into(&mut q).unwrap();
         crit2.push_into(&mut q).unwrap();
         crit3.push_into(&mut q).unwrap();
 
-        assert_eq!(
-            TestEvent::vec_from(&q.buf_debug).unwrap(), 
-            &[crit3]
-        );
+        assert_eq!(TestEvent::vec_from(&q.buf_debug).unwrap(), &[crit3]);
 
-        assert_eq!(
-            TestEvent::vec_from(&q.buf_info).unwrap(), 
-            &[crit2]
-        );
-        assert_eq!(
-            TestEvent::vec_from(&q.buf_critical).unwrap(), 
-            &[crit1]
-        );
+        assert_eq!(TestEvent::vec_from(&q.buf_info).unwrap(), &[crit2]);
+        assert_eq!(TestEvent::vec_from(&q.buf_critical).unwrap(), &[crit1]);
     }
 
     // TODO(events): Need test cases for:
@@ -565,13 +597,19 @@ mod tests {
                     priority: e.priority,
                     timestamp: e.timestamp,
                     data: e.data.u64()?,
-                }).unwrap();
+                })
+                .unwrap();
             }
             Ok(out)
         }
 
-        fn push_into(&self, q: &mut EventQueue<64>) -> Result<(), Error> {
-            let mut tw = q.push(self.path.clone(), self.event_number, self.priority, self.timestamp.clone())?;
+        fn push_into(&self, q: &mut EventsInner<64>) -> Result<(), Error> {
+            let mut tw = q.push(
+                self.path.clone(),
+                self.event_number,
+                self.priority,
+                self.timestamp.clone(),
+            )?;
             tw.u64(&TLVTag::Context(EventDataTag::Data as _), self.data)?;
             tw.end()
         }

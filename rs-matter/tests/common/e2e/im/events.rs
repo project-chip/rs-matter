@@ -17,8 +17,8 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::{EventData, EventDataTag, EventDataTimestamp, EventPath, EventStatus};
-use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
+use rs_matter::im::{EventDataTag, EventDataTimestamp, EventPath, EventStatus};
+use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
 use crate::common::e2e::tlv::{TLVTest, TestToTLV};
@@ -233,18 +233,21 @@ impl E2eRunner {
         //               became a mess and this is all needing to be ripped out anyway and I'm lazy and impatient.
         for ele in expected {
             if let TestEventResp::EventData(ev) = ele {
-                runner.events.push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
-                    if let Some(data) = ev.data {
-                        // TODO(events) the public API shouldn't require knowing about the tag index here
-                        let mut b = [0u8;128];
-                        let mut wb = WriteBuf::new(&mut b[0..]);
-                        data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
-                        let end = wb.get_tail();
-                        tw.write_raw_data(b[..end].iter().copied())?;
-                        tw.end()?;
-                    }
-                    Ok(())
-                }).unwrap();
+                runner
+                    .events
+                    .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
+                        if let Some(data) = ev.data {
+                            // TODO(events) the public API shouldn't require knowing about the tag index here
+                            let mut b = [0u8; 128];
+                            let mut wb = WriteBuf::new(&mut b[0..]);
+                            data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
+                            let end = wb.get_tail();
+                            tw.write_raw_data(b[..end].iter().copied())?;
+                            tw.end()?;
+                        }
+                        Ok(())
+                    })
+                    .unwrap();
             }
         }
 
