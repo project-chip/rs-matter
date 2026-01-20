@@ -91,14 +91,14 @@ where
 /// used in the C++ matter SDK. Every new event is written to the next slot in the DEBUG ring buffer.
 /// If there is not space for the new event, events are FIFO evicted from the first ring buffer.
 /// If the evicted event has a priority level as high as or higher than the next ring buffer in the chain,
-/// then the evicted event is promoted to there, surviving to see another day. 
+/// then the evicted event is promoted to there, surviving to see another day.
 /// Promotion may in turn require more eviction in the next buffer, and so on up the chain.
 /// The end result is that critical events get to live in any of the ring buffers, making their way through
 /// all three until they finally age out. Info lives in one of the first two, and debug only in the first.
-/// 
-/// TODO(events): Per discussion in PR, I don't understand how this design does not violate the spec; I don't mind 
+///
+/// TODO(events): Per discussion in PR, I don't understand how this design does not violate the spec; I don't mind
 ///               violating the spec if the C++ impl does so as well, but I'm worried I've misunderstood something about
-///               the C++ implementation. Specifically this design allows critical events to be evicted to make space 
+///               the C++ implementation. Specifically this design allows critical events to be evicted to make space
 ///               for Debug and/or info events. This happens when the oldest event in the debug and info ring buffers are
 ///               Critical events, which will cause promotion to the last buffer and eviction there of the oldest critical event
 #[derive(Debug, Clone)]

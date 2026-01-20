@@ -274,7 +274,7 @@ impl TestToTLV for TestReportDataMsg<'_> {
         }
 
         if let Some(event_reports) = self.event_reports {
-            tw.start_array(&TLVTag::Context(1))?;
+            tw.start_array(&TLVTag::Context(2))?;
             for event_report in event_reports {
                 event_report.test_to_tlv(&TLVTag::Anonymous, tw)?;
             }

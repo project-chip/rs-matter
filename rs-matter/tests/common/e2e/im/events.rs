@@ -202,13 +202,6 @@ pub enum TestEventResp<'a> {
     EventData(TestEventData<'a>),
 }
 
-impl<'a> TestEventResp<'a> {
-    // // Create a new `TestEventResp` instance with an `EventData` value.
-    // pub fn data(path: &GenericPath, data: &'a dyn TestToTLV) -> Self {
-    //     Self::EventData(TestEventData::new(EventPath::from_gp(path), data))
-    // }
-}
-
 impl TestToTLV for TestEventResp<'_> {
     fn test_to_tlv(&self, tag: &TLVTag, tw: &mut WriteBuf<'_>) -> Result<(), Error> {
         tw.start_struct(tag)?;
@@ -223,7 +216,8 @@ impl TestToTLV for TestEventResp<'_> {
 }
 
 impl E2eRunner {
-    /// For backwards compatibility.
+    /// TODO(events): All other E2E tests say "For backwards compatibility." here
+    ///               does that mean we shouldn't add new methods like this one?
     pub fn read_event_reqs<'a>(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) {
         let runner = Self::new_default();
         runner.add_default_acl();

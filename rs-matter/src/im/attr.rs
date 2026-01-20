@@ -263,7 +263,7 @@ pub struct ReportDataResp<'a> {
 pub enum ReportDataRespTag {
     SubscriptionId = 0,
     AttributeReports = 1,
-    _EventReport = 2, // TODO(events)
+    EventReports = 2,
     MoreChunkedMsgs = 3,
     SupressResponse = 4,
 }

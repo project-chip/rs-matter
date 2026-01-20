@@ -21,7 +21,7 @@ use crate::acl::Accessor;
 use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventPath, EventStatus,
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventStatus,
     GenericPath, IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
@@ -49,7 +49,7 @@ impl<'a> Node<'a> {
         self.endpoints.iter().find(|endpoint| endpoint.id == id)
     }
 
-    /// Expand (potentially wildcard) read requests into concrete attribute & event details
+    /// Expand (potentially wildcard) read requests into concrete attribute details
     /// using the node metadata.
     ///
     /// As part of the expansion, the method will check whether the attributes are
@@ -60,11 +60,12 @@ impl<'a> Node<'a> {
         &'m self,
         req: &'m ReportDataReq,
         accessor: &'m Accessor<'m>,
-    ) -> Result<impl Iterator<Item = Result<ReadResultEntry<'m>, Error>> + 'm, Error> {
-        // First expand any attribute reads
+    ) -> Result<impl Iterator<Item = Result<Result<AttrDetails<'m>, AttrStatus>, Error>> + 'm, Error>
+    {
         let dataver_filters = req.dataver_filters()?;
         let fabric_filtered = req.fabric_filtered()?;
-        let attr_expander = PathExpander::new(
+
+        Ok(PathExpander::new(
             self,
             accessor,
             false,
@@ -77,26 +78,7 @@ impl<'a> Node<'a> {
                     })
                 })
             }),
-        )
-        .into_iter()
-        .map(|r| Ok(ReadResultEntry::Attr(r?)));
-
-        // Next expand any event reads
-        // TODO(events): Is there a performance cost to doing this to consider?
-        //               Usually people don't access events, presumably
-        let event_expander = PathExpander::new(
-            self,
-            accessor,
-            false,
-            req.event_requests()?.map(|reqs| {
-                reqs.into_iter()
-                    .map(move |path_result| path_result.map(|path| EventReadPath { path }))
-            }),
-        )
-        .into_iter()
-        .map(|r| Ok(ReadResultEntry::Event(r?)));
-
-        Ok(attr_expander.chain(event_expander))
+        ))
     }
 
     /// Expand (potentially wildcard) write requests into concrete attribute details
@@ -232,14 +214,6 @@ struct AttrReadPath<'a> {
     fabric_filtered: bool,
 }
 
-/// TODO(events): A helper type for `EventPath` matching the AttrReadPath dito, currently
-/// not adding anything but added to keep things uniform with attr read code paths
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct EventReadPath {
-    path: EventPath,
-}
-
 /// A helper type for `PathExpander` that captures what type of expansion is being done:
 /// Read requests, write requests, or invoke requests.
 #[derive(Debug)]
@@ -318,45 +292,6 @@ impl<'a> PathExpansionItem<'a> for AttrReadPath<'a> {
 
     fn into_status(self, status: IMStatusCode) -> Self::Status {
         AttrStatus::new(self.path, status, None)
-    }
-}
-
-/// `PathExpansionItem` implementation for `AttrReadPath` (attr read requests expansion).
-impl<'a> PathExpansionItem<'a> for EventReadPath {
-    const OPERATION: Operation = Operation::Read;
-
-    type Expanded<'n> = EventDetails<'n>;
-    type Status = EventStatus;
-
-    fn path(&self) -> GenericPath {
-        self.path.to_gp()
-    }
-
-    fn expand(
-        &self,
-        node: &'a Node<'a>,
-        _accessor: &'a Accessor<'a>,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        leaf_id: u32,
-    ) -> Result<Self::Expanded<'a>, Error> {
-        Ok(EventDetails {
-            node,
-            endpoint_id,
-            cluster_id,
-            event_id: leaf_id as _,
-            // TODO(events): Lets see if we need these
-            // wildcard: self.path.to_gp().is_wildcard(),
-            // list_index: self.path.list_index.clone(),
-            // list_chunked: false,
-            // fab_idx: accessor.fab_idx,
-            // fab_filter: self.fabric_filtered,
-            // dataver: dataver(self.dataver_filters.as_ref(), endpoint_id, cluster_id)?,
-        })
-    }
-
-    fn into_status(self, status: IMStatusCode) -> Self::Status {
-        EventStatus::new(self.path, status, None)
     }
 }
 

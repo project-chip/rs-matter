@@ -17,13 +17,13 @@
 
 use core::future::Future;
 
-use crate::dm::{AsyncHandler, EventDetails, Events, IMBuffer};
+use crate::dm::{AsyncHandler, Events, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, EventDataTag, EventResp, EventRespTag, EventStatus, IMStatusCode,
+    CmdRespTag, CmdStatus, EventDataTag, EventPath, EventRespTag, IMStatusCode,
 };
-use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::BufferAccess;
 
@@ -324,12 +324,12 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
 
     pub async fn process_read<T: TLVWrite>(
         &mut self,
-        item: &Result<EventDetails<'_>, EventStatus>,
+        paths: TLVArray<'_, EventPath>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(item, &mut tw).await;
+        let result = self.do_process_read(paths, &mut tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -341,65 +341,49 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
 
     async fn do_process_read<T: TLVWrite>(
         &mut self,
-        item: &Result<EventDetails<'_>, EventStatus>,
+        // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
+        _paths: TLVArray<'_, EventPath>,
         mut tw: T,
     ) -> Result<(), Error> {
-        let result = match item {
-            Ok(_event_details) => {
-                // TODO(events) handle tw reset on failure
-                // TODO(events) now that events contains serialized TLVs we could just copy these rather than re-write them
-                self.events.for_each(|event| {
-                    // TODO(events) reason for manually doing this is I can't figure out how to make the one-of field work with the ToTLV derives..
-                    //              but either way this will need revising depending on how we want to store the associated event data
-                    tw.start_struct(&TLVTag::Anonymous)?;
-                    tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
-                    event
-                        .path
-                        .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
-                    tw.u64(
-                        &TagType::Context(EventDataTag::EventNumber as _),
-                        event.event_number,
-                    )?;
-                    tw.u8(
-                        &TagType::Context(EventDataTag::Priority as _),
-                        event.priority,
-                    )?;
-                    match event.timestamp {
-                        crate::im::EventDataTimestamp::EpochTimestamp(ts) => {
-                            tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
-                        }
-                        crate::im::EventDataTimestamp::SystemTimestamp(ts) => {
-                            tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?
-                        }
-                        crate::im::EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(
-                            &TagType::Context(EventDataTag::DeltaEpochTimestamp as _),
-                            ts,
-                        )?,
-                        crate::im::EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
-                            &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
-                            ts,
-                        )?,
-                    };
-                    event
-                        .data
-                        .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
-                    tw.end_container()?;
-                    tw.end_container()
-                })?;
-
-                Ok(None)
-            }
-            Err(status) => {
-                error!("Error processing event read: {:?}", status);
-                Ok(Some(status.clone()))
-            }
-        };
-
-        match result {
-            Ok(Some(status)) => EventResp::Status(status).to_tlv(&TagType::Anonymous, tw),
-            Ok(None) => Ok(()),
-            Err(err) => Err(err),
-        }
+        // TODO(events) now that events contains serialized TLVs we could just copy these rather than re-write them
+        self.events.for_each(|event| {
+            // TODO(events) reason for manually doing this is I can't figure out how to make the one-of field work with the ToTLV derives..
+            //              but either way this will need revising depending on how we want to store the associated event data
+            tw.start_struct(&TLVTag::Anonymous)?;
+            tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
+            event
+                .path
+                .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+            tw.u64(
+                &TagType::Context(EventDataTag::EventNumber as _),
+                event.event_number,
+            )?;
+            tw.u8(
+                &TagType::Context(EventDataTag::Priority as _),
+                event.priority,
+            )?;
+            match event.timestamp {
+                crate::im::EventDataTimestamp::EpochTimestamp(ts) => {
+                    tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
+                }
+                crate::im::EventDataTimestamp::SystemTimestamp(ts) => {
+                    tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?
+                }
+                crate::im::EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(
+                    &TagType::Context(EventDataTag::DeltaEpochTimestamp as _),
+                    ts,
+                )?,
+                crate::im::EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
+                    &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
+                    ts,
+                )?,
+            };
+            event
+                .data
+                .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
+            tw.end_container()?;
+            tw.end_container()
+        })
     }
 }
 

@@ -875,39 +875,33 @@ where
 
         self.start_reply(wb)?;
 
+        let has_attr_reqs = self.req.attr_requests()?.is_some();
+
+        if has_attr_reqs {
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
+        }
+
         for item in self.node.read(self.req, &accessor)? {
             let item = item?;
 
             loop {
-                let result = match &item {
-                    ReadResultEntry::Attr(attr_item) => {
-                        self.invoker.process_read(attr_item, &mut *wb, notify).await
-                    }
-                    ReadResultEntry::Event(event_item) => {
-                        self.event_reader.process_read(event_item, &mut *wb).await
-                    }
-                };
+                let result = self.invoker.process_read(&item, &mut *wb, notify).await;
 
                 match result {
                     Ok(()) => break,
                     Err(err) if err.code() == ErrorCode::NoSpace => {
-                        let array_attr = match &item {
-                            ReadResultEntry::Attr(attr_item) => {
-                                attr_item.as_ref().ok().filter(|attr| {
-                                    attr.list_index.is_none()
-                                    // The whole attribute is requested
-                                    // Check if it is an array, and if so, send it as individual items instead
-                                    && self
-                                        .node
-                                        .endpoint(attr.endpoint_id)
-                                        .and_then(|e| e.cluster(attr.cluster_id))
-                                        .and_then(|c| c.attribute(attr.attr_id))
-                                        .map(|a| a.quality.contains(Quality::ARRAY))
-                                        .unwrap_or(false)
-                                })
-                            }
-                            _ => None,
-                        };
+                        let array_attr = item.as_ref().ok().filter(|attr| {
+                            attr.list_index.is_none()
+                                // The whole attribute is requested
+                                // Check if it is an array, and if so, send it as individual items instead
+                                && self
+                                    .node
+                                    .endpoint(attr.endpoint_id)
+                                    .and_then(|e| e.cluster(attr.cluster_id))
+                                    .and_then(|c| c.attribute(attr.attr_id))
+                                    .map(|a| a.quality.contains(Quality::ARRAY))
+                                    .unwrap_or(false)
+                        });
 
                         if let Some(array_attr) = array_attr {
                             if self.send_array_items(array_attr, wb, notify).await? {
@@ -925,6 +919,16 @@ where
                     Err(err) => Err(err)?,
                 }
             }
+        }
+
+        if has_attr_reqs {
+            wb.end_container()?;
+        }
+
+        if let Some(event_reqs) = self.req.event_requests()? {
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
+            self.event_reader.process_read(event_reqs, &mut *wb).await?;
+            wb.end_container()?;
         }
 
         self.send(false, suppress_last_resp, wb).await
@@ -1080,13 +1084,6 @@ where
             assert!(matches!(self.req, ReportDataReq::Read(_)));
         }
 
-        let has_requests =
-            self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
-
-        if has_requests {
-            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
-        }
-
         Ok(())
     }
 
@@ -1098,13 +1095,6 @@ where
         wb: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
-
-        let has_requests =
-            self.req.attr_requests()?.is_some() || self.req.event_requests()?.is_some();
-
-        if has_requests {
-            wb.end_container()?;
-        }
 
         if more_chunks {
             wb.bool(
