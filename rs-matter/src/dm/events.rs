@@ -53,7 +53,7 @@ where
     // I guess to allow creating these heavy structures and avoid having them be moved? We likely
     // want that here too, I would assume.
 
-    pub fn push(&self, path: EventPath, priority: u8, mut data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>) -> Result<(), Error> {
+    pub fn push(&self, path: EventPath, priority: u8, data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>) -> Result<(), Error> {
         self.state
             .lock(|internal| {
                 let mut q = internal.borrow_mut();
@@ -63,7 +63,8 @@ where
                 let timestamp = EventDataTimestamp::SystemTimestamp(0);
                 let mut tw = q
                     .push(path, event_no, priority, timestamp)?;
-                data(&mut tw)
+                data(&mut tw)?;
+                tw.end()
             })
     }
 
@@ -140,7 +141,7 @@ impl<const N: usize> EventQueue<N> {
 
 
     fn iter<'a>(&'a self) -> EventQueueIter<'a, N> {
-        EventQueueIter{ queue: self, buf_ref: BufLevel::Critical, buf_iter: self.buf_critical.iter() }
+        EventQueueIter{ queue: self, buf_ref: BufLevel::Debug, buf_iter: self.buf_debug.iter() }
     }
 
 }
@@ -155,11 +156,19 @@ impl<'a, const N: usize> Iterator for EventQueueIter<'a, N> {
     type Item = Result<EventData<'a>, Error>;
     
     fn next(&mut self) -> Option<Self::Item> {
-        match self.buf_iter.next() {
-            None => None,
-            Some(Err(e)) => Some(Err(e)),
-            Some(Ok(tr)) => Some(parse_event(tr)),
+        if let Some(res) = self.buf_iter.next() {
+            match res {
+                Ok(tr) => return Some(parse_event(tr)),
+                Err(e) => return Some(Err(e)),
+            }
         }
+
+        if let Some(next_buf_ref) = self.buf_ref.next_level() {
+            self.buf_iter = next_buf_ref.get(self.queue).iter();
+            self.buf_ref = next_buf_ref;
+            return self.next();
+        }
+        None
     }
 }
 
@@ -201,16 +210,22 @@ fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
 pub struct EventQueueWriter<'a, const N: usize> {
     queue: &'a mut EventQueue<N>,
     buf_ref: BufLevel<N>,
+    // Used in Drop to ensure clients call end(), otherwise data corruption happens
+    ended: bool,
 }
 
 impl<'a, const N: usize> EventQueueWriter<'a, N> {
     fn new(queue: &'a mut EventQueue<N>, buf_ref: BufLevel<N>) -> Self {
-        Self { queue, buf_ref }
+        Self { queue, buf_ref, ended: false }
     }
 
-    // TODO(events): do we need to also call this via a Drop trait? Otherwise wrong API usage would lead to corrupted data
-    pub fn end(mut self) -> Result<(), Error> {
-        self.end_container()
+    pub fn end(&mut self) -> Result<(), Error> {
+        if self.ended {
+            return Ok(());
+        }
+        self.end_container()?;
+        self.ended = true;
+        Ok(())
     }
 
     // Evict one entry from the given buffer, potentially promoting it to the next buffer if
@@ -254,10 +269,23 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
     }
 }
 
+impl<'a, const N: usize> Drop for EventQueueWriter<'a, N> {
+    fn drop(&mut self) {
+        if !self.ended {
+            // TODO(events) what do we do, error log?
+            todo!()
+        }
+    }
+}
+
 impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
     type Position = usize;
 
     fn write(&mut self, byte: u8) -> Result<(), Error> {
+        if self.ended {
+            // TODO(events) context and/or logging?
+            return Err(Error::new(ErrorCode::Failure));
+        }
         while let WriteOutcome::Overflow = self.buf_ref.get_mut(self.queue).write(byte) {
             // Overflow, need to evict an entry
             self.evict(BufLevel::Debug)?;

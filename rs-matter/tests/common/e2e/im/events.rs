@@ -17,7 +17,7 @@
 
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::{EventData, EventDataTimestamp, EventPath, EventStatus};
+use rs_matter::im::{EventData, EventDataTag, EventDataTimestamp, EventPath, EventStatus};
 use rs_matter::tlv::{TLVElement, TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
@@ -71,7 +71,7 @@ macro_rules! event_data_req {
             path: rs_matter::im::EventPath::from_gp(&$path),
             event_number: 0,
             priority: 0,
-            timestamp: rs_matter::im::EventDataTimestamp::EpochTimestamp(0),
+            timestamp: rs_matter::im::EventDataTimestamp::SystemTimestamp(0),
             data: $data,
         }
     };
@@ -233,13 +233,18 @@ impl E2eRunner {
         //               became a mess and this is all needing to be ripped out anyway and I'm lazy and impatient.
         for ele in expected {
             if let TestEventResp::EventData(ev) = ele {
-                runner.events.push(EventData::new(
-                    ev.path.clone(),
-                    ev.event_number,
-                    ev.priority,
-                    ev.timestamp.clone(),
-                    TLVElement::new(&[0x04, 0x42]),
-                ))
+                runner.events.push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
+                    if let Some(data) = ev.data {
+                        // TODO(events) the public API shouldn't require knowing about the tag index here
+                        let mut b = [0u8;128];
+                        let mut wb = WriteBuf::new(&mut b[0..]);
+                        data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
+                        let end = wb.get_tail();
+                        tw.write_raw_data(b[..end].iter().copied())?;
+                        tw.end()?;
+                    }
+                    Ok(())
+                }).unwrap();
             }
         }
 
