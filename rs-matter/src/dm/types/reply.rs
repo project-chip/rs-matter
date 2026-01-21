@@ -21,7 +21,7 @@ use crate::dm::{AsyncHandler, Events, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, EventDataTag, EventPath, EventRespTag, IMStatusCode,
+    CmdRespTag, CmdStatus, EventDataTag, EventFilter, EventPath, EventRespTag, IMStatusCode,
 };
 use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
@@ -325,11 +325,12 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
     pub async fn process_read<T: TLVWrite>(
         &mut self,
         paths: TLVArray<'_, EventPath>,
+        event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
         let tail = tw.get_tail();
 
-        let result = self.do_process_read(paths, &mut tw).await;
+        let result = self.do_process_read(paths, event_filters, &mut tw).await;
 
         if result.is_err() {
             // If there was an error, rewind to the tail so we don't write any data.
@@ -343,10 +344,22 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
         &mut self,
         // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
         _paths: TLVArray<'_, EventPath>,
+        event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
         // TODO(events) now that events contains serialized TLVs we could just copy these rather than re-write them
         self.events.for_each(|event| {
+            // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
+            if let Some(filters) = &event_filters {
+                for filter in filters {
+                    if let Some(event_min) = filter?.event_min {
+                        if event.event_number < event_min {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             // TODO(events) reason for manually doing this is I can't figure out how to make the one-of field work with the ToTLV derives..
             //              but either way this will need revising depending on how we want to store the associated event data
             tw.start_struct(&TLVTag::Anonymous)?;

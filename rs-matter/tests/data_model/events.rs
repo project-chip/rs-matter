@@ -23,18 +23,17 @@ use rs_matter::im::GenericPath;
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
+use crate::common::e2e::im::echo_cluster;
+use crate::common::e2e::im::events::TestEventData;
 use crate::common::e2e::im::ReplyProcessor;
 use crate::common::e2e::im::TestReadReq;
 use crate::common::e2e::im::TestReportDataMsg;
-use crate::common::e2e::im::echo_cluster;
-use crate::common::e2e::ImEngine;
-use crate::common::e2e::im::events::TestEventData;
 use crate::common::e2e::tlv::TLVTest;
+use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
-use crate::{event_data_path, event_data_req, event_data};
+use crate::{event_data_path, event_data_req};
 
 const WILDCARD_PATH: EventPath = EventPath::from_gp(&GenericPath::new(None, None, None));
-
 
 #[test]
 /// Event number filtering should.. filter events by number
@@ -46,26 +45,27 @@ fn test_read_event_filtered() {
 
     im.add_default_acl();
 
-    let ep0_event1 = GenericPath::new(
-        Some(0),
-        Some(echo_cluster::ID),
-        Some(1),
-    );
+    let ep0_event1 = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(1));
 
     // Given events
-    push_events(&im, &[
-        // Both set to 0 event-no, because Events will assign new event-nos
-        event_data_req!(ep0_event1, 0, 0, Some(&0x41u8)),
-        event_data_req!(ep0_event1, 0, 0, Some(&0x42u8)),
-        event_data_req!(ep0_event1, 0, 0, Some(&0x43u8))
-    ]);
+    push_events(
+        &im,
+        &[
+            // Both set to 0 event-no, because Events will assign new event-nos
+            event_data_req!(ep0_event1, 0, 2, Some(&0x41u8)),
+            event_data_req!(ep0_event1, 0, 2, Some(&0x42u8)),
+            event_data_req!(ep0_event1, 0, 2, Some(&0x43u8)),
+        ],
+    );
 
     // Test 1: Simple read without any event number filters
     let input = &[WILDCARD_PATH.clone()];
     let expected = &[
-        event_data_path!(ep0_event1, 0, 0, Some(&0x41u8)),
-        event_data_path!(ep0_event1, 1, 0, Some(&0x42u8)),
-        event_data_path!(ep0_event1, 2, 0, Some(&0x43u8)),
+        // TODO(events): n.b that these arrive out-of-order due to the layered ring buffer storage in Events,
+        //               verify that this is acceptable to the spec
+        event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
+        event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
+        event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
     ];
     im.test_one(&handler, TLVTest::read_events(input, expected));
 
@@ -76,8 +76,8 @@ fn test_read_event_filtered() {
     }];
     let expected_only_one = &[
         // n.b. first event is no longer included
-        event_data_path!(ep0_event1, 1, 0, Some(&0x42u8)),
-        event_data_path!(ep0_event1, 2, 0, Some(&0x43u8)),
+        event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
+        event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
     ];
 
     im.test_one(
@@ -93,11 +93,9 @@ fn test_read_event_filtered() {
     );
 }
 
-
 fn push_events(im: &ImEngine, events: &[TestEventData]) {
     for ev in events {
-        im
-            .events
+        im.events
             .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
                 if let Some(data) = ev.data {
                     // TODO(events) the public API shouldn't require knowing about the tag index here

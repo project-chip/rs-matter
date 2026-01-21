@@ -15,14 +15,12 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
-use rs_matter::im::{EventDataTag, EventDataTimestamp, EventPath, EventStatus};
+use rs_matter::im::{EventDataTimestamp, EventPath, EventStatus};
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
-use crate::common::e2e::tlv::{TLVTest, TestToTLV};
-use crate::common::e2e::E2eRunner;
+use crate::common::e2e::tlv::TestToTLV;
 
 /// A macro for creating an `EventStatus` instance for the provided generic path and `IMStatusCode``
 #[macro_export]
@@ -42,7 +40,7 @@ macro_rules! event_read_status_resp {
     };
 }
 
-/// A macro for creating a `TestEventData` instance taking 
+/// A macro for creating a `TestEventData` instance taking
 /// `GenericPath` instance, prio, event_no and data.
 #[macro_export]
 macro_rules! event_data_req {
@@ -150,4 +148,3 @@ impl TestToTLV for TestEventResp<'_> {
         tw.end_container()
     }
 }
-

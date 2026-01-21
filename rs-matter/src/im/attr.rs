@@ -16,6 +16,7 @@
  */
 
 use crate::error::Error;
+use crate::im::EventFilter;
 use crate::tlv::{FromTLV, Nullable, TLVArray, TLVElement, ToTLV};
 
 use super::{AttrId, ClusterId, EndptId, EventPath, EventResp, GenericPath, IMStatusCode, Status};
@@ -224,6 +225,14 @@ impl<'a> ReportDataReq<'a> {
         match self {
             Self::Read(req) => req.dataver_filters(),
             Self::Subscribe(req) => req.dataver_filters(),
+            Self::SubscribeReport(_) => Ok(None),
+        }
+    }
+
+    pub fn event_filters(&self) -> Result<Option<TLVArray<'_, EventFilter>>, Error> {
+        match self {
+            Self::Read(req) => req.event_filters(),
+            Self::Subscribe(req) => req.event_filters(),
             Self::SubscribeReport(_) => Ok(None),
         }
     }

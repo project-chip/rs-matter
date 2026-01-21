@@ -250,7 +250,6 @@ impl<'a> TestReportDataMsg<'a> {
     pub const fn event_reports(reports: &'a [TestEventResp<'a>]) -> Self {
         Self {
             event_reports: Some(reports),
-            // TODO(events): What does this do
             suppress_response: Some(true),
             ..Self::new()
         }

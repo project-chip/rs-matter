@@ -21,8 +21,8 @@ use crate::acl::Accessor;
 use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter,
-    GenericPath, IMStatusCode, InvReq, ReportDataReq, WriteReq,
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, GenericPath,
+    IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
 

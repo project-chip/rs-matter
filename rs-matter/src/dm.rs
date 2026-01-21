@@ -926,7 +926,9 @@ where
 
         if let Some(event_reqs) = self.req.event_requests()? {
             wb.start_array(&TLVTag::Context(ReportDataRespTag::EventReports as _))?;
-            self.event_reader.process_read(event_reqs, &mut *wb).await?;
+            self.event_reader
+                .process_read(event_reqs, self.req.event_filters()?, &mut *wb)
+                .await?;
             wb.end_container()?;
         }
 
