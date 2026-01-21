@@ -23,12 +23,12 @@ use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{self, Crypto, Digest, FabricSecretKey, Hkdf, FABRIC_SECRET_KEY_ZEROED};
+use crate::crypto::{Crypto, Digest, FabricSecretKey, Hkdf, Sha256Hash};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
-use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
+use crate::utils::init::{init, init_zeroed, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::MatterMdnsService;
 
@@ -87,7 +87,7 @@ impl Fabric {
             fabric_id: 0,
             vendor_id: 0,
             compressed_fabric_id: 0,
-            secret_key <- FabricSecretKey::zero(),
+            secret_key <- init_zeroed(),
             root_ca <- Vec::init(),
             icac <- Vec::init(),
             noc <- Vec::init(),
@@ -134,7 +134,7 @@ impl Fabric {
         }
 
         if let Some(ipk) = ipk {
-            self.ipk = KeySet::new(ipk, &self.compressed_fabric_id.to_be_bytes())?;
+            self.ipk = KeySet::new_from(ipk, &self.compressed_fabric_id)?;
         }
 
         if let Some(case_admin_subject) = case_admin_subject {
@@ -181,7 +181,7 @@ impl Fabric {
         mac.update(&self.fabric_id.to_le_bytes());
         mac.update(&self.node_id.to_le_bytes());
 
-        let mut id = MaybeUninit::<[u8; crypto::SHA256_HASH_LEN_BYTES]>::uninit(); // TODO MEDIUM BUFFER
+        let mut id = MaybeUninit::<Sha256Hash>::uninit(); // TODO MEDIUM BUFFER
         let id = id.init_zeroed();
         mac.finish(id);
         if id.as_slice() == target {
@@ -378,8 +378,7 @@ impl Fabric {
         fabric_id: u64,
         crypto: C,
     ) -> u64 {
-        let root_pubkey = &root_pubkey[1..];
-        const COMPRESSED_FABRIC_ID_INFO: [u8; 16] = [
+        const COMPRESSED_FABRIC_ID_INFO: &[u8; 16] = &[
             0x43, 0x6f, 0x6d, 0x70, 0x72, 0x65, 0x73, 0x73, 0x65, 0x64, 0x46, 0x61, 0x62, 0x72,
             0x69, 0x63,
         ];
@@ -387,8 +386,8 @@ impl Fabric {
         let mut compressed_fabric_id = [0; COMPRESSED_FABRIC_ID_LEN];
         unwrap!(crypto.hkdf_sha256()).expand(
             &fabric_id.to_be_bytes(),
-            root_pubkey,
-            &COMPRESSED_FABRIC_ID_INFO,
+            &root_pubkey[1..],
+            COMPRESSED_FABRIC_ID_INFO,
             &mut compressed_fabric_id,
         );
 

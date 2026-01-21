@@ -85,7 +85,7 @@ pub trait InitMaybeUninit<T> {
     where
         T: Zeroable,
     {
-        self.init_with(pinned_init::zeroed())
+        self.init_with(pinned_init::init_zeroed())
     }
 }
 

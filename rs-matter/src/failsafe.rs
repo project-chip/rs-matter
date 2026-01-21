@@ -230,12 +230,12 @@ impl FailSafe {
             NocFlags::ADD_CSR_REQ_RECVD,
         )?;
 
-        let mut dehydrated_secret_key = FABRIC_SECRET_KEY_ZEROED;
+        let mut secret_key = FABRIC_SECRET_KEY_ZEROED;
 
-        let secret_key = crypto.secret_key_secp256r1()?;
-        secret_key.dehydrate(&mut dehydrated_secret_key)?;
+        let crypto_secret_key = crypto.secp256r1_secret_key_random()?;
+        crypto_secret_key.canon_into(&mut secret_key);
 
-        self.secret_key = Some(dehydrated_secret_key);
+        self.secret_key = Some(secret_key);
 
         self.add_flags(NocFlags::ADD_CSR_REQ_RECVD);
 
@@ -259,12 +259,13 @@ impl FailSafe {
             NocFlags::UPDATE_CSR_REQ_RECVD,
         )?;
 
-        let mut dehydrated_secret_key = FABRIC_SECRET_KEY_ZEROED;
+        let mut secret_key = FABRIC_SECRET_KEY_ZEROED;
 
-        let secret_key = crypto.secret_key_secp256r1()?;
-        secret_key.dehydrate(&mut dehydrated_secret_key)?;
+        crypto
+            .secp256r1_secret_key_random()?
+            .canon_into(&mut secret_key);
 
-        self.secret_key = Some(dehydrated_secret_key);
+        self.secret_key = Some(secret_key);
 
         self.add_flags(NocFlags::UPDATE_CSR_REQ_RECVD);
 

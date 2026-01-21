@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+
+use crate::error::{Error, ErrorCode};
 
 #[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
 pub use self::dummy::*;
@@ -60,16 +62,17 @@ mod openssl;
 mod rustcrypto;
 
 pub const SHA256_HASH_LEN: usize = 32;
+pub const HMAC_SHA256_HASH_LEN: usize = SHA256_HASH_LEN;
 
-pub const SECP256R1_SCALAR_LEN: usize = 32;
-pub const SECP256R1_POINT_LEN: usize = 65;
-pub const SECP256R1_SECRET_KEY_LEN: usize = 95;
+pub const SECP256R1_CANON_SCALAR_LEN: usize = 32;
+pub const SECP256R1_CANON_POINT_LEN: usize = 65;
+pub const SECP256R1_CANON_SECRET_KEY_LEN: usize = 32;
 pub const SECP256R1_SIGNATURE_LEN: usize = 64;
 pub const SECP256R1_ECDH_SHARED_SECRET_LEN: usize = 32;
 
-pub const UINT384_LEN: usize = 48;
+pub const UINT384_CANON_LEN: usize = 48;
 
-pub const AES128_KEY_LEN: usize = 16;
+pub const AES128_CANON_KEY_LEN: usize = 16;
 pub const AES128_NONCE_LEN: usize = 13;
 pub const AES128_TAG_LEN: usize = 16;
 pub const AES128_AAD_LEN: usize = 8;
@@ -77,11 +80,14 @@ pub const AES128_AAD_LEN: usize = 8;
 pub type Sha256Hash = [u8; SHA256_HASH_LEN];
 pub const SHA256_HASH_ZEROED: Sha256Hash = [0u8; SHA256_HASH_LEN];
 
-pub type Uint384 = [u8; UINT384_LEN];
-pub const UINT384_ZEROED: Uint384 = [0u8; UINT384_LEN];
+pub type HmacSha256Hash = [u8; HMAC_SHA256_HASH_LEN];
+pub const HMAC_SHA256_HASH_ZEROED: Sha256Hash = [0u8; HMAC_SHA256_HASH_LEN];
 
-pub type Aes128Key = [u8; AES128_KEY_LEN];
-pub const AES128_ZEROED: Aes128Key = [0u8; AES128_KEY_LEN];
+pub type CanonUint384 = [u8; UINT384_CANON_LEN];
+pub const UINT384_ZEROED: CanonUint384 = [0u8; UINT384_CANON_LEN];
+
+pub type CanonAes128Key = [u8; AES128_CANON_KEY_LEN];
+pub const AES128_KEY_ZEROED: CanonAes128Key = [0u8; AES128_CANON_KEY_LEN];
 
 pub type Aes128Nonce = [u8; AES128_NONCE_LEN];
 pub const AES128_NONCE_ZEROED: Aes128Nonce = [0u8; AES128_NONCE_LEN];
@@ -92,33 +98,51 @@ pub const AES128_TAG_ZEROED: Aes128Tag = [0u8; AES128_TAG_LEN];
 pub type Aes128Aad = [u8; AES128_AAD_LEN];
 pub const AES128_AAD_ZEROED: Aes128Aad = [0u8; AES128_AAD_LEN];
 
-pub type Secp256r1Scalar = [u8; SECP256R1_SCALAR_LEN];
-pub const SECP256R1_SCALAR_ZEROED: Secp256r1Scalar = [0u8; SECP256R1_SCALAR_LEN];
+pub type CanonSecp256r1Scalar = [u8; SECP256R1_CANON_SCALAR_LEN];
+pub const SECP256R1_SCALAR_ZEROED: CanonSecp256r1Scalar = [0u8; SECP256R1_CANON_SCALAR_LEN];
 
-pub type Secp256r1Point = [u8; SECP256R1_POINT_LEN];
-pub const SECP256R1_POINT_ZEROED: Secp256r1Point = [0u8; SECP256R1_POINT_LEN];
+pub type CanonSecp256r1Point = [u8; SECP256R1_CANON_POINT_LEN];
+pub const SECP256R1_POINT_ZEROED: CanonSecp256r1Point = [0u8; SECP256R1_CANON_POINT_LEN];
 
-pub type Secp256r1SecretKey = [u8; SECP256R1_SECRET_KEY_LEN];
-pub const SECP256R1_SECRET_KEY_ZEROED: Secp256r1SecretKey = [0u8; SECP256R1_SECRET_KEY_LEN];
+pub type CanonSecp256r1SecretKey = CanonSecp256r1Scalar;
+pub const SECP256R1_SECRET_KEY_ZEROED: CanonSecp256r1SecretKey = SECP256R1_SCALAR_ZEROED;
 
-pub type Secp256r1PublicKey = Secp256r1Point;
-pub const SECP256R1_PUBLIC_KEY_ZEROED: Secp256r1PublicKey = SECP256R1_POINT_ZEROED;
+pub type CanonSecp256r1PublicKey = CanonSecp256r1Point;
+pub const SECP256R1_PUBLIC_KEY_ZEROED: CanonSecp256r1PublicKey = SECP256R1_POINT_ZEROED;
 
-pub type Secp256r1Signature = [u8; SECP256R1_SIGNATURE_LEN];
-pub const SECP256R1_SIGNATURE_ZEROED: Secp256r1Signature = [0u8; SECP256R1_SIGNATURE_LEN];
+pub type CanonSecp256r1Signature = [u8; SECP256R1_SIGNATURE_LEN];
+pub const SECP256R1_SIGNATURE_ZEROED: CanonSecp256r1Signature = [0u8; SECP256R1_SIGNATURE_LEN];
 
-pub type Secp256r1EcdhSharedSecret = [u8; SECP256R1_ECDH_SHARED_SECRET_LEN];
-pub const SECP256R1_ECDH_SHARED_SECRET_ZEROED: Secp256r1EcdhSharedSecret =
+pub type CanonSecp256r1EcdhSharedSecret = [u8; SECP256R1_ECDH_SHARED_SECRET_LEN];
+pub const SECP256R1_ECDH_SHARED_SECRET_ZEROED: CanonSecp256r1EcdhSharedSecret =
     [0u8; SECP256R1_ECDH_SHARED_SECRET_LEN];
 
-pub type FabricSecretKey = Secp256r1SecretKey;
+pub type FabricSecretKey = CanonSecp256r1SecretKey;
 pub const FABRIC_SECRET_KEY_ZEROED: FabricSecretKey = SECP256R1_SECRET_KEY_ZEROED;
 
-pub type FabricPublicKey = Secp256r1PublicKey;
+pub type FabricPublicKey = CanonSecp256r1PublicKey;
 pub const FABRIC_PUBLIC_KEY_ZEROED: FabricPublicKey = SECP256R1_PUBLIC_KEY_ZEROED;
 
-pub type SessionKey = Aes128Key;
-pub const SESSION_KEY_ZEROED: SessionKey = AES128_ZEROED;
+pub type SessionKey = CanonAes128Key;
+pub const SESSION_KEY_ZEROED: SessionKey = AES128_KEY_ZEROED;
+
+#[inline(always)]
+pub fn as_canon<const LEN: usize>(slice: &[u8]) -> Result<&[u8; LEN], Error> {
+    if slice.len() != LEN {
+        Err(ErrorCode::InvalidData)?;
+    }
+
+    Ok(unwrap!(slice.try_into()))
+}
+
+#[inline(always)]
+pub fn as_canon_mut<const LEN: usize>(slice: &mut [u8]) -> Result<&mut [u8; LEN], Error> {
+    if slice.len() != LEN {
+        Err(ErrorCode::InvalidData)?;
+    }
+
+    Ok(unwrap!(slice.try_into()))
+}
 
 pub trait Crypto {
     type Sha256<'a>: Digest<SHA256_HASH_LEN>
@@ -127,37 +151,38 @@ pub trait Crypto {
     type HmacSha256<'a>: Digest<SHA256_HASH_LEN>
     where
         Self: 'a;
-    type HkdfSha256<'a>: Hkdf<SHA256_HASH_LEN>
+    type HkdfSha256<'a>: Hkdf
     where
         Self: 'a;
-    type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac<SHA256_HASH_LEN>
+    type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac
     where
         Self: 'a;
     type AesCcm16p64p128<'a>: Aead<AES128_NONCE_LEN>
     where
         Self: 'a;
-    type PublicKeySecp256r1<'a>: PublicKey<SECP256R1_POINT_LEN, SECP256R1_SIGNATURE_LEN>
+    type Secp256r1PublicKey<'a>: PublicKey<'a, SECP256R1_CANON_POINT_LEN, SECP256R1_SIGNATURE_LEN>
     where
         Self: 'a;
-    type SecretKeySecp256r1<'a>: SecretKey<
-        SECP256R1_SECRET_KEY_LEN,
-        SECP256R1_POINT_LEN,
+    type Secp256r1SecretKey<'a>: SecretKey<
+        'a,
+        SECP256R1_CANON_SECRET_KEY_LEN,
+        SECP256R1_CANON_POINT_LEN,
         SECP256R1_SIGNATURE_LEN,
         SECP256R1_ECDH_SHARED_SECRET_LEN,
-        PublicKey<'a> = Self::PublicKeySecp256r1<'a>,
+        PublicKey<'a> = Self::Secp256r1PublicKey<'a>,
     >
     where
         Self: 'a;
-    type UInt384<'a>: UInt<'a, UINT384_LEN>
+    type UInt384<'a>: UInt<'a, UINT384_CANON_LEN>
     where
         Self: 'a;
-    type Secp256r1Scalar<'a>: Scalar<'a, SECP256R1_SCALAR_LEN>
+    type Secp256r1Scalar<'a>: Scalar<'a, SECP256R1_CANON_SCALAR_LEN>
     where
         Self: 'a;
     type Secp256r1Point<'a>: CurvePoint<
         'a,
-        SECP256R1_POINT_LEN,
-        SECP256R1_SCALAR_LEN,
+        SECP256R1_CANON_POINT_LEN,
+        SECP256R1_CANON_SCALAR_LEN,
         Scalar<'a> = Self::Secp256r1Scalar<'a>,
     >
     where
@@ -171,32 +196,35 @@ pub trait Crypto {
 
     fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error>;
 
-    fn aes_ccm_16_64_128(&self, key: &Aes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error>;
+    fn aes_ccm_16_64_128(&self, key: &CanonAes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error>;
 
-    fn public_key_secp256r1_hydrate(
+    fn secp256r1_pub_key(
         &self,
-        dehydrated_public_key: &Secp256r1PublicKey,
-    ) -> Result<Self::PublicKeySecp256r1<'_>, Error>;
+        key: &CanonSecp256r1PublicKey,
+    ) -> Result<Self::Secp256r1PublicKey<'_>, Error>;
 
-    fn secret_key_secp256r1(&self) -> Result<Self::SecretKeySecp256r1<'_>, Error>;
+    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error>;
 
-    fn secret_key_secp256r1_hydrate(
+    fn secp256r1_secret_key(
         &self,
-        dehydrated_secret_key: &Secp256r1SecretKey,
-    ) -> Result<Self::SecretKeySecp256r1<'_>, Error>;
+        key: &CanonSecp256r1SecretKey,
+    ) -> Result<Self::Secp256r1SecretKey<'_>, Error>;
 
-    fn uint384(&self, scalar: &Uint384) -> Result<Self::UInt384<'_>, Error>;
+    fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error>;
 
     fn secp256r1_scalar(
         &self,
-        scalar: &Secp256r1Scalar,
+        scalar: &CanonSecp256r1Scalar,
     ) -> Result<Self::Secp256r1Scalar<'_>, Error>;
 
     fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error>;
 
-    fn secpp256r1_point(&self, point: &Secp256r1Point) -> Result<Self::Secp256r1Point<'_>, Error>;
+    fn secp256r1_point(
+        &self,
+        point: &CanonSecp256r1Point,
+    ) -> Result<Self::Secp256r1Point<'_>, Error>;
 
-    fn secpp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error>;
+    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error>;
 }
 
 impl<T> Crypto for &T
@@ -223,12 +251,12 @@ where
         = T::AesCcm16p64p128<'a>
     where
         Self: 'a;
-    type PublicKeySecp256r1<'a>
-        = T::PublicKeySecp256r1<'a>
+    type Secp256r1PublicKey<'a>
+        = T::Secp256r1PublicKey<'a>
     where
         Self: 'a;
-    type SecretKeySecp256r1<'a>
-        = T::SecretKeySecp256r1<'a>
+    type Secp256r1SecretKey<'a>
+        = T::Secp256r1SecretKey<'a>
     where
         Self: 'a;
     type UInt384<'a>
@@ -260,35 +288,35 @@ where
         (*self).pbkdf2_hmac_sha256()
     }
 
-    fn aes_ccm_16_64_128(&self, key: &Aes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+    fn aes_ccm_16_64_128(&self, key: &CanonAes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error> {
         (*self).aes_ccm_16_64_128(key)
     }
 
-    fn public_key_secp256r1_hydrate(
+    fn secp256r1_pub_key(
         &self,
-        dehydrated_public_key: &Secp256r1PublicKey,
-    ) -> Result<Self::PublicKeySecp256r1<'_>, Error> {
-        (*self).public_key_secp256r1_hydrate(dehydrated_public_key)
+        key: &CanonSecp256r1PublicKey,
+    ) -> Result<Self::Secp256r1PublicKey<'_>, Error> {
+        (*self).secp256r1_pub_key(key)
     }
 
-    fn secret_key_secp256r1(&self) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
-        (*self).secret_key_secp256r1()
+    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+        (*self).secp256r1_secret_key_random()
     }
 
-    fn secret_key_secp256r1_hydrate(
+    fn secp256r1_secret_key(
         &self,
-        dehydrated_secret_key: &Secp256r1SecretKey,
-    ) -> Result<Self::SecretKeySecp256r1<'_>, Error> {
-        (*self).secret_key_secp256r1_hydrate(dehydrated_secret_key)
+        key: &CanonSecp256r1SecretKey,
+    ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+        (*self).secp256r1_secret_key(key)
     }
 
-    fn uint384(&self, scalar: &Uint384) -> Result<Self::UInt384<'_>, Error> {
-        (*self).uint384(scalar)
+    fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error> {
+        (*self).uint384(uint)
     }
 
     fn secp256r1_scalar(
         &self,
-        scalar: &Secp256r1Scalar,
+        scalar: &CanonSecp256r1Scalar,
     ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
         (*self).secp256r1_scalar(scalar)
     }
@@ -297,27 +325,30 @@ where
         (*self).secp256r1_scalar_random()
     }
 
-    fn secpp256r1_point(&self, point: &Secp256r1Point) -> Result<Self::Secp256r1Point<'_>, Error> {
-        (*self).secpp256r1_point(point)
+    fn secp256r1_point(
+        &self,
+        point: &CanonSecp256r1Point,
+    ) -> Result<Self::Secp256r1Point<'_>, Error> {
+        (*self).secp256r1_point(point)
     }
 
-    fn secpp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
-        (*self).secpp256r1_generator()
+    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
+        (*self).secp256r1_generator()
     }
 }
 
-pub trait Digest<const HASH_LEN: usize> {
+pub trait Digest<const HASH_LEN: usize>: Clone {
     fn update(&mut self, data: &[u8]);
 
     fn finish(self, hash: &mut [u8; HASH_LEN]);
 }
 
-pub trait Hkdf<const IKM_LEN: usize> {
-    fn expand(self, salt: &[u8], ikm: &[u8; IKM_LEN], info: &[u8], key: &mut [u8]);
+pub trait Hkdf {
+    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()>;
 }
 
-pub trait Pbkdf2Hmac<const KEY_LEN: usize> {
-    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8; KEY_LEN]);
+pub trait Pbkdf2Hmac {
+    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]);
 }
 
 pub trait Aead<const NONCE_LEN: usize> {
@@ -362,95 +393,62 @@ where
 }
 
 pub trait SecretKey<
+    'a,
     const KEY_LEN: usize,
     const PUB_KEY_LEN: usize,
     const SIGNATURE_LEN: usize,
     const SHARED_SECRET_LEN: usize,
 >
 {
-    type PublicKey<'a>: PublicKey<PUB_KEY_LEN, SIGNATURE_LEN>
+    type PublicKey<'s>: PublicKey<'s, PUB_KEY_LEN, SIGNATURE_LEN>
     where
-        Self: 'a;
+        Self: 's;
 
-    fn csr<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error>;
+    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error>;
 
-    fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error>;
+    fn pub_key(&self) -> Self::PublicKey<'a>;
 
-    fn dehydrate(&self, key: &mut [u8; KEY_LEN]) -> Result<(), Error>;
+    fn canon_into(&self, key: &mut [u8; KEY_LEN]);
 
     fn derive_shared_secret(
         &self,
         peer_pub_key: &Self::PublicKey<'_>,
         shared_secret: &mut [u8; SHARED_SECRET_LEN],
-    ) -> Result<(), Error>;
+    );
 
-    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) -> Result<(), Error>;
+    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]);
 }
 
-// TODO
-// impl<'t, T> SecretKey for &'t T
-// where
-//     T: SecretKey + 't,
-// {
-//     type PublicKey<'a>
-//         = T::PublicKey<'a>
-//     where
-//         Self: 'a;
+pub trait PublicKey<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
+    fn canon_into(&self, key: &mut [u8; KEY_LEN]);
 
-//     fn csr<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
-//         (*self).csr(buf)
-//     }
-
-//     fn pub_key(&self) -> Result<Self::PublicKey<'_>, Error> {
-//         (*self).pub_key()
-//     }
-
-//     fn dehydrate<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
-//         (*self).dehydrate(buf)
-//     }
-
-//     fn derive_shared_secret<'a>(
-//         &self,
-//         peer_pub_key: &Self::PublicKey<'_>,
-//         buf: &'a mut [u8],
-//     ) -> Result<&'a [u8], Error> {
-//         (*self).derive_shared_secret(peer_pub_key, buf)
-//     }
-
-//     fn sign<'a>(&self, data: &[u8], buf: &'a mut [u8]) -> Result<&'a [u8], Error> {
-//         (*self).sign(data, buf)
-//     }
-// }
-
-pub trait PublicKey<const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
-    fn dehydrate(&self, key: &mut [u8; KEY_LEN]) -> Result<(), Error>;
-
-    fn verify(&self, signature: &[u8; SIGNATURE_LEN], data: &[u8]) -> Result<(), Error>;
+    fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool;
 }
 
-impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<KEY_LEN, SIGNATURE_LEN> for &T
+impl<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
+    for &T
 where
-    T: PublicKey<KEY_LEN, SIGNATURE_LEN>,
+    T: PublicKey<'a, KEY_LEN, SIGNATURE_LEN>,
 {
-    fn dehydrate(&self, key: &mut [u8; KEY_LEN]) -> Result<(), Error> {
-        (*self).dehydrate(key)
+    fn canon_into(&self, key: &mut [u8; KEY_LEN]) {
+        (*self).canon_into(key)
     }
 
-    fn verify(&self, signature: &[u8; SIGNATURE_LEN], data: &[u8]) -> Result<(), Error> {
-        (*self).verify(signature, data)
+    fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool {
+        (*self).verify(data, signature)
     }
 }
 
-pub trait UInt<'a, const LEN: usize> {
-    fn rem(&self, other: &Self) -> Self;
+pub trait UInt<'a, const LEN: usize>: Sized {
+    fn rem(&self, other: &Self) -> Option<Self>;
 
-    fn dehydrate(&self, key: &mut [u8; LEN]) -> Result<(), Error>;
+    fn canon_into(&self, uint: &mut [u8; LEN]);
 }
 
 pub trait Scalar<'a, const LEN: usize> {
     fn mul(&self, other: &Self) -> Self;
 
-    fn dehydrate(&self, buf: &mut [u8; LEN]) -> Result<(), Error>;
+    fn canon_into(&self, scalar: &mut [u8; LEN]);
 }
 
 pub trait CurvePoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
@@ -460,40 +458,74 @@ pub trait CurvePoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
 
     fn mul(&self, scalar: &Self::Scalar<'a>) -> Self;
 
-    fn add(&self, other: &Self) -> Self;
+    fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self;
 
-    fn dehydrate(&self, buf: &mut [u8; LEN]) -> Result<(), Error>;
+    fn canon_into(&self, point: &mut [u8; LEN]);
+}
+
+pub struct NoRng;
+
+impl rand_core::RngCore for NoRng {
+    fn next_u32(&mut self) -> u32 {
+        unimplemented!()
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        unimplemented!()
+    }
+
+    fn fill_bytes(&mut self, _dest: &mut [u8]) {
+        unimplemented!()
+    }
+
+    fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        unimplemented!()
+    }
+}
+
+impl rand_core::CryptoRng for NoRng {}
+
+pub fn test_crypto() -> impl Crypto {
+    rustcrypto::RustCrypto::<NoopRawMutex, _>::new(NoRng)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::error::ErrorCode;
+    use crate::crypto::{test_crypto, Crypto, PublicKey};
 
     #[test]
     fn test_verify_msg_success() {
-        let key = unwrap!(KeyPair::new_from_public(&test_vectors::PUB_KEY1));
-        unwrap!(key.verify_msg(&test_vectors::MSG1_SUCCESS, &test_vectors::SIGNATURE1));
+        let crypto = test_crypto();
+
+        let key = unwrap!(crypto.secp256r1_pub_key(test_vectors::PUB_KEY1));
+        assert_eq!(
+            key.verify(test_vectors::MSG1_SUCCESS, test_vectors::SIGNATURE1),
+            true
+        );
     }
 
     #[test]
     fn test_verify_msg_fail() {
-        let key = unwrap!(KeyPair::new_from_public(&test_vectors::PUB_KEY1));
+        let crypto = test_crypto();
+
+        let key = unwrap!(crypto.secp256r1_pub_key(test_vectors::PUB_KEY1));
         assert_eq!(
-            key.verify_msg(&test_vectors::MSG1_FAIL, &test_vectors::SIGNATURE1)
-                .map_err(|e| e.code()),
-            Err(ErrorCode::InvalidSignature)
+            key.verify(test_vectors::MSG1_FAIL, test_vectors::SIGNATURE1),
+            false
         );
     }
 
     mod test_vectors {
-        pub const PUB_KEY1: [u8; 65] = [
+        use crate::crypto::{CanonSecp256r1PublicKey, CanonSecp256r1Signature};
+
+        pub const PUB_KEY1: &CanonSecp256r1PublicKey = &[
             0x4, 0x56, 0x19, 0x77, 0x18, 0x3f, 0xd4, 0xff, 0x2b, 0x58, 0x3d, 0xe9, 0x79, 0x34,
             0x66, 0xdf, 0xe9, 0x0, 0xfb, 0x6d, 0xa1, 0xef, 0xe0, 0xcc, 0xdc, 0x77, 0x30, 0xc0,
             0x6f, 0xb6, 0x2d, 0xff, 0xbe, 0x54, 0xa0, 0x95, 0x75, 0xb, 0x8b, 0x7, 0xbc, 0x55, 0xdb,
             0x9c, 0xb6, 0x55, 0x13, 0x8, 0xb8, 0xdf, 0x2, 0xe3, 0x40, 0x6b, 0xae, 0x34, 0xf5, 0xc,
             0xba, 0xc9, 0xf2, 0xbf, 0xf1, 0xe7, 0x50,
         ];
-        pub const MSG1_SUCCESS: [u8; 421] = [
+        pub const MSG1_SUCCESS: &[u8] = &[
             0x30, 0x82, 0x1, 0xa1, 0xa0, 0x3, 0x2, 0x1, 0x2, 0x2, 0x1, 0x1, 0x30, 0xa, 0x6, 0x8,
             0x2a, 0x86, 0x48, 0xce, 0x3d, 0x4, 0x3, 0x2, 0x30, 0x44, 0x31, 0x20, 0x30, 0x1e, 0x6,
             0xa, 0x2b, 0x6, 0x1, 0x4, 0x1, 0x82, 0xa2, 0x7c, 0x1, 0x3, 0xc, 0x10, 0x30, 0x30, 0x30,
@@ -524,7 +556,7 @@ mod tests {
             0x96, 0x72, 0x27, 0x64, 0x81, 0xbc, 0x4f, 0x0, 0x78, 0xa3, 0x30, 0x48, 0xfe, 0x6e,
             0x65, 0x86,
         ];
-        pub const MSG1_FAIL: [u8; 421] = [
+        pub const MSG1_FAIL: &[u8] = &[
             0x30, 0x82, 0x1, 0xa1, 0xa0, 0x3, 0x2, 0x1, 0x2, 0x2, 0x1, 0x1, 0x30, 0xa, 0x6, 0x8,
             0x2a, 0x86, 0x48, 0xce, 0x3d, 0x4, 0x3, 0x2, 0x30, 0x44, 0x31, 0x20, 0x30, 0x1e, 0x6,
             0xa, 0x2b, 0x6, 0x1, 0x4, 0x1, 0x82, 0xa2, 0x7c, 0x1, 0x3, 0xc, 0x10, 0x30, 0x30, 0x30,
@@ -555,7 +587,7 @@ mod tests {
             0x96, 0x72, 0x27, 0x64, 0x81, 0xbc, 0x4f, 0x0, 0x78, 0xa3, 0x30, 0x48, 0xfe, 0x6e,
             0x65, 0x86,
         ];
-        pub const SIGNATURE1: [u8; 64] = [
+        pub const SIGNATURE1: &CanonSecp256r1Signature = &[
             0x20, 0x16, 0xd0, 0x13, 0x1e, 0xd0, 0xb3, 0x9d, 0x44, 0x25, 0x16, 0xea, 0x9c, 0xf2,
             0x72, 0x44, 0xd7, 0xb0, 0xf4, 0xae, 0x4a, 0xa4, 0x37, 0x32, 0xcd, 0x6a, 0x79, 0x7a,
             0x4c, 0x48, 0x3, 0x6d, 0xef, 0xe6, 0x26, 0x82, 0x39, 0x28, 0x9, 0x22, 0xc8, 0x9a, 0xde,

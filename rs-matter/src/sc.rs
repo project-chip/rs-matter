@@ -30,12 +30,12 @@ use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::{ReadBuf, WriteBuf};
 
 use case::Case;
-use pake::Pake;
+use pase::Pase;
 
 pub mod busy;
 pub mod case;
 pub mod crypto;
-pub mod pake;
+pub mod pase;
 
 /* Interaction Model ID as per the Matter Spec */
 pub const PROTO_ID_SECURE_CHANNEL: u16 = 0x00;
@@ -242,8 +242,8 @@ impl<C: Crypto> SecureChannel<C> {
 
         match meta.opcode()? {
             OpCode::PBKDFParamRequest => {
-                let mut pake = MaybeUninit::uninit(); // TODO LARGE BUFFER
-                pake.init_with(Pake::init()).handle(exchange).await
+                let mut pase = MaybeUninit::uninit(); // TODO LARGE BUFFER
+                pase.init_with(Pase::init(&self.0)).handle(exchange).await
             }
             OpCode::CASESigma1 => {
                 let mut case = MaybeUninit::uninit(); // TODO LARGE BUFFER
