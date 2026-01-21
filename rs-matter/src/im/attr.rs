@@ -232,8 +232,7 @@ impl<'a> ReportDataReq<'a> {
     pub fn event_filters(&self) -> Result<Option<TLVArray<'_, EventFilter>>, Error> {
         match self {
             Self::Read(req) => req.event_filters(),
-            Self::Subscribe(req) => req.event_filters(),
-            Self::SubscribeReport(_) => Ok(None),
+            Self::Subscribe(req) | Self::SubscribeReport(req) => req.event_filters(),
         }
     }
 

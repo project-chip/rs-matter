@@ -17,6 +17,7 @@
 
 use bitflags::bitflags;
 
+use rs_matter::dm::events::Events;
 use rs_matter::error::Error;
 use rs_matter::im::{
     AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath, EventResp,
@@ -27,6 +28,7 @@ use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;
 
+use super::test::E2eTestDirection;
 use super::tlv::{TLVTest, TestToTLV};
 
 use attributes::{TestAttrData, TestAttrResp};
@@ -207,6 +209,14 @@ impl<'a> TestSubscribeReq<'a> {
     pub const fn reqs(reqs: &'a [AttrPath]) -> Self {
         Self {
             attr_requests: Some(reqs),
+            ..Self::new()
+        }
+    }
+
+    /// Create a new `TestSubscribeReq` instance with the provided event requests.
+    pub const fn event_reqs(reqs: &'a [EventPath]) -> Self {
+        Self {
+            event_requests: Some(reqs),
             ..Self::new()
         }
     }
@@ -499,7 +509,15 @@ impl ReplyProcessor {
     }
 }
 
-impl<I, E, F> TLVTest<I, E, F>
+pub struct Setup {}
+
+impl Setup {
+    pub fn none(_events: &Events<64>) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+impl<I, E, F> TLVTest<I, E, F, fn(&Events<64>) -> Result<(), Error>>
 where
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
 {
@@ -520,6 +538,8 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
             delay_ms: None,
         }
     }
@@ -541,6 +561,8 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
             delay_ms: None,
         }
     }
@@ -562,6 +584,8 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
             delay_ms: None,
         }
     }
@@ -583,6 +607,8 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
             delay_ms: None,
         }
     }
@@ -604,6 +630,8 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
             delay_ms: None,
         }
     }
@@ -625,6 +653,8 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
             delay_ms: None,
         }
     }
@@ -646,6 +676,43 @@ where
             ),
             expected_payload,
             process_reply,
+            setup: Setup::none,
+            direction: E2eTestDirection::ClientInitiated,
+            delay_ms: None,
+        }
+    }
+}
+
+impl<I, E, F, S> TLVTest<I, E, F, S>
+where
+    F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
+    S: Fn(&Events<64>) -> Result<(), Error>,
+{
+    /// Create a new TLV test instance for a report message from the producer side,
+    /// with the provided setup optionally emitting events into the system-under-test to
+    /// trigger the publishing from the producer
+    pub const fn subscription_report(
+        setup: S,
+        expected_payload: E,
+        process_reply: F,
+        response_payload: I,
+    ) -> Self {
+        Self {
+            expected_meta: MessageMeta::new(
+                PROTO_ID_INTERACTION_MODEL,
+                OpCode::ReportData as _,
+                true,
+            ),
+            expected_payload,
+            input_meta: MessageMeta::new(
+                PROTO_ID_INTERACTION_MODEL,
+                OpCode::StatusResponse as _,
+                true,
+            ),
+            input_payload: response_payload,
+            process_reply,
+            setup,
+            direction: E2eTestDirection::ServerInitiated,
             delay_ms: None,
         }
     }
@@ -656,6 +723,7 @@ impl<'a>
         TestReadReq<'a>,
         TestReportDataMsg<'a>,
         fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
+        fn(&Events<64>) -> Result<(), Error>,
     >
 {
     /// Create a new TLV test instance with input payload being the IM `ReadRequest` message
@@ -682,7 +750,12 @@ impl<'a>
 }
 
 impl<'a>
-    TLVTest<TestWriteReq<'a>, TestWriteResp<'a>, fn(&TLVElement, &mut [u8]) -> Result<usize, Error>>
+    TLVTest<
+        TestWriteReq<'a>,
+        TestWriteResp<'a>,
+        fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
+        fn(&Events<64>) -> Result<(), Error>,
+    >
 {
     /// Create a new TLV test instance with input payload being the IM `WriteRequest` message
     /// and the expected payload being the IM `WriteResponse` message and the input payload and the
@@ -697,7 +770,12 @@ impl<'a>
 }
 
 impl<'a>
-    TLVTest<TestInvReq<'a>, TestInvResp<'a>, fn(&TLVElement, &mut [u8]) -> Result<usize, Error>>
+    TLVTest<
+        TestInvReq<'a>,
+        TestInvResp<'a>,
+        fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
+        fn(&Events<64>) -> Result<(), Error>,
+    >
 {
     /// Create a new TLV test instance with input payload being the IM `InvokeRequest` message
     /// and the expected payload being the IM `InvokeResponse` message and the input payload and the

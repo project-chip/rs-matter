@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use rs_matter::dm::events::Events;
 use rs_matter::error::Error;
 use rs_matter::im::EventDataTag;
 use rs_matter::im::EventFilter;
@@ -28,6 +29,8 @@ use crate::common::e2e::im::events::TestEventData;
 use crate::common::e2e::im::ReplyProcessor;
 use crate::common::e2e::im::TestReadReq;
 use crate::common::e2e::im::TestReportDataMsg;
+use crate::common::e2e::im::TestSubscribeReq;
+use crate::common::e2e::test::E2eTest;
 use crate::common::e2e::tlv::TLVTest;
 use crate::common::e2e::ImEngine;
 use crate::common::init_env_logger;
@@ -62,7 +65,8 @@ fn test_read_event_filtered() {
     let input = &[WILDCARD_PATH.clone()];
     let expected = &[
         // TODO(events): n.b that these arrive out-of-order due to the layered ring buffer storage in Events,
-        //               verify that this is acceptable to the spec
+        //               this is explicitly prohibited by the spec, see page 514 in the core spec; I think we just
+        //               need to iterate the layers in the other direction
         event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
         event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
         event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
@@ -90,6 +94,58 @@ fn test_read_event_filtered() {
             TestReportDataMsg::event_reports(expected_only_one),
             ReplyProcessor::none,
         ),
+    );
+}
+
+#[test]
+fn test_subscribe_events() {
+    init_env_logger();
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
+
+    let ep0_event1 = GenericPath::new(Some(0), Some(echo_cluster::ID), Some(1));
+
+    // Given there is 1 event published so far
+    push_events(&im, &[event_data_req!(ep0_event1, 0, 2, Some(&0x41u8))]);
+
+    im.test_all(
+        &handler,
+        [
+            // When we initially subscribe, we get the one already-stored event
+            &TLVTest::subscribe(
+                TestSubscribeReq {
+                    min_int_floor: 1,
+                    max_int_ceil: 10,
+                    ..TestSubscribeReq::event_reqs(&[WILDCARD_PATH.clone()])
+                },
+                TestReportDataMsg {
+                    subscription_id: Some(1),
+                    event_reports: Some(&[event_data_path!(ep0_event1, 0, 2, Some(&0x41u8))]),
+                    ..Default::default()
+                },
+                ReplyProcessor::none,
+            ) as &dyn E2eTest,
+            &TLVTest::subscription_report(
+                |events: &Events<64>| -> Result<(), Error> {
+                    push_events(&im, &[event_data_req!(ep0_event1, 0, 2, Some(&0x42u8))]);
+                    Ok(())
+                },
+                TestReportDataMsg {
+                    subscription_id: Some(1),
+                    event_reports: Some(&[event_data_path!(ep0_event1, 0, 2, Some(&0x42u8))]),
+                    ..Default::default()
+                },
+                ReplyProcessor::none,
+                TestSubscribeReq {
+                    min_int_floor: 1,
+                    max_int_ceil: 10,
+                    ..TestSubscribeReq::event_reqs(&[WILDCARD_PATH.clone()])
+                },
+            ),
+        ],
     );
 }
 

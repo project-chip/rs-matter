@@ -17,10 +17,13 @@
 
 use core::fmt::Debug;
 
+use rs_matter::dm::events::Events;
 use rs_matter::error::Error;
 use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
 use rs_matter::utils::storage::WriteBuf;
+
+use crate::common::e2e::test::E2eTestDirection;
 
 use super::test::E2eTest;
 
@@ -46,20 +49,23 @@ where
 ///
 /// It validates the differences between the output and the expected payload using a Diff
 /// algorithm, which provides a human readable output.
-pub struct TLVTest<I, E, F> {
+pub struct TLVTest<I, E, F, S = fn(&Events) -> Result<(), Error>> {
     pub input_meta: MessageMeta,
     pub input_payload: I,
     pub expected_meta: MessageMeta,
     pub expected_payload: E,
     pub process_reply: F,
+    pub setup: S,
     pub delay_ms: Option<u64>,
+    pub direction: E2eTestDirection,
 }
 
-impl<I, E, F> E2eTest for TLVTest<I, E, F>
+impl<I, E, F, S> E2eTest for TLVTest<I, E, F, S>
 where
     I: TestToTLV,
     E: TestToTLV,
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
+    S: Fn(&Events<64>) -> Result<(), Error>,
 {
     fn fill_input(&self, message_buf: &mut WriteBuf) -> Result<MessageMeta, Error> {
         self.input_payload
@@ -115,5 +121,13 @@ where
 
     fn delay(&self) -> Option<u64> {
         self.delay_ms
+    }
+
+    fn setup(&self, events: &Events<64>) -> Result<(), Error> {
+        (self.setup)(events)
+    }
+
+    fn direction(&self) -> E2eTestDirection {
+        self.direction
     }
 }
