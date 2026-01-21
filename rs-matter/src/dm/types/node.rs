@@ -21,12 +21,12 @@ use crate::acl::Accessor;
 use crate::dm::Endpoint;
 use crate::error::Error;
 use crate::im::{
-    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter, EventStatus,
+    AttrData, AttrPath, AttrStatus, CmdData, CmdStatus, DataVersionFilter,
     GenericPath, IMStatusCode, InvReq, ReportDataReq, WriteReq,
 };
 use crate::tlv::{TLVArray, TLVElement};
 
-use super::{AttrDetails, ClusterId, CmdDetails, EndptId, EventDetails};
+use super::{AttrDetails, ClusterId, CmdDetails, EndptId};
 
 /// The main Matter metadata type describing a Matter Node.
 #[derive(Debug, Clone)]
@@ -193,13 +193,6 @@ impl<const N: usize> core::fmt::Display for DynamicNode<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.node().fmt(f)
     }
-}
-
-/// A read operation can request a combination of attribute and event
-/// paths to read. This represents the result of one such path entry.
-pub enum ReadResultEntry<'m> {
-    Attr(Result<AttrDetails<'m>, AttrStatus>),
-    Event(Result<EventDetails<'m>, EventStatus>),
 }
 
 /// A helper type for `AttrPath` that enriches it with the request-scope information

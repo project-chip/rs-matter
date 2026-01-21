@@ -66,7 +66,7 @@ pub struct E2eRunner {
     matter_client: Matter<'static>,
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
     subscriptions: Subscriptions<3>,
-    events: Events<64>,
+    pub events: Events<64>,
     cat_ids: NocCatIds,
 }
 

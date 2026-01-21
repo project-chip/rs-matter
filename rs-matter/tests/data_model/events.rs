@@ -15,24 +15,101 @@
  *    limitations under the License.
  */
 
+use rs_matter::error::Error;
+use rs_matter::im::EventDataTag;
+use rs_matter::im::EventFilter;
 use rs_matter::im::EventPath;
 use rs_matter::im::GenericPath;
+use rs_matter::tlv::{TLVTag, TLVWrite};
+use rs_matter::utils::storage::WriteBuf;
 
+use crate::common::e2e::im::ReplyProcessor;
+use crate::common::e2e::im::TestReadReq;
+use crate::common::e2e::im::TestReportDataMsg;
 use crate::common::e2e::im::echo_cluster;
 use crate::common::e2e::ImEngine;
+use crate::common::e2e::im::events::TestEventData;
+use crate::common::e2e::tlv::TLVTest;
 use crate::common::init_env_logger;
-use crate::event_data_path;
+use crate::{event_data_path, event_data_req, event_data};
+
+const WILDCARD_PATH: EventPath = EventPath::from_gp(&GenericPath::new(None, None, None));
+
 
 #[test]
-fn test_read_success() {
+/// Event number filtering should.. filter events by number
+fn test_read_event_filtered() {
     init_env_logger();
+
+    let im = ImEngine::new_default();
+    let handler = im.handler();
+
+    im.add_default_acl();
 
     let ep0_event1 = GenericPath::new(
         Some(0),
         Some(echo_cluster::ID),
-        Some(1), // TODO need to implement macros like  attribute_enum!() for events
+        Some(1),
     );
-    let input = &[EventPath::from_gp(&ep0_event1)];
-    let expected = &[event_data_path!(ep0_event1, Some(&0x42u8))];
-    ImEngine::read_event_reqs(input, expected);
+
+    // Given events
+    push_events(&im, &[
+        // Both set to 0 event-no, because Events will assign new event-nos
+        event_data_req!(ep0_event1, 0, 0, Some(&0x41u8)),
+        event_data_req!(ep0_event1, 0, 0, Some(&0x42u8)),
+        event_data_req!(ep0_event1, 0, 0, Some(&0x43u8))
+    ]);
+
+    // Test 1: Simple read without any event number filters
+    let input = &[WILDCARD_PATH.clone()];
+    let expected = &[
+        event_data_path!(ep0_event1, 0, 0, Some(&0x41u8)),
+        event_data_path!(ep0_event1, 1, 0, Some(&0x42u8)),
+        event_data_path!(ep0_event1, 2, 0, Some(&0x43u8)),
+    ];
+    im.test_one(&handler, TLVTest::read_events(input, expected));
+
+    // Test 2: Add event filter, only single entry should be retrieved
+    let event_filter = &[EventFilter {
+        node: None,
+        event_min: Some(1),
+    }];
+    let expected_only_one = &[
+        // n.b. first event is no longer included
+        event_data_path!(ep0_event1, 1, 0, Some(&0x42u8)),
+        event_data_path!(ep0_event1, 2, 0, Some(&0x43u8)),
+    ];
+
+    im.test_one(
+        &handler,
+        TLVTest::read(
+            TestReadReq {
+                event_filters: Some(event_filter),
+                ..TestReadReq::event_reqs(input)
+            },
+            TestReportDataMsg::event_reports(expected_only_one),
+            ReplyProcessor::none,
+        ),
+    );
+}
+
+
+fn push_events(im: &ImEngine, events: &[TestEventData]) {
+    for ev in events {
+        im
+            .events
+            .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
+                if let Some(data) = ev.data {
+                    // TODO(events) the public API shouldn't require knowing about the tag index here
+                    let mut b = [0u8; 128];
+                    let mut wb = WriteBuf::new(&mut b[0..]);
+                    data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
+                    let end = wb.get_tail();
+                    tw.write_raw_data(b[..end].iter().copied())?;
+                    tw.end()?;
+                }
+                Ok(())
+            })
+            .unwrap();
+    }
 }

@@ -76,9 +76,6 @@ where
     buffers: &'a B,
     subscriptions: &'a Subscriptions<NS>,
     subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, NS>>,
-    // TODO(events): Is this the right place for this? The spec says there should be one queue per node... can we get away with
-    //               one queue per DM instance? And how should we set this up? It'd be nice if apps that don't need events can just
-    //               set a const generic to zero to have this not take up space for no reason, for instance
     events: &'a Events<NE>,
     handler: T,
 }
@@ -422,6 +419,8 @@ where
                 }
             }
         }
+
+        // TODO(events) validate event_reqs
 
         Ok(())
     }

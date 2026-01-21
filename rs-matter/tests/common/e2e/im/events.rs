@@ -32,26 +32,6 @@ macro_rules! event_status {
     };
 }
 
-/// A macro for creating an `EventStatus` instance for the provided generic path and `IMStatusCode``,
-/// where the path is for one concrete array element in an array attribute
-#[macro_export]
-macro_rules! event_status_lel {
-    ($path:expr, $status:expr) => {
-        rs_matter::im::EventStatus::new(
-            rs_matter::im::AttrPath {
-                tag_compression: None,
-                node: None,
-                endpoint: $path.endpoint,
-                cluster: $path.cluster,
-                attr: $path.leaf,
-                list_index: Some(rs_matter::tlv::Nullable::none()),
-            },
-            $status,
-            None,
-        )
-    };
-}
-
 /// A macro for creating a `TestEventResp` instance of variant `Status`.
 #[macro_export]
 macro_rules! event_read_status_resp {
@@ -62,35 +42,16 @@ macro_rules! event_read_status_resp {
     };
 }
 
-/// A macro for creating a `TestEventData` instance of variant `EventData` taking
-/// a `GenericPath` instance and data.
+/// A macro for creating a `TestEventData` instance taking 
+/// `GenericPath` instance, prio, event_no and data.
 #[macro_export]
 macro_rules! event_data_req {
-    ($path:expr, $data:expr) => {
+    ($path:expr, $event_no:expr, $prio:expr, $data:expr) => {
         $crate::common::e2e::im::events::TestEventData {
             path: rs_matter::im::EventPath::from_gp(&$path),
-            event_number: 0,
-            priority: 0,
+            event_number: $event_no,
+            priority: $prio,
             timestamp: rs_matter::im::EventDataTimestamp::SystemTimestamp(0),
-            data: $data,
-        }
-    };
-}
-
-/// Same as `event_data_req!`, but generates a path for one concrete
-/// array element in an array attribute
-#[macro_export]
-macro_rules! event_data_req_lel {
-    ($path:expr, $data:expr) => {
-        $crate::common::e2e::im::attributes::TestEventData {
-            data_ver: None,
-            path: rs_matter::im::EventPath {
-                node: None,
-                endpoint: $path.endpoint,
-                cluster: $path.cluster,
-                event: $path.leaf,
-                is_urgent: None,
-            },
             data: $data,
         }
     };
@@ -100,20 +61,9 @@ macro_rules! event_data_req_lel {
 /// a `GenericPath` instance and data.
 #[macro_export]
 macro_rules! event_data_path {
-    ($path:expr, $data:expr) => {
+    ($path:expr, $event_no:expr, $prio:expr, $data:expr) => {
         $crate::common::e2e::im::events::TestEventResp::EventData($crate::event_data_req!(
-            $path, $data
-        ))
-    };
-}
-
-/// Same as `event_data_path!`, but generates a path for one concrete
-/// array element in an array attribute
-#[macro_export]
-macro_rules! event_data_lel_path {
-    ($path:expr, $data:expr) => {
-        $crate::common::e2e::im::attributes::TestEventResp::EventData($crate::event_data_req_lel!(
-            $path, $data
+            $path, $event_no, $prio, $data
         ))
     };
 }
@@ -125,29 +75,15 @@ macro_rules! event_data_lel_path {
 /// but has a shorter syntax.
 #[macro_export]
 macro_rules! event_data {
-    ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
+    ($endpoint:expr, $cluster:expr, $event: expr,$event_no:expr, $prio:expr, $data:expr) => {
         $crate::event_data_path!(
             rs_matter::im::GenericPath::new(
                 Some($endpoint as u16),
                 Some($cluster as u32),
-                Some($attr as u32)
+                Some($event as u32)
             ),
-            $data
-        )
-    };
-}
-
-/// Same as `event_data!`, but generates data for one concrete
-/// array element in an array attribute
-#[macro_export]
-macro_rules! event_data_lel {
-    ($endpoint:expr, $cluster:expr, $attr: expr, $data:expr) => {
-        $crate::event_data_lel_path!(
-            rs_matter::im::GenericPath::new(
-                Some($endpoint as u16),
-                Some($cluster as u32),
-                Some($attr as u32)
-            ),
+            $event_no,
+            $prio,
             $data
         )
     };
@@ -215,48 +151,3 @@ impl TestToTLV for TestEventResp<'_> {
     }
 }
 
-impl E2eRunner {
-    /// TODO(events): All other E2E tests say "For backwards compatibility." here
-    ///               does that mean we shouldn't add new methods like this one?
-    pub fn read_event_reqs<'a>(input: &'a [EventPath], expected: &'a [TestEventResp<'a>]) {
-        let runner = Self::new_default();
-        runner.add_default_acl();
-
-        // TODO(events): Need to implement a proper way for test setup; for now we just mirror the "expected"
-        //               and insert them into the event queue here, except we set the data to 42 because the borrows
-        //               became a mess and this is all needing to be ripped out anyway and I'm lazy and impatient.
-        for ele in expected {
-            if let TestEventResp::EventData(ev) = ele {
-                runner
-                    .events
-                    .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
-                        if let Some(data) = ev.data {
-                            // TODO(events) the public API shouldn't require knowing about the tag index here
-                            let mut b = [0u8; 128];
-                            let mut wb = WriteBuf::new(&mut b[0..]);
-                            data.test_to_tlv(&TLVTag::Context(EventDataTag::Data as _), &mut wb)?;
-                            let end = wb.get_tail();
-                            tw.write_raw_data(b[..end].iter().copied())?;
-                            tw.end()?;
-                        }
-                        Ok(())
-                    })
-                    .unwrap();
-            }
-        }
-
-        runner.handle_read_event_reqs(runner.handler(), input, expected)
-    }
-
-    /// For backwards compatibility.
-    pub fn handle_read_event_reqs<'a, H>(
-        &self,
-        handler: H,
-        input: &'a [EventPath],
-        expected: &'a [TestEventResp<'a>],
-    ) where
-        H: AsyncHandler + AsyncMetadata,
-    {
-        self.test_one(handler, TLVTest::read_events(input, expected))
-    }
-}

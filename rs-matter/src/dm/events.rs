@@ -20,6 +20,7 @@ use crate::error::{Error, ErrorCode};
 use crate::im::{EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
 use crate::tlv::{FromTLV, TLVElement, TLVSequence, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::utils::cell::RefCell;
+use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
@@ -49,9 +50,11 @@ where
         }
     }
 
-    // TODO(events): The subsciptions structure has an in-place init option here,
-    // I guess to allow creating these heavy structures and avoid having them be moved? We likely
-    // want that here too, I would assume.
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            state <- Mutex::init(RefCell::init(EventsInner::init())),
+        })
+    }
 
     pub fn push(
         &self,
@@ -120,6 +123,16 @@ impl<const N: usize> EventsInner<N> {
             // TODO(events): This needs persistence
             next_event_no: 0,
         }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            buf_debug <- TLVRingBuf::init(),
+            buf_info <- TLVRingBuf::init(),
+            buf_critical <- TLVRingBuf::init(),
+            // TODO(events): This needs persistence
+            next_event_no: 0,
+        })
     }
 
     pub fn push<'a>(
@@ -357,6 +370,13 @@ impl<const N: usize> TLVRingBuf<N> {
             data: [0; N],
             head: 0,
         }
+    }
+
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            data: [0; N],
+            head: 1,
+        })
     }
 
     fn write(&mut self, byte: u8) -> WriteOutcome {
