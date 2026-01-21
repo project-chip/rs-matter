@@ -18,13 +18,13 @@
 //! A set of constants for an uncertified (test) device.
 //! Used in the examples and tests and can be re-used by user code as well.
 
+use crate::crypto::{CanonSecp256r1PublicKey, CanonSecp256r1SecretKey};
 use crate::dm::clusters::basic_info::BasicInfoConfig;
-use crate::dm::clusters::dev_att::{DataType, DevAttDataFetcher};
-use crate::error::{Error, ErrorCode};
+use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::BasicCommData;
 
 /// Test Device Attestation credentials
-pub const TEST_DEV_ATT: TestDevAtt = TestDevAtt(());
+pub const TEST_DEV_ATT: TestDeviceAttestation = TestDeviceAttestation(());
 /// Test Vendor ID
 /// Matches what chip-tool tests expect
 pub const TEST_VID: u16 = 0xfff1;
@@ -55,7 +55,7 @@ pub const TEST_DEV_DET: BasicInfoConfig = BasicInfoConfig {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct TestDevAtt(());
+pub struct TestDeviceAttestation(());
 
 // credentials/examples/ExamplePAI.cpp FFF1
 const PAI_CERT: &[u8] = &[
@@ -125,7 +125,7 @@ const DAC_CERT: &[u8] = &[
     0x51, 0x7c, 0xbe, 0x4f, 0x24, 0xa7, 0x20, 0xe1, 0xc0, 0x59, 0xde, 0x1a,
 ];
 
-const DAC_PUBKEY: &[u8] = &[
+const DAC_PUBKEY: &CanonSecp256r1PublicKey = &[
     0x04, 0xda, 0x93, 0xf1, 0x67, 0x36, 0x25, 0x67, 0x50, 0xd9, 0x03, 0xb0, 0x34, 0xba, 0x45, 0x88,
     0xab, 0xaf, 0x58, 0x95, 0x4f, 0x77, 0xaa, 0x9f, 0xd9, 0x98, 0x9d, 0xfd, 0x40, 0x0d, 0x7a, 0xb3,
     0xfd, 0xc9, 0x75, 0x3b, 0x3b, 0x92, 0x1b, 0x29, 0x4c, 0x95, 0x0f, 0xd9, 0xd2, 0x80, 0xd1, 0x4c,
@@ -133,12 +133,11 @@ const DAC_PUBKEY: &[u8] = &[
     0xca,
 ];
 
-const DAC_PRIVKEY: &[u8] = &[
+const DAC_PRIVKEY: &CanonSecp256r1SecretKey = &[
     0xda, 0xf2, 0x1a, 0x7e, 0xa4, 0x7a, 0x70, 0x48, 0x02, 0xa7, 0xe6, 0x6c, 0x50, 0xeb, 0x10, 0xba,
     0xc3, 0xbd, 0xd1, 0x68, 0x80, 0x39, 0x80, 0x66, 0xff, 0xda, 0xd7, 0xf5, 0x20, 0x98, 0xb6, 0x85,
 ];
 
-//
 const CERT_DECLARATION: &[u8] = &[
     0x30, 0x82, 0x02, 0x19, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02, 0xa0,
     0x82, 0x02, 0x0a, 0x30, 0x82, 0x02, 0x06, 0x02, 0x01, 0x03, 0x31, 0x0d, 0x30, 0x0b, 0x06, 0x09,
@@ -176,27 +175,23 @@ const CERT_DECLARATION: &[u8] = &[
     0xd3, 0xff, 0xdf, 0xc3, 0xcc, 0xed, 0x7a, 0xa8, 0xca, 0x5f, 0x4c, 0x1a, 0x7c,
 ];
 
-impl DevAttDataFetcher for TestDevAtt {
-    fn get_devatt_data<'a>(
-        &self,
-        data_type: DataType,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
-        let src = match data_type {
-            DataType::CertDeclaration => CERT_DECLARATION,
-            DataType::PAI => PAI_CERT,
-            DataType::DAC => DAC_CERT,
-            DataType::DACPubKey => DAC_PUBKEY,
-            DataType::DACPrivKey => DAC_PRIVKEY,
-        };
+impl DeviceAttestation for TestDeviceAttestation {
+    fn cert_declaration(&self) -> &[u8] {
+        CERT_DECLARATION
+    }
 
-        if src.len() <= buf.len() {
-            let dst = &mut buf[..src.len()];
-            dst.copy_from_slice(src);
+    fn pai(&self) -> &[u8] {
+        PAI_CERT
+    }
+    fn dac(&self) -> &[u8] {
+        DAC_CERT
+    }
 
-            Ok(dst)
-        } else {
-            Err(ErrorCode::BufferTooSmall.into())
-        }
+    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey {
+        DAC_PUBKEY
+    }
+
+    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey {
+        DAC_PRIVKEY
     }
 }

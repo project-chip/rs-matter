@@ -59,7 +59,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::Psm;
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::network::btp::bluez::BluezGattPeripheral;
 use rs_matter::transport::network::btp::{Btp, BtpContext};
 use rs_matter::transport::network::wifi::nm::NetMgrCtl;

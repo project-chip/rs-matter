@@ -21,13 +21,13 @@ use core::time::Duration;
 
 use cfg_if::cfg_if;
 
-use crate::crypto::Crypto;
+use crate::crypto::{CanonAes128Key, Crypto, AES128_CANON_KEY_LEN};
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
+use crate::utils::init::{init, init_zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::Matter;
@@ -82,8 +82,8 @@ pub struct Session {
     peer_nodeid: Option<u64>,
     // I find the session initiator/responder role getting confused with exchange initiator/responder
     // So, we might keep this as enc_key and dec_key for now
-    dec_key: [u8; MATTER_AES128_KEY_SIZE],
-    enc_key: [u8; MATTER_AES128_KEY_SIZE],
+    dec_key: CanonAes128Key,
+    enc_key: CanonAes128Key,
     att_challenge: [u8; MATTER_AES128_KEY_SIZE],
     local_sess_id: u16,
     peer_sess_id: u16,
@@ -144,9 +144,9 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key <- zeroed(),
-            enc_key <- zeroed(),
-            att_challenge <- zeroed(),
+            dec_key <- init_zeroed(),
+            enc_key <- init_zeroed(),
+            att_challenge <- init_zeroed(),
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: Self::rand_msg_ctr(rand),
@@ -206,21 +206,21 @@ impl Session {
         ctr
     }
 
-    pub fn get_dec_key(&self) -> Option<&[u8]> {
+    pub fn get_dec_key(&self) -> Option<&CanonAes128Key> {
         match self.mode {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.dec_key),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_enc_key(&self) -> Option<&[u8]> {
+    pub fn get_enc_key(&self) -> Option<&CanonAes128Key> {
         match self.mode {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.enc_key),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_att_challenge(&self) -> &[u8] {
+    pub fn get_att_challenge(&self) -> &[u8; AES128_CANON_KEY_LEN] {
         &self.att_challenge
     }
 

@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::crypto::{Crypto, AEAD_MIC_LEN_BYTES};
+use crate::crypto::{self, Crypto};
 use crate::error::Error;
 use crate::fmt::Bytes;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -35,7 +35,7 @@ pub struct PacketHdr {
 
 impl PacketHdr {
     pub const HDR_RESERVE: usize = plain_hdr::max_plain_hdr_len() + proto_hdr::max_proto_hdr_len();
-    pub const TAIL_RESERVE: usize = AEAD_MIC_LEN_BYTES;
+    pub const TAIL_RESERVE: usize = crypto::AES128_TAG_LEN;
 
     #[inline(always)]
     pub const fn new() -> Self {
@@ -64,7 +64,7 @@ impl PacketHdr {
         &mut self,
         pb: &mut ParseBuf,
         peer_nodeid: u64,
-        dec_key: Option<&[u8]>,
+        dec_key: Option<&crypto::CanonAes128Key>,
         crypto: C,
     ) -> Result<(), Error> {
         self.proto
@@ -75,7 +75,7 @@ impl PacketHdr {
         &self,
         wb: &mut WriteBuf,
         local_nodeid: u64,
-        enc_key: Option<&[u8]>,
+        enc_key: Option<&crypto::CanonAes128Key>,
         crypto: C,
     ) -> Result<(), Error> {
         // Generate encrypted header

@@ -21,7 +21,9 @@ use core::time::Duration;
 
 use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
-use crate::crypto::Crypto;
+use crate::crypto::{
+    as_canon, CanonSecp256r1PublicKey, Crypto, Hkdf, AES128_CANON_KEY_LEN, SECP256R1_POINT_ZEROED,
+};
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{BasicContext, BasicContextInstance};
@@ -461,11 +463,11 @@ struct Pake1Resp<'a> {
 }
 
 /// The PASE PAKE handler
-pub struct Pake<'a, C: Crypto> {
+pub struct Pase<'a, C: Crypto> {
     spake2p: Spake2P<'a, C>,
 }
 
-impl<'a, C: Crypto> Pake<'a, C> {
+impl<'a, C: Crypto> Pase<'a, C> {
     /// Create a new PASE PAKE handler
     pub const fn new(crypto: &'a C) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
@@ -619,7 +621,7 @@ impl<'a, C: Crypto> Pake<'a, C> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
         let pA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let mut pB: [u8; 65] = [0; 65];
+        let mut pB = SECP256R1_POINT_ZEROED;
         let mut cB: [u8; 32] = [0; 32];
 
         let has_comm_window = {
@@ -633,7 +635,7 @@ impl<'a, C: Crypto> Pake<'a, C> {
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
-                self.spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
+                self.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
 
                 true
             } else {
@@ -672,16 +674,20 @@ impl<'a, C: Crypto> Pake<'a, C> {
         check_opcode(exchange, OpCode::PASEPake3)?;
 
         let cA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let (status, ke) = self.spake2p.handle_cA(cA);
+        let result = self.spake2p.handle_cA(cA);
 
-        let result = if status == SCStatusCodes::SessionEstablishmentSuccess {
+        if result.is_ok() {
             // Get the keys
-            let ke = ke.ok_or(ErrorCode::Invalid)?;
-            let mut session_keys: [u8; 48] = [0; 48];
+            let mut session_keys = [0; AES128_CANON_KEY_LEN * 3];
             self.spake2p
                 .crypto
-                .hkdf_sha256()
-                .expand(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+                .hkdf_sha256()?
+                .expand(
+                    &[],
+                    self.spake2p.ke(),
+                    SPAKE2_SESSION_KEYS_INFO,
+                    &mut session_keys,
+                )
                 .map_err(|_x| ErrorCode::InvalidData)?;
 
             // Create a session
@@ -701,11 +707,7 @@ impl<'a, C: Crypto> Pake<'a, C> {
                 Some(&session_keys[16..32]),
                 Some(&session_keys[32..48]),
             )?;
-
-            Ok(())
-        } else {
-            Err(status)
-        };
+        }
 
         let status = match result {
             Ok(()) => {
@@ -787,11 +789,10 @@ impl<'a, C: Crypto> Pake<'a, C> {
         pase.session_timeout = None;
     }
 
-    /// Extract the PAKEPake1 or PAKEPake3 parameters from the given buffer
+    /// Extract the PASEPake1 or PASEPake3 parameters from the given buffer
     #[allow(non_snake_case)]
-    fn extract_pasepake_1_or_3_params(buf: &[u8]) -> Result<&[u8], Error> {
-        let root = get_root_node_struct(buf)?;
-        let pA = root.structure()?.ctx(1)?.str()?;
-        Ok(pA)
+    fn extract_pasepake_1_or_3_params(data: &[u8]) -> Result<&CanonSecp256r1PublicKey, Error> {
+        let root = get_root_node_struct(data)?;
+        as_canon(root.structure()?.ctx(1)?.str()?)
     }
 }

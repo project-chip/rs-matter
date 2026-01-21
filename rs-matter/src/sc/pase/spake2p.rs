@@ -17,11 +17,15 @@
 
 use subtle::ConstantTimeEq;
 
-use crate::crypto::{self, Crypto, Digest, Hkdf, Pbkdf2Hmac};
+use crate::crypto::{
+    as_canon, CanonSecp256r1Point, Crypto, Digest, Hkdf, HmacSha256Hash, Pbkdf2Hmac, Sha256Hash,
+    SECP256R1_CANON_POINT_LEN, SECP256R1_CANON_SCALAR_LEN, SHA256_HASH_LEN, SHA256_HASH_ZEROED,
+    UINT384_CANON_LEN,
+};
 use crate::error::{Error, ErrorCode};
 use crate::sc::crypto::CryptoSpake2;
 use crate::sc::SCStatusCodes;
-use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
+use crate::utils::init::{init, init_zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 
 // This file handles Spake2+ specific instructions. In itself, this file is
@@ -37,11 +41,8 @@ pub const MAX_SALT_SIZE_BYTES: usize = 32;
 
 const SPAKE2P_KEY_CONFIRM_INFO: &[u8] = b"ConfirmationKeys";
 const SPAKE2P_CONTEXT_PREFIX: &[u8] = b"CHIP PAKE V1 Commissioning";
-const CRYPTO_GROUP_SIZE_BYTES: usize = 32;
-const CRYPTO_W_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + 8;
-const CRYPTO_PUBLIC_KEY_SIZE_BYTES: usize = (2 * CRYPTO_GROUP_SIZE_BYTES) + 1;
 
-const VERIFIER_SIZE_BYTES: usize = CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES;
+const VERIFIER_SIZE_BYTES: usize = SECP256R1_CANON_SCALAR_LEN + SECP256R1_CANON_POINT_LEN;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -70,7 +71,7 @@ pub struct Spake2P<'a, C: Crypto> {
     context: Option<C::Sha256<'a>>,
     spake2: Option<CryptoSpake2<'a, C>>,
     Ke: [u8; 16],
-    cA: [u8; 32],
+    cA: HmacSha256Hash,
     app_data: u32,
 }
 
@@ -94,8 +95,8 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
             crypto,
             context: None,
             spake2: None,
-            Ke <- zeroed(),
-            cA <- zeroed(),
+            Ke <- init_zeroed(),
+            cA <- init_zeroed(),
             app_data: 0,
         })
     }
@@ -121,7 +122,11 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
         Ok(())
     }
 
-    fn get_w0w1s(&self, pw: u32, iter: u32, salt: &[u8], w0w1s: &mut [u8]) {
+    pub fn ke(&self) -> &[u8; 16] {
+        &self.Ke
+    }
+
+    fn get_w0w1s(&self, pw: u32, iter: u32, salt: &[u8], w0w1s: &mut [u8; UINT384_CANON_LEN * 2]) {
         unwrap!(self.crypto.pbkdf2_hmac_sha256()).derive(
             &pw.to_le_bytes(),
             iter as usize,
@@ -134,24 +139,22 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
         self.spake2 = Some(CryptoSpake2::new(self.crypto)?);
         if let Some(pw) = verifier.password {
             // Derive w0 and L from the password
-            let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
+            let mut w0w1s = [0; 2 * UINT384_CANON_LEN];
             self.get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
-            let w0s_len = w0w1s.len() / 2;
             if let Some(spake2) = &mut self.spake2 {
-                spake2.set_w0_from_w0s(&w0w1s[0..w0s_len])?;
-                spake2.set_l_from_w1s(&w0w1s[w0s_len..])?;
+                spake2.set_w0_from_w0s(unwrap!(as_canon(&w0w1s[..UINT384_CANON_LEN])))?;
+                spake2.set_L_from_w1s(unwrap!(as_canon(&w0w1s[UINT384_CANON_LEN..])))?;
             }
         } else {
             // Extract w0 and L from the verifier
-            assert_eq!(
-                verifier.verifier.len(),
-                CRYPTO_GROUP_SIZE_BYTES + CRYPTO_PUBLIC_KEY_SIZE_BYTES
-            );
-
             if let Some(spake2) = &mut self.spake2 {
-                spake2.set_w0(&verifier.verifier[0..CRYPTO_GROUP_SIZE_BYTES])?;
-                spake2.set_l(&verifier.verifier[CRYPTO_GROUP_SIZE_BYTES..])?;
+                spake2.set_w0(unwrap!(as_canon(
+                    &verifier.verifier[..SECP256R1_CANON_SCALAR_LEN]
+                )))?;
+                spake2.set_L(unwrap!(as_canon(
+                    &verifier.verifier[SECP256R1_CANON_SCALAR_LEN..]
+                )))?;
             }
         }
 
@@ -162,87 +165,81 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
     #[allow(non_snake_case)]
     pub fn handle_pA(
         &mut self,
-        pA: &[u8],
-        pB: &mut [u8],
-        cB: &mut [u8],
-        rand: Rand,
+        pA: &CanonSecp256r1Point,
+        pB: &mut CanonSecp256r1Point,
+        cB: &mut HmacSha256Hash,
     ) -> Result<(), Error> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::Init) {
             Err(ErrorCode::InvalidState)?;
         }
 
-        if let Some(crypto_spake2) = &mut self.crypto_spake2 {
-            crypto_spake2.get_pB(pB, rand)?;
+        if let Some(crypto_spake2) = &mut self.spake2 {
+            crypto_spake2.get_pB(pB)?;
             if let Some(context) = self.context.take() {
-                let mut hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
-                context.finish(&mut hash)?;
-                let mut TT = [0u8; crypto::SHA256_HASH_LEN_BYTES];
+                let mut hash = SHA256_HASH_ZEROED;
+                context.finish(&mut hash);
+                let mut TT = SHA256_HASH_ZEROED;
                 crypto_spake2.get_TT_as_verifier(&hash, pA, pB, &mut TT)?;
 
-                self.get_Ke_and_cAcB(&TT, pA, pB, &mut self.Ke, &mut self.cA, cB)?;
+                Self::get_Ke_and_cAcB(self.crypto, &TT, pA, pB, &mut self.Ke, &mut self.cA, cB)?;
             }
         }
 
         // We are finished with using the crypto_spake2 now
-        self.crypto_spake2 = None;
+        self.spake2 = None;
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation);
         Ok(())
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_cA(&mut self, cA: &[u8]) -> (SCStatusCodes, Option<&[u8]>) {
+    pub fn handle_cA<'t>(&mut self, cA: &[u8]) -> Result<(), SCStatusCodes> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
-            return (SCStatusCodes::SessionNotFound, None);
+            return Err(SCStatusCodes::SessionNotFound);
         }
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Confirmed);
         if cA.ct_eq(&self.cA).unwrap_u8() == 1 {
-            (SCStatusCodes::SessionEstablishmentSuccess, Some(&self.Ke))
+            return Ok(());
         } else {
-            (SCStatusCodes::InvalidParameter, None)
+            return Err(SCStatusCodes::InvalidParameter);
         }
     }
 
     #[allow(non_snake_case)]
     #[allow(dead_code)]
     fn get_Ke_and_cAcB(
-        &self,
-        TT: &[u8],
+        crypto: &C,
+        TT: &Sha256Hash,
         pA: &[u8],
         pB: &[u8],
-        Ke: &mut [u8],
-        cA: &mut [u8],
-        cB: &mut [u8],
+        Ke: &mut [u8; 16],
+        cA: &mut HmacSha256Hash,
+        cB: &mut HmacSha256Hash,
     ) -> Result<(), Error> {
         // Step 1: Ka || Ke = Hash(TT)
         let KaKe = TT;
-        let KaKe_len = KaKe.len();
-        let Ka = &KaKe[0..KaKe_len / 2];
-        let ke_internal = &KaKe[(KaKe_len / 2)..];
-        if ke_internal.len() == Ke.len() {
-            Ke.copy_from_slice(ke_internal);
-        } else {
-            Err(ErrorCode::InvalidData)?;
-        }
+        let Ka = &KaKe[..SHA256_HASH_LEN / 2];
+        let ke_internal = &KaKe[SHA256_HASH_LEN / 2..];
+        Ke.copy_from_slice(ke_internal);
 
         // Step 2: KcA || KcB = KDF(nil, Ka, "ConfirmationKeys")
         let mut KcAKcB: [u8; 32] = [0; 32];
-        self.crypto
+        crypto
             .hkdf_sha256()
             .unwrap()
             .expand(&[], Ka, SPAKE2P_KEY_CONFIRM_INFO, &mut KcAKcB)
             .map_err(|_x| ErrorCode::InvalidData)?;
 
-        let KcA = &KcAKcB[0..(KcAKcB.len() / 2)];
-        let KcB = &KcAKcB[(KcAKcB.len() / 2)..];
+        let KcA = &KcAKcB[..KcAKcB.len() / 2];
+        let KcB = &KcAKcB[KcAKcB.len() / 2..];
 
         // Step 3: cA = HMAC(KcA, pB), cB = HMAC(KcB, pA)
-        let mut mac = HmacSha256::new(KcA)?;
-        mac.update(pB)?;
-        mac.finish(cA)?;
+        let mut mac = crypto.hmac_sha256(KcA)?;
+        mac.update(pB);
+        mac.finish(cA);
 
-        let mut mac = HmacSha256::new(KcB)?;
-        mac.update(pA)?;
-        mac.finish(cB)?;
+        let mut mac = crypto.hmac_sha256(KcB)?;
+        mac.update(pA);
+        mac.finish(cB);
         Ok(())
     }
 }
@@ -277,8 +274,8 @@ impl VerifierData {
     fn init_empty() -> impl Init<Self> {
         init!(Self {
             password: None,
-            verifier <- zeroed(),
-            salt <- zeroed(),
+            verifier <- init_zeroed(),
+            salt <- init_zeroed(),
             count: SPAKE2_ITERATION_COUNT,
         })
     }
@@ -309,19 +306,21 @@ impl VerifierData {
 
 #[cfg(test)]
 pub mod test_vectors {
+    use crate::crypto::{CanonSecp256r1Point, CanonSecp256r1Scalar};
+
     // Based on vectors used in the RFC
     #[allow(non_snake_case)]
     #[allow(unused)]
     pub struct RFCTestVector {
-        pub w0: [u8; 32],
-        pub w1: [u8; 32],
-        pub x: [u8; 32],
-        pub X: [u8; 65],
-        pub y: [u8; 32],
-        pub Y: [u8; 65],
-        pub Z: [u8; 65],
-        pub V: [u8; 65],
-        pub L: [u8; 65],
+        pub w0: CanonSecp256r1Scalar,
+        pub w1: CanonSecp256r1Scalar,
+        pub x: CanonSecp256r1Scalar,
+        pub X: CanonSecp256r1Point,
+        pub y: CanonSecp256r1Scalar,
+        pub Y: CanonSecp256r1Point,
+        pub Z: CanonSecp256r1Point,
+        pub V: CanonSecp256r1Point,
+        pub L: CanonSecp256r1Point,
         pub cA: [u8; 32],
         pub cB: [u8; 32],
         pub Ke: [u8; 16],
@@ -329,6 +328,7 @@ pub mod test_vectors {
         // The TT size changes, as they change the identifiers, address it through this
         pub TT_len: usize,
     }
+
     pub const RFC_T: [RFCTestVector; 4] = [
         RFCTestVector {
             w0: [
@@ -791,18 +791,19 @@ pub mod test_vectors {
 
 #[cfg(test)]
 mod tests {
-    use super::{test_vectors::*, Spake2P, CRYPTO_W_SIZE_BYTES};
-    use crate::crypto;
+    use crate::crypto::{test_crypto, Crypto, Digest, SHA256_HASH_ZEROED, UINT384_CANON_LEN};
+
+    use super::{test_vectors::*, Spake2P};
 
     #[test]
     fn test_pbkdf2() {
         // These are the vectors from one sample run of chip-tool along with our PBKDFParamResponse
-        let salt = [
+        const SALT: &[u8] = &[
             0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
             0x36, 0x0,
         ];
-        let mut w0w1s: [u8; 2 * CRYPTO_W_SIZE_BYTES] = [0; (2 * CRYPTO_W_SIZE_BYTES)];
-        Spake2P::get_w0w1s(123456, 2000, &salt, &mut w0w1s);
+        let mut w0w1s = [0; 2 * UINT384_CANON_LEN];
+        Spake2P::new(&test_crypto()).get_w0w1s(123456, 2000, SALT, &mut w0w1s);
         assert_eq!(
             w0w1s,
             [
@@ -819,16 +820,18 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_get_Ke_and_cAcB() {
+        let crypto = test_crypto();
+
         for t in RFC_T {
             let mut Ke: [u8; 16] = [0; 16];
             let mut cA: [u8; 32] = [0; 32];
             let mut cB: [u8; 32] = [0; 32];
-            let mut TT_hash = [0u8; crypto::SHA256_HASH_LEN_BYTES];
-            let mut h = unwrap!(crypto::Sha256::new());
-            unwrap!(h.update(&t.TT[0..t.TT_len]));
-            unwrap!(h.finish(&mut TT_hash));
+            let mut TT_hash = SHA256_HASH_ZEROED;
+            let mut h = unwrap!(crypto.sha256());
+            h.update(&t.TT[..t.TT_len]);
+            h.finish(&mut TT_hash);
             unwrap!(Spake2P::get_Ke_and_cAcB(
-                &TT_hash, &t.X, &t.Y, &mut Ke, &mut cA, &mut cB
+                &crypto, &TT_hash, &t.X, &t.Y, &mut Ke, &mut cA, &mut cB,
             ));
             assert_eq!(Ke, t.Ke);
             assert_eq!(cA, t.cA);

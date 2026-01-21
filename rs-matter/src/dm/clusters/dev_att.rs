@@ -15,46 +15,72 @@
  *    limitations under the License.
  */
 
-use crate::error::Error;
+use crate::crypto::{CanonSecp256r1PublicKey, CanonSecp256r1SecretKey};
 
-/// Device Attestation Data Type
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum DataType {
-    /// Certificate Declaration
-    CertDeclaration,
-    /// Product Attestation Intermediary Certificate
-    PAI,
-    /// Device Attestation Certificate
-    DAC,
-    /// Device Attestation Certificate - Public Key
-    DACPubKey,
-    /// Device Attestation Certificate - Private Key
-    DACPrivKey,
-}
-
-/// The Device Attestation Data Fetcher Trait
+/// The Device Attestation trait
 ///
 /// Objects that implement this trait allow the Matter subsystem to query the object
 /// for the Device Attestation data that is programmed in the Matter device.
-pub trait DevAttDataFetcher {
-    /// Get the data in the provided buffer
-    fn get_devatt_data<'a>(
-        &self,
-        data_type: DataType,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error>;
+pub trait DeviceAttestation {
+    /// Get the Certificate Declaration
+    fn cert_declaration(&self) -> &[u8];
+
+    /// Get the Product Attestation Intermediary Certificate
+    fn pai(&self) -> &[u8];
+
+    /// Get the Device Attestation Certificate
+    fn dac(&self) -> &[u8];
+
+    /// Get the Device Attestation Certificate Public Key
+    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey;
+
+    /// Get the Device Attestation Certificate Private Key
+    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey;
 }
 
-impl<T> DevAttDataFetcher for &T
+impl<T> DeviceAttestation for &T
 where
-    T: DevAttDataFetcher,
+    T: DeviceAttestation,
 {
-    fn get_devatt_data<'a>(
-        &self,
-        data_type: DataType,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], Error> {
-        (*self).get_devatt_data(data_type, buf)
+    fn cert_declaration(&self) -> &[u8] {
+        (*self).cert_declaration()
+    }
+
+    fn pai(&self) -> &[u8] {
+        (*self).pai()
+    }
+
+    fn dac(&self) -> &[u8] {
+        (*self).dac()
+    }
+
+    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey {
+        (*self).dac_pub_key()
+    }
+
+    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey {
+        (*self).dac_priv_key()
+    }
+}
+
+impl DeviceAttestation for &dyn DeviceAttestation {
+    fn cert_declaration(&self) -> &[u8] {
+        (*self).cert_declaration()
+    }
+
+    fn pai(&self) -> &[u8] {
+        (*self).pai()
+    }
+
+    fn dac(&self) -> &[u8] {
+        (*self).dac()
+    }
+
+    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey {
+        (*self).dac_pub_key()
+    }
+
+    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey {
+        (*self).dac_priv_key()
     }
 }
