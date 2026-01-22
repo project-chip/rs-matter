@@ -20,7 +20,10 @@
 use crate::dm::{Cluster, Dataver, InvokeContext, ReadContext, WriteContext};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVBuilderParent;
+use crate::transport::exchange::Exchange;
+use crate::utils::cell::RefCell;
 
+use crate::dm::clusters::basic_info::BasicInfoSettings;
 pub use crate::dm::clusters::decl::general_commissioning::*;
 use crate::with;
 
@@ -52,7 +55,6 @@ pub trait CommPolicy {
     fn failsafe_max_cml_secs(&self) -> u16;
 
     /// Return the regulatory configuration of the device.
-    // TODO: Needs to be persisted
     fn regulatory_config(&self) -> RegulatoryLocationTypeEnum;
 
     /// Return the location capability of the device.
@@ -126,6 +128,10 @@ impl<'a> GenCommHandler<'a> {
     pub const fn adapt(self) -> HandlerAdaptor<Self> {
         HandlerAdaptor(self)
     }
+
+    fn settings<'b>(exchange: &'b Exchange) -> &'b RefCell<BasicInfoSettings> {
+        &exchange.matter().basic_info_settings
+    }
 }
 
 impl ClusterHandler for GenCommHandler<'_> {
@@ -139,12 +145,17 @@ impl ClusterHandler for GenCommHandler<'_> {
         self.dataver.changed();
     }
 
-    fn breadcrumb(&self, _ctx: impl ReadContext) -> Result<u64, Error> {
-        Ok(0) // TODO
+    fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {
+        Ok(ctx.exchange().matter().failsafe.borrow_mut().breadcrumb())
     }
 
-    fn set_breadcrumb(&self, _ctx: impl WriteContext, _value: u64) -> Result<(), Error> {
-        Ok(()) // TODO
+    fn set_breadcrumb(&self, ctx: impl WriteContext, value: u64) -> Result<(), Error> {
+        ctx.exchange()
+            .matter()
+            .failsafe
+            .borrow_mut()
+            .set_breadcrumb(value);
+        Ok(())
     }
 
     fn basic_commissioning_info<P: TLVBuilderParent>(
@@ -182,12 +193,14 @@ impl ClusterHandler for GenCommHandler<'_> {
         request: ArmFailSafeRequest,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
+        let mut failsafe = ctx.exchange().matter().failsafe.borrow_mut();
         let status = CommissioningErrorEnum::map(ctx.exchange().with_session(|sess| {
-            ctx.exchange()
-                .matter()
-                .failsafe
-                .borrow_mut()
-                .arm(request.expiry_length_seconds()?, sess.get_session_mode())
+            failsafe.arm(
+                request.expiry_length_seconds()?,
+                request.breadcrumb()?,
+                sess.get_session_mode(),
+                &ctx,
+            )
         }))?;
 
         response.error_code(status)?.debug_text("")?.end()
@@ -195,11 +208,27 @@ impl ClusterHandler for GenCommHandler<'_> {
 
     fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
-        _ctx: impl InvokeContext,
-        _request: SetRegulatoryConfigRequest,
+        ctx: impl InvokeContext,
+        request: SetRegulatoryConfigRequest,
         response: SetRegulatoryConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
-        // TODO
+        let country_code = request.country_code()?;
+        if country_code.len() != 2 {
+            return Err(ErrorCode::ConstraintError.into());
+        }
+        let mut settings = Self::settings(ctx.exchange()).borrow_mut();
+
+        settings.set_location(country_code);
+        settings.location_type = request.new_regulatory_config()?;
+
+        ctx.exchange().matter().notify_persist();
+
+        ctx.exchange()
+            .matter()
+            .failsafe
+            .borrow_mut()
+            .set_breadcrumb(request.breadcrumb()?);
+
         response
             .error_code(CommissioningErrorEnum::OK)?
             .debug_text("")?
@@ -211,16 +240,25 @@ impl ClusterHandler for GenCommHandler<'_> {
         ctx: impl InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let status = CommissioningErrorEnum::map(ctx.exchange().with_session(|sess| {
+        let status = CommissioningErrorEnum::map(
             ctx.exchange()
-                .matter()
-                .failsafe
-                .borrow_mut()
-                .disarm(sess.get_session_mode())
-        }))?;
+                .with_session(|sess| {
+                    ctx.exchange()
+                        .matter()
+                        .failsafe
+                        .borrow_mut()
+                        .disarm(sess.get_session_mode())
+                })
+                .map_err(|err| match err.code() {
+                    ErrorCode::NocInvalidFabricIndex => {
+                        Error::new(ErrorCode::GennCommInvalidAuthentication)
+                    }
+                    _ => err,
+                }),
+        )?;
 
         if matches!(status, CommissioningErrorEnum::OK) {
-            // As per section 5.5 of the Matter Core Spec V1.3 we have to teriminate the PASE session
+            // As per section 5.5 of the Matter Core Spec V1.3 we have to terminate the PASE session
             // upon completion of commissioning
             ctx.exchange()
                 .matter()

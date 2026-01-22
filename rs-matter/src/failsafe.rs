@@ -20,6 +20,7 @@ use core::time::Duration;
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::KeyPair;
+use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::im::IMStatusCode;
@@ -82,6 +83,7 @@ pub struct FailSafe {
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
     epoch: Epoch,
     rand: Rand,
+    breadcrumb: u64,
 }
 
 impl FailSafe {
@@ -93,6 +95,7 @@ impl FailSafe {
             root_ca: Vec::new(),
             epoch,
             rand,
+            breadcrumb: 0,
         }
     }
 
@@ -103,10 +106,17 @@ impl FailSafe {
             root_ca <- Vec::init(),
             epoch,
             rand,
+            breadcrumb: 0
         })
     }
 
-    pub fn arm(&mut self, timeout_secs: u16, session_mode: &SessionMode) -> Result<(), Error> {
+    pub fn arm(
+        &mut self,
+        timeout_secs: u16,
+        breadcrumb: u64,
+        session_mode: &SessionMode,
+        ctx: impl BasicContext,
+    ) -> Result<(), Error> {
         self.update_state_timeout();
 
         if matches!(self.state, State::Idle) {
@@ -115,12 +125,25 @@ impl FailSafe {
                 return Err(ErrorCode::GennCommInvalidAuthentication)?;
             }
 
+            // Cannot arm via CASE while there's an active window
+            if ctx
+                .matter()
+                .pase_mgr
+                .borrow_mut()
+                .comm_window(&ctx)?
+                .is_some()
+                && matches!(session_mode, SessionMode::Case { .. })
+            {
+                return Err(ErrorCode::Busy)?;
+            }
+
             self.state = State::Armed(ArmedCtx {
                 armed_at: (self.epoch)(),
                 timeout_secs,
                 fab_idx: session_mode.fab_idx(),
                 flags: NocFlags::empty(),
             });
+            self.breadcrumb = breadcrumb;
 
             return Ok(());
         }
@@ -141,6 +164,7 @@ impl FailSafe {
 
         ctx.armed_at = (self.epoch)();
         ctx.timeout_secs = timeout_secs;
+        self.breadcrumb = breadcrumb;
 
         Ok(())
     }
@@ -150,7 +174,7 @@ impl FailSafe {
 
         if matches!(self.state, State::Idle) {
             error!("Received Fail-Safe Disarm without it being armed");
-            return Err(ErrorCode::ConstraintError)?;
+            return Err(ErrorCode::FailSafeRequired)?;
         }
 
         // Has to be a CASE session
@@ -163,6 +187,7 @@ impl FailSafe {
             NocFlags::empty(),
         )?;
         self.state = State::Idle;
+        self.breadcrumb = 0;
 
         Ok(())
     }
@@ -301,6 +326,9 @@ impl FailSafe {
             buf,
         )?;
 
+        // TODO: Copy functionality from C++ FabricTable::FindExistingFabricByNocChaining
+        // i.e. need to check to see if a fabric with these creds are already present
+
         let fab_idx = fabric_mgr
             .borrow_mut()
             .add(
@@ -334,6 +362,15 @@ impl FailSafe {
         self.add_flags(NocFlags::ADD_NOC_RECVD);
 
         Ok(fab_idx)
+    }
+
+    pub fn breadcrumb(&mut self) -> u64 {
+        self.update_state_timeout();
+        self.breadcrumb
+    }
+
+    pub fn set_breadcrumb(&mut self, value: u64) {
+        self.breadcrumb = value;
     }
 
     fn validate_certs(
@@ -434,6 +471,7 @@ impl FailSafe {
             let now = (self.epoch)();
             if now >= ctx.armed_at + Duration::from_secs(ctx.timeout_secs as u64) {
                 self.state = State::Idle;
+                self.breadcrumb = 0;
             }
         }
     }

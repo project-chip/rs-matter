@@ -235,7 +235,7 @@ const BASIC_INFO: BasicInfoConfig<'static> = BasicInfoConfig {
         finish: ProductFinishEnum::Satin,
         color: Some(ColorEnum::Purple),
     },
-    device_type: Some(65535),
+    device_type: Some(0x0101),
     pairing_hint: PairingHintFlags::PRESS_RESET_BUTTON,
     ..TEST_DEV_DET
 };
