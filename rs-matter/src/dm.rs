@@ -479,11 +479,6 @@ where
                 let sub = self.subscriptions.find_report_due(now);
 
                 if let Some((fabric_idx, peer_node_id, session_id, id)) = sub {
-                    debug!(
-                        "About to report data for subscription [F:{:x},P:{:x}]::{}",
-                        fabric_idx, peer_node_id, id
-                    );
-
                     let subscribed = Cell::new(false);
 
                     let _guard = scopeguard::guard((), |_| {
@@ -672,7 +667,6 @@ where
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
-
         if !sub_valid {
             debug!(
                 "Subscription [F:{:x},P:{:x}]::{} removed during reporting",

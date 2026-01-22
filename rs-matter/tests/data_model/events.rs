@@ -15,12 +15,14 @@
  *    limitations under the License.
  */
 
-use rs_matter::dm::events::Events;
 use rs_matter::error::Error;
 use rs_matter::im::EventDataTag;
 use rs_matter::im::EventFilter;
 use rs_matter::im::EventPath;
 use rs_matter::im::GenericPath;
+use rs_matter::im::IMStatusCode;
+use rs_matter::im::StatusResp;
+use rs_matter::im::SubscribeResp;
 use rs_matter::tlv::{TLVTag, TLVWrite};
 use rs_matter::utils::storage::WriteBuf;
 
@@ -117,8 +119,8 @@ fn test_subscribe_events() {
             // When we initially subscribe, we get the one already-stored event
             &TLVTest::subscribe(
                 TestSubscribeReq {
-                    min_int_floor: 1,
-                    max_int_ceil: 10,
+                    min_int_floor: 0,
+                    max_int_ceil: 1,
                     ..TestSubscribeReq::event_reqs(&[WILDCARD_PATH.clone()])
                 },
                 TestReportDataMsg {
@@ -128,9 +130,39 @@ fn test_subscribe_events() {
                 },
                 ReplyProcessor::none,
             ) as &dyn E2eTest,
+            &TLVTest {
+                delay_ms: Some(1),
+                ..TLVTest::subscribe_final(
+                    StatusResp {
+                        status: IMStatusCode::Success,
+                    },
+                    SubscribeResp {
+                        subs_id: 1,
+                        max_int: 40,
+                        ..Default::default()
+                    },
+                    ReplyProcessor::none,
+                )
+            },
+            // TODO(events): Without this unrelated back-n-forth the test hangs, I think
+            //               something-something acks?
+            &TLVTest::read(
+                TestReadReq {
+                    ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
+                },
+                TestReportDataMsg::event_reports(&[event_data_path!(
+                    ep0_event1,
+                    0,
+                    2,
+                    Some(&0x41u8)
+                )]),
+                ReplyProcessor::none,
+            ),
             &TLVTest::subscription_report(
-                |events: &Events<64>| -> Result<(), Error> {
+                || -> Result<(), Error> {
                     push_events(&im, &[event_data_req!(ep0_event1, 0, 2, Some(&0x42u8))]);
+                    im.subscriptions
+                        .notify_event_emitted(0, echo_cluster::ID, 2);
                     Ok(())
                 },
                 TestReportDataMsg {
@@ -139,10 +171,8 @@ fn test_subscribe_events() {
                     ..Default::default()
                 },
                 ReplyProcessor::none,
-                TestSubscribeReq {
-                    min_int_floor: 1,
-                    max_int_ceil: 10,
-                    ..TestSubscribeReq::event_reqs(&[WILDCARD_PATH.clone()])
+                StatusResp {
+                    status: IMStatusCode::Success,
                 },
             ),
         ],

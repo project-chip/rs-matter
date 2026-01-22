@@ -17,7 +17,6 @@
 
 use bitflags::bitflags;
 
-use rs_matter::dm::events::Events;
 use rs_matter::error::Error;
 use rs_matter::im::{
     AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath, EventResp,
@@ -512,12 +511,12 @@ impl ReplyProcessor {
 pub struct Setup {}
 
 impl Setup {
-    pub fn none(_events: &Events<64>) -> Result<(), Error> {
+    pub fn none() -> Result<(), Error> {
         Ok(())
     }
 }
 
-impl<I, E, F> TLVTest<I, E, F, fn(&Events<64>) -> Result<(), Error>>
+impl<I, E, F> TLVTest<I, E, F, fn() -> Result<(), Error>>
 where
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
 {
@@ -686,7 +685,7 @@ where
 impl<I, E, F, S> TLVTest<I, E, F, S>
 where
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
-    S: Fn(&Events<64>) -> Result<(), Error>,
+    S: Fn() -> Result<(), Error>,
 {
     /// Create a new TLV test instance for a report message from the producer side,
     /// with the provided setup optionally emitting events into the system-under-test to
@@ -723,7 +722,7 @@ impl<'a>
         TestReadReq<'a>,
         TestReportDataMsg<'a>,
         fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
-        fn(&Events<64>) -> Result<(), Error>,
+        fn() -> Result<(), Error>,
     >
 {
     /// Create a new TLV test instance with input payload being the IM `ReadRequest` message
@@ -754,7 +753,7 @@ impl<'a>
         TestWriteReq<'a>,
         TestWriteResp<'a>,
         fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
-        fn(&Events<64>) -> Result<(), Error>,
+        fn() -> Result<(), Error>,
     >
 {
     /// Create a new TLV test instance with input payload being the IM `WriteRequest` message
@@ -774,7 +773,7 @@ impl<'a>
         TestInvReq<'a>,
         TestInvResp<'a>,
         fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
-        fn(&Events<64>) -> Result<(), Error>,
+        fn() -> Result<(), Error>,
     >
 {
     /// Create a new TLV test instance with input payload being the IM `InvokeRequest` message

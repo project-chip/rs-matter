@@ -17,7 +17,6 @@
 
 use core::fmt::Debug;
 
-use rs_matter::dm::events::Events;
 use rs_matter::error::Error;
 use rs_matter::tlv::{TLVElement, TLVTag, ToTLV};
 use rs_matter::transport::exchange::MessageMeta;
@@ -49,7 +48,7 @@ where
 ///
 /// It validates the differences between the output and the expected payload using a Diff
 /// algorithm, which provides a human readable output.
-pub struct TLVTest<I, E, F, S = fn(&Events) -> Result<(), Error>> {
+pub struct TLVTest<I, E, F, S = fn() -> Result<(), Error>> {
     pub input_meta: MessageMeta,
     pub input_payload: I,
     pub expected_meta: MessageMeta,
@@ -65,7 +64,7 @@ where
     I: TestToTLV,
     E: TestToTLV,
     F: Fn(&TLVElement, &mut [u8]) -> Result<usize, Error>,
-    S: Fn(&Events<64>) -> Result<(), Error>,
+    S: Fn() -> Result<(), Error>,
 {
     fn fill_input(&self, message_buf: &mut WriteBuf) -> Result<MessageMeta, Error> {
         self.input_payload
@@ -123,8 +122,8 @@ where
         self.delay_ms
     }
 
-    fn setup(&self, events: &Events<64>) -> Result<(), Error> {
-        (self.setup)(events)
+    fn setup(&self) -> Result<(), Error> {
+        (self.setup)()
     }
 
     fn direction(&self) -> E2eTestDirection {

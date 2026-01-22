@@ -58,6 +58,7 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHoo
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_CASTING_VIDEO_PLAYER;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -96,6 +97,9 @@ fn main() -> Result<(), Error> {
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Create the event queue
+    let events = DefaultEvents::new();
+
     // Assemble our Data Model handler by composing the predefined Root Endpoint handler with our custom Speaker handler
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(matter.rand()),
@@ -108,6 +112,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &buffers,
         &subscriptions,
+        &events,
         dm_handler(&matter, &on_off_handler),
     );
 

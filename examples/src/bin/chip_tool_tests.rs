@@ -46,6 +46,7 @@ use rs_matter::dm::clusters::unit_testing::{
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -87,6 +88,7 @@ static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, rs_matter::dm::IMBuffer>> =
     StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
+static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<32768>> = StaticCell::new();
 static UNIT_TESTING_DATA: StaticCell<RefCell<UnitTestingHandlerData>> = StaticCell::new();
 
@@ -132,6 +134,9 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(DefaultSubscriptions::init());
 
+    // Create the event queue
+    let events = EVENTS.uninit().init_with(DefaultEvents::init());
+
     // Our on-off cluster
     let on_off_handler = OnOffHandler::new_standalone(
         Dataver::new_rand(matter.rand()),
@@ -149,6 +154,7 @@ fn main() -> Result<(), Error> {
         matter,
         buffers,
         subscriptions,
+        events,
         dm_handler(matter, unit_testing_data, &on_off_handler),
     );
 

@@ -170,6 +170,7 @@ fn run() -> Result<(), Error> {
         matter,
         buffers,
         subscriptions,
+        events,
         dm_handler(matter, &on_off_handler, &level_control_handler),
     );
 

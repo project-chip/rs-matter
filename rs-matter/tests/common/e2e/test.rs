@@ -20,7 +20,6 @@ use embassy_futures::select::select;
 
 use embassy_time::{Duration, Timer};
 
-use rs_matter::dm::events::Events;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata};
 use rs_matter::error::Error;
 use rs_matter::transport::exchange::{Exchange, MessageMeta};
@@ -43,7 +42,7 @@ pub trait E2eTest {
     }
 
     /// Optionally set up the test, allows you to emit events into the system-under-test
-    fn setup(&self, _events: &Events<64>) -> Result<(), Error> {
+    fn setup(&self) -> Result<(), Error> {
         Ok(())
     }
 
@@ -67,8 +66,8 @@ impl E2eTest for &dyn E2eTest {
         (*self).delay()
     }
 
-    fn setup(&self, events: &Events<64>) -> Result<(), Error> {
-        (*self).setup(events)
+    fn setup(&self) -> Result<(), Error> {
+        (*self).setup()
     }
 
     fn direction(&self) -> E2eTestDirection {
@@ -109,6 +108,8 @@ impl E2eRunner {
 
                 for test in tests {
                     self.execute_test(&mut exchange, test).await?;
+                    // TODO(events) without this the subscribe test hangs, need something smarter
+                    exchange.acknowledge().await?;
                 }
 
                 exchange.acknowledge().await?;
@@ -125,15 +126,20 @@ impl E2eRunner {
     where
         T: E2eTest,
     {
-        test.setup(&self.events)?;
+        test.setup()?;
         match test.direction() {
             E2eTestDirection::ClientInitiated => {
                 self.execute_client_part_of_test(exchange, &test).await?;
                 self.execute_server_part_of_test(exchange, &test).await?;
             }
             E2eTestDirection::ServerInitiated => {
-                self.execute_server_part_of_test(exchange, &test).await?;
-                self.execute_client_part_of_test(exchange, &test).await?;
+                // TODO(events): this is not a good solution, it doesn't allow multi-step messaging in the peer-initiated exchange.. but it gives me a failing test to drive the car with for now
+                let mut peer_exchange = Exchange::accept(self.matter_client()).await?;
+                self.execute_server_part_of_test(&mut peer_exchange, &test)
+                    .await?;
+                self.execute_client_part_of_test(&mut peer_exchange, &test)
+                    .await?;
+                peer_exchange.acknowledge().await?;
             }
         }
 
@@ -141,7 +147,6 @@ impl E2eRunner {
         if delay > 0 {
             Timer::after(Duration::from_millis(delay as _)).await;
         }
-
         Ok(())
     }
 

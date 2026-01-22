@@ -18,7 +18,7 @@
 use core::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use core::num::NonZeroU8;
 
-use embassy_futures::select::select3;
+use embassy_futures::select::select4;
 use embassy_sync::{
     blocking_mutex::raw::NoopRawMutex,
     zerocopy_channel::{Channel, Receiver, Sender},
@@ -65,7 +65,7 @@ pub struct E2eRunner {
     pub matter: Matter<'static>,
     matter_client: Matter<'static>,
     buffers: PooledBuffers<10, NoopRawMutex, IMBuffer>,
-    subscriptions: Subscriptions<3>,
+    pub subscriptions: Subscriptions<3>,
     pub events: Events<64>,
     cat_ids: NocCatIds,
 }
@@ -166,20 +166,17 @@ impl E2eRunner {
 
         let matter_client = &self.matter_client;
 
-        let responder = Responder::new(
-            "Default",
-            DataModel::new(
-                &self.matter,
-                &self.buffers,
-                &self.subscriptions,
-                &self.events,
-                handler,
-            ),
+        let dm = DataModel::new(
             &self.matter,
-            0,
+            &self.buffers,
+            &self.subscriptions,
+            &self.events,
+            handler,
         );
 
-        select3(
+        let responder = Responder::new("Default", &dm, &self.matter, 0);
+
+        select4(
             matter_client
                 .transport_mgr
                 .run(NetworkSendImpl(send_local), NetworkReceiveImpl(recv_local)),
@@ -188,6 +185,7 @@ impl E2eRunner {
                 NetworkReceiveImpl(recv_remote),
             ),
             responder.run::<4>(),
+            dm.process_subscriptions(&self.matter),
         )
         .coalesce()
         .await
