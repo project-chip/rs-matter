@@ -323,7 +323,10 @@ pub struct EventReader<'a, const NE: usize> {
 
 impl<'a, const NE: usize> EventReader<'a, NE> {
     pub fn new(events: &'a Events<NE>, min_event_number: u64) -> Self {
-        Self { events, min_event_number }
+        Self {
+            events,
+            min_event_number,
+        }
     }
 
     pub async fn process_read<T: TLVWrite>(
@@ -355,7 +358,7 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
         self.events.for_each(|event| {
             if event.event_number < self.min_event_number {
                 // This event has already been seen by this subscription, skip
-                return Ok(())
+                return Ok(());
             }
 
             // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering

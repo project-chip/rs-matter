@@ -64,7 +64,7 @@ struct SubscriptionBuffer<B> {
     peer_node_id: u64,
     subscription_id: u32,
     // TODO(events): We need some mechanism to keep track of how far along the event stream subscriptions have seen;
-    //               this would be one way. Another I considered was to update the actual TLV value in the buffer, 
+    //               this would be one way. Another I considered was to update the actual TLV value in the buffer,
     //               but that got into some messiness since there may be multiple filter entries (or none).. this costs 8 bytes per sub tho.
     min_event_number: u64,
     buffer: B,
@@ -506,9 +506,17 @@ where
                     let rx = sub.buffer;
 
                     let result = self
-                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, id, sub.min_event_number, &rx)
+                        .process_subscription(
+                            matter,
+                            fabric_idx,
+                            peer_node_id,
+                            session_id,
+                            id,
+                            sub.min_event_number,
+                            &rx,
+                        )
                         .await;
-                    
+
                     let min_event_number = self.events.peek_next_event_no();
 
                     match result {
@@ -921,7 +929,7 @@ where
                             }
                         } else {
                             debug!("<<< No TX space, chunking >>>");
-                            if !self.send(true, false, wb).await? {
+                            if !self.send(true, true, false, wb).await? {
                                 return Ok(false);
                             }
                         }
@@ -943,7 +951,7 @@ where
             wb.end_container()?;
         }
 
-        self.send(false, suppress_last_resp, wb).await
+        self.send(false, false, suppress_last_resp, wb).await
     }
 
     /// Send the items of an array attribute one by one, until the end of the array is reached.
@@ -994,7 +1002,7 @@ where
                 }
                 Err(err) if err.code() == ErrorCode::NoSpace => {
                     debug!("<<< No TX space, chunking >>>");
-                    if !self.send(true, false, wb).await? {
+                    if !self.send(true, true, false, wb).await? {
                         return Ok(false);
                     }
                 }
@@ -1015,11 +1023,12 @@ where
     /// - `wb`: the buffer containing the reply. Once the reply is sent, the buffer is re-initialized for a new reply if `more_chunks` is `true`
     async fn send(
         &mut self,
+        has_open_container: bool,
         more_chunks: bool,
         suppress_last_resp: bool,
         wb: &mut WriteBuf<'_>,
     ) -> Result<bool, Error> {
-        self.end_reply(more_chunks, suppress_last_resp, wb)?;
+        self.end_reply(has_open_container, more_chunks, suppress_last_resp, wb)?;
 
         self.invoker
             .exchange()
@@ -1034,6 +1043,7 @@ where
 
         if more_chunks {
             self.start_reply(wb)?;
+            wb.start_array(&TLVTag::Context(ReportDataRespTag::AttributeReports as u8))?;
         }
 
         Ok(cont)
@@ -1102,11 +1112,16 @@ where
     /// End a reply by writing the closing TLVs and potentially indicating that there are more chunks to send.
     fn end_reply(
         &self,
+        has_open_container: bool,
         more_chunks: bool,
         suppress_resp: bool,
         wb: &mut WriteBuf<'_>,
     ) -> Result<(), Error> {
         wb.expand(Self::LONG_READS_TLV_RESERVE_SIZE)?;
+
+        if has_open_container {
+            wb.end_container()?;
+        }
 
         if more_chunks {
             wb.bool(
