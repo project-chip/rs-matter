@@ -122,22 +122,11 @@ where
     }
 }
 
-pub trait ExchangeContext: BasicContext {
+/// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
+pub trait Context: HandlerContext {
     /// Return the exchange object that is associated with this operation.
     fn exchange(&self) -> &Exchange<'_>;
-}
 
-impl<T> ExchangeContext for &T
-where
-    T: Context,
-{
-    fn exchange(&self) -> &Exchange<'_> {
-        (**self).exchange()
-    }
-}
-
-/// A context super-type that is passed to the handler when processing an attribute read/write or a command invoke operation.
-pub trait Context: HandlerContext + ExchangeContext {
     /// Notify that the state of the attribute whose read/write/invoke operation is processed has changed.
     fn notify_changed(&self) {
         if let Some(ctx) = self.as_read_ctx() {
@@ -176,6 +165,10 @@ impl<T> Context for &T
 where
     T: Context,
 {
+    fn exchange(&self) -> &Exchange<'_> {
+        (**self).exchange()
+    }
+
     fn notify_changed(&self) {
         (**self).notify_changed();
     }
@@ -277,50 +270,6 @@ impl BasicContext for BasicContextInstance<'_> {
         attr_id: AttrId,
     ) {
         self.notify.notify(endpoint_id, cluster_id, attr_id);
-    }
-}
-
-/// A concrete implementation of the `ExchangeContext` trait
-pub(crate) struct ExchangeContextInstance<'a> {
-    matter: &'a Matter<'a>,
-    pub(crate) notify: &'a dyn ChangeNotify,
-    exchange: &'a Exchange<'a>,
-}
-
-impl<'a> ExchangeContextInstance<'a> {
-    /// Construct a new instance.
-    #[inline(always)]
-    pub(crate) const fn new(
-        exchange: &'a Exchange<'a>,
-        matter: &'a Matter<'a>,
-        notify: &'a dyn ChangeNotify,
-    ) -> Self {
-        Self {
-            exchange,
-            matter,
-            notify,
-        }
-    }
-}
-
-impl BasicContext for ExchangeContextInstance<'_> {
-    fn matter(&self) -> &Matter<'_> {
-        self.matter
-    }
-
-    fn notify_attribute_changed(
-        &self,
-        endpoint_id: EndptId,
-        cluster_id: ClusterId,
-        attr_id: AttrId,
-    ) {
-        self.notify.notify(endpoint_id, cluster_id, attr_id);
-    }
-}
-
-impl ExchangeContext for ExchangeContextInstance<'_> {
-    fn exchange(&self) -> &Exchange<'_> {
-        self.exchange
     }
 }
 
@@ -453,7 +402,7 @@ where
     }
 }
 
-impl<T, B> ExchangeContext for ReadContextInstance<'_, T, B>
+impl<T, B> Context for ReadContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -461,13 +410,7 @@ where
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
     }
-}
 
-impl<T, B> Context for ReadContextInstance<'_, T, B>
-where
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-{
     fn as_read_ctx(&self) -> Option<impl ReadContext> {
         Some(self)
     }
@@ -552,7 +495,7 @@ where
     }
 }
 
-impl<T, B> ExchangeContext for WriteContextInstance<'_, T, B>
+impl<T, B> Context for WriteContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -560,13 +503,7 @@ where
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
     }
-}
 
-impl<T, B> Context for WriteContextInstance<'_, T, B>
-where
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-{
     fn as_write_ctx(&self) -> Option<impl WriteContext> {
         Some(self)
     }
@@ -655,7 +592,7 @@ where
     }
 }
 
-impl<T, B> ExchangeContext for InvokeContextInstance<'_, T, B>
+impl<T, B> Context for InvokeContextInstance<'_, T, B>
 where
     T: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -663,13 +600,7 @@ where
     fn exchange(&self) -> &Exchange<'_> {
         self.exchange
     }
-}
 
-impl<T, B> Context for InvokeContextInstance<'_, T, B>
-where
-    T: AsyncHandler,
-    B: BufferAccess<IMBuffer>,
-{
     fn as_invoke_ctx(&self) -> Option<impl InvokeContext> {
         Some(self)
     }
