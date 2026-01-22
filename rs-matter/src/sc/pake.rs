@@ -23,7 +23,7 @@ use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
-use crate::dm::{BasicContext, ExchangeContext, ExchangeContextInstance};
+use crate::dm::{BasicContext, BasicContextInstance};
 use crate::error::{Error, ErrorCode};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
@@ -232,7 +232,7 @@ impl PaseMgr {
     /// - `discriminator` - The discriminator
     /// - `timeout_secs` - The timeout in seconds of the validity of the window
     /// - `opener` - The opener info
-    /// - `ctx` - a BasicContext with core necessary matter functionality
+    /// - `mdns_notif` - The mDNS notification callback
     ///
     /// # Returns
     /// - `Ok(())` if the window was opened successfully
@@ -304,7 +304,7 @@ impl PaseMgr {
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
-        ctx: impl ExchangeContext,
+        ctx: impl BasicContext,
     ) -> Result<(), Error> {
         if self.comm_window(&ctx)?.is_some() {
             Err(ErrorCode::Busy)?;
@@ -528,7 +528,7 @@ impl Pake {
         let mut salt = [0; MAX_SALT_SIZE_BYTES];
         let mut count = 0;
 
-        let ctx = ExchangeContextInstance::new(exchange, exchange.matter(), exchange.matter());
+        let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
@@ -623,7 +623,7 @@ impl Pake {
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = ExchangeContextInstance::new(exchange, exchange.matter(), exchange.matter());
+            let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
