@@ -315,11 +315,15 @@ where
 
 pub struct EventReader<'a, const NE: usize> {
     events: &'a Events<NE>,
+    // This is applied in combination with any event number filters that are
+    // inside the request itself; it's the "what's the min event number this subscription should see next"
+    // that's tracked with each active Subscription and updated each time we emit events to the subscriber
+    min_event_number: u64,
 }
 
 impl<'a, const NE: usize> EventReader<'a, NE> {
-    pub fn new(events: &'a Events<NE>) -> Self {
-        Self { events }
+    pub fn new(events: &'a Events<NE>, min_event_number: u64) -> Self {
+        Self { events, min_event_number }
     }
 
     pub async fn process_read<T: TLVWrite>(
@@ -349,6 +353,11 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
     ) -> Result<(), Error> {
         // TODO(events) now that events contains serialized TLVs we could just copy these rather than re-write them
         self.events.for_each(|event| {
+            if event.event_number < self.min_event_number {
+                // This event has already been seen by this subscription, skip
+                return Ok(())
+            }
+
             // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
             if let Some(filters) = &event_filters {
                 for filter in filters {

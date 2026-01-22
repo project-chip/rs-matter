@@ -165,9 +165,12 @@ fn test_subscribe_events() {
                         .notify_event_emitted(0, echo_cluster::ID, 2);
                     Ok(())
                 },
+                // Holy crap y'all. All this ceremony is really about these few lines:
+                // We should get notified of the new event and we should *only* get the new event, note that the
+                // payload is 0x42, matching the new event we emitted, vs 0x41 for the first event that we already saw.
                 TestReportDataMsg {
                     subscription_id: Some(1),
-                    event_reports: Some(&[event_data_path!(ep0_event1, 0, 2, Some(&0x42u8))]),
+                    event_reports: Some(&[event_data_path!(ep0_event1, 1, 2, Some(&0x42u8))]),
                     ..Default::default()
                 },
                 ReplyProcessor::none,

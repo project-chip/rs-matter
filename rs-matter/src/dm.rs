@@ -63,6 +63,10 @@ struct SubscriptionBuffer<B> {
     fabric_idx: NonZeroU8,
     peer_node_id: u64,
     subscription_id: u32,
+    // TODO(events): We need some mechanism to keep track of how far along the event stream subscriptions have seen;
+    //               this would be one way. Another I considered was to update the actual TLV value in the buffer, 
+    //               but that got into some messiness since there may be multiple filter entries (or none).. this costs 8 bytes per sub tho.
+    min_event_number: u64,
     buffer: B,
 }
 
@@ -197,7 +201,7 @@ where
             &node,
             None,
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
-            EventReader::new(self.events),
+            EventReader::new(self.events, 0),
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -354,12 +358,15 @@ where
                 id,
                 fabric_idx.get(),
                 peer_node_id,
+                0, // min-event-number is zero initially, though the subscription req itself may have separate filters
                 &rx,
                 &mut tx,
                 exchange,
                 true,
             )
             .await?;
+
+        let min_event_number = self.events.peek_next_event_no();
 
         if primed {
             exchange
@@ -382,6 +389,7 @@ where
                         fabric_idx,
                         peer_node_id,
                         subscription_id: id,
+                        min_event_number,
                         buffer: rx,
                     });
 
@@ -494,11 +502,14 @@ where
                         .borrow()
                         .iter()
                         .position(|sb| sb.subscription_id == id));
-                    let rx = self.subscriptions_buffers.borrow_mut().remove(index).buffer;
+                    let sub = self.subscriptions_buffers.borrow_mut().remove(index);
+                    let rx = sub.buffer;
 
                     let result = self
-                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, id, &rx)
+                        .process_subscription(matter, fabric_idx, peer_node_id, session_id, id, sub.min_event_number, &rx)
                         .await;
+                    
+                    let min_event_number = self.events.peek_next_event_no();
 
                     match result {
                         Ok(primed) => {
@@ -508,6 +519,7 @@ where
                                         fabric_idx,
                                         peer_node_id,
                                         subscription_id: id,
+                                        min_event_number,
                                         buffer: rx,
                                     },
                                 );
@@ -533,6 +545,7 @@ where
     /// - `peer_node_id` - the node ID of the peer
     /// - `session_id` - the session ID of the peer, if any
     /// - `id` - the subscription ID
+    /// - `min_event_number` TODO
     /// - `rx` - the received and saved data for the subscription, when the subscription was primed
     async fn process_subscription(
         &self,
@@ -541,6 +554,7 @@ where
         peer_node_id: u64,
         session_id: Option<u32>,
         id: u32,
+        min_event_number: u64,
         rx: &[u8],
     ) -> Result<bool, Error> {
         let mut exchange = if let Some(session_id) = session_id {
@@ -561,6 +575,7 @@ where
                     id,
                     fabric_idx.get(),
                     peer_node_id,
+                    min_event_number,
                     rx,
                     &mut tx,
                     &mut exchange,
@@ -628,6 +643,7 @@ where
     /// - `id` - the subscription ID
     /// - `fabric_idx` - the fabric index of the peer
     /// - `peer_node_id` - the node ID of the peer
+    /// - `min_event_number` TODO
     /// - `rx` - the received data for the subscription, when the subscription was primed
     /// - `tx` - the TX buffer to write the response to
     /// - `exchange` - the exchange to respond to
@@ -638,6 +654,7 @@ where
         id: u32,
         fabric_idx: u8,
         peer_node_id: u64,
+        min_event_number: u64,
         rx: &[u8],
         tx: &mut [u8],
         exchange: &mut Exchange<'_>,
@@ -663,7 +680,7 @@ where
             &node,
             Some(id),
             HandlerInvoker::new(exchange, &self.handler, &self.buffers),
-            EventReader::new(self.events),
+            EventReader::new(self.events, min_event_number),
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;

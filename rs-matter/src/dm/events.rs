@@ -88,6 +88,15 @@ where
             Ok(())
         })
     }
+
+    // TODO(events) we can't do it like this, this will miss events; if pushing interleaves with for_each;
+    //              we need to return the last processed one from for_each or something like that
+    pub fn peek_next_event_no(&self) -> u64 {
+        self.state.lock(|internal| {
+            let q = internal.borrow();
+            q.next_event_no
+        })
+    }
 }
 
 /// This is the central event queue storage system. It's modeled after the tiered ring buffer design
