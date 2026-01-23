@@ -66,12 +66,9 @@ fn test_read_event_filtered() {
     // Test 1: Simple read without any event number filters
     let input = &[WILDCARD_PATH.clone()];
     let expected = &[
-        // TODO(events): n.b that these arrive out-of-order due to the layered ring buffer storage in Events,
-        //               this is explicitly prohibited by the spec, see page 514 in the core spec; I think we just
-        //               need to iterate the layers in the other direction
+        event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
         event_data_path!(ep0_event1, 1, 2, Some(&0x42u8)),
         event_data_path!(ep0_event1, 2, 2, Some(&0x43u8)),
-        event_data_path!(ep0_event1, 0, 2, Some(&0x41u8)),
     ];
     im.test_one(&handler, TLVTest::read_events(input, expected));
 

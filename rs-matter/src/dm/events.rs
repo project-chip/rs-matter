@@ -89,7 +89,7 @@ where
         })
     }
 
-    // TODO(events) we can't do it like this, this will miss events; if pushing interleaves with for_each;
+    // TODO(events) we can't do it like this, this will miss events when pushing happens after for_each but before we call this
     //              we need to return the last processed one from for_each or something like that
     pub fn peek_next_event_no(&self) -> u64 {
         self.state.lock(|internal| {
@@ -181,7 +181,7 @@ impl<const N: usize> EventsInner<N> {
     fn iter<'a>(&'a self) -> EventQueueIter<'a, N> {
         EventQueueIter {
             queue: self,
-            buf_ref: BufLevel::Debug,
+            buf_ref: BufLevel::Critical,
             buf_iter: self.buf_debug.iter(),
         }
     }
@@ -204,7 +204,7 @@ impl<'a, const N: usize> Iterator for EventQueueIter<'a, N> {
             }
         }
 
-        if let Some(next_buf_ref) = self.buf_ref.next_level() {
+        if let Some(next_buf_ref) = self.buf_ref.prior_level() {
             self.buf_iter = next_buf_ref.get(self.queue).iter();
             self.buf_ref = next_buf_ref;
             return self.next();
@@ -547,6 +547,17 @@ impl<const N: usize> BufLevel<N> {
             BufLevel::Debug => Some(BufLevel::Info),
             BufLevel::Info => Some(BufLevel::Critical),
             BufLevel::Critical => None,
+        }
+    }
+
+    /// Used during iteration, note that this goes "backwards" compared to get_mut_and_next;
+    /// when iterating we want to start with the oldest events, so we start with the "highest"
+    /// level where the oldest survivors are and work back
+    fn prior_level(&self) -> Option<BufLevel<N>> {
+        match self {
+            BufLevel::Debug => None,
+            BufLevel::Info => Some(BufLevel::Debug),
+            BufLevel::Critical => Some(BufLevel::Info),
         }
     }
 }
