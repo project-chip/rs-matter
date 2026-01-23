@@ -19,18 +19,6 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::error::{Error, ErrorCode};
 
-#[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
-pub use self::dummy::*;
-#[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]
-pub use self::mbedtls::*;
-#[cfg(all(
-    feature = "openssl",
-    not(any(feature = "rustcrypto", feature = "mbedtls"))
-))]
-pub use self::openssl::*;
-#[cfg(feature = "rustcrypto")]
-pub use self::rustcrypto::*;
-
 // pub const SYMM_KEY_LEN_BITS: usize = 128;
 // pub const SYMM_KEY_LEN_BYTES: usize = SYMM_KEY_LEN_BITS / 8;
 
@@ -49,17 +37,13 @@ pub use self::rustcrypto::*;
 
 // pub const EC_SIGNATURE_LEN_BYTES: usize = 64;
 
-#[cfg(not(any(feature = "rustcrypto", feature = "mbedtls", feature = "openssl")))]
-mod dummy;
-#[cfg(all(feature = "mbedtls", not(feature = "rustcrypto")))]
-mod mbedtls;
-#[cfg(all(
-    feature = "openssl",
-    not(any(feature = "rustcrypto", feature = "mbedtls"))
-))]
-mod openssl;
+pub mod dummy;
+#[cfg(feature = "mbedtls")]
+pub mod mbedtls;
+#[cfg(feature = "openssl")]
+pub mod openssl;
 #[cfg(feature = "rustcrypto")]
-mod rustcrypto;
+pub mod rustcrypto;
 
 pub const SHA256_HASH_LEN: usize = 32;
 pub const HMAC_SHA256_HASH_LEN: usize = SHA256_HASH_LEN;

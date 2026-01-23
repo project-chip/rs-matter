@@ -15,26 +15,311 @@
  *    limitations under the License.
  */
 
+use std::marker::PhantomData;
+
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
-    as_canon, CanonSecp256r1Point, Crypto, Digest, Hkdf, HmacSha256Hash, Pbkdf2Hmac, Sha256Hash,
-    SECP256R1_CANON_POINT_LEN, SECP256R1_CANON_SCALAR_LEN, SHA256_HASH_LEN, SHA256_HASH_ZEROED,
-    UINT384_CANON_LEN,
+    as_canon, as_canon_mut, CanonSecp256r1Point, CanonSecp256r1Scalar, Crypto, CurvePoint, Digest,
+    Hkdf, HmacSha256Hash, Pbkdf2Hmac, Scalar, Sha256Hash, UInt, SECP256R1_CANON_POINT_LEN,
+    SECP256R1_CANON_SCALAR_LEN, SECP256R1_POINT_ZEROED, SHA256_HASH_LEN, SHA256_HASH_ZEROED,
+    UINT384_CANON_LEN, UINT384_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
-use crate::sc::crypto::CryptoSpake2;
 use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, init_zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 
 // This file handles Spake2+ specific instructions. In itself, this file is
 // independent from the BigNum and EC operations that are typically required
-// Spake2+. We use the CryptoSpake2 trait object that allows us to abstract
-// out the specific implementations.
+// Spake2+.
 //
 // In the case of the verifier, we don't actually release the Ke until we
 // validate that the cA is confirmed.
+
+const MATTER_M_BIN: &CanonSecp256r1Point = &[
+    0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
+    0x99, 0x3b, 0x64, 0xe1, 0x6e, 0xf3, 0xdc, 0xab, 0x95, 0xaf, 0xd4, 0x97, 0x33, 0x3d, 0x8f, 0xa1,
+    0x2f, 0x5f, 0xf3, 0x55, 0x16, 0x3e, 0x43, 0xce, 0x22, 0x4e, 0x0b, 0x0e, 0x65, 0xff, 0x02, 0xac,
+    0x8e, 0x5c, 0x7b, 0xe0, 0x94, 0x19, 0xc7, 0x85, 0xe0, 0xca, 0x54, 0x7d, 0x55, 0xa1, 0x2e, 0x2d,
+    0x20,
+];
+
+const MATTER_N_BIN: &CanonSecp256r1Point = &[
+    0x04, 0xd8, 0xbb, 0xd6, 0xc6, 0x39, 0xc6, 0x29, 0x37, 0xb0, 0x4d, 0x99, 0x7f, 0x38, 0xc3, 0x77,
+    0x07, 0x19, 0xc6, 0x29, 0xd7, 0x01, 0x4d, 0x49, 0xa2, 0x4b, 0x4f, 0x98, 0xba, 0xa1, 0x29, 0x2b,
+    0x49, 0x07, 0xd6, 0x0a, 0xa6, 0xbf, 0xad, 0xe4, 0x50, 0x08, 0xa6, 0x36, 0x33, 0x7f, 0x51, 0x68,
+    0xc6, 0x4d, 0x9b, 0xd3, 0x60, 0x34, 0x80, 0x8c, 0xd5, 0x64, 0x49, 0x0b, 0x1e, 0x65, 0x6e, 0xdb,
+    0xe7,
+];
+
+#[allow(non_snake_case)]
+pub struct CryptoSpake2<'a, C: Crypto> {
+    crypto: &'a C,
+    M: C::Secp256r1Point<'a>,
+    N: C::Secp256r1Point<'a>,
+    xy: Option<C::Secp256r1Scalar<'a>>,
+    w0: Option<C::Secp256r1Scalar<'a>>,
+    w1: Option<C::Secp256r1Scalar<'a>>,
+    L: Option<C::Secp256r1Point<'a>>,
+    pB: Option<C::Secp256r1Point<'a>>,
+}
+
+impl<'a, C: Crypto> CryptoSpake2<'a, C> {
+    #[allow(non_snake_case)]
+    pub fn new(crypto: &'a C) -> Result<Self, Error> {
+        Ok(Self {
+            crypto,
+            M: crypto.secp256r1_point(MATTER_M_BIN)?,
+            N: crypto.secp256r1_point(MATTER_N_BIN)?,
+            xy: None,
+            w0: None,
+            w1: None,
+            L: None,
+            pB: None,
+        })
+    }
+
+    // Computes w0 from w0s respectively
+    pub fn set_w0_from_w0s(&mut self, w0s: &CanonSecp256r1Scalar) -> Result<(), Error> {
+        // From the Matter Spec,
+        //         w0 = w0s mod p
+        //   where p is the order of the curve
+        const OPERAND: &CanonSecp256r1Scalar = &[
+            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
+            0xfc, 0x63, 0x25, 0x51,
+        ];
+
+        self.w0 = Some(self.rem(w0s, OPERAND)?);
+
+        Ok(())
+    }
+
+    pub fn set_w1_from_w1s(&mut self, w1s: &CanonSecp256r1Scalar) -> Result<(), Error> {
+        // From the Matter Spec,
+        //         w1 = w1s mod p
+        //   where p is the order of the curve
+        const OPERAND: &CanonSecp256r1Scalar = &[
+            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
+            0xfc, 0x63, 0x25, 0x51,
+        ];
+
+        self.w1 = Some(self.rem(w1s, OPERAND)?);
+
+        Ok(())
+    }
+
+    fn rem(
+        &self,
+        value: &CanonSecp256r1Scalar,
+        operand: &CanonSecp256r1Scalar,
+    ) -> Result<C::Secp256r1Scalar<'a>, Error> {
+        let value = self.expand(value)?;
+        let operand = self.expand(operand)?;
+
+        let result = value.rem(&operand).unwrap();
+        let mut result_uint = UINT384_ZEROED;
+        result.canon_into(&mut result_uint);
+
+        let result_scalar: &CanonSecp256r1Scalar = unwrap!(as_canon(&result_uint[16..]));
+
+        self.crypto.secp256r1_scalar(result_scalar)
+    }
+
+    fn expand(&self, scalar: &CanonSecp256r1Scalar) -> Result<C::UInt384<'a>, Error> {
+        let mut operand_u384 = UINT384_ZEROED;
+        let scalar_buf: &mut CanonSecp256r1Scalar = unwrap!(as_canon_mut(&mut operand_u384[16..]));
+        scalar_buf.copy_from_slice(scalar);
+
+        self.crypto.uint384(&operand_u384)
+    }
+
+    pub(crate) fn set_w0(&mut self, w0: &CanonSecp256r1Scalar) -> Result<(), Error> {
+        self.w0 = Some(self.crypto.secp256r1_scalar(w0)?);
+        Ok(())
+    }
+
+    pub(crate) fn set_w1(&mut self, w1: &CanonSecp256r1Scalar) -> Result<(), Error> {
+        self.w1 = Some(self.crypto.secp256r1_scalar(w1)?);
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    #[allow(dead_code)]
+    pub fn set_L(&mut self, l: &CanonSecp256r1Point) -> Result<(), Error> {
+        self.L = Some(self.crypto.secp256r1_point(l)?);
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn set_L_from_w1s(&mut self, w1s: &CanonSecp256r1Scalar) -> Result<(), Error> {
+        // From the Matter spec,
+        //        L = w1 * P
+        //    where P is the generator of the underlying elliptic curve
+        self.set_w1_from_w1s(w1s)?;
+        self.L = Some(
+            self.crypto
+                .secp256r1_generator()?
+                .mul(unwrap!(self.w1.as_ref())),
+        );
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn get_pB(&mut self, pB: &mut CanonSecp256r1Point) -> Result<(), Error> {
+        // From the SPAKE2+ spec (https://datatracker.ietf.org/doc/draft-bar-cfrg-spake2plus/)
+        //   for y
+        //   - select random y between 0 to p
+        //   - Y = y*P + w0*N
+        //   - pB = Y
+        let xy = self.crypto.secp256r1_scalar_random()?;
+
+        let pb =
+            self.crypto
+                .secp256r1_generator()?
+                .add_mul(&xy, &self.N, unwrap!(self.w0.as_ref()));
+
+        pb.canon_into(pB);
+
+        self.xy = Some(xy);
+        self.pB = Some(pb);
+
+        Ok(())
+    }
+
+    #[allow(non_snake_case)]
+    pub fn get_TT_as_verifier(
+        &mut self,
+        context: &[u8],
+        pA: &CanonSecp256r1Point,
+        pB: &CanonSecp256r1Point,
+        out: &mut Sha256Hash,
+    ) -> Result<(), Error> {
+        let mut TT = self.crypto.sha256()?;
+
+        // Context
+        Self::add_to_tt(&mut TT, context);
+        // 2 empty identifiers
+        Self::add_to_tt(&mut TT, &[]);
+        Self::add_to_tt(&mut TT, &[]);
+        // M
+        Self::add_to_tt(&mut TT, MATTER_M_BIN);
+        // N
+        Self::add_to_tt(&mut TT, MATTER_N_BIN);
+        // X = pA
+        Self::add_to_tt(&mut TT, pA);
+        // Y = pB
+        Self::add_to_tt(&mut TT, pB);
+
+        let X = self.crypto.secp256r1_point(pA)?;
+        let (Z, V) = ZV::new(self.crypto).verifier(
+            unwrap!(self.w0.as_ref()),
+            unwrap!(self.L.as_ref()),
+            &self.M,
+            &X,
+            unwrap!(self.xy.as_ref()),
+        );
+
+        let mut point = SECP256R1_POINT_ZEROED;
+
+        // Z
+        Z.canon_into(&mut point);
+        Self::add_to_tt(&mut TT, &point);
+        // V
+        V.canon_into(&mut point);
+        Self::add_to_tt(&mut TT, &point);
+        // w0
+        let scalar: &mut CanonSecp256r1Scalar =
+            unwrap!(as_canon_mut(&mut point[..SECP256R1_CANON_SCALAR_LEN]));
+        unwrap!(self.w0.as_ref()).canon_into(scalar);
+        Self::add_to_tt(&mut TT, scalar);
+
+        TT.finish(out);
+
+        Ok(())
+    }
+
+    fn add_to_tt(tt: &mut C::Sha256<'_>, data: &[u8]) {
+        tt.update(&(data.len() as u64).to_le_bytes());
+        if !data.is_empty() {
+            tt.update(data);
+        }
+    }
+}
+
+struct ZV<'a, C: Crypto>(PhantomData<&'a C>);
+
+impl<'a, C: Crypto> ZV<'a, C> {
+    pub const fn new(_crypto: &'a C) -> Self {
+        Self(PhantomData)
+    }
+
+    #[inline(always)]
+    #[allow(non_snake_case)]
+    #[allow(dead_code)]
+    fn verifier(
+        &self,
+        w0: &C::Secp256r1Scalar<'a>,
+        L: &C::Secp256r1Point<'a>,
+        M: &C::Secp256r1Point<'a>,
+        X: &C::Secp256r1Point<'a>,
+        y: &C::Secp256r1Scalar<'a>,
+    ) -> (C::Secp256r1Point<'a>, C::Secp256r1Point<'a>) {
+        // As per the RFC, the operation here is:
+        //   Z = h*y*(X - w0*M)
+        //   V = h*y*L
+
+        // We will follow the same sequence as in C++ SDK, under the assumption
+        // that the same sequence works for all embedded platforms. So the step
+        // of operations is:
+        //    tmp = y*w0
+        //    Z = y*X + tmp*M (M is inverted to get the 'negative' effect)
+        //    Z = h*Z (cofactor Mul)
+
+        let Z = X.add_mul(y, &M.neg(), &y.mul(w0));
+
+        // Cofactor for P256 is 1, so that is a No-Op
+
+        let V = L.mul(y);
+
+        (Z, V)
+    }
+
+    #[inline(always)]
+    #[allow(non_snake_case)]
+    #[allow(dead_code)]
+    fn prover(
+        &self,
+        w0: &C::Secp256r1Scalar<'a>,
+        w1: &C::Secp256r1Scalar<'a>,
+        N: &C::Secp256r1Point<'a>,
+        Y: &C::Secp256r1Point<'a>,
+        x: &C::Secp256r1Scalar<'a>,
+    ) -> (C::Secp256r1Point<'a>, C::Secp256r1Point<'a>) {
+        // As per the RFC, the operation here is:
+        //   Z = h*x*(Y - w0*N)
+        //   V = h*w1*(Y - w0*N)
+
+        // We will follow the same sequence as in C++ SDK, under the assumption
+        // that the same sequence works for all embedded platforms. So the step
+        // of operations is:
+        //    tmp = x*w0
+        //    Z = x*Y + tmp*N (N is inverted to get the 'negative' effect)
+        //    Z = h*Z (cofactor Mul)
+
+        let N_neg = N.neg();
+
+        let Z = Y.add_mul(x, &N_neg, &x.mul(w0));
+
+        // Cofactor for P256 is 1, so that is a No-Op
+
+        let V = Y.add_mul(w1, &N_neg, &w1.mul(w0));
+
+        (Z, V)
+    }
+}
 
 pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
 pub const MAX_SALT_SIZE_BYTES: usize = 32;
@@ -192,15 +477,15 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
     }
 
     #[allow(non_snake_case)]
-    pub fn handle_cA<'t>(&mut self, cA: &[u8]) -> Result<(), SCStatusCodes> {
+    pub fn handle_cA(&mut self, cA: &[u8]) -> Result<(), SCStatusCodes> {
         if self.mode != Spake2Mode::Verifier(Spake2VerifierState::PendingConfirmation) {
             return Err(SCStatusCodes::SessionNotFound);
         }
         self.mode = Spake2Mode::Verifier(Spake2VerifierState::Confirmed);
         if cA.ct_eq(&self.cA).unwrap_u8() == 1 {
-            return Ok(());
+            Ok(())
         } else {
-            return Err(SCStatusCodes::InvalidParameter);
+            Err(SCStatusCodes::InvalidParameter)
         }
     }
 
@@ -305,8 +590,136 @@ impl VerifierData {
 }
 
 #[cfg(test)]
-pub mod test_vectors {
-    use crate::crypto::{CanonSecp256r1Point, CanonSecp256r1Scalar};
+mod tests {
+    use crate::crypto::{test_crypto, Crypto, Digest, SHA256_HASH_ZEROED, UINT384_CANON_LEN};
+
+    use super::*;
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_get_X() {
+        for t in RFC_T {
+            let crypto = test_crypto();
+            let M = unwrap!(crypto.secp256r1_point(MATTER_M_BIN));
+            let x = unwrap!(crypto.secp256r1_scalar(&t.x));
+            let w0 = unwrap!(crypto.secp256r1_scalar(&t.w0));
+            let P = unwrap!(crypto.secp256r1_generator());
+            let r = P.add_mul(&x, &M, &w0);
+
+            let mut point = SECP256R1_POINT_ZEROED;
+            r.canon_into(&mut point);
+
+            assert_eq!(&t.X, &point);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_get_Y() {
+        for t in RFC_T {
+            let crypto = test_crypto();
+            let M = unwrap!(crypto.secp256r1_point(MATTER_M_BIN));
+            let y = unwrap!(crypto.secp256r1_scalar(&t.y));
+            let w0 = unwrap!(crypto.secp256r1_scalar(&t.w0));
+            let P = unwrap!(crypto.secp256r1_generator());
+            let r = P.add_mul(&y, &M, &w0);
+
+            let mut point = SECP256R1_POINT_ZEROED;
+            r.canon_into(&mut point);
+
+            assert_eq!(&t.Y, &point);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_get_ZV_as_prover() {
+        for t in RFC_T {
+            let crypto = test_crypto();
+            let N = unwrap!(crypto.secp256r1_point(MATTER_N_BIN));
+            let x = unwrap!(crypto.secp256r1_scalar(&t.x));
+            let y = unwrap!(crypto.secp256r1_point(&t.Y));
+            let w0 = unwrap!(crypto.secp256r1_scalar(&t.w0));
+            let w1 = unwrap!(crypto.secp256r1_scalar(&t.w1));
+
+            let (Z, V) = ZV::new(&crypto).prover(&w0, &w1, &N, &y, &x);
+
+            let mut point = SECP256R1_POINT_ZEROED;
+
+            Z.canon_into(&mut point);
+            assert_eq!(&t.Z, &point);
+
+            V.canon_into(&mut point);
+            assert_eq!(&t.V, &point);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_get_ZV_as_verifier() {
+        for t in RFC_T {
+            let crypto = test_crypto();
+            let M = unwrap!(crypto.secp256r1_point(MATTER_M_BIN));
+            let x = unwrap!(crypto.secp256r1_point(&t.X));
+            let y = unwrap!(crypto.secp256r1_scalar(&t.y));
+            let w0 = unwrap!(crypto.secp256r1_scalar(&t.w0));
+            let l = unwrap!(crypto.secp256r1_point(&t.L));
+            let (Z, V) = ZV::new(&crypto).verifier(&w0, &l, &M, &x, &y);
+
+            let mut point = SECP256R1_POINT_ZEROED;
+
+            Z.canon_into(&mut point);
+            assert_eq!(&t.Z, &point);
+
+            V.canon_into(&mut point);
+            assert_eq!(&t.V, &point);
+        }
+    }
+
+    #[test]
+    fn test_pbkdf2() {
+        // These are the vectors from one sample run of chip-tool along with our PBKDFParamResponse
+        const SALT: &[u8] = &[
+            0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
+            0x36, 0x0,
+        ];
+        let mut w0w1s = [0; 2 * UINT384_CANON_LEN];
+        Spake2P::new(&test_crypto()).get_w0w1s(123456, 2000, SALT, &mut w0w1s);
+        assert_eq!(
+            w0w1s,
+            [
+                0xc7, 0x89, 0x33, 0x9c, 0xc5, 0xeb, 0xbc, 0xf6, 0xdf, 0x04, 0xa9, 0x11, 0x11, 0x06,
+                0x4c, 0x15, 0xac, 0x5a, 0xea, 0x67, 0x69, 0x9f, 0x32, 0x62, 0xcf, 0xc6, 0xe9, 0x19,
+                0xe8, 0xa4, 0x0b, 0xb3, 0x42, 0xe8, 0xc6, 0x8e, 0xa9, 0x9a, 0x73, 0xe2, 0x59, 0xd1,
+                0x17, 0xd8, 0xed, 0xcb, 0x72, 0x8c, 0xbf, 0x3b, 0xa9, 0x88, 0x02, 0xd8, 0x45, 0x4b,
+                0xd0, 0x2d, 0xe5, 0xe4, 0x1c, 0xc3, 0xd7, 0x00, 0x03, 0x3c, 0x86, 0x20, 0x9a, 0x42,
+                0x5f, 0x55, 0x96, 0x3b, 0x9f, 0x6f, 0x79, 0xef, 0xcb, 0x37, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        )
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_get_Ke_and_cAcB() {
+        let crypto = test_crypto();
+
+        for t in RFC_T {
+            let mut Ke: [u8; 16] = [0; 16];
+            let mut cA: [u8; 32] = [0; 32];
+            let mut cB: [u8; 32] = [0; 32];
+            let mut TT_hash = SHA256_HASH_ZEROED;
+            let mut h = unwrap!(crypto.sha256());
+            h.update(&t.TT[..t.TT_len]);
+            h.finish(&mut TT_hash);
+            unwrap!(Spake2P::get_Ke_and_cAcB(
+                &crypto, &TT_hash, &t.X, &t.Y, &mut Ke, &mut cA, &mut cB,
+            ));
+            assert_eq!(Ke, t.Ke);
+            assert_eq!(cA, t.cA);
+            assert_eq!(cB, t.cB);
+        }
+    }
 
     // Based on vectors used in the RFC
     #[allow(non_snake_case)]
@@ -787,55 +1200,4 @@ pub mod test_vectors {
             TT_len: 535,
         },
     ];
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::crypto::{test_crypto, Crypto, Digest, SHA256_HASH_ZEROED, UINT384_CANON_LEN};
-
-    use super::{test_vectors::*, Spake2P};
-
-    #[test]
-    fn test_pbkdf2() {
-        // These are the vectors from one sample run of chip-tool along with our PBKDFParamResponse
-        const SALT: &[u8] = &[
-            0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
-            0x36, 0x0,
-        ];
-        let mut w0w1s = [0; 2 * UINT384_CANON_LEN];
-        Spake2P::new(&test_crypto()).get_w0w1s(123456, 2000, SALT, &mut w0w1s);
-        assert_eq!(
-            w0w1s,
-            [
-                0xc7, 0x89, 0x33, 0x9c, 0xc5, 0xeb, 0xbc, 0xf6, 0xdf, 0x04, 0xa9, 0x11, 0x11, 0x06,
-                0x4c, 0x15, 0xac, 0x5a, 0xea, 0x67, 0x69, 0x9f, 0x32, 0x62, 0xcf, 0xc6, 0xe9, 0x19,
-                0xe8, 0xa4, 0x0b, 0xb3, 0x42, 0xe8, 0xc6, 0x8e, 0xa9, 0x9a, 0x73, 0xe2, 0x59, 0xd1,
-                0x17, 0xd8, 0xed, 0xcb, 0x72, 0x8c, 0xbf, 0x3b, 0xa9, 0x88, 0x02, 0xd8, 0x45, 0x4b,
-                0xd0, 0x2d, 0xe5, 0xe4, 0x1c, 0xc3, 0xd7, 0x00, 0x03, 0x3c, 0x86, 0x20, 0x9a, 0x42,
-                0x5f, 0x55, 0x96, 0x3b, 0x9f, 0x6f, 0x79, 0xef, 0xcb, 0x37
-            ]
-        )
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn test_get_Ke_and_cAcB() {
-        let crypto = test_crypto();
-
-        for t in RFC_T {
-            let mut Ke: [u8; 16] = [0; 16];
-            let mut cA: [u8; 32] = [0; 32];
-            let mut cB: [u8; 32] = [0; 32];
-            let mut TT_hash = SHA256_HASH_ZEROED;
-            let mut h = unwrap!(crypto.sha256());
-            h.update(&t.TT[..t.TT_len]);
-            h.finish(&mut TT_hash);
-            unwrap!(Spake2P::get_Ke_and_cAcB(
-                &crypto, &TT_hash, &t.X, &t.Y, &mut Ke, &mut cA, &mut cB,
-            ));
-            assert_eq!(Ke, t.Ke);
-            assert_eq!(cA, t.cA);
-            assert_eq!(cB, t.cB);
-        }
-    }
 }

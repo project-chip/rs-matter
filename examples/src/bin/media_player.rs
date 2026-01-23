@@ -32,6 +32,7 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use log::info;
 
+use rs_matter::crypto::test_crypto;
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
 //
 // User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
@@ -103,12 +104,16 @@ fn main() -> Result<(), Error> {
         TestOnOffDeviceLogic::new(false),
     );
 
+    // Create default crypto instance
+    let crypto = test_crypto();
+
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
         &buffers,
         &subscriptions,
         dm_handler(&matter, &on_off_handler),
+        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -127,7 +132,7 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter));
-    let mut transport = pin!(matter.run(&socket, &socket));
+    let mut transport = pin!(matter.run(&socket, &socket, &crypto));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();

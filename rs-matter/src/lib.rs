@@ -551,27 +551,23 @@ impl<'a> Matter<'a> {
     ///
     /// # Arguments
     /// - `timeout_secs`: The timeout in seconds for the basic commissioning window
-    pub fn open_basic_comm_window<C: Crypto>(
-        &self,
-        timeout_secs: u16,
-        crypto: C,
-    ) -> Result<(), Error> {
+    pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
         self.pase_mgr.borrow_mut().open_basic_comm_window(
             self.dev_comm.password,
             self.dev_comm.discriminator,
             timeout_secs,
             None,
-            BasicContextInstance::new(self, crypto, self),
+            BasicContextInstance::new(self, self),
         )
     }
 
     /// Close the basic commissioning window
     ///
     /// The method will return Ok(false) if there is no active PASE commissioning window to close.
-    pub fn close_comm_window<C: Crypto>(&self, crypto: C) -> Result<bool, Error> {
+    pub fn close_comm_window(&self) -> Result<bool, Error> {
         self.pase_mgr
             .borrow_mut()
-            .close_comm_window(BasicContextInstance::new(self, crypto, self))
+            .close_comm_window(BasicContextInstance::new(self, self))
     }
 
     /// Run the transport layer
@@ -699,9 +695,8 @@ impl<'a> Matter<'a> {
     }
 
     /// Invoke the given closure for each currently published Matter mDNS service.
-    pub fn mdns_services<C, F>(&self, crypto: C, mut f: F) -> Result<(), Error>
+    pub fn mdns_services<F>(&self, mut f: F) -> Result<(), Error>
     where
-        C: Crypto,
         F: FnMut(MatterMdnsService) -> Result<(), Error>,
     {
         debug!("=== Currently published mDNS services");
@@ -709,9 +704,7 @@ impl<'a> Matter<'a> {
         let mut pase_mgr = self.pase_mgr.borrow_mut();
         let fabric_mgr = self.fabric_mgr.borrow();
 
-        if let Some(comm_window) =
-            pase_mgr.comm_window(BasicContextInstance::new(self, crypto, self))?
-        {
+        if let Some(comm_window) = pase_mgr.comm_window(BasicContextInstance::new(self, self))? {
             // Do not remove this logging line or change its formatting.
             // C++ E2E tests rely on this log line to determine when the mDNS service is published
             debug!("mDNS service published: {:?}", comm_window.mdns_service());

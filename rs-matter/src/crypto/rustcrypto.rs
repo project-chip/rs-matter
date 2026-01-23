@@ -233,7 +233,12 @@ pub struct Pbkdf2HmacFactory(());
 
 impl super::Pbkdf2Hmac for Pbkdf2HmacFactory {
     fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) {
-        pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(pass, salt, iter as u32, key);
+        unwrap!(pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(
+            pass,
+            salt,
+            iter as u32,
+            key
+        ));
     }
 }
 
@@ -423,7 +428,7 @@ impl<'a>
 
 impl<'a> super::UInt<'a, { super::UINT384_CANON_LEN }> for crypto_bigint::U384 {
     fn rem(&self, other: &Self) -> Option<Self> {
-        let other = NonZero::new(other.clone()).into_option();
+        let other = NonZero::new(*other).into_option();
         other.map(|other| self.rem(&other))
     }
 
@@ -440,10 +445,10 @@ where
     C::Scalar: Mul<Output = C::Scalar> + Clone,
 {
     fn mul(&self, other: &Self) -> Self {
-        Self(self.0.mul(other.0.clone()))
+        Self(self.0.mul(other.0))
     }
 
-    fn canon_into(&self, scalar: &mut [u8; super::SECP256R1_CANON_SCALAR_LEN]) {
+    fn canon_into(&self, _scalar: &mut [u8; super::SECP256R1_CANON_SCALAR_LEN]) {
         todo!()
     }
 }
@@ -472,12 +477,12 @@ where
     }
 
     fn mul(&self, scalar: &Self::Scalar<'a>) -> Self {
-        Self(self.0.clone().mul(scalar.0.clone()))
+        Self(self.0.mul(scalar.0))
     }
 
     fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self {
-        let a = self.0.clone().mul(s1.0.clone());
-        let b = p2.0.clone().mul(s2.0.clone());
+        let a = self.0.mul(s1.0);
+        let b = p2.0.mul(s2.0);
         Self(a.add(b))
     }
 

@@ -25,7 +25,7 @@ use embassy_sync::{
 };
 
 use rs_matter::acl::{AclEntry, AuthMode};
-use rs_matter::crypto::KeyPair;
+use rs_matter::crypto::test_crypto;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::subscriptions::Subscriptions;
 use rs_matter::dm::{AsyncHandler, AsyncMetadata, Privilege};
@@ -163,20 +163,31 @@ impl E2eRunner {
 
         let matter_client = &self.matter_client;
 
+        let crypto = test_crypto();
+
         let responder = Responder::new(
             "Default",
-            DataModel::new(&self.matter, &self.buffers, &self.subscriptions, handler),
+            DataModel::new(
+                &self.matter,
+                &self.buffers,
+                &self.subscriptions,
+                handler,
+                &crypto,
+            ),
             &self.matter,
             0,
         );
 
         select3(
-            matter_client
-                .transport_mgr
-                .run(NetworkSendImpl(send_local), NetworkReceiveImpl(recv_local)),
+            matter_client.transport_mgr.run(
+                NetworkSendImpl(send_local),
+                NetworkReceiveImpl(recv_local),
+                &crypto,
+            ),
             self.matter.transport_mgr.run(
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
+                &crypto,
             ),
             responder.run::<4>(),
         )
@@ -209,7 +220,7 @@ impl E2eRunner {
         matter
             .fabric_mgr
             .borrow_mut()
-            .add_with_post_init(KeyPair::new(matter.rand()).unwrap(), |_| Ok(()))
+            .add_with_post_init(|_| Ok(()))
             .unwrap();
 
         matter.initialize_transport_buffers().unwrap();

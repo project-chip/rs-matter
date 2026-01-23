@@ -124,13 +124,7 @@ where
 
     /// Run the Data Model instance.
     pub async fn run(&self) -> Result<(), Error> {
-        let ctx = HandlerContextInstance::new(
-            self.matter,
-            &self.handler,
-            self.buffers,
-            &self.crypto,
-            self,
-        );
+        let ctx = HandlerContextInstance::new(self.matter, &self.handler, self.buffers, self);
 
         self.handler.run(&ctx).await
     }

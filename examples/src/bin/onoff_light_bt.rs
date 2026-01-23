@@ -39,6 +39,7 @@ use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use log::{info, warn};
 
+use rs_matter::crypto::test_crypto;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::LevelControlHooks;
 use rs_matter::dm::clusters::net_comm::{NetCtl, NetCtlStatus, NetworkType, Networks};
@@ -147,12 +148,16 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
 
     let net_ctl = NetCtlWithStatusImpl::new(&net_ctl_state, net_ctl);
 
+    // Create default crypto instance
+    let crypto = test_crypto();
+
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
         &buffers,
         &subscriptions,
         dm_handler(&matter, &on_off_handler, &net_ctl, &networks),
+        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -192,7 +197,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         let btp = Btp::new(BluezGattPeripheral::new(None, connection), &BTP_CONTEXT);
         let mut bluetooth = pin!(btp.run("MT", &TEST_DEV_DET, TEST_DEV_COMM.discriminator));
 
-        let mut transport = pin!(matter.run(&btp, &btp));
+        let mut transport = pin!(matter.run(&btp, &btp, &crypto));
         let mut wifi_prov_task = pin!(async {
             NetCtlState::wait_prov_ready(&net_ctl_state, &btp).await;
             Ok(())
@@ -216,7 +221,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     let udp = async_io::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
 
     // Run the Matter transport
-    let mut transport = pin!(matter.run_transport(&udp, &udp));
+    let mut transport = pin!(matter.run_transport(&udp, &udp, &crypto));
 
     // Combine all async tasks in a single one
     let all = select4(

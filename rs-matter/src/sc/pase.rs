@@ -531,8 +531,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let mut salt = [0; MAX_SALT_SIZE_BYTES];
         let mut count = 0;
 
-        let ctx =
-            BasicContextInstance::new(exchange.matter(), self.spake2p.crypto, exchange.matter());
+        let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
@@ -627,11 +626,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = BasicContextInstance::new(
-                exchange.matter(),
-                self.spake2p.crypto,
-                exchange.matter(),
-            );
+            let ctx = BasicContextInstance::new(matter, matter);
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
