@@ -840,21 +840,21 @@ mod tests {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_INPUT1));
             let len = unwrap!(c.as_asn1(&mut asn1_buf));
-            assert_eq!(&test_vectors::ASN1_OUTPUT1, &asn1_buf[..len]);
+            assert_eq!(test_vectors::ASN1_OUTPUT1, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_INPUT2));
             let len = unwrap!(c.as_asn1(&mut asn1_buf));
-            assert_eq!(&test_vectors::ASN1_OUTPUT2, &asn1_buf[..len]);
+            assert_eq!(test_vectors::ASN1_OUTPUT2, &asn1_buf[..len]);
         }
 
         {
             let mut asn1_buf = [0u8; 1000];
             let c = CertRef::new(TLVElement::new(&test_vectors::CHIP_CERT_TXT_IN_DN));
             let len = unwrap!(c.as_asn1(&mut asn1_buf));
-            assert_eq!(&test_vectors::ASN1_OUTPUT_TXT_IN_DN, &asn1_buf[..len]);
+            assert_eq!(test_vectors::ASN1_OUTPUT_TXT_IN_DN, &asn1_buf[..len]);
         }
     }
 

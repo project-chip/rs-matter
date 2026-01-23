@@ -34,7 +34,6 @@ use pase::Pase;
 
 pub mod busy;
 pub mod case;
-pub mod crypto;
 pub mod pase;
 
 /* Interaction Model ID as per the Matter Spec */

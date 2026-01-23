@@ -25,6 +25,7 @@ use std::net::UdpSocket;
 use embassy_futures::select::{select, select4};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use rs_matter::crypto::test_crypto;
 use rs_matter::dm::clusters::desc::{self, ClusterHandler as _};
 use rs_matter::dm::clusters::level_control::{
     self, test::LevelControlDeviceLogic, AttributeDefaults, LevelControlHandler, LevelControlHooks,
@@ -99,12 +100,16 @@ fn main() -> Result<(), Error> {
     on_off_handler.init(Some(&level_control_handler));
     level_control_handler.init(Some(&on_off_handler));
 
+    // Create default crypto instance
+    let crypto = test_crypto();
+
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
         &buffers,
         &subscriptions,
         dm_handler(&matter, &on_off_handler, &level_control_handler),
+        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -123,7 +128,7 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter));
-    let mut transport = pin!(matter.run(&socket, &socket));
+    let mut transport = pin!(matter.run(&socket, &socket, &crypto));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();

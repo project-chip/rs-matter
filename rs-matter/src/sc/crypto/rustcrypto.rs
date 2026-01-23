@@ -103,8 +103,11 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         let value = self.expand(value)?;
         let operand = self.expand(operand)?;
 
-        let result = value.rem(&operand);
-        let result_scalar: &CanonSecp256r1Scalar = unwrap!(as_canon(&result[16..]));
+        let result = value.rem(&operand).unwrap();
+        let mut result_uint = UINT384_ZEROED;
+        result.canon_into(&mut result_uint);
+
+        let result_scalar: &CanonSecp256r1Scalar = unwrap!(as_canon(&result_uint[16..]));
 
         self.crypto.secp256r1_scalar(result_scalar)
     }
