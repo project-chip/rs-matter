@@ -325,11 +325,8 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
         let (src, dst) = src_buf.get_mut_and_next(self.queue);
         // TODO(events): dst being None here is a programming error, what's the right way to signal that?
         let dst = dst.expect("there should always be a dst buffer at this point");
-        match dst.write_slice(victim_ref.raw(src)) {
-            WriteOutcome::Ok => Ok(()),
-            // TODO(events)Again this is a programming error, the while further up should have guaranteed space
-            WriteOutcome::Overflow => todo!(),
-        }
+        dst.write_slice(victim_ref.raw(src)).expect("TODO Again this is a programming error, the while further up should have guaranteed space");
+        Ok(())
     }
 }
 
@@ -350,7 +347,7 @@ impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
             // TODO(events) context and/or logging?
             return Err(Error::new(ErrorCode::Failure));
         }
-        while let WriteOutcome::Overflow = self.buf_ref.get_mut(self.queue).write(byte) {
+        while let Err(OverflowError{}) = self.buf_ref.get_mut(self.queue).write(byte) {
             // Overflow, need to evict an entry
             self.evict(BufLevel::Debug)?;
         }
@@ -388,22 +385,22 @@ impl<const N: usize> TLVRingBuf<N> {
         })
     }
 
-    fn write(&mut self, byte: u8) -> WriteOutcome {
+    fn write(&mut self, byte: u8) -> Result<(), OverflowError> {
         if self.capacity() == 0 {
-            return WriteOutcome::Overflow;
+            return Err(OverflowError{});
         }
         self.data[self.head] = byte;
         self.head += 1;
-        WriteOutcome::Ok
+        Ok(())
     }
 
-    fn write_slice(&mut self, data: &[u8]) -> WriteOutcome {
+    fn write_slice(&mut self, data: &[u8]) -> Result<(), OverflowError> {
         if self.capacity() < data.len() {
-            return WriteOutcome::Overflow;
+            return Err(OverflowError{});
         }
         self.data[self.head..self.head + data.len()].copy_from_slice(data);
         self.head += data.len();
-        WriteOutcome::Ok
+        Ok(())
     }
 
     // Get the size of the record at the given position; the caller is responsible for ensuring pos is aligned on a record
@@ -488,12 +485,8 @@ impl<'a, const N: usize> Iterator for TLVRingBufIter<'a, N> {
     }
 }
 
-enum WriteOutcome {
-    Ok,
-    // The write failed because the head is caught up with the tail,
-    // evict an entry and try again
-    Overflow,
-}
+#[derive(Debug)]
+struct OverflowError;
 
 // This is how we handle the "levels" of buffers, using this reference we can access the current
 // level and get access to the next level, if there is one
