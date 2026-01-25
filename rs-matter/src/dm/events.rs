@@ -383,8 +383,8 @@ impl<const N: usize> TLVRingBuf<N> {
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            data: [0; N],
-            head: 1,
+            data <- crate::utils::init::zeroed(),
+            head: 0,
         })
     }
 
