@@ -446,11 +446,11 @@ struct VictimRef {
 }
 
 impl VictimRef {
-    fn tlv<'a, const N: usize>(&'a self, buf: &'a TLVRingBuf<N>) -> TLVElement<'a> {
+    fn tlv<'a, const N: usize>(&self, buf: &'a TLVRingBuf<N>) -> TLVElement<'a> {
         TLVElement::new(self.raw(buf))
     }
 
-    fn raw<'a, const N: usize>(&'a self, buf: &'a TLVRingBuf<N>) -> &'a [u8] {
+    fn raw<'a, const N: usize>(&self, buf: &'a TLVRingBuf<N>) -> &'a [u8] {
         &buf.data[0..self.victim_len]
     }
 
