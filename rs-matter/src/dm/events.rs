@@ -182,7 +182,7 @@ impl<const N: usize> EventsInner<N> {
         EventQueueIter {
             queue: self,
             buf_ref: BufLevel::Critical,
-            buf_iter: self.buf_debug.iter(),
+            buf_iter: self.buf_critical.iter(),
         }
     }
 }
