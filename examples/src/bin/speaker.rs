@@ -35,6 +35,7 @@ use rs_matter::dm::clusters::on_off::{self, test::TestOnOffDeviceLogic, OnOffHan
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_SMART_SPEAKER;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
@@ -73,6 +74,9 @@ fn main() -> Result<(), Error> {
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Create the event queue
+    let events = DefaultEvents::new();
+
     // OnOff cluster setup
     let on_off_handler = on_off::OnOffHandler::new(
         Dataver::new_rand(matter.rand()),
@@ -104,6 +108,7 @@ fn main() -> Result<(), Error> {
         &matter,
         &buffers,
         &subscriptions,
+        &events,
         dm_handler(&matter, &on_off_handler, &level_control_handler),
     );
 

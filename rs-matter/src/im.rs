@@ -28,6 +28,7 @@ use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
 use crate::transport::exchange::MessageMeta;
 
 pub use attr::*;
+pub use event::*;
 pub use invoke::*;
 pub use status::*;
 pub use timed::*;
@@ -35,6 +36,7 @@ pub use timed::*;
 pub mod busy;
 
 mod attr;
+mod event;
 mod invoke;
 mod status;
 mod timed;

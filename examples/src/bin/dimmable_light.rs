@@ -45,6 +45,7 @@ use rs_matter::dm::clusters::on_off::{self, OnOffHooks, StartUpOnOffEnum};
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_DIMMABLE_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::IMBuffer;
@@ -76,6 +77,7 @@ mod mdns;
 static MATTER: StaticCell<Matter> = StaticCell::new();
 static BUFFERS: StaticCell<PooledBuffers<10, NoopRawMutex, IMBuffer>> = StaticCell::new();
 static SUBSCRIPTIONS: StaticCell<DefaultSubscriptions> = StaticCell::new();
+static EVENTS: StaticCell<DefaultEvents> = StaticCell::new();
 static PSM: StaticCell<Psm<4096>> = StaticCell::new();
 
 #[cfg(feature = "chip-test")]
@@ -140,6 +142,9 @@ fn run() -> Result<(), Error> {
         .uninit()
         .init_with(DefaultSubscriptions::init());
 
+    // Create the event queue
+    let events = EVENTS.uninit().init_with(DefaultEvents::init());
+
     // OnOff cluster setup
     let on_off_handler =
         on_off::OnOffHandler::new(Dataver::new_rand(matter.rand()), 1, OnOffDeviceLogic::new());
@@ -165,6 +170,7 @@ fn run() -> Result<(), Error> {
         matter,
         buffers,
         subscriptions,
+        events,
         dm_handler(matter, &on_off_handler, &level_control_handler),
     );
 

@@ -17,13 +17,13 @@
 
 use core::future::Future;
 
-use crate::dm::{AsyncHandler, IMBuffer};
+use crate::dm::{AsyncHandler, Events, IMBuffer};
 use crate::error::{Error, ErrorCode};
 use crate::im::{
     AttrDataTag, AttrPath, AttrResp, AttrRespTag, AttrStatus, CmdDataTag, CmdPath, CmdResp,
-    CmdRespTag, CmdStatus, IMStatusCode,
+    CmdRespTag, CmdStatus, EventDataTag, EventFilter, EventPath, EventRespTag, IMStatusCode,
 };
-use crate::tlv::{TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::BufferAccess;
 
@@ -310,6 +310,105 @@ where
             ),
             InvokeReplyInstance::new(cmd, tw),
         )
+    }
+}
+
+pub struct EventReader<'a, const NE: usize> {
+    events: &'a Events<NE>,
+    // This is applied in combination with any event number filters that are
+    // inside the request itself; it's the "what's the min event number this subscription should see next"
+    // that's tracked with each active Subscription and updated each time we emit events to the subscriber
+    min_event_number: u64,
+}
+
+impl<'a, const NE: usize> EventReader<'a, NE> {
+    pub fn new(events: &'a Events<NE>, min_event_number: u64) -> Self {
+        Self {
+            events,
+            min_event_number,
+        }
+    }
+
+    pub async fn process_read<T: TLVWrite>(
+        &mut self,
+        paths: TLVArray<'_, EventPath>,
+        event_filters: Option<TLVArray<'_, EventFilter>>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        let tail = tw.get_tail();
+
+        let result = self.do_process_read(paths, event_filters, &mut tw).await;
+
+        if result.is_err() {
+            // If there was an error, rewind to the tail so we don't write any data.
+            tw.rewind_to(tail);
+        }
+
+        result
+    }
+
+    async fn do_process_read<T: TLVWrite>(
+        &mut self,
+        // TODO(events): Each event we go over in the for_each here should be checked to match at least one of these paths
+        _paths: TLVArray<'_, EventPath>,
+        event_filters: Option<TLVArray<'_, EventFilter>>,
+        mut tw: T,
+    ) -> Result<(), Error> {
+        // TODO(events) now that events contains serialized TLVs we could just copy these rather than re-write them
+        self.events.for_each(|event| {
+            if event.event_number < self.min_event_number {
+                // This event has already been seen by this subscription, skip
+                return Ok(());
+            }
+
+            // We assume the 99% case is that there is a single filter, on event-no, so just brute force filtering
+            if let Some(filters) = &event_filters {
+                for filter in filters {
+                    if let Some(event_min) = filter?.event_min {
+                        if event.event_number < event_min {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            // TODO(events) reason for manually doing this is I can't figure out how to make the one-of field work with the ToTLV derives..
+            //              but either way this will need revising depending on how we want to store the associated event data
+            tw.start_struct(&TLVTag::Anonymous)?;
+            tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
+            event
+                .path
+                .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+            tw.u64(
+                &TagType::Context(EventDataTag::EventNumber as _),
+                event.event_number,
+            )?;
+            tw.u8(
+                &TagType::Context(EventDataTag::Priority as _),
+                event.priority,
+            )?;
+            match event.timestamp {
+                crate::im::EventDataTimestamp::EpochTimestamp(ts) => {
+                    tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
+                }
+                crate::im::EventDataTimestamp::SystemTimestamp(ts) => {
+                    tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?
+                }
+                crate::im::EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(
+                    &TagType::Context(EventDataTag::DeltaEpochTimestamp as _),
+                    ts,
+                )?,
+                crate::im::EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
+                    &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
+                    ts,
+                )?,
+            };
+            event
+                .data
+                .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
+            tw.end_container()?;
+            tw.end_container()
+        })
     }
 }
 
