@@ -134,9 +134,15 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         write_buf.append(&AES128_TAG_ZEROED)?;
         let cipher_text = write_buf.as_mut_slice();
 
-        let mut cypher = self.crypto.aes_ccm_16_64_128(&sigma2_key)?;
+        let mut cypher = self.crypto.aes_ccm_16_64_128()?;
 
-        cypher.encrypt_in_place(NONCE, &[], cipher_text, cipher_text.len() - AES128_TAG_LEN)?;
+        cypher.encrypt_in_place(
+            &sigma2_key,
+            NONCE,
+            &[],
+            cipher_text,
+            cipher_text.len() - AES128_TAG_LEN,
+        )?;
         Ok(write_buf.as_slice().len())
     }
 
@@ -350,9 +356,9 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
 
         let encrypted_len = encrypted.len();
 
-        let mut cypher = self.crypto.aes_ccm_16_64_128(&sigma3_key)?;
+        let mut cypher = self.crypto.aes_ccm_16_64_128()?;
 
-        cypher.decrypt_in_place(NONCE, &[], encrypted)?;
+        cypher.decrypt_in_place(&sigma3_key, NONCE, &[], encrypted)?;
         Ok(encrypted_len - crypto::AES128_TAG_LEN)
     }
 

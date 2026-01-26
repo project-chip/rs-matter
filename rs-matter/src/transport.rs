@@ -837,7 +837,7 @@ impl TransportMgr {
         if !packet.header.plain.is_encrypted() {
             // Unencrypted packets can be decoded without a session, and we need to anyway do that
             // in order to determine (based on proto hdr data) whether to create a new session or not
-            packet.header.decode_remaining(&mut pb, 0, None, crypto)?;
+            packet.header.decode_remaining(crypto, None, 0, &mut pb)?;
             packet.header.proto.adjust_reliability(true, &packet.peer);
 
             let payload_range = pb.slice_range();
@@ -884,7 +884,7 @@ impl TransportMgr {
             "{}",
             Packet::<0>::display_payload(
                 &packet.header.proto,
-                &packet.buf[PacketHdr::HDR_RESERVE + packet.payload_start..payload_end]
+                &packet.buf[packet.payload_start..payload_end]
             )
         );
 
@@ -893,21 +893,17 @@ impl TransportMgr {
             "{}",
             Packet::<0>::display_payload(
                 &packet.header.proto,
-                &packet.buf[PacketHdr::HDR_RESERVE + packet.payload_start..payload_end]
+                &packet.buf[packet.payload_start..payload_end]
             )
         );
 
         unwrap!(packet.buf.resize_default(N));
 
-        let mut wb = WriteBuf::new_with(
-            &mut packet.buf,
-            PacketHdr::HDR_RESERVE + packet.payload_start,
-            payload_end,
-        );
+        let mut wb = WriteBuf::new_with(&mut packet.buf, packet.payload_start, payload_end);
         if let Some(session) = session {
             session.encode(&packet.header, &mut wb, crypto)?;
         } else {
-            packet.header.encode(&mut wb, 0, None, crypto)?;
+            packet.header.encode(crypto, None, 0, &mut wb)?;
         }
 
         let encoded_payload_start = wb.get_start();
@@ -935,8 +931,11 @@ impl TransportMgr {
         // which is the size of `buf` heapless vec
         unwrap!(packet.buf.resize_default(N));
 
-        let mut wb = WriteBuf::new(&mut packet.buf);
-        wb.reserve(PacketHdr::HDR_RESERVE)?;
+        let mut wb = WriteBuf::new_with(
+            &mut packet.buf,
+            PacketHdr::HDR_RESERVE,
+            PacketHdr::HDR_RESERVE,
+        );
 
         let Some(meta) = payload_writer(&mut wb)? else {
             packet.buf.clear();
@@ -946,7 +945,7 @@ impl TransportMgr {
         let (start, end) = (wb.get_start(), wb.get_tail());
 
         packet.payload_start = start;
-        packet.buf.truncate(PacketHdr::HDR_RESERVE + end);
+        packet.buf.truncate(end);
 
         meta.set_into(&mut packet.header.proto);
 

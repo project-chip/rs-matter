@@ -97,10 +97,7 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn aes_ccm_16_64_128(
-        &self,
-        _key: &super::CanonAes128Key,
-    ) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
         unimplemented!()
     }
 
@@ -171,10 +168,11 @@ impl super::Pbkdf2Hmac for DummyCrypto {
     }
 }
 
-impl<const KEY_LEN: usize> super::Aead<KEY_LEN> for DummyCrypto {
+impl<const KEY_LEN: usize, const NONCE_LEN: usize> super::Aead<KEY_LEN, NONCE_LEN> for DummyCrypto {
     fn encrypt_in_place<'a>(
         &mut self,
-        _nonce: &[u8; KEY_LEN],
+        _key: &[u8; KEY_LEN],
+        _nonce: &[u8; NONCE_LEN],
         _ad: &[u8],
         _data: &'a mut [u8],
         _data_len: usize,
@@ -184,7 +182,8 @@ impl<const KEY_LEN: usize> super::Aead<KEY_LEN> for DummyCrypto {
 
     fn decrypt_in_place<'a>(
         &mut self,
-        _nonce: &[u8; KEY_LEN],
+        _key: &[u8; KEY_LEN],
+        _nonce: &[u8; NONCE_LEN],
         _ad: &[u8],
         _data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {

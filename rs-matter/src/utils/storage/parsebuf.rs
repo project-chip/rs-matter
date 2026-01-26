@@ -55,7 +55,7 @@ where
             Err(ErrorCode::BufferTooSmall)?;
         }
 
-        self.buf.borrow_mut()[0..pb.read_off + pb.left]
+        self.buf.borrow_mut()[..pb.read_off + pb.left]
             .copy_from_slice(&pb.buf.borrow()[..pb.read_off + pb.left]);
         self.read_off = pb.read_off;
         self.left = pb.left;
@@ -81,11 +81,19 @@ where
     where
         T: BorrowMut<[u8]>,
     {
-        &mut self.buf.borrow_mut()[self.read_off..(self.read_off + self.left)]
+        self.split_mut().1
+    }
+
+    pub fn split_mut(&mut self) -> (&mut [u8], &mut [u8])
+    where
+        T: BorrowMut<[u8]>,
+    {
+        let (parsed, remaining) = self.buf.borrow_mut().split_at_mut(self.read_off);
+        (parsed, &mut remaining[..self.left])
     }
 
     pub fn parsed_as_slice(&self) -> &[u8] {
-        &self.buf.borrow()[0..self.read_off]
+        &self.buf.borrow()[..self.read_off]
     }
 
     pub fn tail(&mut self, size: usize) -> Result<&[u8], Error> {
