@@ -32,6 +32,8 @@ impl<'a> WriteBuf<'a> {
     }
 
     pub fn new_with(buf: &'a mut [u8], start: usize, end: usize) -> Self {
+        assert!(start <= end && end <= buf.len());
+
         let buf_size = buf.len();
 
         Self {
@@ -70,6 +72,10 @@ impl<'a> WriteBuf<'a> {
         &mut self.buf[self.end..self.buf_size]
     }
 
+    pub fn reserve_as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.buf[..self.start]
+    }
+
     pub fn reset(&mut self) {
         self.buf_size = self.buf.len();
         self.start = 0;
@@ -88,16 +94,11 @@ impl<'a> WriteBuf<'a> {
         Ok(())
     }
 
-    pub fn reserve(&mut self, reserve: usize) -> Result<(), Error> {
-        if self.end != 0 || self.start != 0 || self.buf_size != self.buf.len() {
-            Err(ErrorCode::Invalid.into())
-        } else if reserve > self.buf_size {
-            Err(ErrorCode::NoSpace.into())
-        } else {
-            self.start = reserve;
-            self.end = reserve;
-            Ok(())
-        }
+    pub fn reserve(&mut self, new_start: usize) -> Result<(), Error> {
+        assert!(new_start <= self.end);
+        self.start = new_start;
+
+        Ok(())
     }
 
     pub fn shrink(&mut self, with: usize) -> Result<(), Error> {
@@ -118,23 +119,29 @@ impl<'a> WriteBuf<'a> {
         }
     }
 
-    pub fn prepend_with<F>(&mut self, size: usize, f: F) -> Result<(), Error>
-    where
-        F: FnOnce(&mut Self),
-    {
-        if size <= self.start {
-            f(self);
-            self.start -= size;
-            return Ok(());
-        }
-        Err(ErrorCode::NoSpace.into())
+    pub fn split_mut(&mut self) -> (&mut [u8], &mut [u8]) {
+        let (reserved, remaining) = self.buf.split_at_mut(self.start);
+        (reserved, &mut remaining[..self.end - self.start])
     }
 
-    pub fn prepend(&mut self, src: &[u8]) -> Result<(), Error> {
-        self.prepend_with(src.len(), |x| {
-            let dst_slice = &mut x.buf[(x.start - src.len())..x.start];
-            dst_slice.copy_from_slice(src);
-        })
+    pub fn realign(&mut self, reserve: usize) {
+        assert!(reserve <= self.start);
+
+        let mut old_offset = self.start;
+        let mut new_offset = reserve;
+        assert!(new_offset <= old_offset);
+
+        if old_offset < new_offset {
+            while old_offset < self.end {
+                self.buf[new_offset] = self.buf[old_offset];
+
+                old_offset += 1;
+                new_offset += 1;
+            }
+        }
+
+        self.end -= self.start - reserve;
+        self.start = 0;
     }
 
     pub fn append_with_buf<F>(&mut self, f: F) -> Result<usize, Error>

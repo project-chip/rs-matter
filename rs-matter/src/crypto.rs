@@ -141,7 +141,7 @@ pub trait Crypto {
     type Pbkdf2HmacSha256<'a>: Pbkdf2Hmac
     where
         Self: 'a;
-    type AesCcm16p64p128<'a>: Aead<AES128_NONCE_LEN>
+    type AesCcm16p64p128<'a>: Aead<AES128_CANON_KEY_LEN, AES128_NONCE_LEN>
     where
         Self: 'a;
     type Secp256r1PublicKey<'a>: PublicKey<'a, SECP256R1_CANON_POINT_LEN, SECP256R1_SIGNATURE_LEN>
@@ -180,7 +180,7 @@ pub trait Crypto {
 
     fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error>;
 
-    fn aes_ccm_16_64_128(&self, key: &CanonAes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error>;
+    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error>;
 
     fn secp256r1_pub_key(
         &self,
@@ -272,8 +272,8 @@ where
         (*self).pbkdf2_hmac_sha256()
     }
 
-    fn aes_ccm_16_64_128(&self, key: &CanonAes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error> {
-        (*self).aes_ccm_16_64_128(key)
+    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+        (*self).aes_ccm_16_64_128()
     }
 
     fn secp256r1_pub_key(
@@ -335,44 +335,48 @@ pub trait Pbkdf2Hmac {
     fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]);
 }
 
-pub trait Aead<const NONCE_LEN: usize> {
+pub trait Aead<const KEY_LEN: usize, const NONCE_LEN: usize> {
     fn encrypt_in_place<'a>(
         &mut self,
+        key: &[u8; KEY_LEN],
         nonce: &[u8; NONCE_LEN],
-        ad: &[u8],
+        aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
     ) -> Result<&'a [u8], Error>;
 
     fn decrypt_in_place<'a>(
         &mut self,
+        key: &[u8; KEY_LEN],
         nonce: &[u8; NONCE_LEN],
         ad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error>;
 }
 
-impl<const NONCE_LEN: usize, T> Aead<NONCE_LEN> for &mut T
+impl<const KEY_LEN: usize, const NONCE_LEN: usize, T> Aead<KEY_LEN, NONCE_LEN> for &mut T
 where
-    T: Aead<NONCE_LEN>,
+    T: Aead<KEY_LEN, NONCE_LEN>,
 {
     fn encrypt_in_place<'a>(
         &mut self,
+        key: &[u8; KEY_LEN],
         nonce: &[u8; NONCE_LEN],
-        ad: &[u8],
+        aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
     ) -> Result<&'a [u8], Error> {
-        (*self).encrypt_in_place(nonce, ad, data, data_len)
+        (*self).encrypt_in_place(key, nonce, aad, data, data_len)
     }
 
     fn decrypt_in_place<'a>(
         &mut self,
+        key: &[u8; KEY_LEN],
         nonce: &[u8; NONCE_LEN],
         ad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        (*self).decrypt_in_place(nonce, ad, data)
+        (*self).decrypt_in_place(key, nonce, ad, data)
     }
 }
 
@@ -396,7 +400,7 @@ pub trait SecretKey<
 
     fn derive_shared_secret(
         &self,
-        peer_pub_key: &Self::PublicKey<'_>,
+        peer_pub_key: &Self::PublicKey<'a>,
         shared_secret: &mut [u8; SHARED_SECRET_LEN],
     );
 

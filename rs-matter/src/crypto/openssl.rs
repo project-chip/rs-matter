@@ -17,28 +17,22 @@
 
 #![allow(deprecated)] // Remove this once `hmac` updates to `generic-array` 1.x
 
-use core::fmt::{self, Debug};
+use core::ops::Mul;
 
 use crate::error::{Error, ErrorCode};
-use crate::utils::rand::Rand;
 
-use alloc::vec;
-use foreign_types::ForeignTypeRef;
 use openssl::asn1::Asn1Type;
 use openssl::bn::{BigNum, BigNumContext};
-use openssl::cipher::CipherRef;
-use openssl::cipher_ctx::{CipherCtx, CipherCtxRef};
+use openssl::cipher_ctx::CipherCtx;
 use openssl::derive::Deriver;
-use openssl::ec::{EcGroup, EcKey, EcPoint, EcPointRef, PointConversionForm};
+use openssl::ec::{EcGroup, EcKey, EcPoint, PointConversionForm};
 use openssl::ecdsa::EcdsaSig;
-use openssl::error::ErrorStack;
 use openssl::hash::{Hasher, MessageDigest};
 use openssl::md::Md;
 use openssl::nid::Nid;
-use openssl::pkey::{self, Id, PKey, Private};
+use openssl::pkey::{self, Id, PKey};
 use openssl::pkey_ctx::PkeyCtx;
-use openssl::symm::{self};
-use openssl::x509::{X509NameBuilder, X509ReqBuilder, X509};
+use openssl::x509::{X509NameBuilder, X509ReqBuilder};
 
 // We directly use the hmac crate here, there was a self-referential structure
 // problem while using OpenSSL's Signer
@@ -47,124 +41,356 @@ use hmac::{Hmac, Mac};
 
 extern crate alloc;
 
-pub struct HmacSha256 {
-    ctx: Hmac<sha2::Sha256>,
+pub struct OpenSslCrypto {
+    ec_group: EcGroup,
 }
 
-impl HmacSha256 {
-    pub fn new(key: &[u8]) -> Result<Self, Error> {
-        Ok(Self {
+impl OpenSslCrypto {
+    pub fn new() -> Self {
+        Self {
+            ec_group: EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap(),
+        }
+    }
+}
+
+impl super::Crypto for OpenSslCrypto {
+    type Sha256<'a>
+        = Sha256
+    where
+        Self: 'a;
+
+    type HmacSha256<'a>
+        = HmacSha256
+    where
+        Self: 'a;
+
+    type HkdfSha256<'a>
+        = HkdfFactory
+    where
+        Self: 'a;
+
+    type Pbkdf2HmacSha256<'a>
+        = Pbkdf2HmacFactory
+    where
+        Self: 'a;
+
+    type AesCcm16p64p128<'a>
+        = Aes128Ccm1613
+    where
+        Self: 'a;
+
+    type Secp256r1PublicKey<'a>
+        = ECPublicKey<'a>
+    where
+        Self: 'a;
+
+    type Secp256r1SecretKey<'a>
+        = ECPrivateKey<'a>
+    where
+        Self: 'a;
+
+    type UInt384<'a>
+        = BigNum
+    where
+        Self: 'a;
+
+    type Secp256r1Scalar<'a>
+        = ECScalar
+    where
+        Self: 'a;
+
+    type Secp256r1Point<'a>
+        = ECPoint<'a>
+    where
+        Self: 'a;
+
+    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
+        Ok(Sha256(Hasher::new(MessageDigest::sha256())?))
+    }
+
+    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
+        Ok(HmacSha256 {
             ctx: Hmac::<sha2::Sha256>::new_from_slice(key)
                 .map_err(|_x| ErrorCode::InvalidKeyLength)?,
         })
     }
 
-    pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.ctx.update(data);
-        Ok(())
+    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error> {
+        Ok(HkdfFactory(()))
     }
 
-    pub fn finish(self, out: &mut [u8]) -> Result<(), Error> {
-        let a = self.ctx.finalize().into_bytes();
-        out.copy_from_slice(a.as_slice());
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum KeyType {
-    Public(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] EcKey<pkey::Public>),
-    Private(#[cfg_attr(feature = "defmt", defmt(Debug2Format))] EcKey<pkey::Private>),
-}
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct KeyPair {
-    key: KeyType,
-}
-
-impl KeyPair {
-    pub fn new(_rand: Rand) -> Result<Self, Error> {
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-        let key = EcKey::generate(&group)?;
-        Ok(Self {
-            key: KeyType::Private(key),
-        })
+    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
+        Ok(Pbkdf2HmacFactory(()))
     }
 
-    pub fn new_from_components(pub_key: &[u8], priv_key: &[u8]) -> Result<Self, Error> {
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+        Ok(Aes128Ccm1613)
+    }
+
+    fn secp256r1_pub_key(
+        &self,
+        key: &super::CanonSecp256r1PublicKey,
+    ) -> Result<Self::Secp256r1PublicKey<'_>, Error> {
         let mut ctx = BigNumContext::new()?;
-        let priv_key = BigNum::from_slice(priv_key)?;
-        let pub_key = EcPoint::from_bytes(&group, pub_key, &mut ctx)?;
-        Ok(Self {
-            key: KeyType::Private(EcKey::from_private_components(&group, &priv_key, &pub_key)?),
-        })
+        let point = EcPoint::from_bytes(&self.ec_group, key, &mut ctx)?;
+        let key = EcKey::from_public_key(&self.ec_group, &point)?;
+        Ok(Self::Secp256r1PublicKey { crypto: self, key })
     }
 
-    pub fn new_from_public(pub_key: &[u8]) -> Result<Self, Error> {
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+        let key = EcKey::generate(&self.ec_group)?;
+        Ok(Self::Secp256r1SecretKey { crypto: self, key })
+    }
+
+    fn secp256r1_secret_key(
+        &self,
+        key: &super::CanonSecp256r1SecretKey,
+    ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+        let priv_key = BigNum::from_slice(key)?;
+
         let mut ctx = BigNumContext::new()?;
-        let pub_key = EcPoint::from_bytes(&group, pub_key, &mut ctx)?;
-
-        Ok(Self {
-            key: KeyType::Public(EcKey::from_public_key(&group, &pub_key)?),
-        })
-    }
-
-    fn public_key_point(&self) -> &EcPointRef {
-        match &self.key {
-            KeyType::Public(k) => k.public_key(),
-            KeyType::Private(k) => k.public_key(),
-        }
-    }
-
-    fn private_key(&self) -> Result<&EcKey<Private>, Error> {
-        match &self.key {
-            KeyType::Public(_) => Err(ErrorCode::Invalid.into()),
-            KeyType::Private(k) => Ok(k),
-        }
-    }
-
-    pub fn get_public_key(&self, pub_key: &mut [u8]) -> Result<usize, Error> {
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-        let mut bn_ctx = BigNumContext::new()?;
-        let s = self.public_key_point().to_bytes(
-            &group,
-            PointConversionForm::UNCOMPRESSED,
-            &mut bn_ctx,
+        let mut pub_key = EcPoint::new(&self.ec_group)?;
+        pub_key.mul(
+            &self.ec_group,
+            self.ec_group.generator(),
+            &priv_key,
+            &mut ctx,
         )?;
-        let len = s.len();
-        pub_key[..len].copy_from_slice(s.as_slice());
-        Ok(len)
+
+        let ec_key = EcKey::from_private_components(&self.ec_group, &priv_key, &pub_key)?;
+        Ok(Self::Secp256r1SecretKey {
+            crypto: self,
+            key: ec_key,
+        })
     }
 
-    pub fn get_private_key(&self, priv_key: &mut [u8]) -> Result<usize, Error> {
-        let s = self.private_key()?.private_key().to_vec();
-        let len = s.len();
-        priv_key[..len].copy_from_slice(s.as_slice());
-        Ok(len)
+    fn uint384(&self, uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {
+        let bn = BigNum::from_slice(uint)?;
+        Ok(bn)
     }
 
-    pub fn derive_secret(self, peer_pub_key: &[u8], secret: &mut [u8]) -> Result<usize, Error> {
-        let self_pkey = PKey::from_ec_key(self.private_key()?.clone())?;
+    fn secp256r1_scalar(
+        &self,
+        scalar: &super::CanonSecp256r1Scalar,
+    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+        let bn = BigNum::from_slice(scalar)?;
+        Ok(ECScalar(bn))
+    }
 
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
         let mut ctx = BigNumContext::new()?;
-        let point = EcPoint::from_bytes(&group, peer_pub_key, &mut ctx)?;
-        let peer_key = EcKey::from_public_key(&group, &point)?;
-        let peer_pkey = PKey::from_ec_key(peer_key)?;
-
-        let mut deriver = Deriver::new(&self_pkey)?;
-        deriver.set_peer(&peer_pkey)?;
-        Ok(deriver.derive(secret)?)
+        let mut order = BigNum::new()?;
+        self.ec_group.order(&mut order, &mut ctx)?;
+        let mut bn = BigNum::new()?;
+        order.rand_range(&mut bn)?;
+        Ok(ECScalar(bn))
     }
 
-    pub fn get_csr<'a>(&self, out_csr: &'a mut [u8]) -> Result<&'a [u8], Error> {
+    fn secp256r1_point(
+        &self,
+        point: &super::CanonSecp256r1Point,
+    ) -> Result<Self::Secp256r1Point<'_>, Error> {
+        let mut ctx = BigNumContext::new()?;
+        let ec_point = EcPoint::from_bytes(&self.ec_group, point, &mut ctx)?;
+        Ok(Self::Secp256r1Point {
+            crypto: self,
+            point: ec_point,
+        })
+    }
+
+    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
+        Ok(Self::Secp256r1Point {
+            crypto: self,
+            point: self.ec_group.generator().to_owned(&self.ec_group)?,
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct Sha256(Hasher);
+
+impl super::Digest<{ super::SHA256_HASH_LEN }> for Sha256 {
+    fn update(&mut self, data: &[u8]) {
+        unwrap!(self.0.update(data));
+    }
+
+    fn finish(mut self, hash: &mut [u8; super::SHA256_HASH_LEN]) {
+        let digest = unwrap!(self.0.finish());
+        hash.copy_from_slice(digest.as_ref());
+    }
+}
+
+#[derive(Clone)]
+pub struct HmacSha256 {
+    ctx: Hmac<sha2::Sha256>,
+}
+
+impl super::Digest<{ super::SHA256_HASH_LEN }> for HmacSha256 {
+    fn update(&mut self, data: &[u8]) {
+        Mac::update(&mut self.ctx, data);
+    }
+
+    fn finish(self, hash: &mut [u8; super::SHA256_HASH_LEN]) {
+        hash.copy_from_slice(self.ctx.finalize().into_bytes().as_slice());
+    }
+}
+
+// TODO: Generalize for more than Sha256
+pub struct HkdfFactory(());
+
+impl super::Hkdf for HkdfFactory {
+    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()> {
+        let mut ctx = PkeyCtx::new_id(Id::HKDF).unwrap();
+        ctx.derive_init().unwrap();
+        ctx.set_hkdf_md(Md::sha256()).unwrap();
+        ctx.set_hkdf_key(ikm).unwrap();
+        if !salt.is_empty() {
+            ctx.set_hkdf_salt(salt).unwrap();
+        }
+        ctx.add_hkdf_info(info).unwrap();
+        ctx.derive(Some(key)).unwrap();
+
+        Ok(())
+    }
+}
+
+// TODO: Generalize for more than Sha256
+pub struct Pbkdf2HmacFactory(());
+
+impl super::Pbkdf2Hmac for Pbkdf2HmacFactory {
+    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) {
+        openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, MessageDigest::sha256(), key).unwrap();
+    }
+}
+
+pub struct Aes128Ccm1613;
+
+impl super::Aead<{ super::AES128_CANON_KEY_LEN }, { super::AES128_NONCE_LEN }> for Aes128Ccm1613 {
+    fn encrypt_in_place<'a>(
+        &mut self,
+        key: &[u8; super::AES128_CANON_KEY_LEN],
+        nonce: &[u8; super::AES128_NONCE_LEN],
+        aad: &[u8],
+        data: &'a mut [u8],
+        data_len: usize,
+    ) -> Result<&'a [u8], Error> {
+        assert!(data_len + super::AES128_TAG_LEN <= data.len());
+
+        let mut ctx = CipherCtx::new()?;
+
+        ctx.encrypt_init(
+            Some(openssl::cipher::Cipher::aes_128_ccm()),
+            Some(key),
+            Some(nonce),
+        )?;
+        //ctx.set_key_length(super::AES128_CANON_KEY_LEN)?;
+        //ctx.set_iv_length(super::AES128_NONCE_LEN)?;
+        ctx.set_tag_length(super::AES128_TAG_LEN)?;
+        ctx.set_data_len(data_len)?;
+
+        let mut encrypted_data_len = ctx.cipher_update(aad, None)?;
+
+        encrypted_data_len += ctx.cipher_update_inplace(data, data_len)?;
+        encrypted_data_len += ctx.cipher_final(&mut data[encrypted_data_len..])?;
+
+        ctx.tag(&mut data[encrypted_data_len..])?;
+
+        Ok(&data[..encrypted_data_len + super::AES128_TAG_LEN])
+    }
+
+    fn decrypt_in_place<'a>(
+        &mut self,
+        key: &[u8; super::AES128_CANON_KEY_LEN],
+        nonce: &[u8; super::AES128_NONCE_LEN],
+        aad: &[u8],
+        data: &'a mut [u8],
+    ) -> Result<&'a [u8], Error> {
+        assert!(data.len() >= super::AES128_TAG_LEN);
+
+        let (data, tag) = data.split_at_mut(data.len() - super::AES128_TAG_LEN);
+
+        let mut ctx = CipherCtx::new()?;
+
+        ctx.decrypt_init(
+            Some(openssl::cipher::Cipher::aes_128_ccm()),
+            Some(key),
+            Some(nonce),
+        )?;
+        //ctx.set_key_length(super::AES128_CANON_KEY_LEN)?;
+        //ctx.set_iv_length(super::AES128_NONCE_LEN)?;
+        ctx.set_tag(tag)?;
+        ctx.set_data_len(data.len())?;
+
+        let mut decrypted_data_len = ctx.cipher_update(aad, None)?;
+
+        decrypted_data_len += ctx.cipher_update_inplace(data, data.len())?;
+        decrypted_data_len += ctx.cipher_final(&mut data[decrypted_data_len..])?;
+
+        Ok(&data[..decrypted_data_len])
+    }
+}
+
+pub struct ECPublicKey<'a> {
+    crypto: &'a OpenSslCrypto,
+    key: EcKey<pkey::Public>,
+}
+
+impl<'a>
+    super::PublicKey<'a, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_SIGNATURE_LEN }>
+    for ECPublicKey<'a>
+{
+    fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_POINT_LEN]) {
+        let mut bn_ctx = BigNumContext::new().unwrap();
+        let s = self
+            .key
+            .public_key()
+            .to_bytes(
+                &self.crypto.ec_group,
+                PointConversionForm::UNCOMPRESSED,
+                &mut bn_ctx,
+            )
+            .unwrap();
+        key.copy_from_slice(s.as_slice());
+    }
+
+    fn verify(&self, data: &[u8], signature: &[u8; super::SECP256R1_SIGNATURE_LEN]) -> bool {
+        // First get the SHA256 of the message
+        let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
+        hasher.update(data).unwrap();
+        let digest = hasher.finish().unwrap();
+
+        let r = BigNum::from_slice(&signature[..super::SECP256R1_SIGNATURE_LEN / 2]).unwrap();
+        let s = BigNum::from_slice(&signature[super::SECP256R1_SIGNATURE_LEN / 2..]).unwrap();
+        let sig = EcdsaSig::from_private_components(r, s).unwrap();
+
+        sig.verify(&digest, &self.key).unwrap()
+    }
+}
+
+pub struct ECPrivateKey<'a> {
+    crypto: &'a OpenSslCrypto,
+    key: EcKey<pkey::Private>,
+}
+
+impl<'a>
+    super::SecretKey<
+        'a,
+        { super::SECP256R1_CANON_SECRET_KEY_LEN },
+        { super::SECP256R1_CANON_POINT_LEN },
+        { super::SECP256R1_SIGNATURE_LEN },
+        { super::SECP256R1_ECDH_SHARED_SECRET_LEN },
+    > for ECPrivateKey<'a>
+{
+    type PublicKey<'s>
+        = ECPublicKey<'s>
+    where
+        Self: 's;
+
+    fn csr<'s>(&self, buf: &'s mut [u8]) -> Result<&'s [u8], Error> {
         let mut builder = X509ReqBuilder::new()?;
         builder.set_version(0)?;
 
-        let pkey = PKey::from_ec_key(self.private_key()?.clone())?;
+        let pkey = PKey::from_ec_key(self.key.clone())?;
         builder.set_pubkey(&pkey)?;
 
         let mut name_builder = X509NameBuilder::new()?;
@@ -174,239 +400,178 @@ impl KeyPair {
 
         builder.sign(&pkey, MessageDigest::sha256())?;
 
-        let csr_vec = builder.build().to_der()?;
-        let csr = csr_vec.as_slice();
-        if csr.len() < out_csr.len() {
-            let a = &mut out_csr[0..csr.len()];
-            a.copy_from_slice(csr);
-            Ok(a)
+        let csr = builder.build().to_der()?;
+        if buf.len() <= csr.len() {
+            buf[..csr.len()].copy_from_slice(csr.as_slice());
+
+            Ok(&buf[..csr.len()])
         } else {
             Err(ErrorCode::NoSpace.into())
         }
     }
 
-    pub fn sign_msg(&self, msg: &[u8], signature: &mut [u8]) -> Result<usize, Error> {
-        // First get the SHA256 of the message
-        let mut h = Hasher::new(MessageDigest::sha256())?;
-        h.update(msg)?;
-        let msg = h.finish()?;
-
-        if signature.len() < super::EC_SIGNATURE_LEN_BYTES {
-            Err(ErrorCode::NoSpace)?;
+    fn pub_key(&self) -> Self::PublicKey<'a> {
+        Self::PublicKey {
+            crypto: self.crypto,
+            key: EcKey::from_public_key(&self.crypto.ec_group, self.key.public_key()).unwrap(),
         }
-        signature.fill(0);
-
-        let sig = EcdsaSig::sign(&msg, self.private_key()?)?;
-        let r = sig.r().to_vec();
-        signature[0..r.len()].copy_from_slice(r.as_slice());
-        let s = sig.s().to_vec();
-        signature[32..(32 + s.len())].copy_from_slice(s.as_slice());
-        Ok(64)
     }
 
-    pub fn verify_msg(&self, msg: &[u8], signature: &[u8]) -> Result<(), Error> {
+    fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_SECRET_KEY_LEN]) {
+        key.copy_from_slice(self.key.private_key().to_vec().as_slice());
+    }
+
+    fn derive_shared_secret(
+        &self,
+        peer_pub_key: &Self::PublicKey<'a>,
+        shared_secret: &mut [u8; super::SECP256R1_ECDH_SHARED_SECRET_LEN],
+    ) {
+        let our_priv_key = PKey::from_ec_key(self.key.clone()).unwrap();
+        let peer_pub_key = PKey::from_ec_key(peer_pub_key.key.clone()).unwrap();
+
+        let mut deriver = Deriver::new(&our_priv_key).unwrap();
+
+        deriver.set_peer(&peer_pub_key).unwrap();
+        deriver.derive(shared_secret).unwrap();
+    }
+
+    fn sign(&self, data: &[u8], signature: &mut [u8; super::SECP256R1_SIGNATURE_LEN]) {
         // First get the SHA256 of the message
-        let mut h = Hasher::new(MessageDigest::sha256())?;
-        h.update(msg)?;
-        let msg = h.finish()?;
+        let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
+        hasher.update(data).unwrap();
+        let digest = hasher.finish().unwrap();
 
-        let r = BigNum::from_slice(&signature[0..super::BIGNUM_LEN_BYTES])?;
-        let s =
-            BigNum::from_slice(&signature[super::BIGNUM_LEN_BYTES..(2 * super::BIGNUM_LEN_BYTES)])?;
-        let sig = EcdsaSig::from_private_components(r, s)?;
+        let sig = EcdsaSig::sign(&digest, &self.key).unwrap();
 
-        let k = match &self.key {
-            KeyType::Public(key) => key,
-            _ => {
-                error!("Not yet supported");
-                return Err(ErrorCode::Invalid.into());
-            }
-        };
-        if !sig.verify(&msg, k)? {
-            Err(ErrorCode::InvalidSignature.into())
+        signature[..super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2]
+            .copy_from_slice(sig.r().to_vec().as_slice());
+        signature[super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2..]
+            .copy_from_slice(sig.s().to_vec().as_slice());
+    }
+}
+
+impl<'a> super::UInt<'a, { super::UINT384_CANON_LEN }> for BigNum {
+    fn rem(&self, other: &Self) -> Option<Self> {
+        let mut ctx = BigNumContext::new().unwrap();
+        let mut r = BigNum::new().unwrap();
+        if r.checked_rem(self, other, &mut ctx).is_ok() {
+            Some(r)
         } else {
-            Ok(())
+            None
         }
     }
-}
 
-const P256_KEY_LEN: usize = 256 / 8;
-pub fn pubkey_from_der(der: &[u8], out_key: &mut [u8]) -> Result<(), Error> {
-    if out_key.len() != P256_KEY_LEN {
-        error!("Insufficient length");
-        Err(ErrorCode::NoSpace.into())
-    } else {
-        let key = X509::from_der(der)?.public_key()?.public_key_to_der()?;
-        let len = key.len();
-        let out_key = &mut out_key[..len];
-        out_key.copy_from_slice(key.as_slice());
-        Ok(())
+    fn canon_into(&self, uint: &mut [u8; super::UINT384_CANON_LEN]) {
+        uint.copy_from_slice(
+            self.to_vec_padded(super::SECP256R1_CANON_SCALAR_LEN as _)
+                .unwrap()
+                .as_slice(),
+        );
     }
 }
 
-pub fn pbkdf2_hmac(pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, MessageDigest::sha256(), key)
-        .map_err(|_e| ErrorCode::TLSStack.into())
-}
+pub struct ECScalar(BigNum);
 
-pub fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), Error> {
-    let mut ctx = PkeyCtx::new_id(Id::HKDF)?;
-    ctx.derive_init()?;
-    ctx.set_hkdf_md(Md::sha256())?;
-    ctx.set_hkdf_key(ikm)?;
-    if !salt.is_empty() {
-        ctx.set_hkdf_salt(salt)?;
+impl<'a> super::Scalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }> for ECScalar {
+    fn mul(&self, other: &Self) -> Self {
+        Self(self.0.mul(&other.0))
     }
-    ctx.add_hkdf_info(info)?;
-    ctx.derive(Some(key))?;
-    Ok(())
+
+    fn canon_into(&self, scalar: &mut [u8; super::SECP256R1_CANON_SCALAR_LEN]) {
+        scalar.copy_from_slice(
+            self.0
+                .to_vec_padded(super::SECP256R1_CANON_SCALAR_LEN as _)
+                .unwrap()
+                .as_slice(),
+        );
+    }
 }
 
-pub fn encrypt_in_place(
-    key: &[u8],
-    nonce: &[u8],
-    ad: &[u8],
-    data: &mut [u8],
-    data_len: usize,
-) -> Result<usize, Error> {
-    let (plain_text, tag) = data.split_at_mut(data_len);
-
-    let result = lowlevel_encrypt_aead(
-        key,
-        Some(nonce),
-        ad,
-        plain_text,
-        &mut tag[..super::AEAD_MIC_LEN_BYTES],
-    )?;
-    data[..data_len].copy_from_slice(result.as_slice());
-    Ok(result.len() + super::AEAD_MIC_LEN_BYTES)
+pub struct ECPoint<'a> {
+    crypto: &'a OpenSslCrypto,
+    point: EcPoint,
 }
 
-pub fn decrypt_in_place(
-    key: &[u8],
-    nonce: &[u8],
-    ad: &[u8],
-    data: &mut [u8],
-) -> Result<usize, Error> {
-    let tag_start = data.len() - super::AEAD_MIC_LEN_BYTES;
-    let (data, tag) = data.split_at_mut(tag_start);
-    let result = lowlevel_decrypt_aead(key, Some(nonce), ad, data, tag)?;
-    data[..result.len()].copy_from_slice(result.as_slice());
-    Ok(result.len())
-}
+impl<'a>
+    super::CurvePoint<
+        'a,
+        { super::SECP256R1_CANON_POINT_LEN },
+        { super::SECP256R1_CANON_SCALAR_LEN },
+    > for ECPoint<'a>
+{
+    type Scalar<'s> = ECScalar;
 
-// The default encrypt/decrypt routines in rust-mbedtls have a problem in the ordering of
-// set-tag-length. This causes the CCM tag-length to be use incorrectly.
-// Instead we use the low-level CipherCtx APIs here to get the desired behaviour.
-// More details available here: https://github.com/sfackler/rust-openssl/pull/1594/
-//   Need to pursue this PR when I get a chance
-pub fn lowlevel_encrypt_aead(
-    key: &[u8],
-    iv: Option<&[u8]>,
-    aad: &[u8],
-    data: &[u8],
-    tag: &mut [u8],
-) -> Result<alloc::vec::Vec<u8>, ErrorStack> {
-    let t = symm::Cipher::aes_128_ccm();
-    let mut ctx = CipherCtx::new()?;
-    CipherCtxRef::encrypt_init(
-        &mut ctx,
-        Some(unsafe { CipherRef::from_ptr(t.as_ptr() as *mut _) }),
-        None,
-        None,
-    )?;
+    fn neg(&self) -> Self {
+        let mut result = self.point.to_owned(&self.crypto.ec_group).unwrap();
 
-    ctx.set_tag_length(tag.len())?;
-    ctx.set_key_length(key.len())?;
-    if let (Some(iv), Some(iv_len)) = (iv, t.iv_len()) {
-        if iv.len() != iv_len {
-            ctx.set_iv_length(iv.len())?;
+        let ctx = BigNumContext::new().unwrap();
+        result.invert(&self.crypto.ec_group, &ctx).unwrap();
+
+        Self {
+            crypto: self.crypto,
+            point: result,
         }
     }
-    CipherCtxRef::encrypt_init(&mut ctx, None, Some(key), iv)?;
 
-    let mut out = vec![0; data.len() + t.block_size()];
-    ctx.set_data_len(data.len())?;
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Self {
+        let mut result = EcPoint::new(&self.crypto.ec_group).unwrap();
 
-    ctx.cipher_update(aad, None)?;
-    let count = ctx.cipher_update(data, Some(&mut out))?;
-    let rest = ctx.cipher_final(&mut out[count..])?;
-    ctx.tag(tag)?;
-    out.truncate(count + rest);
-    Ok(out)
-}
+        let ctx = BigNumContext::new().unwrap();
 
-pub fn lowlevel_decrypt_aead(
-    key: &[u8],
-    iv: Option<&[u8]>,
-    aad: &[u8],
-    data: &[u8],
-    tag: &[u8],
-) -> Result<alloc::vec::Vec<u8>, ErrorStack> {
-    let t = symm::Cipher::aes_128_ccm();
-    let mut ctx = CipherCtx::new()?;
-    CipherCtxRef::decrypt_init(
-        &mut ctx,
-        Some(unsafe { CipherRef::from_ptr(t.as_ptr() as *mut _) }),
-        None,
-        None,
-    )?;
+        result
+            .mul(&self.crypto.ec_group, &self.point, &scalar.0, &ctx)
+            .unwrap();
 
-    ctx.set_tag_length(tag.len())?;
-    ctx.set_key_length(key.len())?;
-    if let (Some(iv), Some(iv_len)) = (iv, t.iv_len()) {
-        if iv.len() != iv_len {
-            ctx.set_iv_length(iv.len())?;
+        Self {
+            crypto: self.crypto,
+            point: result,
         }
     }
-    CipherCtxRef::decrypt_init(&mut ctx, None, Some(key), iv)?;
 
-    let mut out = vec![0; data.len() + t.block_size()];
+    fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self {
+        let a = self.mul(s1);
+        let b = p2.mul(s2);
 
-    ctx.set_tag(tag)?;
-    ctx.set_data_len(data.len())?;
+        let mut ctx = BigNumContext::new().unwrap();
 
-    ctx.cipher_update(aad, None)?;
-    let count = ctx.cipher_update(data, Some(&mut out))?;
+        let mut result = EcPoint::new(&self.crypto.ec_group).unwrap();
 
-    out.truncate(count);
-    Ok(out)
-}
+        result
+            .add(&self.crypto.ec_group, &a.point, &b.point, &mut ctx)
+            .unwrap();
 
-#[derive(Clone)]
-pub struct Sha256 {
-    hasher: Hasher,
-}
-
-impl Sha256 {
-    pub fn new() -> Result<Self, Error> {
-        Ok(Self {
-            hasher: Hasher::new(MessageDigest::sha256())?,
-        })
+        Self {
+            crypto: self.crypto,
+            point: result,
+        }
     }
 
-    pub fn update(&mut self, data: &[u8]) -> Result<(), Error> {
-        self.hasher
-            .update(data)
-            .map_err(|_| ErrorCode::TLSStack.into())
-    }
+    fn canon_into(&self, point: &mut [u8; super::SECP256R1_CANON_POINT_LEN]) {
+        let mut ctx = BigNumContext::new().unwrap();
 
-    pub fn finish(mut self, data: &mut [u8]) -> Result<(), Error> {
-        let h = self.hasher.finish()?;
-        data.copy_from_slice(h.as_ref());
-        Ok(())
+        let tmp = self
+            .point
+            .to_bytes(
+                &self.crypto.ec_group,
+                PointConversionForm::UNCOMPRESSED,
+                &mut ctx,
+            )
+            .unwrap();
+
+        point.copy_from_slice(tmp.as_slice());
     }
 }
 
-impl Debug for Sha256 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(f, "Sha256")
-    }
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for Sha256 {
-    fn format(&self, f: defmt::Formatter<'_>) {
-        defmt::write!(f, "Sha256")
-    }
-}
+// const P256_KEY_LEN: usize = 256 / 8;
+// pub fn pubkey_from_der(der: &[u8], out_key: &mut [u8]) -> Result<(), Error> {
+//     if out_key.len() != P256_KEY_LEN {
+//         error!("Insufficient length");
+//         Err(ErrorCode::NoSpace.into())
+//     } else {
+//         let key = X509::from_der(der)?.public_key()?.public_key_to_der()?;
+//         let len = key.len();
+//         let out_key = &mut out_key[..len];
+//         out_key.copy_from_slice(key.as_slice());
+//         Ok(())
+//     }
+// }

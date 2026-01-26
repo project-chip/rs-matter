@@ -55,9 +55,8 @@ use x509_cert::request::CertReq;
 use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
-    CanonAes128Key, CanonSecp256r1Point, CanonSecp256r1PublicKey, CanonSecp256r1Scalar,
-    CanonSecp256r1SecretKey, CanonUint384, Crypto, SECP256R1_CANON_POINT_LEN,
-    SECP256R1_CANON_SECRET_KEY_LEN, SECP256R1_ECDH_SHARED_SECRET_LEN, SECP256R1_SIGNATURE_LEN,
+    CanonSecp256r1Point, CanonSecp256r1PublicKey, CanonSecp256r1Scalar, CanonSecp256r1SecretKey,
+    CanonUint384, Crypto, SECP256R1_CANON_POINT_LEN, SECP256R1_SIGNATURE_LEN,
 };
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
@@ -95,7 +94,7 @@ where
     where
         Self: 'a;
     type AesCcm16p64p128<'a>
-        = Ccm<Aes128, U16, U13>
+        = Aes128Ccm1613
     where
         Self: 'a;
     type Secp256r1PublicKey<'a>
@@ -138,10 +137,8 @@ where
         Ok(Pbkdf2HmacFactory(()))
     }
 
-    fn aes_ccm_16_64_128(&self, key: &CanonAes128Key) -> Result<Self::AesCcm16p64p128<'_>, Error> {
-        use ccm::KeyInit;
-
-        Ok(Ccm::<Aes128, U16, U13>::new(GenericArray::from_slice(key)))
+    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+        Ok(Aes128Ccm1613)
     }
 
     fn secp256r1_pub_key(
@@ -243,16 +240,23 @@ impl super::Pbkdf2Hmac for Pbkdf2HmacFactory {
 }
 
 // TODO: Generalize for more than Aes128
-impl super::Aead<{ super::AES128_NONCE_LEN }> for Ccm<Aes128, U16, U13> {
+pub struct Aes128Ccm1613;
+
+impl super::Aead<{ super::AES128_CANON_KEY_LEN }, { super::AES128_NONCE_LEN }> for Aes128Ccm1613 {
     fn encrypt_in_place<'a>(
         &mut self,
+        key: &[u8; super::AES128_CANON_KEY_LEN],
         nonce: &[u8; super::AES128_NONCE_LEN],
-        ad: &[u8],
+        aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
     ) -> Result<&'a [u8], Error> {
+        use ccm::{AeadInPlace, KeyInit};
+
+        let cipher = Ccm::<Aes128, U16, U13>::new(GenericArray::from_slice(key));
+
         let mut buffer = SliceBuffer::new(data, data_len);
-        ccm::AeadInPlace::encrypt_in_place(self, GenericArray::from_slice(nonce), ad, &mut buffer)?;
+        cipher.encrypt_in_place(GenericArray::from_slice(nonce), aad, &mut buffer)?;
 
         let len = buffer.len();
 
@@ -261,12 +265,17 @@ impl super::Aead<{ super::AES128_NONCE_LEN }> for Ccm<Aes128, U16, U13> {
 
     fn decrypt_in_place<'a>(
         &mut self,
+        key: &[u8; super::AES128_CANON_KEY_LEN],
         nonce: &[u8; super::AES128_NONCE_LEN],
-        ad: &[u8],
+        aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
+        use ccm::{AeadInPlace, KeyInit};
+
+        let cipher = Ccm::<Aes128, U16, U13>::new(GenericArray::from_slice(key));
+
         let mut buffer = SliceBuffer::new(data, data.len());
-        ccm::AeadInPlace::decrypt_in_place(self, GenericArray::from_slice(nonce), ad, &mut buffer)?;
+        cipher.decrypt_in_place(GenericArray::from_slice(nonce), aad, &mut buffer)?;
 
         let len = buffer.len();
 
@@ -274,18 +283,18 @@ impl super::Aead<{ super::AES128_NONCE_LEN }> for Ccm<Aes128, U16, U13> {
     }
 }
 
-impl super::PublicKey<'_, { SECP256R1_CANON_POINT_LEN }, { SECP256R1_SIGNATURE_LEN }>
+impl super::PublicKey<'_, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_SIGNATURE_LEN }>
     for p256::PublicKey
 {
-    fn canon_into(&self, key: &mut [u8; SECP256R1_CANON_POINT_LEN]) {
+    fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_POINT_LEN]) {
         let point = self.as_affine().to_encoded_point(false);
         let slice = point.as_bytes();
 
-        assert_eq!(slice.len(), SECP256R1_CANON_POINT_LEN);
+        assert_eq!(slice.len(), super::SECP256R1_CANON_POINT_LEN);
         key[..slice.len()].copy_from_slice(slice);
     }
 
-    fn verify(&self, data: &[u8], signature: &[u8; SECP256R1_SIGNATURE_LEN]) -> bool {
+    fn verify(&self, data: &[u8], signature: &[u8; super::SECP256R1_SIGNATURE_LEN]) -> bool {
         use p256::ecdsa::signature::Verifier;
 
         let verifying_key = unwrap!(VerifyingKey::from_affine(*self.as_affine()));
@@ -298,10 +307,10 @@ impl super::PublicKey<'_, { SECP256R1_CANON_POINT_LEN }, { SECP256R1_SIGNATURE_L
 impl<'a>
     super::SecretKey<
         'a,
-        { SECP256R1_CANON_SECRET_KEY_LEN },
-        { SECP256R1_CANON_POINT_LEN },
-        { SECP256R1_SIGNATURE_LEN },
-        { SECP256R1_ECDH_SHARED_SECRET_LEN },
+        { super::SECP256R1_CANON_SECRET_KEY_LEN },
+        { super::SECP256R1_CANON_POINT_LEN },
+        { super::SECP256R1_SIGNATURE_LEN },
+        { super::SECP256R1_ECDH_SHARED_SECRET_LEN },
     > for p256::SecretKey
 {
     type PublicKey<'s>
@@ -387,18 +396,18 @@ impl<'a>
         self.public_key()
     }
 
-    fn canon_into(&self, key: &mut [u8; SECP256R1_CANON_SECRET_KEY_LEN]) {
+    fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_SECRET_KEY_LEN]) {
         let bytes = self.to_bytes();
         let slice = bytes.as_slice();
 
-        assert_eq!(slice.len(), SECP256R1_CANON_SECRET_KEY_LEN);
+        assert_eq!(slice.len(), super::SECP256R1_CANON_SECRET_KEY_LEN);
         key[..slice.len()].copy_from_slice(slice);
     }
 
     fn derive_shared_secret(
         &self,
         peer_pub_key: &Self::PublicKey<'_>,
-        shared_secret: &mut [u8; SECP256R1_ECDH_SHARED_SECRET_LEN],
+        shared_secret: &mut [u8; super::SECP256R1_ECDH_SHARED_SECRET_LEN],
     ) {
         // let encoded_point = EncodedPoint::from_bytes(peer_pub_key)?;
         // let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap(); // TODO: defmt
@@ -410,11 +419,11 @@ impl<'a>
         let bytes = secret.raw_secret_bytes();
         let slice = bytes.as_slice();
 
-        assert_eq!(slice.len(), SECP256R1_ECDH_SHARED_SECRET_LEN);
+        assert_eq!(slice.len(), super::SECP256R1_ECDH_SHARED_SECRET_LEN);
         shared_secret[..slice.len()].copy_from_slice(slice);
     }
 
-    fn sign(&self, data: &[u8], signature: &mut [u8; SECP256R1_SIGNATURE_LEN]) {
+    fn sign(&self, data: &[u8], signature: &mut [u8; super::SECP256R1_SIGNATURE_LEN]) {
         use p256::ecdsa::signature::Signer;
 
         let signing_key = SigningKey::from(self);

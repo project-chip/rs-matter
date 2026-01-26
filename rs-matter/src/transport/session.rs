@@ -364,10 +364,10 @@ impl Session {
         crypto: C,
     ) -> Result<(usize, usize), Error> {
         rx_header.decode_remaining(
-            &mut pb,
-            self.peer_nodeid.unwrap_or_default(),
-            self.get_dec_key(),
             crypto,
+            self.get_dec_key(),
+            self.peer_nodeid.unwrap_or_default(),
+            &mut pb,
         )?;
 
         rx_header.proto.adjust_reliability(true, &self.peer_addr);
@@ -381,7 +381,7 @@ impl Session {
         wb: &mut WriteBuf,
         crypto: C,
     ) -> Result<(), Error> {
-        tx.encode(wb, self.local_nodeid, self.get_enc_key(), crypto)
+        tx.encode(crypto, self.get_enc_key(), self.local_nodeid, wb)
     }
 
     fn update_last_used(&mut self, epoch: Epoch) {

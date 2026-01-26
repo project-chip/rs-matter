@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::crypto::{Aead, Crypto};
+use crate::crypto::{as_canon, Aead, Aes128Aad, Crypto};
 use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -113,6 +113,21 @@ pub struct ProtoHdr {
 }
 
 impl ProtoHdr {
+    /// Maximum length of the protocol header
+    pub const MAX_LEN: usize =
+        // exchange flags
+        1
+        // protocol opcode
+        + 1
+        // exchange ID
+        + 2
+        // protocol ID
+        + 2
+        // [optional] protocol vendor ID
+        + 2
+        // [optional] acknowledged message counter
+        + 4;
+
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -237,15 +252,15 @@ impl ProtoHdr {
 
     pub fn decrypt_and_decode<C: Crypto>(
         &mut self,
+        crypto: C,
+        dec_key: Option<&crypto::CanonAes128Key>,
+        peer_nodeid: u64,
         plain_hdr: &plain_hdr::PlainHdr,
         parsebuf: &mut ParseBuf<'_>,
-        peer_nodeid: u64,
-        dec_key: Option<&crypto::CanonAes128Key>,
-        crypto: C,
     ) -> Result<(), Error> {
-        if let Some(d) = dec_key {
+        if let Some(key) = dec_key {
             // We decrypt only if the decryption key is valid
-            decrypt_in_place(plain_hdr.ctr, peer_nodeid, parsebuf, d, crypto)?;
+            decrypt_in_place(crypto, key, plain_hdr.ctr, peer_nodeid, parsebuf)?;
         }
 
         self.exch_flags = ExchFlags::from_bits(parsebuf.le_u8()?).ok_or(ErrorCode::Invalid)?;
@@ -356,12 +371,11 @@ fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::Aes128Nonce) -> Res
 }
 
 pub fn encrypt_in_place<C: Crypto>(
+    crypto: C,
+    key: &crypto::CanonAes128Key,
     send_ctr: u32,
     peer_nodeid: u64,
-    plain_hdr: &[u8],
-    writebuf: &mut WriteBuf<'_>,
-    key: &crypto::CanonAes128Key,
-    crypto: C,
+    wb: &mut WriteBuf<'_>,
 ) -> Result<(), Error> {
     // IV
     let mut iv = crypto::AES128_NONCE_ZEROED;
@@ -369,14 +383,17 @@ pub fn encrypt_in_place<C: Crypto>(
 
     // Cipher Text
     let tag_space = crypto::AES128_TAG_ZEROED;
-    writebuf.append(&tag_space)?;
-    let cipher_text = writebuf.as_mut_slice();
+    wb.append(&tag_space)?;
 
-    let mut cypher = crypto.aes_ccm_16_64_128(key)?;
+    let (plain, cipher_text) = wb.split_mut();
+    let aad: &Aes128Aad = as_canon(plain)?;
+
+    let mut cypher = crypto.aes_ccm_16_64_128()?;
 
     cypher.encrypt_in_place(
+        key,
         &iv,
-        plain_hdr,
+        aad,
         cipher_text,
         cipher_text.len() - crypto::AES128_TAG_LEN,
     )?;
@@ -386,56 +403,35 @@ pub fn encrypt_in_place<C: Crypto>(
 }
 
 fn decrypt_in_place<C: Crypto>(
+    crypto: C,
+    key: &crypto::CanonAes128Key,
     recvd_ctr: u32,
     peer_nodeid: u64,
     parsebuf: &mut ParseBuf<'_>,
-    key: &crypto::CanonAes128Key,
-    crypto: C,
 ) -> Result<(), Error> {
-    // AAD:
-    //    the unencrypted header of this packet
-    let mut aad = crypto::AES128_AAD_ZEROED;
-    let parsed_slice = parsebuf.parsed_as_slice();
-    if parsed_slice.len() == aad.len() {
-        // The plain_header is variable sized in length, I wonder if the AAD is fixed at 8, or the variable size.
-        // If so, we need to handle it cleanly here.
-        aad.copy_from_slice(parsed_slice);
-    } else {
-        Err(ErrorCode::InvalidAAD)?;
-    }
-
     // IV:
     //   the specific way for creating IV is in get_iv
     let mut iv = crypto::AES128_NONCE_ZEROED;
     get_iv(recvd_ctr, peer_nodeid, &mut iv)?;
 
-    let cipher_text = parsebuf.as_mut_slice();
+    let (parsed, cipher_text) = parsebuf.split_mut();
+
+    // AAD:
+    //    the unencrypted header of this packet
+    let aad: &Aes128Aad = as_canon(parsed)?;
+
     //println!("AAD: {:x?}", aad);
     //println!("Cipher Text: {:x?}", cipher_text);
     //println!("IV: {:x?}", iv);
     //println!("Key: {:x?}", key);
 
-    let mut cypher = crypto.aes_ccm_16_64_128(key)?;
+    let mut cypher = crypto.aes_ccm_16_64_128()?;
 
-    cypher.decrypt_in_place(&iv, &aad, cipher_text)?;
+    cypher.decrypt_in_place(key, &iv, aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);
     parsebuf.tail(crypto::AES128_TAG_LEN)?;
-    Ok(())
-}
 
-pub const fn max_proto_hdr_len() -> usize {
-    // exchange flags
-    1 +
-    // protocol opcode
-        1 +
-    // exchange ID
-        2 +
-    // protocol ID
-        2 +
-    // [optional] protocol vendor ID
-        2 +
-    // [optional] acknowledged message counter
-        4
+    Ok(())
 }
 
 #[cfg(test)]
@@ -466,7 +462,7 @@ mod tests {
         parsebuf.le_u32().unwrap();
         parsebuf.le_u32().unwrap();
 
-        decrypt_in_place(recvd_ctr, 0, &mut parsebuf, KEY, test_crypto()).unwrap();
+        decrypt_in_place(test_crypto(), KEY, recvd_ctr, 0, &mut parsebuf).unwrap();
         assert_eq!(
             parsebuf.as_slice(),
             [
@@ -488,10 +484,15 @@ mod tests {
 
         const PLAIN_HDR: &[u8; 8] = &[0x0, 0x11, 0x0, 0x0, 0x29, 0x0, 0x0, 0x0];
 
+        writebuf.append(PLAIN_HDR).unwrap();
+
         const PLAIN_TEXT: &[u8] = &[
             5, 8, 0x58, 0x28, 0x01, 0x00, 0x15, 0x36, 0x00, 0x15, 0x37, 0x00, 0x24, 0x00, 0x01,
             0x24, 0x02, 0x06, 0x24, 0x03, 0x01, 0x18, 0x35, 0x01, 0x18, 0x18, 0x18, 0x18,
         ];
+
+        let data_start = writebuf.get_tail();
+        writebuf.reserve(data_start);
 
         writebuf.append(PLAIN_TEXT).unwrap();
 
@@ -500,7 +501,9 @@ mod tests {
             0x1b, 0x33,
         ];
 
-        encrypt_in_place(send_ctr, 0, PLAIN_HDR, &mut writebuf, KEY, test_crypto()).unwrap();
+        encrypt_in_place(test_crypto(), KEY, send_ctr, 0, &mut writebuf).unwrap();
+        writebuf.realign(data_start);
+
         assert_eq!(
             writebuf.as_slice(),
             [
