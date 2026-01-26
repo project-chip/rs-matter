@@ -347,7 +347,7 @@ impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
             // TODO(events) context and/or logging?
             return Err(Error::new(ErrorCode::Failure));
         }
-        while let Err(OverflowError{}) = self.buf_ref.get_mut(self.queue).write(byte) {
+        while let Err(OverflowError {}) = self.buf_ref.get_mut(self.queue).write(byte) {
             // Overflow, need to evict an entry
             self.evict(BufLevel::Debug)?;
         }
@@ -387,7 +387,7 @@ impl<const N: usize> TLVRingBuf<N> {
 
     fn write(&mut self, byte: u8) -> Result<(), OverflowError> {
         if self.capacity() == 0 {
-            return Err(OverflowError{});
+            return Err(OverflowError {});
         }
         self.data[self.head] = byte;
         self.head += 1;
@@ -396,7 +396,7 @@ impl<const N: usize> TLVRingBuf<N> {
 
     fn write_slice(&mut self, data: &[u8]) -> Result<(), OverflowError> {
         if self.capacity() < data.len() {
-            return Err(OverflowError{});
+            return Err(OverflowError {});
         }
         self.data[self.head..self.head + data.len()].copy_from_slice(data);
         self.head += data.len();
@@ -405,12 +405,7 @@ impl<const N: usize> TLVRingBuf<N> {
 
     // Get the size of the record at the given position; the caller is responsible for ensuring pos is aligned on a record
     fn record_len(&self, pos: usize) -> Result<usize, Error> {
-        let seq = TLVSequence(&self.data[pos..]);
-        // TODO(events): Sooo the +2 is mega shady but: The length I'm getting here is, in the one case I've tested,
-        //               off-by-2. I *think* that's the control byte and maybe the struct trailer byte, and the
-        //               length then just being the "innards" of the container. But I don't think I can rely on the
-        //               struct start/end data being exactly 2 bytes all the time, so this likely needs something better
-        Ok(seq.raw_value()?.len() + 2)
+        TLVSequence(&self.data[pos..]).container_len()
     }
 
     fn capacity(&self) -> usize {
