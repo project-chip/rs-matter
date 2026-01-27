@@ -398,16 +398,14 @@ fn handler_attribute(
                     Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
+        } else if delegate {
+            quote!(
+                fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                    T::#attr_name(self, ctx, builder)
+                }
+            )
         } else {
-            if delegate {
-                quote!(
-                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
-                        T::#attr_name(self, ctx, builder)
-                    }
-                )
-            } else {
-                quote!(async fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>;)
-            }
+            quote!(async fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>;)
         }
     } else if !delegate && attr.field.is_optional {
         quote!(
@@ -415,16 +413,14 @@ fn handler_attribute(
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
+    } else if delegate {
+        quote!(
+            fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
+                T::#attr_name(self, ctx)
+            }
+        )
     } else {
-        if delegate {
-            quote!(
-                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
-                    T::#attr_name(self, ctx)
-                }
-            )
-        } else {
-            quote!(async fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>;)
-        }
+        quote!(async fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>;)
     }
 }
 
