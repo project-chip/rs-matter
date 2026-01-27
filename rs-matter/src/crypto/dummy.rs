@@ -66,6 +66,11 @@ impl Crypto for DummyCrypto {
     where
         Self: 'a;
 
+    type Secp256r1SigningSecretKey<'a>
+        = DummyCrypto
+    where
+        Self: 'a;
+
     type UInt384<'a>
         = DummyCrypto
     where
@@ -116,6 +121,12 @@ impl Crypto for DummyCrypto {
         &self,
         _key: &super::CanonSecp256r1SecretKey,
     ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+        unimplemented!()
+    }
+
+    fn secp256r1_secret_key_signing_singleton(
+        &self,
+    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
         unimplemented!()
     }
 
@@ -203,12 +214,8 @@ impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize> super::PublicKey<'_, KEY_
     }
 }
 
-impl<
-        const KEY_LEN: usize,
-        const PUB_KEY_LEN: usize,
-        const SIGNATURE_LEN: usize,
-        const SHARED_SECRET_LEN: usize,
-    > super::SecretKey<'_, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN> for DummyCrypto
+impl<const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
+    super::SigningSecretKey<'_, PUB_KEY_LEN, SIGNATURE_LEN> for DummyCrypto
 {
     type PublicKey<'s>
         = DummyCrypto
@@ -223,6 +230,18 @@ impl<
         unimplemented!()
     }
 
+    fn sign(&self, _data: &[u8], _signature: &mut [u8; SIGNATURE_LEN]) {
+        unimplemented!()
+    }
+}
+
+impl<
+        const KEY_LEN: usize,
+        const PUB_KEY_LEN: usize,
+        const SIGNATURE_LEN: usize,
+        const SHARED_SECRET_LEN: usize,
+    > super::SecretKey<'_, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN> for DummyCrypto
+{
     fn canon_into(&self, _key: &mut [u8; KEY_LEN]) {
         unimplemented!()
     }
@@ -232,10 +251,6 @@ impl<
         _peer_pub_key: &Self::PublicKey<'_>,
         _shared_secret: &mut [u8; SHARED_SECRET_LEN],
     ) {
-        unimplemented!()
-    }
-
-    fn sign(&self, _data: &[u8], _signature: &mut [u8; SIGNATURE_LEN]) {
         unimplemented!()
     }
 }
@@ -250,7 +265,7 @@ impl<const LEN: usize> super::UInt<'_, LEN> for DummyCrypto {
     }
 }
 
-impl<const LEN: usize> super::Scalar<'_, LEN> for DummyCrypto {
+impl<const LEN: usize> super::CurveScalar<'_, LEN> for DummyCrypto {
     fn mul(&self, _other: &Self) -> Self {
         unimplemented!()
     }

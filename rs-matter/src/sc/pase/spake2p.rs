@@ -20,10 +20,10 @@ use std::marker::PhantomData;
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
-    as_canon, as_canon_mut, CanonSecp256r1Point, CanonSecp256r1Scalar, Crypto, CurvePoint, Digest,
-    Hkdf, HmacSha256Hash, Pbkdf2Hmac, Scalar, Sha256Hash, UInt, SECP256R1_CANON_POINT_LEN,
-    SECP256R1_CANON_SCALAR_LEN, SECP256R1_POINT_ZEROED, SHA256_HASH_LEN, SHA256_HASH_ZEROED,
-    UINT384_CANON_LEN, UINT384_ZEROED,
+    as_canon, as_canon_mut, CanonSecp256r1Point, CanonSecp256r1Scalar, Crypto, CurvePoint,
+    CurveScalar, Digest, Hkdf, HmacSha256Hash, Pbkdf2Hmac, Sha256Hash, UInt,
+    SECP256R1_CANON_POINT_LEN, SECP256R1_CANON_SCALAR_LEN, SECP256R1_POINT_ZEROED, SHA256_HASH_LEN,
+    SHA256_HASH_ZEROED, UINT384_CANON_LEN, UINT384_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;

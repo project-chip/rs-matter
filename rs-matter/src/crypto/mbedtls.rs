@@ -75,6 +75,11 @@ impl super::Crypto for MbedtlsCrypto {
     where
         Self: 'a;
 
+    type Secp256r1SigningSecretKey<'a>
+        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    where
+        Self: 'a;
+
     type UInt384<'a>
         = Mpi
     where
@@ -132,6 +137,12 @@ impl super::Crypto for MbedtlsCrypto {
         key: &super::CanonSecp256r1SecretKey,
     ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
         self.secp256r1_scalar(key)
+    }
+
+    fn secp256r1_secret_key_signing_singleton(
+        &self,
+    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+        todo!()
     }
 
     fn uint384(&self, uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {
@@ -742,7 +753,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> 
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::Scalar<'a, LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize> super::CurveScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
     fn mul(&self, other: &Self) -> Self {
@@ -761,14 +772,8 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::Scalar<'a, LEN>
     }
 }
 
-impl<
-        'a,
-        const KEY_LEN: usize,
-        const PUB_KEY_LEN: usize,
-        const SIGNATURE_LEN: usize,
-        const SHARED_SECRET_LEN: usize,
-    > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
-    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
+impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
+    super::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN> for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
 {
     type PublicKey<'s>
         = ECPoint<'s, PUB_KEY_LEN, KEY_LEN>
@@ -872,33 +877,6 @@ impl<
         pub_key
     }
 
-    fn canon_into(&self, key: &mut [u8; KEY_LEN]) {
-        self.write(key);
-    }
-
-    fn derive_shared_secret(
-        &self,
-        peer_pub_key: &Self::PublicKey<'a>,
-        shared_secret: &mut [u8; SHARED_SECRET_LEN],
-    ) {
-        let mut z = Mpi::new();
-
-        let result = merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_ecdh_compute_shared(
-                self.group as *const _ as *mut _,
-                &mut z.raw,
-                &peer_pub_key.raw,
-                &self.mpi.raw,
-                None, // TODO
-                core::ptr::null_mut(),
-            )
-        });
-
-        z.write(shared_secret);
-
-        result.unwrap();
-    }
-
     fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) {
         use super::Digest;
 
@@ -930,6 +908,43 @@ impl<
 
         r.write(r_signature);
         s.write(s_signature);
+    }
+}
+
+impl<
+        'a,
+        const KEY_LEN: usize,
+        const PUB_KEY_LEN: usize,
+        const SIGNATURE_LEN: usize,
+        const SHARED_SECRET_LEN: usize,
+    > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
+{
+    fn canon_into(&self, key: &mut [u8; KEY_LEN]) {
+        self.write(key);
+    }
+
+    fn derive_shared_secret(
+        &self,
+        peer_pub_key: &Self::PublicKey<'a>,
+        shared_secret: &mut [u8; SHARED_SECRET_LEN],
+    ) {
+        let mut z = Mpi::new();
+
+        let result = merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_ecdh_compute_shared(
+                self.group as *const _ as *mut _,
+                &mut z.raw,
+                &peer_pub_key.raw,
+                &self.mpi.raw,
+                None, // TODO
+                core::ptr::null_mut(),
+            )
+        });
+
+        z.write(shared_secret);
+
+        result.unwrap();
     }
 }
 
