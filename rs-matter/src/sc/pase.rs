@@ -22,7 +22,7 @@ use core::time::Duration;
 use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
 
 use crate::crypto::{
-    as_canon, CanonSecp256r1PublicKey, Crypto, Hkdf, AES128_CANON_KEY_LEN, SECP256R1_POINT_ZEROED,
+    as_canon, CanonPkcPublicKey, Crypto, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
 };
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -620,7 +620,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
         let pA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let mut pB = SECP256R1_POINT_ZEROED;
+        let mut pB = EC_POINT_ZEROED;
         let mut cB: [u8; 32] = [0; 32];
 
         let has_comm_window = {
@@ -673,10 +673,10 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
         if result.is_ok() {
             // Get the keys
-            let mut session_keys = [0; AES128_CANON_KEY_LEN * 3];
+            let mut session_keys = [0; AEAD_CANON_KEY_LEN * 3];
             self.spake2p
                 .crypto
-                .hkdf_sha256()?
+                .kdf()?
                 .expand(
                     &[],
                     self.spake2p.ke(),
@@ -786,7 +786,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
     /// Extract the PASEPake1 or PASEPake3 parameters from the given buffer
     #[allow(non_snake_case)]
-    fn extract_pasepake_1_or_3_params(data: &[u8]) -> Result<&CanonSecp256r1PublicKey, Error> {
+    fn extract_pasepake_1_or_3_params(data: &[u8]) -> Result<&CanonPkcPublicKey, Error> {
         let root = get_root_node_struct(data)?;
         as_canon(root.structure()?.ctx(1)?.str()?)
     }

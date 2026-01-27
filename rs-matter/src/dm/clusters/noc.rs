@@ -22,7 +22,7 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use crate::cert::CertRef;
-use crate::crypto::{CanonSecp256r1Signature, Crypto, SigningSecretKey};
+use crate::crypto::{CanonPkcSignature, Crypto, SigningSecretKey};
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};
@@ -74,10 +74,10 @@ impl NocHandler {
         dev_att: D,
         attest_element: &mut WriteBuf,
         attest_challenge: &[u8],
-        signature: &mut CanonSecp256r1Signature,
+        signature: &mut CanonPkcSignature,
         crypto: C,
     ) -> Result<(), Error> {
-        let dac_key = crypto.secp256r1_secret_key(dev_att.dac_priv_key())?;
+        let dac_key = crypto.secret_key(dev_att.dac_priv_key())?;
 
         attest_element.copy_from_slice(attest_challenge)?;
         dac_key.sign(attest_element.as_slice(), signature);
@@ -272,7 +272,7 @@ impl ClusterHandler for NocHandler {
 
             let epoch = (ctx.exchange().matter().epoch())().as_secs() as u32;
 
-            let mut signature = MaybeUninit::<CanonSecp256r1Signature>::uninit(); // TODO MEDIUM BUFFER
+            let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
             let signature = signature.init_zeroed();
 
             writer.str_cb(&TLVTag::Context(0), |buf| {
@@ -364,7 +364,7 @@ impl ClusterHandler for NocHandler {
             // Struct is already started
             // writer.start_struct(&CmdDataWriter::TAG)?;
 
-            let mut signature = MaybeUninit::<CanonSecp256r1Signature>::uninit(); // TODO MEDIUM BUFFER
+            let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
             let signature = signature.init_zeroed();
 
             writer.str_cb(&TLVTag::Context(0), |buf| {
@@ -373,7 +373,7 @@ impl ClusterHandler for NocHandler {
                 wb.start_struct(&TLVTag::Anonymous)?;
                 wb.str_cb(&TLVTag::Context(1), |buf| {
                     ctx.crypto()
-                        .secp256r1_secret_key(secret_key)?
+                        .secret_key(secret_key)?
                         .csr(buf)
                         .map(|slice| slice.len())
                 })?;

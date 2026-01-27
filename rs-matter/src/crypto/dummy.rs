@@ -26,47 +26,47 @@
 
 use crate::{crypto::Crypto, error::Error};
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// A dummy crypto backend that panics on any operation.
+#[derive(Clone)]
 pub struct DummyCrypto;
 
 impl Crypto for DummyCrypto {
-    type Sha256<'a>
+    type Hash<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type HmacSha256<'a>
+    type Hmac<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type HkdfSha256<'a>
+    type Kdf<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type Pbkdf2HmacSha256<'a>
+    type PbKdf<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type AesCcm16p64p128<'a>
+    type Aead<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type Secp256r1PublicKey<'a>
+    type PublicKey<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type Secp256r1SecretKey<'a>
+    type SecretKey<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type Secp256r1SigningSecretKey<'a>
+    type SigningSecretKey<'a>
         = DummyCrypto
     where
         Self: 'a;
@@ -76,57 +76,49 @@ impl Crypto for DummyCrypto {
     where
         Self: 'a;
 
-    type Secp256r1Scalar<'a>
+    type EcScalar<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    type Secp256r1Point<'a>
+    type EcPoint<'a>
         = DummyCrypto
     where
         Self: 'a;
 
-    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         unimplemented!()
     }
 
-    fn hmac_sha256(&self, _key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
+    fn hmac(&self, _key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
         unimplemented!()
     }
 
-    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
         unimplemented!()
     }
 
-    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
         unimplemented!()
     }
 
-    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_pub_key(
-        &self,
-        _key: &super::CanonSecp256r1PublicKey,
-    ) -> Result<Self::Secp256r1PublicKey<'_>, Error> {
+    fn pub_key(&self, _key: &super::CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_secret_key(
-        &self,
-        _key: &super::CanonSecp256r1SecretKey,
-    ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+    fn secret_key(&self, _key: &super::CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_secret_key_signing_singleton(
-        &self,
-    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
         unimplemented!()
     }
 
@@ -134,25 +126,19 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn secp256r1_scalar(
-        &self,
-        _scalar: &super::CanonSecp256r1Scalar,
-    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn ec_scalar(&self, _scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_point(
-        &self,
-        _point: &super::CanonSecp256r1Point,
-    ) -> Result<Self::Secp256r1Point<'_>, Error> {
+    fn ec_point(&self, _point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         unimplemented!()
     }
 }
@@ -167,13 +153,13 @@ impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for DummyCrypto {
     }
 }
 
-impl super::Hkdf for DummyCrypto {
+impl super::Kdf for DummyCrypto {
     fn expand(self, _salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> Result<(), ()> {
         unimplemented!()
     }
 }
 
-impl super::Pbkdf2Hmac for DummyCrypto {
+impl super::PbKdf for DummyCrypto {
     fn derive(self, _password: &[u8], _iter: usize, _salt: &[u8], _out: &mut [u8]) {
         unimplemented!()
     }
@@ -209,7 +195,7 @@ impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize> super::PublicKey<'_, KEY_
         unimplemented!()
     }
 
-    fn canon_into(&self, _key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, _key: &mut [u8; KEY_LEN]) {
         unimplemented!()
     }
 }
@@ -242,7 +228,7 @@ impl<
         const SHARED_SECRET_LEN: usize,
     > super::SecretKey<'_, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN> for DummyCrypto
 {
-    fn canon_into(&self, _key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, _key: &mut [u8; KEY_LEN]) {
         unimplemented!()
     }
 
@@ -260,22 +246,22 @@ impl<const LEN: usize> super::UInt<'_, LEN> for DummyCrypto {
         unimplemented!()
     }
 
-    fn canon_into(&self, _buf: &mut [u8; LEN]) {
+    fn write_canon(&self, _buf: &mut [u8; LEN]) {
         unimplemented!()
     }
 }
 
-impl<const LEN: usize> super::CurveScalar<'_, LEN> for DummyCrypto {
+impl<const LEN: usize> super::EcScalar<'_, LEN> for DummyCrypto {
     fn mul(&self, _other: &Self) -> Self {
         unimplemented!()
     }
 
-    fn canon_into(&self, _scalar: &mut [u8; LEN]) {
+    fn write_canon(&self, _scalar: &mut [u8; LEN]) {
         unimplemented!()
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCALAR_LEN>
     for DummyCrypto
 {
     type Scalar<'s> = DummyCrypto;
@@ -292,7 +278,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, S
         unimplemented!()
     }
 
-    fn canon_into(&self, _point: &mut [u8; LEN]) {
+    fn write_canon(&self, _point: &mut [u8; LEN]) {
         unimplemented!()
     }
 }

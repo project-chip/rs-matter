@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+//! A RustCrypto backend for the crypto traits
+
 #![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
 
 use core::convert::TryInto;
@@ -30,6 +32,7 @@ use ccm::consts::{U13, U16};
 use ccm::Ccm;
 
 use crypto_bigint::NonZero;
+
 use elliptic_curve::group::Curve;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use elliptic_curve::{
@@ -55,8 +58,8 @@ use x509_cert::request::CertReq;
 use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
-    CanonSecp256r1Point, CanonSecp256r1PublicKey, CanonSecp256r1Scalar, CanonSecp256r1SecretKey,
-    CanonUint384, Crypto, SECP256R1_CANON_POINT_LEN, SECP256R1_SIGNATURE_LEN,
+    CanonEcPoint, CanonEcScalar, CanonPkcPublicKey, CanonPkcSecretKey, CanonUint384, Crypto,
+    EC_CANON_POINT_LEN, PKC_SIGNATURE_LEN,
 };
 use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
@@ -65,9 +68,14 @@ use crate::utils::sync::blocking::Mutex;
 
 extern crate alloc;
 
+/// A RustCrypto backend for the crypto traits
 pub struct RustCrypto<M: RawMutex, T>(Mutex<M, RefCell<T>>);
 
 impl<M: RawMutex, T> RustCrypto<M, T> {
+    /// Create a new RustCrypto backend
+    ///
+    /// # Arguments
+    /// * `rng` - A cryptographic random number generator
     pub const fn new(rng: T) -> Self {
         Self(Mutex::new(RefCell::new(rng)))
     }
@@ -77,98 +85,100 @@ impl<M: RawMutex, T> Crypto for RustCrypto<M, T>
 where
     T: CryptoRngCore,
 {
-    type Sha256<'a>
+    type Hash<'a>
         = sha2::Sha256
     where
         Self: 'a;
-    type HmacSha256<'a>
+
+    type Hmac<'a>
         = hmac::Hmac<sha2::Sha256>
     where
         Self: 'a;
-    type HkdfSha256<'a>
-        = HkdfFactory
+
+    type Kdf<'a>
+        = HkdfSha256
     where
         Self: 'a;
-    type Pbkdf2HmacSha256<'a>
-        = Pbkdf2HmacFactory
+
+    type PbKdf<'a>
+        = Pbkdf2HmacSha256
     where
         Self: 'a;
-    type AesCcm16p64p128<'a>
+
+    type Aead<'a>
         = Aes128Ccm1613
     where
         Self: 'a;
-    type Secp256r1PublicKey<'a>
+
+    type PublicKey<'a>
         = p256::PublicKey
     where
         Self: 'a;
-    type Secp256r1SecretKey<'a>
+
+    type SigningSecretKey<'a>
         = p256::SecretKey
     where
         Self: 'a;
-    type Secp256r1SigningSecretKey<'a>
+
+    type SecretKey<'a>
         = p256::SecretKey
     where
         Self: 'a;
+
     type UInt384<'a>
         = crypto_bigint::U384
     where
         Self: 'a;
-    type Secp256r1Scalar<'a>
+
+    type EcScalar<'a>
         = ECScalar<NistP256>
     where
         Self: 'a;
-    type Secp256r1Point<'a>
+
+    type EcPoint<'a>
         = ECPoint<NistP256>
     where
         Self: 'a;
 
-    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
-        Ok(Self::Sha256::new())
+    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+        Ok(Self::Hash::new())
     }
 
-    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
-        hmac::Hmac::<sha2::Sha256>::new_from_slice(key).map_err(|e| {
+    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
+        Self::Hmac::new_from_slice(key).map_err(|e| {
             error!("Error creating HmacSha256 {:?}", display2format!(&e));
             ErrorCode::TLSStack.into()
         })
     }
 
-    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error> {
-        Ok(HkdfFactory(()))
+    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
+        Ok(HkdfSha256(()))
     }
 
-    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
-        Ok(Pbkdf2HmacFactory(()))
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
+        Ok(Pbkdf2HmacSha256(()))
     }
 
-    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
         Ok(Aes128Ccm1613)
     }
 
-    fn secp256r1_pub_key(
-        &self,
-        pub_key: &CanonSecp256r1PublicKey,
-    ) -> Result<Self::Secp256r1PublicKey<'_>, Error> {
+    fn pub_key(&self, pub_key: &CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
         let encoded_point = EncodedPoint::from_bytes(pub_key)?;
         Ok(PublicKey::from_encoded_point(&encoded_point)
             .into_option()
             .ok_or(ErrorCode::InvalidData)?)
     }
 
-    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
         Ok(self.0.lock(|rng| SecretKey::random(&mut *rng.borrow_mut())))
     }
 
-    fn secp256r1_secret_key(
-        &self,
-        secret_key: &CanonSecp256r1SecretKey,
-    ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
+    fn secret_key(&self, secret_key: &CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
         Ok(SecretKey::from_slice(secret_key)?)
     }
 
-    fn secp256r1_secret_key_signing_singleton(
-        &self,
-    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
         todo!()
     }
 
@@ -176,10 +186,7 @@ where
         Ok(crypto_bigint::U384::from_be_slice(uint))
     }
 
-    fn secp256r1_scalar(
-        &self,
-        scalar: &CanonSecp256r1Scalar,
-    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn ec_scalar(&self, scalar: &CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
         Ok(ECScalar(
             p256::Scalar::from_repr(*elliptic_curve::generic_array::GenericArray::from_slice(
                 scalar,
@@ -188,16 +195,13 @@ where
         ))
     }
 
-    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
         Ok(self
             .0
             .lock(|rng| ECScalar(p256::Scalar::random(&mut *rng.borrow_mut()))))
     }
 
-    fn secp256r1_point(
-        &self,
-        point: &CanonSecp256r1Point,
-    ) -> Result<Self::Secp256r1Point<'_>, Error> {
+    fn ec_point(&self, point: &CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
         let affine_point =
             AffinePoint::<NistP256>::from_encoded_point(&EncodedPoint::from_bytes(point)?).unwrap();
         let point = ECPoint(affine_point.into());
@@ -205,7 +209,7 @@ where
         Ok(point)
     }
 
-    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
         Ok(ECPoint(p256::AffinePoint::GENERATOR.into()))
     }
 }
@@ -225,9 +229,9 @@ where
 }
 
 // TODO: Generalize for more than Sha256
-pub struct HkdfFactory(());
+pub struct HkdfSha256(());
 
-impl super::Hkdf for HkdfFactory {
+impl super::Kdf for HkdfSha256 {
     fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()> {
         let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm);
 
@@ -236,9 +240,9 @@ impl super::Hkdf for HkdfFactory {
 }
 
 // TODO: Generalize for more than Sha256
-pub struct Pbkdf2HmacFactory(());
+pub struct Pbkdf2HmacSha256(());
 
-impl super::Pbkdf2Hmac for Pbkdf2HmacFactory {
+impl super::PbKdf for Pbkdf2HmacSha256 {
     fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) {
         unwrap!(pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(
             pass,
@@ -252,11 +256,11 @@ impl super::Pbkdf2Hmac for Pbkdf2HmacFactory {
 // TODO: Generalize for more than Aes128
 pub struct Aes128Ccm1613;
 
-impl super::Aead<{ super::AES128_CANON_KEY_LEN }, { super::AES128_NONCE_LEN }> for Aes128Ccm1613 {
+impl super::Aead<{ super::AEAD_CANON_KEY_LEN }, { super::AEAD_NONCE_LEN }> for Aes128Ccm1613 {
     fn encrypt_in_place<'a>(
         &mut self,
-        key: &[u8; super::AES128_CANON_KEY_LEN],
-        nonce: &[u8; super::AES128_NONCE_LEN],
+        key: &[u8; super::AEAD_CANON_KEY_LEN],
+        nonce: &[u8; super::AEAD_NONCE_LEN],
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
@@ -275,8 +279,8 @@ impl super::Aead<{ super::AES128_CANON_KEY_LEN }, { super::AES128_NONCE_LEN }> f
 
     fn decrypt_in_place<'a>(
         &mut self,
-        key: &[u8; super::AES128_CANON_KEY_LEN],
-        nonce: &[u8; super::AES128_NONCE_LEN],
+        key: &[u8; super::AEAD_CANON_KEY_LEN],
+        nonce: &[u8; super::AEAD_NONCE_LEN],
         aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
@@ -293,18 +297,10 @@ impl super::Aead<{ super::AES128_CANON_KEY_LEN }, { super::AES128_NONCE_LEN }> f
     }
 }
 
-impl super::PublicKey<'_, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_SIGNATURE_LEN }>
+impl super::PublicKey<'_, { super::EC_CANON_POINT_LEN }, { super::PKC_SIGNATURE_LEN }>
     for p256::PublicKey
 {
-    fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_POINT_LEN]) {
-        let point = self.as_affine().to_encoded_point(false);
-        let slice = point.as_bytes();
-
-        assert_eq!(slice.len(), super::SECP256R1_CANON_POINT_LEN);
-        key[..slice.len()].copy_from_slice(slice);
-    }
-
-    fn verify(&self, data: &[u8], signature: &[u8; super::SECP256R1_SIGNATURE_LEN]) -> bool {
+    fn verify(&self, data: &[u8], signature: &[u8; super::PKC_SIGNATURE_LEN]) -> bool {
         use p256::ecdsa::signature::Verifier;
 
         let verifying_key = unwrap!(VerifyingKey::from_affine(*self.as_affine()));
@@ -312,14 +308,18 @@ impl super::PublicKey<'_, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256
 
         verifying_key.verify(data, &signature).is_ok()
     }
+
+    fn write_canon(&self, key: &mut [u8; super::EC_CANON_POINT_LEN]) {
+        let point = self.as_affine().to_encoded_point(false);
+        let slice = point.as_bytes();
+
+        assert_eq!(slice.len(), super::EC_CANON_POINT_LEN);
+        key[..slice.len()].copy_from_slice(slice);
+    }
 }
 
-impl<'a>
-    super::SigningSecretKey<
-        'a,
-        { super::SECP256R1_CANON_POINT_LEN },
-        { super::SECP256R1_SIGNATURE_LEN },
-    > for p256::SecretKey
+impl<'a> super::SigningSecretKey<'a, { super::EC_CANON_POINT_LEN }, { super::PKC_SIGNATURE_LEN }>
+    for p256::SecretKey
 {
     type PublicKey<'s>
         = p256::PublicKey
@@ -352,9 +352,9 @@ impl<'a>
             "x509 AttrValue creation failed"
         ))]);
 
-        let mut public_key = MaybeUninit::<CanonSecp256r1PublicKey>::uninit(); // TODO MEDIUM BUFFER
+        let mut public_key = MaybeUninit::<CanonPkcPublicKey>::uninit(); // TODO MEDIUM BUFFER
         let public_key = public_key.init_zeroed();
-        super::PublicKey::canon_into(&self.public_key(), public_key);
+        super::PublicKey::write_canon(&self.public_key(), public_key);
 
         let info = x509_cert::request::CertReqInfo {
             version: x509_cert::request::Version::V1,
@@ -404,14 +404,14 @@ impl<'a>
         self.public_key()
     }
 
-    fn sign(&self, data: &[u8], signature: &mut [u8; super::SECP256R1_SIGNATURE_LEN]) {
+    fn sign(&self, data: &[u8], signature: &mut [u8; super::PKC_SIGNATURE_LEN]) {
         use p256::ecdsa::signature::Signer;
 
         let signing_key = SigningKey::from(self);
         let sign: Signature = signing_key.sign(data);
         let sign_bytes = sign.to_bytes();
 
-        assert_eq!(sign_bytes.len(), SECP256R1_SIGNATURE_LEN);
+        assert_eq!(sign_bytes.len(), PKC_SIGNATURE_LEN);
         signature[..sign_bytes.len()].copy_from_slice(&sign_bytes);
     }
 }
@@ -419,24 +419,16 @@ impl<'a>
 impl<'a>
     super::SecretKey<
         'a,
-        { super::SECP256R1_CANON_SECRET_KEY_LEN },
-        { super::SECP256R1_CANON_POINT_LEN },
-        { super::SECP256R1_SIGNATURE_LEN },
-        { super::SECP256R1_ECDH_SHARED_SECRET_LEN },
+        { super::PKC_CANON_SECRET_KEY_LEN },
+        { super::EC_CANON_POINT_LEN },
+        { super::PKC_SIGNATURE_LEN },
+        { super::PKC_SHARED_SECRET_LEN },
     > for p256::SecretKey
 {
-    fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_SECRET_KEY_LEN]) {
-        let bytes = self.to_bytes();
-        let slice = bytes.as_slice();
-
-        assert_eq!(slice.len(), super::SECP256R1_CANON_SECRET_KEY_LEN);
-        key[..slice.len()].copy_from_slice(slice);
-    }
-
     fn derive_shared_secret(
         &self,
         peer_pub_key: &Self::PublicKey<'_>,
-        shared_secret: &mut [u8; super::SECP256R1_ECDH_SHARED_SECRET_LEN],
+        shared_secret: &mut [u8; super::PKC_SHARED_SECRET_LEN],
     ) {
         // let encoded_point = EncodedPoint::from_bytes(peer_pub_key)?;
         // let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap(); // TODO: defmt
@@ -448,8 +440,16 @@ impl<'a>
         let bytes = secret.raw_secret_bytes();
         let slice = bytes.as_slice();
 
-        assert_eq!(slice.len(), super::SECP256R1_ECDH_SHARED_SECRET_LEN);
+        assert_eq!(slice.len(), super::PKC_SHARED_SECRET_LEN);
         shared_secret[..slice.len()].copy_from_slice(slice);
+    }
+
+    fn write_canon(&self, key: &mut [u8; super::PKC_CANON_SECRET_KEY_LEN]) {
+        let bytes = self.to_bytes();
+        let slice = bytes.as_slice();
+
+        assert_eq!(slice.len(), super::PKC_CANON_SECRET_KEY_LEN);
+        key[..slice.len()].copy_from_slice(slice);
     }
 }
 
@@ -459,15 +459,14 @@ impl<'a> super::UInt<'a, { super::UINT384_CANON_LEN }> for crypto_bigint::U384 {
         other.map(|other| self.rem(&other))
     }
 
-    fn canon_into(&self, uint: &mut [u8; super::UINT384_CANON_LEN]) {
+    fn write_canon(&self, uint: &mut [u8; super::UINT384_CANON_LEN]) {
         uint.copy_from_slice(self.to_be_bytes().as_slice());
     }
 }
 
 pub struct ECScalar<C: CurveArithmetic>(Scalar<C>);
 
-impl<'a, C: CurveArithmetic> super::CurveScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }>
-    for ECScalar<C>
+impl<'a, C: CurveArithmetic> super::EcScalar<'a, { super::EC_CANON_SCALAR_LEN }> for ECScalar<C>
 where
     C::Scalar: Mul<Output = C::Scalar> + Clone,
 {
@@ -475,7 +474,7 @@ where
         Self(self.0.mul(other.0))
     }
 
-    fn canon_into(&self, _scalar: &mut [u8; super::SECP256R1_CANON_SCALAR_LEN]) {
+    fn write_canon(&self, _scalar: &mut [u8; super::EC_CANON_SCALAR_LEN]) {
         todo!()
     }
 }
@@ -483,11 +482,7 @@ where
 pub struct ECPoint<C: CurveArithmetic>(ProjectivePoint<C>);
 
 impl<'a, C: CurveArithmetic>
-    super::CurvePoint<
-        'a,
-        { super::SECP256R1_CANON_POINT_LEN },
-        { super::SECP256R1_CANON_SCALAR_LEN },
-    > for ECPoint<C>
+    super::EcPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }> for ECPoint<C>
 where
     FieldBytesSize<C>: ModulusSize,
     C::Scalar: Mul<Output = C::Scalar> + Clone,
@@ -513,11 +508,11 @@ where
         Self(a.add(b))
     }
 
-    fn canon_into(&self, point: &mut [u8; super::SECP256R1_CANON_POINT_LEN]) {
+    fn write_canon(&self, point: &mut [u8; super::EC_CANON_POINT_LEN]) {
         let encoded_point = self.0.to_affine().to_encoded_point(false);
         let slice = encoded_point.as_bytes();
 
-        assert_eq!(slice.len(), SECP256R1_CANON_POINT_LEN);
+        assert_eq!(slice.len(), EC_CANON_POINT_LEN);
         point[..slice.len()].copy_from_slice(slice);
     }
 }

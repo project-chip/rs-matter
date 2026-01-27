@@ -33,7 +33,7 @@ pub struct PacketHdr {
 
 impl PacketHdr {
     pub const HDR_RESERVE: usize = PlainHdr::MAX_LEN + ProtoHdr::MAX_LEN;
-    pub const TAG_RESERVE: usize = crypto::AES128_TAG_LEN;
+    pub const TAG_RESERVE: usize = crypto::AEAD_TAG_LEN;
 
     #[inline(always)]
     pub const fn new() -> Self {
@@ -61,7 +61,7 @@ impl PacketHdr {
     pub fn decode_remaining<C: Crypto>(
         &mut self,
         crypto: C,
-        dec_key: Option<&crypto::CanonAes128Key>,
+        dec_key: Option<&crypto::CanonAeadKey>,
         peer_nodeid: u64,
         pb: &mut ParseBuf,
     ) -> Result<(), Error> {
@@ -72,7 +72,7 @@ impl PacketHdr {
     pub fn encode<C: Crypto>(
         &self,
         crypto: C,
-        enc_key: Option<&crypto::CanonAes128Key>,
+        enc_key: Option<&crypto::CanonAeadKey>,
         local_nodeid: u64,
         wb: &mut WriteBuf,
     ) -> Result<(), Error> {

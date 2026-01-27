@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-//! A dummy crypto-spake2 backend
+//! A dummy crypto backend
 //!
 //! NOTE: The dummy backend _cannot_ be used for running `rs-matter`, even in test mode.
 //! The moment any crypto operation is invoked, it will panic.
