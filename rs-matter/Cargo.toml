@@ -12,7 +12,7 @@ license = "Apache-2.0"
 rust-version = "1.83"
 
 [features]
-default = ["os", "rustcrypto", "log", "openssl"]
+default = ["os", "rustcrypto", "log", "openssl", "mbedtls"]
 #default = ["os", "mbedtls", "log"] mbedtls is broken since several months - check the root cause
 
 # Sizing
@@ -100,7 +100,7 @@ std = ["alloc", "rand"]
 backtrace = []
 alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
-mbedtls = ["alloc", "dep:mbedtls"]
+mbedtls = ["alloc", "dep:esp-mbedtls-sys"]
 rustcrypto = ["alloc", "digest", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "sec1", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
 defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt"]
 log = ["dep:log", "embassy-time/log"]
@@ -134,7 +134,7 @@ pinned-init = { version = "0.0.10", default-features = false }
 # crypto
 openssl = { version = "0.10", optional = true }
 foreign-types = { version = "0.3", optional = true }
-mbedtls = { version = "0.12", optional = true, features = ["x509"] }
+esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", branch = "extra-headers", optional = true }
 
 # rust-crypto
 digest = { version = "0.10", default-features = false, optional = true }

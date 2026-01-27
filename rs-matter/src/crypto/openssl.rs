@@ -499,7 +499,10 @@ impl<'a>
         { super::SECP256R1_CANON_SCALAR_LEN },
     > for ECPoint<'a>
 {
-    type Scalar<'s> = ECScalar;
+    type Scalar<'s>
+        = ECScalar
+    where
+        Self: 'a + 's;
 
     fn neg(&self) -> Self {
         let mut result = self.point.to_owned(&self.crypto.ec_group).unwrap();
