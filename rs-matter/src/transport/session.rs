@@ -21,7 +21,7 @@ use core::time::Duration;
 
 use cfg_if::cfg_if;
 
-use crate::crypto::{CanonAes128Key, Crypto, AES128_CANON_KEY_LEN};
+use crate::crypto::{CanonAeadKey, Crypto, AEAD_CANON_KEY_LEN};
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
@@ -82,8 +82,8 @@ pub struct Session {
     peer_nodeid: Option<u64>,
     // I find the session initiator/responder role getting confused with exchange initiator/responder
     // So, we might keep this as enc_key and dec_key for now
-    dec_key: CanonAes128Key,
-    enc_key: CanonAes128Key,
+    dec_key: CanonAeadKey,
+    enc_key: CanonAeadKey,
     att_challenge: [u8; MATTER_AES128_KEY_SIZE],
     local_sess_id: u16,
     peer_sess_id: u16,
@@ -206,21 +206,21 @@ impl Session {
         ctr
     }
 
-    pub fn get_dec_key(&self) -> Option<&CanonAes128Key> {
+    pub fn get_dec_key(&self) -> Option<&CanonAeadKey> {
         match self.mode {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.dec_key),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_enc_key(&self) -> Option<&CanonAes128Key> {
+    pub fn get_enc_key(&self) -> Option<&CanonAeadKey> {
         match self.mode {
             SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.enc_key),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_att_challenge(&self) -> &[u8; AES128_CANON_KEY_LEN] {
+    pub fn get_att_challenge(&self) -> &[u8; AEAD_CANON_KEY_LEN] {
         &self.att_challenge
     }
 

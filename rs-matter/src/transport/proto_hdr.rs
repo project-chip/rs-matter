@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::crypto::{as_canon, Aead, Aes128Aad, Crypto};
+use crate::crypto::{as_canon, Aead, AeadAad, Crypto};
 use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::storage::{ParseBuf, WriteBuf};
@@ -253,7 +253,7 @@ impl ProtoHdr {
     pub fn decrypt_and_decode<C: Crypto>(
         &mut self,
         crypto: C,
-        dec_key: Option<&crypto::CanonAes128Key>,
+        dec_key: Option<&crypto::CanonAeadKey>,
         peer_nodeid: u64,
         plain_hdr: &plain_hdr::PlainHdr,
         parsebuf: &mut ParseBuf<'_>,
@@ -360,7 +360,7 @@ impl defmt::Format for ProtoHdr {
     }
 }
 
-fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::Aes128Nonce) -> Result<(), Error> {
+fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::AeadNonce) -> Result<(), Error> {
     // The IV is the source address (64-bit) followed by the message counter (32-bit)
     let mut write_buf = WriteBuf::new(iv);
     // For some reason, this is 0 in the 'bypass' mode
@@ -372,30 +372,30 @@ fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::Aes128Nonce) -> Res
 
 pub fn encrypt_in_place<C: Crypto>(
     crypto: C,
-    key: &crypto::CanonAes128Key,
+    key: &crypto::CanonAeadKey,
     send_ctr: u32,
     peer_nodeid: u64,
     wb: &mut WriteBuf<'_>,
 ) -> Result<(), Error> {
     // IV
-    let mut iv = crypto::AES128_NONCE_ZEROED;
+    let mut iv = crypto::AEAD_NONCE_ZEROED;
     get_iv(send_ctr, peer_nodeid, &mut iv)?;
 
     // Cipher Text
-    let tag_space = crypto::AES128_TAG_ZEROED;
+    let tag_space = crypto::AEAD_TAG_ZEROED;
     wb.append(&tag_space)?;
 
     let (plain, cipher_text) = wb.split_mut();
-    let aad: &Aes128Aad = as_canon(plain)?;
+    let aad: &AeadAad = as_canon(plain)?;
 
-    let mut cypher = crypto.aes_ccm_16_64_128()?;
+    let mut cypher = crypto.aead()?;
 
     cypher.encrypt_in_place(
         key,
         &iv,
         aad,
         cipher_text,
-        cipher_text.len() - crypto::AES128_TAG_LEN,
+        cipher_text.len() - crypto::AEAD_TAG_LEN,
     )?;
     //println!("Cipher Text: {:x?}", cipher_text);
 
@@ -404,39 +404,39 @@ pub fn encrypt_in_place<C: Crypto>(
 
 fn decrypt_in_place<C: Crypto>(
     crypto: C,
-    key: &crypto::CanonAes128Key,
+    key: &crypto::CanonAeadKey,
     recvd_ctr: u32,
     peer_nodeid: u64,
     parsebuf: &mut ParseBuf<'_>,
 ) -> Result<(), Error> {
     // IV:
     //   the specific way for creating IV is in get_iv
-    let mut iv = crypto::AES128_NONCE_ZEROED;
+    let mut iv = crypto::AEAD_NONCE_ZEROED;
     get_iv(recvd_ctr, peer_nodeid, &mut iv)?;
 
     let (parsed, cipher_text) = parsebuf.split_mut();
 
     // AAD:
     //    the unencrypted header of this packet
-    let aad: &Aes128Aad = as_canon(parsed)?;
+    let aad: &AeadAad = as_canon(parsed)?;
 
     //println!("AAD: {:x?}", aad);
     //println!("Cipher Text: {:x?}", cipher_text);
     //println!("IV: {:x?}", iv);
     //println!("Key: {:x?}", key);
 
-    let mut cypher = crypto.aes_ccm_16_64_128()?;
+    let mut cypher = crypto.aead()?;
 
     cypher.decrypt_in_place(key, &iv, aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);
-    parsebuf.tail(crypto::AES128_TAG_LEN)?;
+    parsebuf.tail(crypto::AEAD_TAG_LEN)?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{test_crypto, CanonAes128Key};
+    use crate::crypto::{test_crypto, CanonAeadKey};
 
     use super::*;
 
@@ -453,7 +453,7 @@ mod tests {
         ];
         let mut parsebuf = ParseBuf::new(&mut input_buf);
 
-        const KEY: &CanonAes128Key = &[
+        const KEY: &CanonAeadKey = &[
             0x66, 0x63, 0x31, 0x97, 0x43, 0x9c, 0x17, 0xb9, 0x7e, 0x10, 0xee, 0x47, 0xc8, 0x8,
             0x80, 0x4a,
         ];
@@ -492,11 +492,11 @@ mod tests {
         ];
 
         let data_start = writebuf.get_tail();
-        writebuf.reserve(data_start);
+        writebuf.reserve(data_start).unwrap();
 
         writebuf.append(PLAIN_TEXT).unwrap();
 
-        const KEY: &CanonAes128Key = &[
+        const KEY: &CanonAeadKey = &[
             0x44, 0xd4, 0x3c, 0x91, 0xd2, 0x27, 0xf3, 0xba, 0x08, 0x24, 0xc5, 0xd8, 0x7c, 0xb8,
             0x1b, 0x33,
         ];

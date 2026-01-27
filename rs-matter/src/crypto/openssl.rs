@@ -15,6 +15,8 @@
  *    limitations under the License.
  */
 
+//! An OpenSSL-based crypto backend
+
 #![allow(deprecated)] // Remove this once `hmac` updates to `generic-array` 1.x
 
 use core::ops::Mul;
@@ -40,62 +42,65 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder};
 // TODO: Use proper OpenSSL method for this
 use hmac::{Hmac, Mac};
 
-extern crate alloc;
-
+/// An OpenSSL-based crypto backend
 pub struct OpenSslCrypto {
-    ec_group: ECGroup<{ super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_CANON_SCALAR_LEN }>,
+    /// Elliptic curve group (secp256r1)
+    ec_group: ECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>,
 }
 
 impl OpenSslCrypto {
+    /// Create a new OpenSSL crypto backend
     pub fn new() -> Self {
         Self {
-            ec_group: ECGroup::new(Nid::X9_62_PRIME256V1).unwrap(),
+            ec_group: unsafe { ECGroup::new(Nid::X9_62_PRIME256V1).unwrap() },
         }
     }
 }
 
+impl Default for OpenSslCrypto {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl super::Crypto for OpenSslCrypto {
-    type Sha256<'a>
-        = Sha256
+    type Hash<'a>
+        = Hash<{ super::HASH_LEN }>
     where
         Self: 'a;
 
-    type HmacSha256<'a>
+    type Hmac<'a>
         = HmacSha256
     where
         Self: 'a;
 
-    type HkdfSha256<'a>
+    type Kdf<'a>
         = Hkdf
     where
         Self: 'a;
 
-    type Pbkdf2HmacSha256<'a>
+    type PbKdf<'a>
         = Pbkdf2Hmac
     where
         Self: 'a;
 
-    type AesCcm16p64p128<'a>
-        = Aead<
-        { super::AES128_CANON_KEY_LEN },
-        { super::AES128_NONCE_LEN },
-        { super::AES128_TAG_LEN },
-    >
+    type Aead<'a>
+        = Aead<{ super::AEAD_CANON_KEY_LEN }, { super::AEAD_NONCE_LEN }, { super::AEAD_TAG_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1PublicKey<'a>
-        = ECPoint<'a, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_CANON_SCALAR_LEN }>
+    type PublicKey<'a>
+        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1SecretKey<'a>
-        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    type SecretKey<'a>
+        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1SigningSecretKey<'a>
-        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    type SigningSecretKey<'a>
+        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
@@ -104,60 +109,49 @@ impl super::Crypto for OpenSslCrypto {
     where
         Self: 'a;
 
-    type Secp256r1Scalar<'a>
-        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    type EcScalar<'a>
+        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1Point<'a>
-        = ECPoint<'a, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_CANON_SCALAR_LEN }>
+    type EcPoint<'a>
+        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
     where
         Self: 'a;
 
-    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
-        Ok(Sha256(Hasher::new(MessageDigest::sha256())?))
+    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
+        unsafe { Hash::new(MessageDigest::sha256()) }
     }
 
-    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
-        Ok(HmacSha256 {
-            ctx: Hmac::<sha2::Sha256>::new_from_slice(key)
-                .map_err(|_x| ErrorCode::InvalidKeyLength)?,
-        })
+    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
+        Ok(HmacSha256::new(key))
     }
 
-    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
         Ok(Hkdf::new(Md::sha256()))
     }
 
-    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
         Ok(Pbkdf2Hmac::new(MessageDigest::sha256()))
     }
 
-    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
         Ok(unsafe { Aead::new(openssl::cipher::Cipher::aes_128_ccm()) })
     }
 
-    fn secp256r1_pub_key(
-        &self,
-        key: &super::CanonSecp256r1PublicKey,
-    ) -> Result<Self::Secp256r1PublicKey<'_>, Error> {
-        self.secp256r1_point(key)
+    fn pub_key(&self, key: &super::CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
+        self.ec_point(key)
     }
 
-    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
-        self.secp256r1_scalar_random() // TODO: Should be non-zero
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+        self.generate_ec_scalar() // TODO: Should be non-zero
     }
 
-    fn secp256r1_secret_key(
-        &self,
-        key: &super::CanonSecp256r1SecretKey,
-    ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
-        self.secp256r1_scalar(key)
+    fn secret_key(&self, key: &super::CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
+        self.ec_scalar(key)
     }
 
-    fn secp256r1_secret_key_signing_singleton(
-        &self,
-    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
         todo!()
     }
 
@@ -167,19 +161,16 @@ impl super::Crypto for OpenSslCrypto {
         Ok(uint)
     }
 
-    fn secp256r1_scalar(
-        &self,
-        scalar: &super::CanonSecp256r1Scalar,
-    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn ec_scalar(&self, scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
         let scalar = BigNum::from_slice(scalar)?;
 
-        Ok(Self::Secp256r1Scalar {
+        Ok(Self::EcScalar {
             group: &self.ec_group,
             scalar,
         })
     }
 
-    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
         let mut ctx = BigNumContext::new()?;
         let mut order = BigNum::new()?;
         self.ec_group.group.order(&mut order, &mut ctx)?;
@@ -187,28 +178,25 @@ impl super::Crypto for OpenSslCrypto {
         let mut scalar = BigNum::new()?;
         order.rand_range(&mut scalar)?;
 
-        Ok(Self::Secp256r1Scalar {
+        Ok(Self::EcScalar {
             group: &self.ec_group,
             scalar,
         })
     }
 
-    fn secp256r1_point(
-        &self,
-        point: &super::CanonSecp256r1Point,
-    ) -> Result<Self::Secp256r1Point<'_>, Error> {
+    fn ec_point(&self, point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
         let mut ctx = BigNumContext::new()?;
 
         let point = EcPoint::from_bytes(&self.ec_group.group, point, &mut ctx)?;
 
-        Ok(Self::Secp256r1Point {
+        Ok(Self::EcPoint {
             group: &self.ec_group,
             point,
         })
     }
 
-    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
-        Ok(Self::Secp256r1Point {
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+        Ok(Self::EcPoint {
             group: &self.ec_group,
             point: self
                 .ec_group
@@ -219,86 +207,121 @@ impl super::Crypto for OpenSslCrypto {
     }
 }
 
+/// A hash implementation
 #[derive(Clone)]
-pub struct Sha256(Hasher);
+pub struct Hash<const HASH_LEN: usize>(Hasher);
 
-impl super::Digest<{ super::SHA256_HASH_LEN }> for Sha256 {
+impl<const HASH_LEN: usize> Hash<HASH_LEN> {
+    /// Create a new hash instance
+    ///
+    /// # Arguments
+    /// - `md`: The message digest algorithm to use
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the
+    /// `md` parameter corresponds to the `HASH_LEN` generic parameter.
+    unsafe fn new(md: MessageDigest) -> Result<Self, Error> {
+        Ok(Self(Hasher::new(md)?))
+    }
+}
+
+impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for Hash<HASH_LEN> {
     fn update(&mut self, data: &[u8]) {
         unwrap!(self.0.update(data));
     }
 
-    fn finish(mut self, hash: &mut [u8; super::SHA256_HASH_LEN]) {
+    fn finish(mut self, hash: &mut [u8; HASH_LEN]) {
         let digest = unwrap!(self.0.finish());
         hash.copy_from_slice(digest.as_ref());
     }
 }
 
+/// An HMAC-SHA256 implementation
 #[derive(Clone)]
-pub struct HmacSha256 {
-    ctx: Hmac<sha2::Sha256>,
+pub struct HmacSha256(Hmac<sha2::Sha256>);
+
+impl HmacSha256 {
+    /// Create a new HMAC-SHA256 instance
+    fn new(key: &[u8]) -> Self {
+        Self(Hmac::<sha2::Sha256>::new_from_slice(key).unwrap())
+    }
 }
 
-impl super::Digest<{ super::SHA256_HASH_LEN }> for HmacSha256 {
+impl super::Digest<{ super::HASH_LEN }> for HmacSha256 {
     fn update(&mut self, data: &[u8]) {
-        Mac::update(&mut self.ctx, data);
+        Mac::update(&mut self.0, data);
     }
 
-    fn finish(self, hash: &mut [u8; super::SHA256_HASH_LEN]) {
-        hash.copy_from_slice(self.ctx.finalize().into_bytes().as_slice());
+    fn finish(self, hash: &mut [u8; super::HASH_LEN]) {
+        hash.copy_from_slice(self.0.finalize().into_bytes().as_slice());
     }
 }
 
-pub struct Hkdf {
-    md: &'static MdRef,
-}
+/// An HKDF implementation
+pub struct Hkdf(&'static MdRef);
 
 impl Hkdf {
+    /// Create a new HKDF instance
     fn new(md: &'static MdRef) -> Self {
-        Self { md }
+        Self(md)
     }
 }
 
-impl super::Hkdf for Hkdf {
+impl super::Kdf for Hkdf {
     fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()> {
         let mut ctx = PkeyCtx::new_id(Id::HKDF).unwrap();
+
         ctx.derive_init().unwrap();
-        ctx.set_hkdf_md(self.md).unwrap();
+
+        ctx.set_hkdf_md(self.0).unwrap();
         ctx.set_hkdf_key(ikm).unwrap();
+
         if !salt.is_empty() {
             ctx.set_hkdf_salt(salt).unwrap();
         }
+
         ctx.add_hkdf_info(info).unwrap();
+
         ctx.derive(Some(key)).unwrap();
 
         Ok(())
     }
 }
 
-pub struct Pbkdf2Hmac {
-    md: MessageDigest,
-}
+/// A PBKDF2-HMAC implementation
+pub struct Pbkdf2Hmac(MessageDigest);
 
 impl Pbkdf2Hmac {
+    /// Create a new PBKDF2-HMAC instance
     fn new(md: MessageDigest) -> Self {
-        Self { md }
+        Self(md)
     }
 }
 
-impl super::Pbkdf2Hmac for Pbkdf2Hmac {
+impl super::PbKdf for Pbkdf2Hmac {
     fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) {
-        openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, self.md, key).unwrap();
+        openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, self.0, key).unwrap();
     }
 }
 
-pub struct Aead<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize> {
-    cipher: &'static CipherRef,
-}
+/// An AEAD implementation
+pub struct Aead<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>(
+    &'static CipherRef,
+);
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     Aead<KEY_LEN, NONCE_LEN, TAG_LEN>
 {
+    /// Create a new AEAD instance
+    ///
+    /// # Arguments
+    /// - `cipher`: The cipher to use
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the
+    /// `cipher` parameter corresponds to the `KEY_LEN`, `NONCE_LEN` and `TAG_LEN` generic parameters.
     unsafe fn new(cipher: &'static CipherRef) -> Self {
-        Self { cipher }
+        Self(cipher)
     }
 }
 
@@ -317,7 +340,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
         let mut ctx = CipherCtx::new()?;
 
-        ctx.encrypt_init(Some(self.cipher), Some(key), Some(nonce))?;
+        ctx.encrypt_init(Some(self.0), Some(key), Some(nonce))?;
         //ctx.set_key_length(KEY_LEN)?;
         //ctx.set_iv_length(NONCE_LEN)?;
         ctx.set_tag_length(TAG_LEN)?;
@@ -346,7 +369,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
         let mut ctx = CipherCtx::new()?;
 
-        ctx.decrypt_init(Some(self.cipher), Some(key), Some(nonce))?;
+        ctx.decrypt_init(Some(self.0), Some(key), Some(nonce))?;
         //ctx.set_key_length(KEY_LEN)?;
         //ctx.set_iv_length(NONCE_LEN)?;
         ctx.set_tag(tag)?;
@@ -361,50 +384,61 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     }
 }
 
-impl<'a> super::UInt<'a, { super::UINT384_CANON_LEN }> for BigNum {
+impl<'a, const LEN: usize> super::UInt<'a, LEN> for BigNum {
     fn rem(&self, other: &Self) -> Option<Self> {
         let mut ctx = BigNumContext::new().unwrap();
-        let mut r = BigNum::new().unwrap();
-        if r.checked_rem(self, other, &mut ctx).is_ok() {
-            Some(r)
+
+        let mut result = BigNum::new().unwrap();
+
+        if result.checked_rem(self, other, &mut ctx).is_ok() {
+            Some(result)
         } else {
             None
         }
     }
 
-    fn canon_into(&self, uint: &mut [u8; super::UINT384_CANON_LEN]) {
-        uint.copy_from_slice(
-            self.to_vec_padded(super::SECP256R1_CANON_SCALAR_LEN as _)
-                .unwrap()
-                .as_slice(),
-        );
+    fn write_canon(&self, uint: &mut [u8; LEN]) {
+        uint.copy_from_slice(self.to_vec_padded(LEN as _).unwrap().as_slice());
     }
 }
 
+/// Elliptic curve group implementation using OpenSSL
 pub struct ECGroup<const LEN: usize, const SCALAR_LEN: usize> {
+    /// The underlying OpenSSL EC group
     group: EcGroup,
 }
 
 impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
-    fn new(nid: Nid) -> Result<Self, Error> {
+    /// Create a new EC group instance
+    ///
+    /// # Arguments
+    /// - `nid`: The OpenSSL NID of the curve to use
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the
+    /// `nid` parameter corresponds to the `LEN` and `SCALAR_LEN` generic parameters.
+    unsafe fn new(nid: Nid) -> Result<Self, Error> {
         let group = EcGroup::from_curve_name(nid)?;
 
         Ok(Self { group })
     }
 }
 
+/// An EC point implementation using OpenSSL
 pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
+    /// The associated EC group
     group: &'a ECGroup<LEN, SCALAR_LEN>,
+    /// The underlying OpenSSL EC point
     point: EcPoint,
 }
 
 impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
+    /// Compute the OpenSSL EC key corresponding to this point
     fn ec_key(&self) -> EcKey<Public> {
         EcKey::from_public_key(&self.group.group, &self.point).unwrap()
     }
-}
 
-impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
+    /// Write the point in canonical form
     fn write(&self, point: &mut [u8; LEN]) {
         let mut ctx = BigNumContext::new().unwrap();
 
@@ -421,7 +455,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCALAR_LEN>
     for ECPoint<'a, LEN, SCALAR_LEN>
 {
     type Scalar<'s>
@@ -474,7 +508,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, S
         }
     }
 
-    fn canon_into(&self, point: &mut [u8; LEN]) {
+    fn write_canon(&self, point: &mut [u8; LEN]) {
         self.write(point);
     }
 }
@@ -482,10 +516,6 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, S
 impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize>
     super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN>
 {
-    fn canon_into(&self, key: &mut [u8; KEY_LEN]) {
-        self.write(key);
-    }
-
     fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool {
         // First get the SHA256 of the message
         let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
@@ -500,16 +530,24 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
 
         sig.verify(&digest, &ec_key).unwrap()
     }
+
+    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
+        self.write(key);
+    }
 }
 
+/// An EC scalar implementation using OpenSSL
 pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize> {
+    /// The associated EC group
     group: &'a ECGroup<POINT_LEN, LEN>,
+    /// The underlying OpenSSL big number scalar
     scalar: BigNum,
 }
 
 impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
+    /// Compute the OpenSSL EC point corresponding to this scalar
     fn ec_pub_key_point(&self) -> EcPoint {
-        let mut ctx = BigNumContext::new().unwrap();
+        let ctx = BigNumContext::new().unwrap();
 
         let mut point = EcPoint::new(&self.group.group).unwrap();
 
@@ -518,26 +556,26 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
                 &self.group.group,
                 self.group.group.generator(),
                 &self.scalar,
-                &mut ctx,
+                &ctx,
             )
             .unwrap();
 
         point
     }
 
+    /// Compute the OpenSSL EC key corresponding to this scalar
     fn ec_key(&self) -> EcKey<Private> {
         EcKey::from_private_components(&self.group.group, &self.scalar, &self.ec_pub_key_point())
             .unwrap()
     }
-}
 
-impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
+    /// Write the scalar in canonical form
     fn write(&self, scalar: &mut [u8; LEN]) {
         scalar.copy_from_slice(self.scalar.to_vec_padded(LEN as _).unwrap().as_slice());
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::CurveScalar<'a, LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
     fn mul(&self, other: &Self) -> Self {
@@ -547,7 +585,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::CurveScalar<'a, LEN>
         }
     }
 
-    fn canon_into(&self, scalar: &mut [u8; LEN]) {
+    fn write_canon(&self, scalar: &mut [u8; LEN]) {
         self.write(scalar);
     }
 }
@@ -585,10 +623,10 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
     }
 
     fn pub_key(&self) -> Self::PublicKey<'a> {
-        let mut ctx = BigNumContext::new().unwrap();
+        let ctx = BigNumContext::new().unwrap();
 
         let mut pub_key = Self::PublicKey {
-            group: &self.group,
+            group: self.group,
             point: EcPoint::new(&self.group.group).unwrap(),
         };
 
@@ -598,7 +636,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
                 &self.group.group,
                 self.group.group.generator(),
                 &self.scalar,
-                &mut ctx,
+                &ctx,
             )
             .unwrap();
 
@@ -615,10 +653,8 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
 
         let sig = EcdsaSig::sign(&digest, &our_ec_key).unwrap();
 
-        signature[..super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2]
-            .copy_from_slice(sig.r().to_vec().as_slice());
-        signature[super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2..]
-            .copy_from_slice(sig.s().to_vec().as_slice());
+        signature[..super::PKC_SHARED_SECRET_LEN / 2].copy_from_slice(sig.r().to_vec().as_slice());
+        signature[super::PKC_SHARED_SECRET_LEN / 2..].copy_from_slice(sig.s().to_vec().as_slice());
     }
 }
 
@@ -631,7 +667,7 @@ impl<
     > super::SecretKey<'a, LEN, POINT_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
-    fn canon_into(&self, key: &mut [u8; LEN]) {
+    fn write_canon(&self, key: &mut [u8; LEN]) {
         self.write(key);
     }
 

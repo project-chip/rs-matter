@@ -779,7 +779,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
 
             let result = self
                 .crypto
-                .secp256r1_pub_key(as_canon(parent.pubkey()?)?)?
+                .pub_key(as_canon(parent.pubkey()?)?)?
                 .verify(asn1, as_canon(self.cert.signature()?)?);
 
             if !result {

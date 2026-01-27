@@ -23,7 +23,7 @@ use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{Crypto, Digest, FabricSecretKey, Hkdf, Sha256Hash};
+use crate::crypto::{Crypto, Digest, FabricSecretKey, Hash, Kdf};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
@@ -108,7 +108,7 @@ impl Fabric {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: Option<&[u8]>,
+        ipk: Option<KeySet>,
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
         mdns_notif: &mut dyn FnMut(),
@@ -134,7 +134,7 @@ impl Fabric {
         }
 
         if let Some(ipk) = ipk {
-            self.ipk = KeySet::new_from(ipk, &self.compressed_fabric_id)?;
+            self.ipk = ipk;
         }
 
         if let Some(case_admin_subject) = case_admin_subject {
@@ -173,7 +173,7 @@ impl Fabric {
         target: &[u8],
         crypto: C,
     ) -> Result<(), Error> {
-        let mut mac = crypto.hmac_sha256(self.ipk.op_key())?;
+        let mut mac = crypto.hmac(self.ipk.op_key())?;
 
         mac.update(random);
         mac.update(CertRef::new(TLVElement::new(self.root_ca())).pubkey()?);
@@ -181,7 +181,7 @@ impl Fabric {
         mac.update(&self.fabric_id.to_le_bytes());
         mac.update(&self.node_id.to_le_bytes());
 
-        let mut id = MaybeUninit::<Sha256Hash>::uninit(); // TODO MEDIUM BUFFER
+        let mut id = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
         let id = id.init_zeroed();
         mac.finish(id);
         if id.as_slice() == target {
@@ -384,7 +384,7 @@ impl Fabric {
         ];
 
         let mut compressed_fabric_id = [0; COMPRESSED_FABRIC_ID_LEN];
-        unwrap!(crypto.hkdf_sha256()).expand(
+        unwrap!(crypto.kdf()).expand(
             &fabric_id.to_be_bytes(),
             &root_pubkey[1..],
             COMPRESSED_FABRIC_ID_INFO,
@@ -563,7 +563,7 @@ impl FabricMgr {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: &[u8],
+        ipk: KeySet,
         vendor_id: u16,
         case_admin_subject: u64,
         mdns_notif: &mut dyn FnMut(),

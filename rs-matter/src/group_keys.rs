@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::crypto::{self, test_crypto, CanonAes128Key, Crypto, Hkdf};
+use crate::crypto::{self, CanonAeadKey, Crypto, Kdf};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, ToTLV};
 use crate::utils::init::{init, init_zeroed, Init};
@@ -23,15 +23,15 @@ use crate::utils::init::{init, init_zeroed, Init};
 #[derive(Debug, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct KeySet {
-    pub epoch_key: CanonAes128Key,
-    pub op_key: CanonAes128Key,
+    pub epoch_key: CanonAeadKey,
+    pub op_key: CanonAeadKey,
 }
 
 impl KeySet {
     pub const fn new() -> Self {
         Self {
-            epoch_key: crypto::AES128_KEY_ZEROED,
-            op_key: crypto::AES128_KEY_ZEROED,
+            epoch_key: crypto::AEAD_KEY_ZEROED,
+            op_key: crypto::AEAD_KEY_ZEROED,
         }
     }
 
@@ -42,9 +42,14 @@ impl KeySet {
         })
     }
 
-    pub fn new_from(epoch_key: &[u8], compressed_fabric_id: &u64) -> Result<Self, Error> {
+    pub fn new_from<C: Crypto>(
+        crypto: C,
+        epoch_key: &[u8],
+        compressed_fabric_id: &u64,
+    ) -> Result<Self, Error> {
         let mut ks = KeySet::new();
         Self::op_key_from_ipk(
+            crypto,
             epoch_key,
             &compressed_fabric_id.to_be_bytes(),
             &mut ks.op_key,
@@ -53,26 +58,27 @@ impl KeySet {
         Ok(ks)
     }
 
-    fn op_key_from_ipk(
+    fn op_key_from_ipk<C: Crypto>(
+        crypto: C,
         ipk: &[u8],
         compressed_id: &[u8],
-        opkey: &mut CanonAes128Key,
+        opkey: &mut CanonAeadKey,
     ) -> Result<(), Error> {
         const GRP_KEY_INFO: &[u8] = &[
             0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x20, 0x76, 0x31, 0x2e, 0x30,
         ];
 
-        test_crypto()
-            .hkdf_sha256()?
+        crypto
+            .kdf()?
             .expand(compressed_id, ipk, GRP_KEY_INFO, opkey)
             .map_err(|_| ErrorCode::InvalidData.into())
     }
 
-    pub fn op_key(&self) -> &CanonAes128Key {
+    pub fn op_key(&self) -> &CanonAeadKey {
         &self.op_key
     }
 
-    pub fn epoch_key(&self) -> &CanonAes128Key {
+    pub fn epoch_key(&self) -> &CanonAeadKey {
         &self.epoch_key
     }
 }

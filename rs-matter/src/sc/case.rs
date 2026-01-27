@@ -20,11 +20,10 @@ use core::{mem::MaybeUninit, num::NonZeroU8};
 use crate::alloc;
 use crate::cert::CertRef;
 use crate::crypto::{
-    self, as_canon, Aead, Aes128Nonce, CanonAes128Key, CanonSecp256r1EcdhSharedSecret,
-    CanonSecp256r1PublicKey, CanonSecp256r1Signature, Crypto, Digest, Hkdf, PublicKey, SecretKey,
-    Sha256Hash, SigningSecretKey, AES128_CANON_KEY_LEN, AES128_KEY_ZEROED, AES128_TAG_LEN,
-    AES128_TAG_ZEROED, SECP256R1_ECDH_SHARED_SECRET_ZEROED, SECP256R1_PUBLIC_KEY_ZEROED,
-    SHA256_HASH_ZEROED,
+    self, as_canon, Aead, AeadNonce, CanonAeadKey, CanonPkcPublicKey, CanonPkcSharedSecret,
+    CanonPkcSignature, Crypto, Digest, Hash, Kdf, PublicKey, SecretKey, SigningSecretKey,
+    AEAD_CANON_KEY_LEN, AEAD_KEY_ZEROED, AEAD_TAG_LEN, AEAD_TAG_ZEROED, HASH_ZEROED,
+    PKC_PUBLIC_KEY_ZEROED, PKC_SHARED_SECRET_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;
@@ -46,13 +45,13 @@ struct CaseSession<'a, C: Crypto + 'a> {
     /// The local session ID
     local_sessid: u16,
     /// The Transcript Hash
-    tt_hash: Optional<C::Sha256<'a>>,
+    tt_hash: Optional<C::Hash<'a>>,
     /// The ECDH Shared Secret
-    shared_secret: CanonSecp256r1EcdhSharedSecret,
+    shared_secret: CanonPkcSharedSecret,
     /// Our ephemeral public key
-    our_pub_key: CanonSecp256r1PublicKey,
+    our_pub_key: CanonPkcPublicKey,
     /// The peer's ephemeral public key
-    peer_pub_key: CanonSecp256r1PublicKey,
+    peer_pub_key: CanonPkcPublicKey,
     /// The local fabric index for this session
     local_fabric_idx: u8,
     crypto: &'a C,
@@ -66,9 +65,9 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
             peer_sessid: 0,
             local_sessid: 0,
             tt_hash: Optional::none(),
-            shared_secret: SECP256R1_ECDH_SHARED_SECRET_ZEROED,
-            our_pub_key: SECP256R1_PUBLIC_KEY_ZEROED,
-            peer_pub_key: SECP256R1_PUBLIC_KEY_ZEROED,
+            shared_secret: PKC_SHARED_SECRET_ZEROED,
+            our_pub_key: PKC_PUBLIC_KEY_ZEROED,
+            peer_pub_key: PKC_PUBLIC_KEY_ZEROED,
             local_fabric_idx: 0,
             crypto,
         }
@@ -106,12 +105,12 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         &self,
         fabric: &Fabric,
         our_random: &[u8],
-        our_hash: &Sha256Hash,
-        signature: &CanonSecp256r1Signature,
+        our_hash: &Hash,
+        signature: &CanonPkcSignature,
         resumption_id: &[u8],
         out: &mut [u8],
     ) -> Result<usize, Error> {
-        let mut sigma2_key = AES128_KEY_ZEROED;
+        let mut sigma2_key = AEAD_KEY_ZEROED;
         self.get_sigma2_key(fabric.ipk().op_key(), our_random, our_hash, &mut sigma2_key)?;
 
         let mut write_buf = WriteBuf::new(out);
@@ -126,23 +125,23 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         tw.str(&TLVTag::Context(4), resumption_id)?;
         tw.end_container()?;
         //println!("TBE is {:x?}", write_buf.as_borrow_slice());
-        const NONCE: &Aes128Nonce = &[
+        const NONCE: &AeadNonce = &[
             0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x32, 0x4e,
         ];
         //        let nonce = GenericArray::from_slice(&nonce);
         //        type AesCcm = Ccm<Aes128, U16, U13>;
         //        let cipher = AesCcm::new(GenericArray::from_slice(key));
-        write_buf.append(&AES128_TAG_ZEROED)?;
+        write_buf.append(&AEAD_TAG_ZEROED)?;
         let cipher_text = write_buf.as_mut_slice();
 
-        let mut cypher = self.crypto.aes_ccm_16_64_128()?;
+        let mut cypher = self.crypto.aead()?;
 
         cypher.encrypt_in_place(
             &sigma2_key,
             NONCE,
             &[],
             cipher_text,
-            cipher_text.len() - AES128_TAG_LEN,
+            cipher_text.len() - AEAD_TAG_LEN,
         )?;
         Ok(write_buf.as_slice().len())
     }
@@ -161,7 +160,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         &self,
         fabric: &Fabric,
         tmp_buf: &mut [u8],
-        signature: &mut CanonSecp256r1Signature,
+        signature: &mut CanonPkcSignature,
     ) -> Result<(), Error> {
         let mut write_buf = WriteBuf::new(tmp_buf);
         let tw = &mut write_buf;
@@ -175,7 +174,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         tw.end_container()?;
         //println!("TBS is {:x?}", write_buf.as_borrow_slice());
 
-        let fabric_secret = self.crypto.secp256r1_secret_key(fabric.secret_key())?;
+        let fabric_secret = self.crypto.secret_key(fabric.secret_key())?;
         fabric_secret.sign(write_buf.as_slice(), signature);
 
         Ok(())
@@ -197,8 +196,8 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         &self,
         ipk: &[u8],
         our_random: &[u8],
-        our_hash: &Sha256Hash,
-        key: &mut CanonAes128Key,
+        our_hash: &Hash,
+        key: &mut CanonAeadKey,
     ) -> Result<(), Error> {
         const S2K_INFO: [u8; 6] = [0x53, 0x69, 0x67, 0x6d, 0x61, 0x32];
         let mut salt = heapless::Vec::<u8, 256>::new();
@@ -208,7 +207,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         unwrap!(salt.extend_from_slice(our_hash));
 
         self.crypto
-            .hkdf_sha256()?
+            .kdf()?
             .expand(salt.as_slice(), &self.shared_secret, &S2K_INFO, key)
             .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Sigma2Key: key: {:x?}", key);
@@ -291,7 +290,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
 
         let pub_key = self
             .crypto
-            .secp256r1_pub_key(as_canon(initiator_noc_cert.pubkey()?)?)?;
+            .pub_key(as_canon(initiator_noc_cert.pubkey()?)?)?;
         if !pub_key.verify(write_buf.as_slice(), signature) {
             Err(ErrorCode::Invalid)?;
         }
@@ -311,7 +310,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
     fn get_session_keys(
         &self,
         ipk: &[u8],
-        keys: &mut [u8; AES128_CANON_KEY_LEN * 3],
+        keys: &mut [u8; AEAD_CANON_KEY_LEN * 3],
     ) -> Result<(), Error> {
         let tt = unwrap!(self.tt_hash.as_opt_ref());
         let shared_secret = &self.shared_secret;
@@ -323,13 +322,13 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         let mut salt = heapless::Vec::<u8, 256>::new();
         unwrap!(salt.extend_from_slice(ipk));
         let tt = tt.clone();
-        let mut tt_hash = SHA256_HASH_ZEROED;
+        let mut tt_hash = HASH_ZEROED;
         tt.finish(&mut tt_hash);
         unwrap!(salt.extend_from_slice(&tt_hash));
         //        println!("Session Key: salt: {:x?}, len: {}", salt, salt.len());
 
         self.crypto
-            .hkdf_sha256()?
+            .kdf()?
             .expand(salt.as_slice(), shared_secret, &SEKEYS_INFO, keys)
             .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Session Key: key: {:x?}", key);
@@ -347,20 +346,20 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
     /// - `Ok(usize)` - The length of the decrypted data
     /// - `Err(Error)` - If an error occurred during the process
     fn get_sigma3_decryption(&self, ipk: &[u8], encrypted: &mut [u8]) -> Result<usize, Error> {
-        let mut sigma3_key = AES128_KEY_ZEROED;
+        let mut sigma3_key = AEAD_KEY_ZEROED;
         self.get_sigma3_key(ipk, &mut sigma3_key)?;
         // println!("Sigma3 Key: {:x?}", sigma3_key);
 
-        const NONCE: &Aes128Nonce = &[
+        const NONCE: &AeadNonce = &[
             0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x33, 0x4e,
         ];
 
         let encrypted_len = encrypted.len();
 
-        let mut cypher = self.crypto.aes_ccm_16_64_128()?;
+        let mut cypher = self.crypto.aead()?;
 
         cypher.decrypt_in_place(&sigma3_key, NONCE, &[], encrypted)?;
-        Ok(encrypted_len - crypto::AES128_TAG_LEN)
+        Ok(encrypted_len - crypto::AEAD_TAG_LEN)
     }
 
     /// Get the Sigma3 key
@@ -385,13 +384,13 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
 
         let tt = tt.clone();
 
-        let mut tt_hash = SHA256_HASH_ZEROED;
+        let mut tt_hash = HASH_ZEROED;
         tt.finish(&mut tt_hash);
         unwrap!(salt.extend_from_slice(&tt_hash));
         //        println!("Sigma3Key: salt: {:x?}, len: {}", salt, salt.len());
 
         self.crypto
-            .hkdf_sha256()?
+            .kdf()?
             .expand(salt.as_slice(), shared_secret, &S3K_INFO, key)
             .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Sigma3Key: key: {:x?}", key);
@@ -506,27 +505,24 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
             .get_next_sess_id();
         self.session.peer_sessid = r.initiator_sessid;
         self.session.local_sessid = local_sessid;
-        self.session.tt_hash = Optional::some(self.session.crypto.sha256()?);
+        self.session.tt_hash = Optional::some(self.session.crypto.hash()?);
         unwrap!(self.session.tt_hash.as_opt_mut()).update(exchange.rx()?.payload());
         self.session.local_fabric_idx = unwrap!(local_fabric_idx).get();
-        let peer_pub_key: &CanonSecp256r1PublicKey = as_canon(r.peer_pub_key.0)?;
+        let peer_pub_key: &CanonPkcPublicKey = as_canon(r.peer_pub_key.0)?;
         self.session.peer_pub_key.copy_from_slice(peer_pub_key);
         trace!(
             "Destination ID matched to fabric index {}",
             self.session.local_fabric_idx
         );
 
-        let peer_pub_key = self
-            .session
-            .crypto
-            .secp256r1_pub_key(&self.session.peer_pub_key)?;
+        let peer_pub_key = self.session.crypto.pub_key(&self.session.peer_pub_key)?;
 
         // Create an ephemeral EC secret key
-        let secret_key = self.session.crypto.secp256r1_secret_key_random()?;
+        let secret_key = self.session.crypto.generate_secret_key()?;
 
         secret_key
             .pub_key()
-            .canon_into(&mut self.session.our_pub_key);
+            .write_canon(&mut self.session.our_pub_key);
 
         // Derive the Shared Secret
         secret_key.derive_shared_secret(&peer_pub_key, &mut self.session.shared_secret);
@@ -540,7 +536,7 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
         let resumption_id = resumption_id.init_zeroed();
         (exchange.matter().rand())(resumption_id);
 
-        let mut tt_hash = MaybeUninit::<Sha256Hash>::uninit(); // TODO MEDIUM BUFFER
+        let mut tt_hash = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
         let tt_hash = tt_hash.init_zeroed();
         unwrap!(self.session.tt_hash.as_opt_ref())
             .clone()
@@ -558,7 +554,7 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
                     return sc_write(tw, SCStatusCodes::NoSharedTrustRoots, &[]);
                 };
 
-                let mut signature = MaybeUninit::<CanonSecp256r1Signature>::uninit(); // TODO MEDIUM BUFFER
+                let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
                 let signature = signature.init_zeroed();
 
                 // Use the remainder of the TX buffer as scratch space for computing the signature
@@ -660,7 +656,7 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
                     initiator_noc.get_cat_ids(&mut peer_catids)?;
                     unwrap!(self.session.tt_hash.as_opt_mut()).update(exchange.rx()?.payload());
 
-                    let mut session_keys = MaybeUninit::<[u8; 3 * AES128_CANON_KEY_LEN]>::uninit(); // TODO MEDIM BUFFER
+                    let mut session_keys = MaybeUninit::<[u8; 3 * AEAD_CANON_KEY_LEN]>::uninit(); // TODO MEDIM BUFFER
                     let session_keys = session_keys.init_zeroed();
                     self.session
                         .get_session_keys(fabric.ipk().op_key(), session_keys)?;
@@ -678,9 +674,9 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
                             fab_idx: unwrap!(NonZeroU8::new(self.session.local_fabric_idx)),
                             cat_ids: peer_catids,
                         },
-                        Some(&session_keys[..AES128_CANON_KEY_LEN]),
-                        Some(&session_keys[AES128_CANON_KEY_LEN..AES128_CANON_KEY_LEN * 2]),
-                        Some(&session_keys[AES128_CANON_KEY_LEN * 2..]),
+                        Some(&session_keys[..AEAD_CANON_KEY_LEN]),
+                        Some(&session_keys[AEAD_CANON_KEY_LEN..AEAD_CANON_KEY_LEN * 2]),
+                        Some(&session_keys[AEAD_CANON_KEY_LEN * 2..]),
                     )?;
 
                     // Complete the reserved session and thus make the `Session` instance

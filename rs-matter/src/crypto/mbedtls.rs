@@ -15,68 +15,72 @@
  *    limitations under the License.
  */
 
+//! MbedTLS-based crypto backend for Matter.
+
 use esp_mbedtls_sys::merr;
 
 use crate::error::Error;
 
+/// MbedTLS-based crypto backend for Matter.
 pub struct MbedtlsCrypto {
-    secp256r1_group:
-        ECGroup<{ super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_CANON_SCALAR_LEN }>,
+    /// Elliptic curve group (secp256r1)
+    ec_group: ECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>,
 }
 
 impl MbedtlsCrypto {
+    /// Create a new MbedTLS crypto backend.
     pub fn new() -> Self {
-        let mut ec_group = unsafe { ECGroup::new() };
-        ec_group.set(esp_mbedtls_sys::mbedtls_ecp_group_id_MBEDTLS_ECP_DP_SECP256R1);
+        let mut ec_group = ECGroup::new();
+        unsafe { ec_group.set(esp_mbedtls_sys::mbedtls_ecp_group_id_MBEDTLS_ECP_DP_SECP256R1) };
 
-        Self {
-            secp256r1_group: ec_group,
-        }
+        Self { ec_group }
+    }
+}
+
+impl Default for MbedtlsCrypto {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl super::Crypto for MbedtlsCrypto {
-    type Sha256<'a>
+    type Hash<'a>
         = Sha256
     where
         Self: 'a;
 
-    type HmacSha256<'a>
-        = Hmac<{ super::SHA256_HASH_LEN }>
+    type Hmac<'a>
+        = Hmac<{ super::HASH_LEN }>
     where
         Self: 'a;
 
-    type HkdfSha256<'a>
+    type Kdf<'a>
         = Hkdf
     where
         Self: 'a;
 
-    type Pbkdf2HmacSha256<'a>
+    type PbKdf<'a>
         = Pbkdf2Hmac
     where
         Self: 'a;
 
-    type AesCcm16p64p128<'a>
-        = AeadCcm<
-        { super::AES128_CANON_KEY_LEN },
-        { super::AES128_NONCE_LEN },
-        { super::AES128_TAG_LEN },
-    >
+    type Aead<'a>
+        = AeadCcm<{ super::AEAD_CANON_KEY_LEN }, { super::AEAD_NONCE_LEN }, { super::AEAD_TAG_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1PublicKey<'a>
-        = ECPoint<'a, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_CANON_SCALAR_LEN }>
+    type PublicKey<'a>
+        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1SecretKey<'a>
-        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    type SecretKey<'a>
+        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1SigningSecretKey<'a>
-        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    type SigningSecretKey<'a>
+        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
@@ -85,63 +89,55 @@ impl super::Crypto for MbedtlsCrypto {
     where
         Self: 'a;
 
-    type Secp256r1Scalar<'a>
-        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    type EcScalar<'a>
+        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
     where
         Self: 'a;
 
-    type Secp256r1Point<'a>
-        = ECPoint<'a, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256R1_CANON_SCALAR_LEN }>
+    type EcPoint<'a>
+        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
     where
         Self: 'a;
 
-    fn sha256(&self) -> Result<Self::Sha256<'_>, Error> {
+    fn hash(&self) -> Result<Self::Hash<'_>, Error> {
         Ok(Sha256::new())
     }
 
-    fn hmac_sha256(&self, key: &[u8]) -> Result<Self::HmacSha256<'_>, Error> {
+    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
         Ok(unsafe { Hmac::new(esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256, key) })
     }
 
-    fn hkdf_sha256(&self) -> Result<Self::HkdfSha256<'_>, Error> {
+    fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
         Ok(Hkdf::new(
             esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
         ))
     }
 
-    fn pbkdf2_hmac_sha256(&self) -> Result<Self::Pbkdf2HmacSha256<'_>, Error> {
+    fn pbkdf(&self) -> Result<Self::PbKdf<'_>, Error> {
         Ok(Pbkdf2Hmac::new(
             esp_mbedtls_sys::mbedtls_md_type_t_MBEDTLS_MD_SHA256,
         ))
     }
 
-    fn aes_ccm_16_64_128(&self) -> Result<Self::AesCcm16p64p128<'_>, Error> {
+    fn aead(&self) -> Result<Self::Aead<'_>, Error> {
         Ok(unsafe {
             AeadCcm::new(esp_mbedtls_sys::mbedtls_cipher_type_t_MBEDTLS_CIPHER_AES_128_CCM)
         })
     }
 
-    fn secp256r1_pub_key(
-        &self,
-        key: &super::CanonSecp256r1PublicKey,
-    ) -> Result<Self::Secp256r1PublicKey<'_>, Error> {
-        self.secp256r1_point(key)
+    fn pub_key(&self, key: &super::CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
+        self.ec_point(key)
     }
 
-    fn secp256r1_secret_key_random(&self) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
-        self.secp256r1_scalar_random()
+    fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
+        self.generate_ec_scalar()
     }
 
-    fn secp256r1_secret_key(
-        &self,
-        key: &super::CanonSecp256r1SecretKey,
-    ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
-        self.secp256r1_scalar(key)
+    fn secret_key(&self, key: &super::CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
+        self.ec_scalar(key)
     }
 
-    fn secp256r1_secret_key_signing_singleton(
-        &self,
-    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+    fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
         todo!()
     }
 
@@ -153,47 +149,42 @@ impl super::Crypto for MbedtlsCrypto {
         Ok(result)
     }
 
-    fn secp256r1_scalar(
-        &self,
-        scalar: &super::CanonSecp256r1Scalar,
-    ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
-        let mut result = ECScalar::new(&self.secp256r1_group);
+    fn ec_scalar(&self, scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
+        let mut result = ECScalar::new(&self.ec_group);
         result.set(scalar);
 
         Ok(result)
     }
 
-    fn secp256r1_scalar_random(&self) -> Result<Self::Secp256r1Scalar<'_>, Error> {
+    fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
 
-    fn secp256r1_point(
-        &self,
-        point: &super::CanonSecp256r1Point,
-    ) -> Result<Self::Secp256r1Point<'_>, Error> {
-        let mut result = ECPoint::new(&self.secp256r1_group);
+    fn ec_point(&self, point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
+        let mut result = ECPoint::new(&self.ec_group);
         result.set(point);
 
         Ok(result)
     }
 
-    fn secp256r1_generator(&self) -> Result<Self::Secp256r1Point<'_>, Error> {
-        let mut result = ECPoint::new(&self.secp256r1_group);
+    fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
+        let mut result = ECPoint::new(&self.ec_group);
 
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_copy(&mut result.raw, &self.secp256r1_group.raw.G)
-        })
-        .unwrap();
+        merr!(unsafe { esp_mbedtls_sys::mbedtls_ecp_copy(&mut result.raw, &self.ec_group.raw.G) })
+            .unwrap();
 
         Ok(result)
     }
 }
 
+/// SHA-256 hash implementation using MbedTLS.
 pub struct Sha256 {
+    /// Raw MbedTLS SHA-256 context
     raw: esp_mbedtls_sys::mbedtls_sha256_context,
 }
 
 impl Sha256 {
+    /// Create a new SHA-256 hash instance.
     fn new() -> Self {
         let mut raw = Default::default();
 
@@ -227,7 +218,7 @@ impl Clone for Sha256 {
     }
 }
 
-impl super::Digest<{ super::SHA256_HASH_LEN }> for Sha256 {
+impl super::Digest<{ super::HASH_LEN }> for Sha256 {
     fn update(&mut self, data: &[u8]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_sha256_update(&mut self.raw, data.as_ptr(), data.len())
@@ -235,17 +226,24 @@ impl super::Digest<{ super::SHA256_HASH_LEN }> for Sha256 {
         .unwrap();
     }
 
-    fn finish(mut self, out: &mut [u8; super::SHA256_HASH_LEN]) {
+    fn finish(mut self, out: &mut [u8; super::HASH_LEN]) {
         merr!(unsafe { esp_mbedtls_sys::mbedtls_sha256_finish(&mut self.raw, out.as_mut_ptr()) })
             .unwrap();
     }
 }
 
+/// HMAC implementation using MbedTLS.
 pub struct Hmac<const HASH_LEN: usize> {
+    /// Raw MbedTLS MD context
     raw: esp_mbedtls_sys::mbedtls_md_context_t,
 }
 
 impl<const HASH_LEN: usize> Hmac<HASH_LEN> {
+    /// Create a new HMAC instance with the given key.
+    ///
+    /// # Safety
+    /// The caller must ensure that the provided `md_type` corresponds to the `HASH_LEN`
+    /// generic parameter.
     unsafe fn new(md_type: esp_mbedtls_sys::mbedtls_md_type_t, key: &[u8]) -> Self {
         let mut raw = Default::default();
 
@@ -306,17 +304,20 @@ impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for Hmac<HASH_LEN> {
     }
 }
 
+/// HKDF implementation using MbedTLS.
 pub struct Hkdf {
+    /// Message digest type
     md_type: esp_mbedtls_sys::mbedtls_md_type_t,
 }
 
 impl Hkdf {
+    /// Create a new HKDF instance.
     fn new(md_type: esp_mbedtls_sys::mbedtls_md_type_t) -> Self {
         Self { md_type }
     }
 }
 
-impl super::Hkdf for Hkdf {
+impl super::Kdf for Hkdf {
     fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()> {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_hkdf(
@@ -337,17 +338,20 @@ impl super::Hkdf for Hkdf {
     }
 }
 
+/// PBKDF2-HMAC implementation using MbedTLS.
 pub struct Pbkdf2Hmac {
+    /// Message digest type
     md_type: esp_mbedtls_sys::mbedtls_md_type_t,
 }
 
 impl Pbkdf2Hmac {
+    /// Create a new PBKDF2-HMAC instance.
     fn new(md_type: esp_mbedtls_sys::mbedtls_md_type_t) -> Self {
         Self { md_type }
     }
 }
 
-impl super::Pbkdf2Hmac for Pbkdf2Hmac {
+impl super::PbKdf for Pbkdf2Hmac {
     fn derive(self, password: &[u8], iter: usize, salt: &[u8], out: &mut [u8]) {
         unsafe {
             esp_mbedtls_sys::mbedtls_pkcs5_pbkdf2_hmac_ext(
@@ -364,13 +368,20 @@ impl super::Pbkdf2Hmac for Pbkdf2Hmac {
     }
 }
 
+/// AEAD-CCM implementation using MbedTLS.
 pub struct AeadCcm<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize> {
+    /// Cipher type
     cipher_type: esp_mbedtls_sys::mbedtls_cipher_type_t,
 }
 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN>
 {
+    /// Create a new AEAD-CCM instance.
+    ///
+    /// # Safety
+    /// The caller must ensure that the provided `cipher_type` corresponds to the
+    /// `KEY_LEN`, `NONCE_LEN`, and `TAG_LEN` generic parameters.
     unsafe fn new(cipher_type: esp_mbedtls_sys::mbedtls_cipher_type_t) -> Self {
         Self { cipher_type }
     }
@@ -477,11 +488,14 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     }
 }
 
+/// Multi-precision integer (MPI) implementation using MbedTLS.
 pub struct Mpi {
+    /// Raw MbedTLS MPI
     raw: esp_mbedtls_sys::mbedtls_mpi,
 }
 
 impl Mpi {
+    /// Create a new MPI instance.
     fn new() -> Self {
         let mut raw = Default::default();
 
@@ -492,6 +506,7 @@ impl Mpi {
         Self { raw }
     }
 
+    /// Set the MPI from the given BE byte representation.
     fn set(&mut self, uint: &[u8]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_mpi_read_binary(&mut self.raw, uint.as_ptr(), uint.len())
@@ -499,6 +514,9 @@ impl Mpi {
         .unwrap();
     }
 
+    /// Write the MPI to the given BE byte array.
+    ///
+    /// The method will panic if the provided buffer is not large enough.
     fn write(&self, uint: &mut [u8]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_mpi_write_binary(&self.raw, uint.as_mut_ptr(), uint.len())
@@ -530,17 +548,20 @@ impl<const LEN: usize> super::UInt<'_, LEN> for Mpi {
         }
     }
 
-    fn canon_into(&self, buf: &mut [u8; LEN]) {
+    fn write_canon(&self, buf: &mut [u8; LEN]) {
         self.write(buf);
     }
 }
 
+/// Elliptic curve group implementation using MbedTLS.
 pub struct ECGroup<const LEN: usize, const SCALAR_LEN: usize> {
+    /// Raw MbedTLS EC group
     raw: esp_mbedtls_sys::mbedtls_ecp_group,
 }
 
 impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
-    unsafe fn new() -> Self {
+    /// Create a new EC group instance.
+    fn new() -> Self {
         let mut raw = Default::default();
 
         unsafe {
@@ -550,7 +571,12 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECGroup<LEN, SCALAR_LEN> {
         Self { raw }
     }
 
-    fn set(&mut self, group_id: esp_mbedtls_sys::mbedtls_ecp_group_id) {
+    /// Set the EC group to the specified group ID.
+    ///
+    /// # Safety
+    /// The caller must ensure that the provided `group_id` matches the
+    /// `LEN` and `SCALAR_LEN` generic parameters.
+    unsafe fn set(&mut self, group_id: esp_mbedtls_sys::mbedtls_ecp_group_id) {
         merr!(unsafe { esp_mbedtls_sys::mbedtls_ecp_group_load(&mut self.raw, group_id) }).unwrap();
     }
 }
@@ -563,12 +589,24 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECGroup<LEN, SCALAR_LEN
     }
 }
 
+/// Elliptic curve point implementation using MbedTLS.
 pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
+    /// Associated EC group
     group: &'a ECGroup<LEN, SCALAR_LEN>,
+    /// Raw MbedTLS EC point
     raw: esp_mbedtls_sys::mbedtls_ecp_point,
 }
 
 impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN> {
+    /// Create a new EC point instance with an empty point.
+    ///
+    /// The point MUST be initialized post-creation using `set()`.
+    ///
+    /// # Arguments
+    /// - `group`: Reference to the associated EC group.
+    ///
+    /// # Returns
+    /// - New EC point instance.
     fn new(group: &'a ECGroup<LEN, SCALAR_LEN>) -> Self {
         let mut raw = Default::default();
 
@@ -579,7 +617,8 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN>
         Self { group, raw }
     }
 
-    fn set(&mut self, point: &[u8]) {
+    /// Set the EC point from the given byte representation.
+    fn set(&mut self, point: &[u8; LEN]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_point_read_binary(
                 &self.group.raw,
@@ -591,6 +630,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN>
         .unwrap();
     }
 
+    /// Write the EC point to the given byte array in uncompressed format.
     fn write(&self, point: &mut [u8; LEN]) {
         let mut olen = 0;
 
@@ -618,7 +658,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECPoint<'_, LEN, SCALAR
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCALAR_LEN>
     for ECPoint<'a, LEN, SCALAR_LEN>
 {
     type Scalar<'s>
@@ -687,7 +727,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, S
         result
     }
 
-    fn canon_into(&self, point: &mut [u8; LEN]) {
+    fn write_canon(&self, point: &mut [u8; LEN]) {
         self.write(point);
     }
 }
@@ -699,7 +739,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         let mut r = Mpi::new();
         let mut s = Mpi::new();
 
-        let (r_signature, s_signature) = signature.split_at(super::SECP256R1_SIGNATURE_LEN / 2);
+        let (r_signature, s_signature) = signature.split_at(super::PKC_SIGNATURE_LEN / 2);
 
         r.set(r_signature);
         s.set(s_signature);
@@ -709,7 +749,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         let mut sha256 = Sha256::new();
         sha256.update(data);
 
-        let mut hash = super::SHA256_HASH_ZEROED;
+        let mut hash = super::HASH_ZEROED;
         sha256.finish(&mut hash);
 
         let result = unsafe {
@@ -726,17 +766,24 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         result == 0
     }
 
-    fn canon_into(&self, key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
         self.write(key);
     }
 }
 
+/// Elliptic curve scalar implementation using MbedTLS.
 pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize> {
+    /// Associated EC group
     group: &'a ECGroup<POINT_LEN, LEN>,
+    /// Scalar
     mpi: Mpi,
 }
 
 impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> {
+    /// Create a new, empty EC scalar instance.
+    ///
+    /// The scalar value MUST be initialized post-creation
+    /// using `set()`.
     fn new(group: &'a ECGroup<POINT_LEN, LEN>) -> Self {
         Self {
             group,
@@ -744,16 +791,18 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> 
         }
     }
 
-    fn set(&mut self, scalar: &[u8]) {
+    /// Set the EC scalar from the given byte representation.
+    fn set(&mut self, scalar: &[u8; LEN]) {
         self.mpi.set(scalar);
     }
 
+    /// Write the EC scalar to the given byte array.
     fn write(&self, scalar: &mut [u8; LEN]) {
         self.mpi.write(scalar);
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::CurveScalar<'a, LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
     fn mul(&self, other: &Self) -> Self {
@@ -767,7 +816,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::CurveScalar<'a, LEN>
         result
     }
 
-    fn canon_into(&self, scalar: &mut [u8; LEN]) {
+    fn write_canon(&self, scalar: &mut [u8; LEN]) {
         self.write(scalar);
     }
 }
@@ -883,7 +932,7 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
         let mut sha256 = Sha256::new();
         sha256.update(data);
 
-        let mut hash = super::SHA256_HASH_ZEROED;
+        let mut hash = super::HASH_ZEROED;
         sha256.finish(&mut hash);
 
         let mut r = Mpi::new();
@@ -904,7 +953,7 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
 
         merr!(result).unwrap();
 
-        let (r_signature, s_signature) = signature.split_at_mut(super::SECP256R1_SIGNATURE_LEN / 2);
+        let (r_signature, s_signature) = signature.split_at_mut(super::PKC_SIGNATURE_LEN / 2);
 
         r.write(r_signature);
         s.write(s_signature);
@@ -920,7 +969,7 @@ impl<
     > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
 {
-    fn canon_into(&self, key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
         self.write(key);
     }
 

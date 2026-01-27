@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::crypto::{CanonSecp256r1PublicKey, CanonSecp256r1SecretKey};
+use crate::crypto::{CanonPkcPublicKey, CanonPkcSecretKey};
 
 /// The Device Attestation trait
 ///
@@ -32,10 +32,10 @@ pub trait DeviceAttestation {
     fn dac(&self) -> &[u8];
 
     /// Get the Device Attestation Certificate Public Key
-    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey;
+    fn dac_pub_key(&self) -> &CanonPkcPublicKey;
 
     /// Get the Device Attestation Certificate Private Key
-    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey;
+    fn dac_priv_key(&self) -> &CanonPkcSecretKey;
 }
 
 impl<T> DeviceAttestation for &T
@@ -54,11 +54,11 @@ where
         (*self).dac()
     }
 
-    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey {
+    fn dac_pub_key(&self) -> &CanonPkcPublicKey {
         (*self).dac_pub_key()
     }
 
-    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey {
+    fn dac_priv_key(&self) -> &CanonPkcSecretKey {
         (*self).dac_priv_key()
     }
 }
@@ -76,11 +76,11 @@ impl DeviceAttestation for &dyn DeviceAttestation {
         (*self).dac()
     }
 
-    fn dac_pub_key(&self) -> &CanonSecp256r1PublicKey {
+    fn dac_pub_key(&self) -> &CanonPkcPublicKey {
         (*self).dac_pub_key()
     }
 
-    fn dac_priv_key(&self) -> &CanonSecp256r1SecretKey {
+    fn dac_priv_key(&self) -> &CanonPkcSecretKey {
         (*self).dac_priv_key()
     }
 }
