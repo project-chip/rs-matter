@@ -440,7 +440,9 @@ pub trait Scalar<'a, const LEN: usize> {
 }
 
 pub trait CurvePoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
-    type Scalar<'s>: Scalar<'s, SCALAR_LEN>;
+    type Scalar<'s>: Scalar<'s, SCALAR_LEN>
+    where
+        Self: 'a + 's;
 
     fn neg(&self) -> Self;
 
