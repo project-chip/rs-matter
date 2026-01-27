@@ -275,7 +275,7 @@ where
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        on_off::HandlerAdaptor(on_off),
                     ),
             ),
         ),

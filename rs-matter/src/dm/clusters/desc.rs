@@ -139,7 +139,7 @@ impl ClusterHandler for DescHandler<'_> {
         self.dataver.changed();
     }
 
-    fn device_type_list<P: TLVBuilderParent>(
+    async fn device_type_list<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<DeviceTypeStructArrayBuilder<P>, DeviceTypeStructBuilder<P>>,
@@ -172,7 +172,7 @@ impl ClusterHandler for DescHandler<'_> {
         }
     }
 
-    fn server_list<P: TLVBuilderParent>(
+    async fn server_list<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
@@ -198,7 +198,7 @@ impl ClusterHandler for DescHandler<'_> {
         }
     }
 
-    fn client_list<P: TLVBuilderParent>(
+    async fn client_list<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u32>, ToTLVBuilder<P, u32>>,
@@ -213,7 +213,7 @@ impl ClusterHandler for DescHandler<'_> {
         }
     }
 
-    fn parts_list<P: TLVBuilderParent>(
+    async fn parts_list<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<ToTLVArrayBuilder<P, u16>, ToTLVBuilder<P, u16>>,

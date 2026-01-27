@@ -58,7 +58,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         self.dataver.changed();
     }
 
-    fn group_key_map<P: TLVBuilderParent>(
+    async fn group_key_map<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<GroupKeyMapStructArrayBuilder<P>, GroupKeyMapStructBuilder<P>>,
@@ -70,7 +70,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         }
     }
 
-    fn group_table<P: TLVBuilderParent>(
+    async fn group_table<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
@@ -85,15 +85,15 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         }
     }
 
-    fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    async fn max_groups_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(1)
     }
 
-    fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    async fn max_group_keys_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(1)
     }
 
-    fn set_group_key_map(
+    async fn set_group_key_map(
         &self,
         _ctx: impl crate::dm::WriteContext,
         _value: ArrayAttributeWrite<
@@ -104,7 +104,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         Ok(())
     }
 
-    fn handle_key_set_write(
+    async fn handle_key_set_write(
         &self,
         _ctx: impl InvokeContext,
         _request: KeySetWriteRequest<'_>,
@@ -112,7 +112,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         Ok(())
     }
 
-    fn handle_key_set_read<P: TLVBuilderParent>(
+    async fn handle_key_set_read<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: KeySetReadRequest<'_>,
@@ -121,7 +121,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         Err(ErrorCode::NotFound.into())
     }
 
-    fn handle_key_set_remove(
+    async fn handle_key_set_remove(
         &self,
         _ctx: impl InvokeContext,
         _request: KeySetRemoveRequest<'_>,
@@ -129,7 +129,7 @@ impl ClusterHandler for GrpKeyMgmtHandler {
         Ok(())
     }
 
-    fn handle_key_set_read_all_indices<P: TLVBuilderParent>(
+    async fn handle_key_set_read_all_indices<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         response: KeySetReadAllIndicesResponseBuilder<P>,

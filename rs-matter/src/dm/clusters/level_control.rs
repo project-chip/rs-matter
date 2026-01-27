@@ -358,8 +358,8 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `Handler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 
     // Helper accessors for `Nullable` attributes.
@@ -1210,7 +1210,7 @@ impl<'a, H: LevelControlHooks, OH: OnOffHooks> LevelControlHandler<'a, H, OH> {
     }
 }
 
-impl<H: LevelControlHooks, OH: OnOffHooks> ClusterAsyncHandler for LevelControlHandler<'_, H, OH> {
+impl<H: LevelControlHooks, OH: OnOffHooks> ClusterHandler for LevelControlHandler<'_, H, OH> {
     const CLUSTER: Cluster<'static> = H::CLUSTER;
 
     // Runs an async task manager for the cluster handler.

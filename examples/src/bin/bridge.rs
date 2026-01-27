@@ -36,8 +36,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint,
-    EpClMatcher, InvokeContext, Node, ReadContext,
+    AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler, Endpoint, EpClMatcher,
+    InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::Error;
 use rs_matter::pairing::qr::QrTextType;
@@ -220,10 +220,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     // https://www.1home.io/docs/en/server/configure-devices#manage-rooms
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(
-                            desc::DescHandler::new_aggregator(Dataver::new_rand(matter.rand()))
-                                .adapt(),
-                        ),
+                        desc::DescHandler::new_aggregator(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     // The following chains are the handlers for the bridged devices corresponding to ep 2 and ep3.
                     //
@@ -236,27 +233,27 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     // the lamp, or to switch it on/off.
                     .chain(
                         EpClMatcher::new(Some(2), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(2), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off_ep2),
+                        on_off::HandlerAdaptor(on_off_ep2),
                     )
                     .chain(
                         EpClMatcher::new(Some(2), Some(BridgedHandler::CLUSTER.id)),
-                        Async(BridgedHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        BridgedHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off_ep3),
+                        on_off::HandlerAdaptor(on_off_ep3),
                     )
                     .chain(
                         EpClMatcher::new(Some(3), Some(BridgedHandler::CLUSTER.id)),
-                        Async(BridgedHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        BridgedHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     ),
             ),
         ),
@@ -292,7 +289,7 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         self.dataver.changed();
     }
 
-    fn reachable(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+    async fn reachable(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         // This is the only mandatory attribute.
         //
         // We always report that the bridged device is reachable,
@@ -301,7 +298,7 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         Ok(true)
     }
 
-    fn unique_id<P: TLVBuilderParent>(
+    async fn unique_id<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         _builder: Utf8StrBuilder<P>,
@@ -309,7 +306,7 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         todo!()
     }
 
-    fn handle_keep_active(
+    async fn handle_keep_active(
         &self,
         _ctx: impl InvokeContext,
         _request: KeepActiveRequest<'_>,

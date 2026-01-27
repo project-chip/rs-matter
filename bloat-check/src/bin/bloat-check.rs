@@ -197,7 +197,7 @@ type AppBtp<'a> =
     Btp<&'a BtpContext<CriticalSectionRawMutex>, CriticalSectionRawMutex, FakeGattPeripheral>;
 type AppTransport<'a> = ChainedNetwork<FakeUdp, &'a AppBtp<'a>, fn(&Address) -> bool>;
 type AppHandler<'a> = handler_chain_type!(
-    EpClMatcher => on_off::HandlerAsyncAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
+    EpClMatcher => on_off::HandlerAdaptor<on_off::OnOffHandler<'a, TestOnOffDeviceLogic, NoLevelControl>>,
     EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>
     | EmptyHandler
 );
@@ -639,7 +639,7 @@ where
                 )
                 .chain(
                     EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                    on_off::HandlerAsyncAdaptor(on_off),
+                    on_off::HandlerAdaptor(on_off),
                 ),
         ),
     )

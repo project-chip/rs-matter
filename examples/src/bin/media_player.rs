@@ -34,19 +34,19 @@ use log::info;
 
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
 //
-// User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
+// User needs to implement the `ClusterHandler` trait
 // so as to handle the requests from the controller.
 use rs_matter::dm::clusters::decl::content_launcher::{
-    self, ClusterAsyncHandler as _, LaunchContentRequest, LaunchURLRequest,
-    LauncherResponseBuilder, SupportedProtocolsBitmap,
+    self, ClusterHandler as _, LaunchContentRequest, LaunchURLRequest, LauncherResponseBuilder,
+    SupportedProtocolsBitmap,
 };
 
 use rs_matter::dm::clusters::decl::keypad_input::{
-    self, ClusterAsyncHandler as _, SendKeyRequest, SendKeyResponseBuilder,
+    self, ClusterHandler as _, SendKeyRequest, SendKeyResponseBuilder,
 };
 
 use rs_matter::dm::clusters::decl::media_playback::{
-    self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
+    self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterHandler as _,
     FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
     SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
@@ -61,8 +61,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver,
-    EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
+    ArrayAttributeRead, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler,
+    Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -196,7 +196,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
@@ -212,7 +212,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        on_off::HandlerAdaptor(on_off),
                     ),
             ),
         ),
@@ -235,8 +235,8 @@ impl MediaHandler {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> media_playback::HandlerAsyncAdaptor<Self> {
-        media_playback::HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> media_playback::HandlerAdaptor<Self> {
+        media_playback::HandlerAdaptor(self)
     }
 
     /// Update the state of the handler
@@ -251,7 +251,7 @@ impl MediaHandler {
     }
 }
 
-impl media_playback::ClusterAsyncHandler for MediaHandler {
+impl media_playback::ClusterHandler for MediaHandler {
     /// The metadata cluster definition corresponding to the handler
     const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
         .with_attrs(with!(required))
@@ -424,12 +424,12 @@ impl ContentHandler {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> content_launcher::HandlerAsyncAdaptor<Self> {
-        content_launcher::HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> content_launcher::HandlerAdaptor<Self> {
+        content_launcher::HandlerAdaptor(self)
     }
 }
 
-impl content_launcher::ClusterAsyncHandler for ContentHandler {
+impl content_launcher::ClusterHandler for ContentHandler {
     const CLUSTER: Cluster<'static> = content_launcher::FULL_CLUSTER
         .with_features(0b11)
         .with_attrs(
@@ -535,12 +535,12 @@ impl KeypadInputHandler {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> keypad_input::HandlerAsyncAdaptor<Self> {
-        keypad_input::HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> keypad_input::HandlerAdaptor<Self> {
+        keypad_input::HandlerAdaptor(self)
     }
 }
 
-impl keypad_input::ClusterAsyncHandler for KeypadInputHandler {
+impl keypad_input::ClusterHandler for KeypadInputHandler {
     const CLUSTER: Cluster<'static> = keypad_input::FULL_CLUSTER
         .with_attrs(with!(required))
         .with_cmds(with!(keypad_input::CommandId::SendKey));

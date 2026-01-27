@@ -26,8 +26,8 @@ use rs_matter::utils::storage::Vec;
 use strum::{EnumDiscriminants, FromRepr};
 
 use rs_matter::dm::{
-    Access, ArrayAttributeWrite, Attribute, Cluster, Command, Dataver, Handler, InvokeContext,
-    InvokeReply, NonBlockingHandler, Quality, ReadContext, ReadReply, Reply, WriteContext,
+    Access, ArrayAttributeWrite, AsyncHandler, Attribute, Cluster, Command, Dataver, InvokeContext,
+    InvokeReply, Quality, ReadContext, ReadReply, Reply, WriteContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::tlv::{TLVArray, TLVElement, TLVTag, TLVWrite};
@@ -292,18 +292,16 @@ impl EchoHandler {
     }
 }
 
-impl Handler for EchoHandler {
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
+impl AsyncHandler for EchoHandler {
+    async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
         EchoHandler::read(self, ctx, reply)
     }
 
-    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
+    async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
         EchoHandler::write(self, ctx)
     }
 
-    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
+    async fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
         EchoHandler::invoke(self, ctx, reply)
     }
 }
-
-impl NonBlockingHandler for EchoHandler {}

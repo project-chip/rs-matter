@@ -28,8 +28,8 @@ use super::IdlGenerateContext;
 
 /// Return a token stream defining the handler trait for the provided IDL cluster.
 ///
-/// Unlike the `rs-matter` generic `Handler` / `AsyncHandler` pair of traits, the trait
-/// generated here is specific to the conrete provided IDL cluster and is strongly-typed.
+/// Unlike the `rs-matter` generic `AsyncHandler` pair of traits, the trait
+/// generated here is specific to the concrete provided IDL cluster and is strongly-typed.
 ///
 /// Thus, it contains methods corresponding to all the attributes and commands of the
 /// IDL cluster.
@@ -39,13 +39,11 @@ use super::IdlGenerateContext;
 /// in the IDL cluster, thus providing a strongly-typed interface.
 ///
 /// ## Arguments
-/// - `asynch`: If true, the generated handler will be async.
 /// - `delegate`: If true, rather than generating a handler trait, the function will generate
 ///   an inherent implementation of the trait over `&T`, where `T` is assumed to implement the trait.
 /// - `cluster`: The IDL cluster for which the handler is generated.
 /// - `context`: The context containing the information needed to generate the handler.
 pub fn handler(
-    asynch: bool,
     delegate: bool,
     cluster: &Cluster,
     globals: &Entities,
@@ -53,40 +51,33 @@ pub fn handler(
 ) -> TokenStream {
     let krate = context.rs_matter_crate.clone();
 
-    let handler_name = ident(&format!(
-        "Cluster{}Handler",
-        if asynch { "Async" } else { "" }
-    ));
+    let handler_name = ident("ClusterHandler");
 
     let entities = &EntityContext::new(Some(&cluster.entities), globals);
     let handler_attribute_methods = cluster
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
-        .map(|attr| handler_attribute(attr, asynch, delegate, entities, &krate));
+        .map(|attr| handler_attribute(attr, delegate, entities, &krate));
 
     let handler_attribute_write_methods = cluster
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .filter(|attr| !attr.is_read_only)
-        .map(|attr| handler_attribute_write(attr, asynch, delegate, entities, &krate));
+        .map(|attr| handler_attribute_write(attr, delegate, entities, &krate));
 
     let handler_command_methods = cluster
         .commands
         .iter()
-        .map(|cmd| handler_command(cmd, asynch, delegate, entities, &krate));
+        .map(|cmd| handler_command(cmd, delegate, entities, &krate));
 
     if delegate {
-        let run = if asynch {
-            quote!(
-                fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    (**self).run(ctx)
-                }
-            )
-        } else {
-            quote!()
-        };
+        let run = quote!(
+            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                (**self).run(ctx)
+            }
+        );
 
         quote!(
             impl<T> #handler_name for &T
@@ -108,15 +99,11 @@ pub fn handler(
             }
         )
     } else {
-        let run = if asynch {
-            quote!(
-                fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                    core::future::pending::<Result::<(), #krate::error::Error>>()
-                }
-            )
-        } else {
-            quote!()
-        };
+        let run = quote!(
+            fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                core::future::pending::<Result::<(), #krate::error::Error>>()
+            }
+        );
 
         quote!(
             #[doc = "The handler trait for the cluster."]
@@ -142,18 +129,16 @@ pub fn handler(
 
 /// Return a token stream defining an adaptor struct that can adapt a type implementing the
 /// cluster-specific handler trait as defined by the `handler` function to the
-/// generic `Handler` / `AsyncHandler` traits that `rs-matter` understands.
+/// generic `AsyncHandler` traits that `rs-matter` understands.
 ///
 /// Without this adaptor, implementations of the cluster-specific handler trait would not be
 /// usable with `rs-matter`.
 ///
 /// # Arguments
-/// - `asynch`: If true, the adaptor implements to rs-matter's `AsyncHandler` trait, rather than
 ///   to the `Handler` trait.
 /// - `cluster`: The IDL cluster for which the adaptor is generated.
 /// - `context`: The context containing the information needed to generate the adaptor.
 pub fn handler_adaptor(
-    asynch: bool,
     cluster: &Cluster,
     globals: &Entities,
     context: &IdlGenerateContext,
@@ -163,24 +148,18 @@ pub fn handler_adaptor(
     let cluster_name_str = Literal::string(&cluster.id);
     let cluster_code = Literal::u32_suffixed(cluster.code as _);
 
-    let handler_name = ident(&format!(
-        "Cluster{}Handler",
-        if asynch { "Async" } else { "" }
-    ));
+    let handler_name = ident("ClusterHandler");
 
-    let handler_adaptor_name = ident(&format!(
-        "Handler{}Adaptor",
-        if asynch { "Async" } else { "" }
-    ));
+    let handler_adaptor_name = ident("HandlerAdaptor");
 
-    let generic_handler_name = ident(&format!("{}Handler", if asynch { "Async" } else { "" }));
+    let generic_handler_name = ident("AsyncHandler");
 
     let entities = &EntityContext::new(Some(&cluster.entities), globals);
     let handler_adaptor_attribute_match = cluster
         .attributes
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
-        .map(|attr| handler_adaptor_attribute_match(attr, asynch, entities, &krate))
+        .map(|attr| handler_adaptor_attribute_match(attr, entities, &krate))
         .collect::<Vec<_>>();
 
     let handler_adaptor_attribute_write_match = cluster
@@ -188,12 +167,12 @@ pub fn handler_adaptor(
         .iter()
         .filter(|attr| !GLOBAL_ATTR.contains(&attr.field.field.code))
         .filter(|attr| !attr.is_read_only)
-        .map(|attr| handler_adaptor_attribute_write_match(attr, asynch, entities, &krate));
+        .map(|attr| handler_adaptor_attribute_write_match(attr, entities, &krate));
 
     let handler_adaptor_command_match = cluster
         .commands
         .iter()
-        .map(|cmd| handler_adaptor_command_match(cmd, asynch, entities, &krate))
+        .map(|cmd| handler_adaptor_command_match(cmd, entities, &krate))
         .collect::<Vec<_>>();
 
     let read_stream = if !handler_adaptor_attribute_match.is_empty() {
@@ -272,17 +251,11 @@ pub fn handler_adaptor(
         )
     };
 
-    let run = if asynch {
-        quote!(
-            fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
-                self.0.run(ctx)
-            }
-        )
-    } else {
-        quote!()
-    };
-
-    let pasync = if asynch { quote!(async) } else { quote!() };
+    let run = quote!(
+        fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+            self.0.run(ctx)
+        }
+    );
 
     let stream = quote!(
         #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
@@ -295,7 +268,7 @@ pub fn handler_adaptor(
             T: #handler_name,
         {
             #[allow(unreachable_code)]
-            #pasync fn read(
+            async fn read(
                 &self,
                 ctx: impl #krate::dm::ReadContext,
                 reply: impl #krate::dm::ReadReply,
@@ -312,7 +285,7 @@ pub fn handler_adaptor(
             }
 
             #[allow(unreachable_code)]
-            #pasync fn write(
+            async fn write(
                 &self,
                 ctx: impl #krate::dm::WriteContext,
             ) -> Result<(), #krate::error::Error> {
@@ -330,7 +303,7 @@ pub fn handler_adaptor(
             }
 
             #[allow(unreachable_code)]
-            #pasync fn invoke(
+            async fn invoke(
                 &self,
                 ctx: impl #krate::dm::InvokeContext,
                 reply: impl #krate::dm::InvokeReply,
@@ -369,32 +342,19 @@ pub fn handler_adaptor(
         }
     );
 
-    if asynch {
-        stream
-    } else {
-        quote!(
-            #stream
-
-            impl<T> #krate::dm::NonBlockingHandler for #handler_adaptor_name<T>
-            where
-                T: #handler_name,
-            {}
-        )
-    }
+    stream
 }
 
 /// Return a token stream defining the handler trait method for reading the provided IDL attribute.
 ///
 /// # Arguments
 /// - `attr`: The IDL attribute for which the handler method is generated.
-/// - `asynch`: If true, the generated handler method signature will be async.
 /// - `delegate`: If true, the generated handler method will have an implementation delegating
 ///   to a `T` type (for inherent impls)
 /// - `cluster`: The IDL cluster for which the handler method is generated.
 /// - `krate`: The crate name to use for the generated code.
 fn handler_attribute(
     attr: &Attribute,
-    asynch: bool,
     delegate: bool,
     entities: &EntityContext,
     krate: &Ident,
@@ -402,11 +362,6 @@ fn handler_attribute(
     let attr_name = ident(&idl_field_name_to_rs_name(&attr.field.field.id));
 
     let parent = quote!(P);
-    let (pasync, sawait) = if asynch {
-        (quote!(async), quote!(.await))
-    } else {
-        (quote!(), quote!())
-    };
 
     let (mut attr_type, builder) = field_type_builder(
         &attr.field.field.data_type,
@@ -439,36 +394,36 @@ fn handler_attribute(
 
         if !delegate && attr.field.is_optional {
             quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
+                async fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
                     Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
         } else {
-            let stream = quote!(
-                #pasync fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>
-            );
-
             if delegate {
-                quote!(#stream { T::#attr_name(self, ctx, builder)#sawait })
+                quote!(
+                    fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
+                        T::#attr_name(self, ctx, builder)
+                    }
+                )
             } else {
-                quote!(#stream;)
+                quote!(async fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error>;)
             }
         }
     } else if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
+            async fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
-        let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>
-        );
-
         if delegate {
-            quote!(#stream { T::#attr_name(self, ctx)#sawait })
+            quote!(
+                fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
+                    T::#attr_name(self, ctx)
+                }
+            )
         } else {
-            quote!(#stream;)
+            quote!(async fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error>;)
         }
     }
 }
@@ -477,14 +432,12 @@ fn handler_attribute(
 ///
 /// # Arguments
 /// - `attr`: The IDL attribute for which the handler method is generated.
-/// - `asynch`: If true, the generated handler method signature will be async.
 /// - `delegate`: If true, the generated handler method will have an implementation delegating
 ///   to a `T` type (for inherent impls)
 /// - `cluster`: The IDL cluster for which the handler method is generated.
 /// - `krate`: The crate name to use for the generated code.
 fn handler_attribute_write(
     attr: &Attribute,
-    asynch: bool,
     delegate: bool,
     entities: &EntityContext,
     krate: &Ident,
@@ -493,12 +446,6 @@ fn handler_attribute_write(
         "set_{}",
         &idl_field_name_to_rs_name(&attr.field.field.id)
     ));
-
-    let (pasync, sawait) = if asynch {
-        (quote!(async), quote!(.await))
-    } else {
-        (quote!(), quote!())
-    };
 
     let mut attr_type = field_type(
         &attr.field.field.data_type,
@@ -526,17 +473,17 @@ fn handler_attribute_write(
 
     if !delegate && attr.field.is_optional {
         quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
+            async fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else {
         let stream = quote!(
-            #pasync fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
+            async fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
         );
 
         if delegate {
-            quote!(#stream { T::#attr_name(self, ctx, value)#sawait })
+            quote!(#stream { T::#attr_name(self, ctx, value).await })
         } else {
             quote!(#stream;)
         }
@@ -547,25 +494,17 @@ fn handler_attribute_write(
 ///
 /// # Arguments
 /// - `cmd`: The IDL command for which the handler method is generated.
-/// - `asynch`: If true, the generated handler method signature will be async.
 /// - `delegate`: If true, the generated handler method will have an implementation delegating
 ///   to a `T` type (for inherent impls)
 /// - `cluster`: The IDL cluster for which the handler method is generated.
 /// - `krate`: The crate name to use for the generated code.
 fn handler_command(
     cmd: &Command,
-    asynch: bool,
     delegate: bool,
     entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
     let cmd_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
-
-    let (pasync, sawait) = if asynch {
-        (quote!(async), quote!(.await))
-    } else {
-        (quote!(), quote!())
-    };
 
     let field_req = cmd.input.as_ref().map(|id| {
         field_type(
@@ -603,7 +542,7 @@ fn handler_command(
         if let Some((field_resp, field_resp_builder)) = field_resp {
             if field_resp_builder {
                 let stream = quote!(
-                    #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                    async fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
@@ -612,13 +551,13 @@ fn handler_command(
                 );
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, request, response)#sawait })
+                    quote!(#stream { T::#cmd_name(self, ctx, request, response).await })
                 } else {
                     quote!(#stream;)
                 }
             } else {
                 let stream = quote!(
-                    #pasync fn #cmd_name(
+                    async fn #cmd_name(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
@@ -626,14 +565,14 @@ fn handler_command(
                 );
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
+                    quote!(#stream { T::#cmd_name(self, ctx, request).await })
                 } else {
                     quote!(#stream;)
                 }
             }
         } else {
             let stream = quote!(
-                #pasync fn #cmd_name(
+                async fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
                     request: #field_req,
@@ -641,7 +580,7 @@ fn handler_command(
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx, request)#sawait })
+                quote!(#stream { T::#cmd_name(self, ctx, request).await })
             } else {
                 quote!(#stream;)
             }
@@ -649,7 +588,7 @@ fn handler_command(
     } else if let Some((field_resp, field_resp_builder)) = field_resp {
         if field_resp_builder {
             let stream = quote!(
-                #pasync fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                async fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
                     response: #field_resp,
@@ -657,34 +596,34 @@ fn handler_command(
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx, response)#sawait })
+                quote!(#stream { T::#cmd_name(self, ctx, response).await })
             } else {
                 quote!(#stream;)
             }
         } else {
             let stream = quote!(
-                #pasync fn #cmd_name(
+                async fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
                 ) -> Result<#field_resp, #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx)#sawait })
+                quote!(#stream { T::#cmd_name(self, ctx).await })
             } else {
                 quote!(#stream;)
             }
         }
     } else {
         let stream = quote!(
-            #pasync fn #cmd_name(
+            async fn #cmd_name(
                 &self,
                 ctx: impl #krate::dm::InvokeContext,
             ) -> Result<(), #krate::error::Error>
         );
 
         if delegate {
-            quote!(#stream { T::#cmd_name(self, ctx)#sawait })
+            quote!(#stream { T::#cmd_name(self, ctx).await })
         } else {
             quote!(#stream;)
         }
@@ -696,12 +635,10 @@ fn handler_command(
 ///
 /// # Arguments
 /// - `attr`: The IDL attribute for which the match clause is generated.
-/// - `asynch`: If true, the generated match clause will assume the cluster trait is async and will generate async code.
 /// - `cluster`: The IDL cluster for which the match clause is generated.
 /// - `krate`: The crate name to use for the generated code.
 fn handler_adaptor_attribute_match(
     attr: &Attribute,
-    asynch: bool,
     entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
@@ -713,7 +650,6 @@ fn handler_adaptor_attribute_match(
     let attr_method_name = ident(&idl_field_name_to_rs_name(&attr.field.field.id));
 
     let parent = quote!(P);
-    let sawait = if asynch { quote!(.await) } else { quote!() };
 
     let (_, builder) = field_type_builder(
         &attr.field.field.data_type,
@@ -762,7 +698,7 @@ fn handler_adaptor_attribute_match(
                             #krate::tlv::TLVWriteParent::new(#attr_debug_id, tw),
                             tag,
                         )?,
-                    )#sawait;
+                    ).await;
 
                     #attr_read_debug_build_end
 
@@ -782,7 +718,7 @@ fn handler_adaptor_attribute_match(
                     let attr_read_result = self.0.#attr_method_name(&ctx, #krate::tlv::TLVBuilder::new(
                         #krate::tlv::TLVWriteParent::new(#attr_debug_id, tw),
                         tag,
-                    )?)#sawait;
+                    )?).await;
 
                     #attr_read_debug_build_end
 
@@ -795,7 +731,7 @@ fn handler_adaptor_attribute_match(
     } else {
         quote!(
             AttributeId::#attr_name => {
-                let attr_read_result = self.0.#attr_method_name(&ctx)#sawait;
+                let attr_read_result = self.0.#attr_method_name(&ctx).await;
 
                 #attr_read_debug
 
@@ -810,11 +746,9 @@ fn handler_adaptor_attribute_match(
 ///
 /// # Arguments
 /// - `attr`: The IDL attribute for which the match clause is generated.
-/// - `asynch`: If true, the generated match clause will assume the cluster trait is async and will generate async code.
 /// - `krate`: The crate name to use for the generated code.
 fn handler_adaptor_attribute_write_match(
     attr: &Attribute,
-    asynch: bool,
     entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
@@ -836,8 +770,6 @@ fn handler_adaptor_attribute_write_match(
         krate,
     );
 
-    let sawait = if asynch { quote!(.await) } else { quote!() };
-
     let attr_write_debug = quote!(
         #[cfg(feature = "defmt")]
         #krate::reexport::defmt::debug!("{:?}({:?}) -> {:?}", #attr_debug_id, attr_data, attr_write_result);
@@ -850,7 +782,7 @@ fn handler_adaptor_attribute_write_match(
             AttributeId::#attr_name => {
                 let attr_data = #krate::dm::ArrayAttributeWrite::new(ctx.attr().list_index.clone(), ctx.data())?;
 
-                let attr_write_result = self.0.#attr_method_name(&ctx, attr_data.clone())#sawait;
+                let attr_write_result = self.0.#attr_method_name(&ctx, attr_data.clone()).await;
 
                 #attr_write_debug
 
@@ -862,7 +794,7 @@ fn handler_adaptor_attribute_write_match(
             AttributeId::#attr_name => {
                 let attr_data: #attr_type = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                let attr_write_result = self.0.#attr_method_name(&ctx, attr_data.clone())#sawait;
+                let attr_write_result = self.0.#attr_method_name(&ctx, attr_data.clone()).await;
 
                 #attr_write_debug
 
@@ -877,12 +809,10 @@ fn handler_adaptor_attribute_write_match(
 ///
 /// # Arguments
 /// - `cmd`: The IDL command for which the match clause is generated.
-/// - `asynch`: If true, the generated match clause will assume the cluster trait is async and will generate async code.
 /// - `cluster`: The IDL cluster for which the match clause is generated.
 /// - `krate`: The crate name to use for the generated code.
 fn handler_adaptor_command_match(
     cmd: &Command,
-    asynch: bool,
     entities: &EntityContext,
     krate: &Ident,
 ) -> TokenStream {
@@ -891,8 +821,6 @@ fn handler_adaptor_command_match(
         quote!(MetadataDebug((ctx.cmd().endpoint_id, self, MetadataDebug(CommandId::#cmd_name))));
 
     let cmd_method_name = ident(&format!("handle_{}", &idl_field_name_to_rs_name(&cmd.id)));
-
-    let sawait = if asynch { quote!(.await) } else { quote!() };
 
     let cmd_invoke_debug_build_start = quote!(
         #[cfg(feature = "defmt")]
@@ -998,7 +926,7 @@ fn handler_adaptor_command_match(
                                 #krate::tlv::TLVWriteParent::new(#cmd_debug_id, tw),
                                 tag,
                             )?
-                        )#sawait;
+                        ).await;
 
                         #cmd_invoke_debug_build_end
 
@@ -1014,7 +942,7 @@ fn handler_adaptor_command_match(
 
                         let writer = reply.with_command(#field_resp_cmd_code)?;
 
-                        let cmd_invoke_result = self.0.#cmd_method_name(&ctx, cmd_data.clone())#sawait;
+                        let cmd_invoke_result = self.0.#cmd_method_name(&ctx, cmd_data.clone()).await;
 
                         #cmd_invoke_debug
 
@@ -1027,7 +955,7 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     let cmd_data: #field_req = #krate::tlv::FromTLV::from_tlv(ctx.data())?;
 
-                    let cmd_invoke_result = self.0.#cmd_method_name(&ctx, cmd_data.clone())#sawait;
+                    let cmd_invoke_result = self.0.#cmd_method_name(&ctx, cmd_data.clone()).await;
 
                     #cmd_invoke_debug
 
@@ -1051,7 +979,7 @@ fn handler_adaptor_command_match(
                             #krate::tlv::TLVWriteParent::new(#cmd_debug_id, tw),
                             tag,
                         )?,
-                    )#sawait;
+                    ).await;
 
                     #cmd_invoke_debug_build_end
 
@@ -1065,7 +993,7 @@ fn handler_adaptor_command_match(
                 CommandId::#cmd_name => {
                     let writer = reply.with_command(#field_resp_cmd_code)?;
 
-                    let cmd_invoke_result = self.0.#cmd_method_name(&ctx)#sawait;
+                    let cmd_invoke_result = self.0.#cmd_method_name(&ctx).await;
 
                     #cmd_invoke_debug_noarg
 
@@ -1076,7 +1004,7 @@ fn handler_adaptor_command_match(
     } else {
         quote!(
             CommandId::#cmd_name => {
-                let cmd_invoke_result = self.0.#cmd_method_name(&ctx)#sawait;
+                let cmd_invoke_result = self.0.#cmd_method_name(&ctx).await;
 
                 #cmd_invoke_debug_noarg
 
@@ -1180,7 +1108,7 @@ mod tests {
         // panic!("====\n{}\n====", &handler(false, false, cluster, &context));
 
         assert_tokenstreams_eq!(
-            &handler(false, false, cluster, &idl.globals, &context),
+            &handler(false, cluster, &idl.globals, &context),
             &quote!(
                 #[doc = "The handler trait for the cluster."]
                 pub trait ClusterHandler {
@@ -1188,29 +1116,36 @@ mod tests {
                     const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
                     fn dataver(&self) -> u32;
                     fn dataver_changed(&self);
-                    fn on_off(
+                    fn run(
+                        &self,
+                        _ctx: impl rs_matter_crate::dm::HandlerContext,
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        core::future::pending::<Result<(), rs_matter_crate::error::Error>>()
+                    }
+                    async fn on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error>;
-                    fn global_scene_control(
+                    async fn global_scene_control(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn on_time(
+                    async fn on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn off_wait_time(
+                    async fn off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn start_up_on_off(
+                    async fn start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<
@@ -1219,49 +1154,49 @@ mod tests {
                     > {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn set_on_time(
+                    async fn set_on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn set_off_wait_time(
+                    async fn set_off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn set_start_up_on_off(
+                    async fn set_start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
-                    fn handle_off(
+                    async fn handle_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
-                    fn handle_on(
+                    async fn handle_on(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
-                    fn handle_toggle(
+                    async fn handle_toggle(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
-                    fn handle_off_with_effect(
+                    async fn handle_off_with_effect(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OffWithEffectRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error>;
-                    fn handle_on_with_recall_global_scene(
+                    async fn handle_on_with_recall_global_scene(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error>;
-                    fn handle_on_with_timed_off(
+                    async fn handle_on_with_timed_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OnWithTimedOffRequest<'_>,
@@ -1270,10 +1205,10 @@ mod tests {
             )
         );
 
-        // panic!("====\n{}\n====", &handler(false, true, cluster, &context));
+        // panic!("====\n{}\n====", &handler(true, cluster, &idl.globals, &context));
 
         assert_tokenstreams_eq!(
-            &handler(false, true, cluster, &idl.globals, &context),
+            &handler(true, cluster, &idl.globals, &context),
             &quote!(
                 impl<T> ClusterHandler for &T
                 where
@@ -1286,97 +1221,110 @@ mod tests {
                     fn dataver_changed(&self) {
                         T::dataver_changed(self)
                     }
+                    fn run(
+                        &self,
+                        ctx: impl rs_matter_crate::dm::HandlerContext,
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        (**self).run(ctx)
+                    }
                     fn on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
-                    ) -> Result<bool, rs_matter_crate::error::Error> {
+                    ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+                    {
                         T::on_off(self, ctx)
                     }
                     fn global_scene_control(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
-                    ) -> Result<bool, rs_matter_crate::error::Error> {
+                    ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+                    {
                         T::global_scene_control(self, ctx)
                     }
                     fn on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
-                    ) -> Result<u16, rs_matter_crate::error::Error> {
+                    ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
+                    {
                         T::on_time(self, ctx)
                     }
                     fn off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
-                    ) -> Result<u16, rs_matter_crate::error::Error> {
+                    ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
+                    {
                         T::off_wait_time(self, ctx)
                     }
                     fn start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
-                    ) -> Result<
-                        rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
-                        rs_matter_crate::error::Error,
+                    ) -> impl core::future::Future<
+                        Output = Result<
+                            rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
+                            rs_matter_crate::error::Error,
+                        >,
                     > {
                         T::start_up_on_off(self, ctx)
                     }
-                    fn set_on_time(
+                    async fn set_on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::set_on_time(self, ctx, value)
+                        T::set_on_time(self, ctx, value).await
                     }
-                    fn set_off_wait_time(
+                    async fn set_off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::set_off_wait_time(self, ctx, value)
+                        T::set_off_wait_time(self, ctx, value).await
                     }
-                    fn set_start_up_on_off(
+                    async fn set_start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::set_start_up_on_off(self, ctx, value)
+                        T::set_start_up_on_off(self, ctx, value).await
                     }
-                    fn handle_off(
+                    async fn handle_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_off(self, ctx)
+                        T::handle_off(self, ctx).await
                     }
-                    fn handle_on(
+                    async fn handle_on(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_on(self, ctx)
+                        T::handle_on(self, ctx).await
                     }
-                    fn handle_toggle(
+                    async fn handle_toggle(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_toggle(self, ctx)
+                        T::handle_toggle(self, ctx).await
                     }
-                    fn handle_off_with_effect(
+                    async fn handle_off_with_effect(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OffWithEffectRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_off_with_effect(self, ctx, request)
+                        T::handle_off_with_effect(self, ctx, request).await
                     }
-                    fn handle_on_with_recall_global_scene(
+                    async fn handle_on_with_recall_global_scene(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_on_with_recall_global_scene(self, ctx)
+                        T::handle_on_with_recall_global_scene(self, ctx).await
                     }
-                    fn handle_on_with_timed_off(
+                    async fn handle_on_with_timed_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OnWithTimedOffRequest<'_>,
                     ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_on_with_timed_off(self, ctx, request)
+                        T::handle_on_with_timed_off(self, ctx, request).await
                     }
                 }
             )
@@ -1390,21 +1338,21 @@ mod tests {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &handler_adaptor(false, cluster, &context));
+        // panic!("====\n{}\n====", &handler_adaptor( cluster,  &idl.globals, &context));
 
         assert_tokenstreams_eq!(
-            &handler_adaptor(false, cluster, &idl.globals, &context),
+            &handler_adaptor(cluster, &idl.globals, &context),
             &quote!(
                 #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
                 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
                 #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
                 pub struct HandlerAdaptor<T>(pub T);
-                impl<T> rs_matter_crate::dm::Handler for HandlerAdaptor<T>
+                impl<T> rs_matter_crate::dm::AsyncHandler for HandlerAdaptor<T>
                 where
                     T: ClusterHandler,
                 {
                     #[allow(unreachable_code)]
-                    fn read(
+                    async fn read(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                         reply: impl rs_matter_crate::dm::ReadReply,
@@ -1415,7 +1363,7 @@ mod tests {
                             } else {
                                 match AttributeId::try_from(ctx.attr().attr_id)? {
                                     AttributeId::OnOff => {
-                                        let attr_read_result = self.0.on_off(&ctx);
+                                        let attr_read_result = self.0.on_off(&ctx).await;
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1439,7 +1387,8 @@ mod tests {
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::GlobalSceneControl => {
-                                        let attr_read_result = self.0.global_scene_control(&ctx);
+                                        let attr_read_result =
+                                            self.0.global_scene_control(&ctx).await;
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1469,7 +1418,7 @@ mod tests {
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::OnTime => {
-                                        let attr_read_result = self.0.on_time(&ctx);
+                                        let attr_read_result = self.0.on_time(&ctx).await;
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1493,7 +1442,7 @@ mod tests {
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::OffWaitTime => {
-                                        let attr_read_result = self.0.off_wait_time(&ctx);
+                                        let attr_read_result = self.0.off_wait_time(&ctx).await;
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1517,7 +1466,7 @@ mod tests {
                                         rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                                     }
                                     AttributeId::StartUpOnOff => {
-                                        let attr_read_result = self.0.start_up_on_off(&ctx);
+                                        let attr_read_result = self.0.start_up_on_off(&ctx).await;
                                         #[cfg(feature = "defmt")]
                                         rs_matter_crate::reexport::defmt::debug!(
                                             "{:?} -> {:?}",
@@ -1562,7 +1511,7 @@ mod tests {
                         }
                     }
                     #[allow(unreachable_code)]
-                    fn write(
+                    async fn write(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                     ) -> Result<(), rs_matter_crate::error::Error> {
@@ -1574,7 +1523,8 @@ mod tests {
                             AttributeId::OnTime => {
                                 let attr_data: u16 =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                                let attr_write_result = self.0.set_on_time(&ctx, attr_data.clone());
+                                let attr_write_result =
+                                    self.0.set_on_time(&ctx, attr_data.clone()).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1603,7 +1553,7 @@ mod tests {
                                 let attr_data: u16 =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result =
-                                    self.0.set_off_wait_time(&ctx, attr_data.clone());
+                                    self.0.set_off_wait_time(&ctx, attr_data.clone()).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1632,7 +1582,7 @@ mod tests {
                                 let attr_data: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum> =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let attr_write_result =
-                                    self.0.set_start_up_on_off(&ctx, attr_data.clone());
+                                    self.0.set_start_up_on_off(&ctx, attr_data.clone()).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1677,14 +1627,14 @@ mod tests {
                         Ok(())
                     }
                     #[allow(unreachable_code)]
-                    fn invoke(
+                    async fn invoke(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         reply: impl rs_matter_crate::dm::InvokeReply,
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         match CommandId::try_from(ctx.cmd().cmd_id)? {
                             CommandId::Off => {
-                                let cmd_invoke_result = self.0.handle_off(&ctx);
+                                let cmd_invoke_result = self.0.handle_off(&ctx).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1708,7 +1658,7 @@ mod tests {
                                 cmd_invoke_result?;
                             }
                             CommandId::On => {
-                                let cmd_invoke_result = self.0.handle_on(&ctx);
+                                let cmd_invoke_result = self.0.handle_on(&ctx).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1732,7 +1682,7 @@ mod tests {
                                 cmd_invoke_result?;
                             }
                             CommandId::Toggle => {
-                                let cmd_invoke_result = self.0.handle_toggle(&ctx);
+                                let cmd_invoke_result = self.0.handle_toggle(&ctx).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1759,7 +1709,7 @@ mod tests {
                                 let cmd_data: OffWithEffectRequest<'_> =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
                                 let cmd_invoke_result =
-                                    self.0.handle_off_with_effect(&ctx, cmd_data.clone());
+                                    self.0.handle_off_with_effect(&ctx, cmd_data.clone()).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1786,7 +1736,7 @@ mod tests {
                             }
                             CommandId::OnWithRecallGlobalScene => {
                                 let cmd_invoke_result =
-                                    self.0.handle_on_with_recall_global_scene(&ctx);
+                                    self.0.handle_on_with_recall_global_scene(&ctx).await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?} -> {:?}",
@@ -1812,8 +1762,10 @@ mod tests {
                             CommandId::OnWithTimedOff => {
                                 let cmd_data: OnWithTimedOffRequest<'_> =
                                     rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                                let cmd_invoke_result =
-                                    self.0.handle_on_with_timed_off(&ctx, cmd_data.clone());
+                                let cmd_invoke_result = self
+                                    .0
+                                    .handle_on_with_timed_off(&ctx, cmd_data.clone())
+                                    .await;
                                 #[cfg(feature = "defmt")]
                                 rs_matter_crate::reexport::defmt::debug!(
                                     "{:?}({:?}) -> {:?}",
@@ -1857,6 +1809,13 @@ mod tests {
                         self.0.dataver_changed();
                         Ok(())
                     }
+                    fn run(
+                        &self,
+                        ctx: impl rs_matter_crate::dm::HandlerContext,
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        self.0.run(ctx)
+                    }
                 }
                 impl<T, Q> core::fmt::Debug for MetadataDebug<(u16, &HandlerAdaptor<T>, Q)>
                 where
@@ -1890,7 +1849,6 @@ mod tests {
                         )
                     }
                 }
-                impl<T> rs_matter_crate::dm::NonBlockingHandler for HandlerAdaptor<T> where T: ClusterHandler {}
             )
         );
     }
