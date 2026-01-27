@@ -94,6 +94,11 @@ impl super::Crypto for OpenSslCrypto {
     where
         Self: 'a;
 
+    type Secp256r1SigningSecretKey<'a>
+        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
+    where
+        Self: 'a;
+
     type UInt384<'a>
         = BigNum
     where
@@ -148,6 +153,12 @@ impl super::Crypto for OpenSslCrypto {
         key: &super::CanonSecp256r1SecretKey,
     ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
         self.secp256r1_scalar(key)
+    }
+
+    fn secp256r1_secret_key_signing_singleton(
+        &self,
+    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+        todo!()
     }
 
     fn uint384(&self, uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {
@@ -526,7 +537,7 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::Scalar<'a, LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize> super::CurveScalar<'a, LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
     fn mul(&self, other: &Self) -> Self {
@@ -541,14 +552,8 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::Scalar<'a, LEN>
     }
 }
 
-impl<
-        'a,
-        const LEN: usize,
-        const POINT_LEN: usize,
-        const SIGNATURE_LEN: usize,
-        const SHARED_SECRET_LEN: usize,
-    > super::SecretKey<'a, LEN, POINT_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
-    for ECScalar<'a, LEN, POINT_LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
+    super::SigningSecretKey<'a, POINT_LEN, SIGNATURE_LEN> for ECScalar<'a, LEN, POINT_LEN>
 {
     type PublicKey<'s>
         = ECPoint<'s, POINT_LEN, LEN>
@@ -600,6 +605,32 @@ impl<
         pub_key
     }
 
+    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) {
+        // First get the SHA256 of the message
+        let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
+        hasher.update(data).unwrap();
+        let digest = hasher.finish().unwrap();
+
+        let our_ec_key = self.ec_key();
+
+        let sig = EcdsaSig::sign(&digest, &our_ec_key).unwrap();
+
+        signature[..super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2]
+            .copy_from_slice(sig.r().to_vec().as_slice());
+        signature[super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2..]
+            .copy_from_slice(sig.s().to_vec().as_slice());
+    }
+}
+
+impl<
+        'a,
+        const LEN: usize,
+        const POINT_LEN: usize,
+        const SIGNATURE_LEN: usize,
+        const SHARED_SECRET_LEN: usize,
+    > super::SecretKey<'a, LEN, POINT_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
+    for ECScalar<'a, LEN, POINT_LEN>
+{
     fn canon_into(&self, key: &mut [u8; LEN]) {
         self.write(key);
     }
@@ -616,22 +647,6 @@ impl<
 
         deriver.set_peer(&peer_pub_key).unwrap();
         deriver.derive(shared_secret).unwrap();
-    }
-
-    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) {
-        // First get the SHA256 of the message
-        let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
-        hasher.update(data).unwrap();
-        let digest = hasher.finish().unwrap();
-
-        let our_ec_key = self.ec_key();
-
-        let sig = EcdsaSig::sign(&digest, &our_ec_key).unwrap();
-
-        signature[..super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2]
-            .copy_from_slice(sig.r().to_vec().as_slice());
-        signature[super::SECP256R1_ECDH_SHARED_SECRET_LEN / 2..]
-            .copy_from_slice(sig.s().to_vec().as_slice());
     }
 }
 

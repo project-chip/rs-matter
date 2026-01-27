@@ -22,7 +22,7 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use crate::cert::CertRef;
-use crate::crypto::{CanonSecp256r1Signature, Crypto, SecretKey};
+use crate::crypto::{CanonSecp256r1Signature, Crypto, SigningSecretKey};
 use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::dm::{ArrayAttributeRead, Cluster, Dataver, InvokeContext, ReadContext};
 use crate::error::{Error, ErrorCode};

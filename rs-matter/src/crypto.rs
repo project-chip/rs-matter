@@ -50,7 +50,9 @@ pub const HMAC_SHA256_HASH_LEN: usize = SHA256_HASH_LEN;
 
 pub const SECP256R1_CANON_SCALAR_LEN: usize = 32;
 pub const SECP256R1_CANON_POINT_LEN: usize = 65;
-pub const SECP256R1_CANON_SECRET_KEY_LEN: usize = 32;
+
+pub const SECP256R1_CANON_PUBLIC_KEY_LEN: usize = SECP256R1_CANON_POINT_LEN;
+pub const SECP256R1_CANON_SECRET_KEY_LEN: usize = SECP256R1_CANON_SCALAR_LEN;
 pub const SECP256R1_SIGNATURE_LEN: usize = 64;
 pub const SECP256R1_ECDH_SHARED_SECRET_LEN: usize = 32;
 
@@ -147,6 +149,14 @@ pub trait Crypto {
     type Secp256r1PublicKey<'a>: PublicKey<'a, SECP256R1_CANON_POINT_LEN, SECP256R1_SIGNATURE_LEN>
     where
         Self: 'a;
+    type Secp256r1SigningSecretKey<'a>: SigningSecretKey<
+        'a,
+        SECP256R1_CANON_POINT_LEN,
+        SECP256R1_SIGNATURE_LEN,
+        PublicKey<'a> = Self::Secp256r1PublicKey<'a>,
+    >
+    where
+        Self: 'a;
     type Secp256r1SecretKey<'a>: SecretKey<
         'a,
         SECP256R1_CANON_SECRET_KEY_LEN,
@@ -160,7 +170,7 @@ pub trait Crypto {
     type UInt384<'a>: UInt<'a, UINT384_CANON_LEN>
     where
         Self: 'a;
-    type Secp256r1Scalar<'a>: Scalar<'a, SECP256R1_CANON_SCALAR_LEN>
+    type Secp256r1Scalar<'a>: CurveScalar<'a, SECP256R1_CANON_SCALAR_LEN>
     where
         Self: 'a;
     type Secp256r1Point<'a>: CurvePoint<
@@ -193,6 +203,10 @@ pub trait Crypto {
         &self,
         key: &CanonSecp256r1SecretKey,
     ) -> Result<Self::Secp256r1SecretKey<'_>, Error>;
+
+    fn secp256r1_secret_key_signing_singleton(
+        &self,
+    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error>;
 
     fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error>;
 
@@ -241,6 +255,10 @@ where
         Self: 'a;
     type Secp256r1SecretKey<'a>
         = T::Secp256r1SecretKey<'a>
+    where
+        Self: 'a;
+    type Secp256r1SigningSecretKey<'a>
+        = T::Secp256r1SigningSecretKey<'a>
     where
         Self: 'a;
     type UInt384<'a>
@@ -292,6 +310,12 @@ where
         key: &CanonSecp256r1SecretKey,
     ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
         (*self).secp256r1_secret_key(key)
+    }
+
+    fn secp256r1_secret_key_signing_singleton(
+        &self,
+    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+        (*self).secp256r1_secret_key_signing_singleton()
     }
 
     fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error> {
@@ -380,14 +404,7 @@ where
     }
 }
 
-pub trait SecretKey<
-    'a,
-    const KEY_LEN: usize,
-    const PUB_KEY_LEN: usize,
-    const SIGNATURE_LEN: usize,
-    const SHARED_SECRET_LEN: usize,
->
-{
+pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize> {
     type PublicKey<'s>: PublicKey<'s, PUB_KEY_LEN, SIGNATURE_LEN>
     where
         Self: 's;
@@ -396,6 +413,17 @@ pub trait SecretKey<
 
     fn pub_key(&self) -> Self::PublicKey<'a>;
 
+    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]);
+}
+
+pub trait SecretKey<
+    'a,
+    const KEY_LEN: usize,
+    const PUB_KEY_LEN: usize,
+    const SIGNATURE_LEN: usize,
+    const SHARED_SECRET_LEN: usize,
+>: SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
+{
     fn canon_into(&self, key: &mut [u8; KEY_LEN]);
 
     fn derive_shared_secret(
@@ -403,8 +431,6 @@ pub trait SecretKey<
         peer_pub_key: &Self::PublicKey<'a>,
         shared_secret: &mut [u8; SHARED_SECRET_LEN],
     );
-
-    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]);
 }
 
 pub trait PublicKey<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
@@ -433,14 +459,14 @@ pub trait UInt<'a, const LEN: usize>: Sized {
     fn canon_into(&self, uint: &mut [u8; LEN]);
 }
 
-pub trait Scalar<'a, const LEN: usize> {
+pub trait CurveScalar<'a, const LEN: usize> {
     fn mul(&self, other: &Self) -> Self;
 
     fn canon_into(&self, scalar: &mut [u8; LEN]);
 }
 
 pub trait CurvePoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
-    type Scalar<'s>: Scalar<'s, SCALAR_LEN>
+    type Scalar<'s>: CurveScalar<'s, SCALAR_LEN>
     where
         Self: 'a + 's;
 

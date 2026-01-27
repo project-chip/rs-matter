@@ -22,8 +22,9 @@ use crate::cert::CertRef;
 use crate::crypto::{
     self, as_canon, Aead, Aes128Nonce, CanonAes128Key, CanonSecp256r1EcdhSharedSecret,
     CanonSecp256r1PublicKey, CanonSecp256r1Signature, Crypto, Digest, Hkdf, PublicKey, SecretKey,
-    Sha256Hash, AES128_CANON_KEY_LEN, AES128_KEY_ZEROED, AES128_TAG_LEN, AES128_TAG_ZEROED,
-    SECP256R1_ECDH_SHARED_SECRET_ZEROED, SECP256R1_PUBLIC_KEY_ZEROED, SHA256_HASH_ZEROED,
+    Sha256Hash, SigningSecretKey, AES128_CANON_KEY_LEN, AES128_KEY_ZEROED, AES128_TAG_LEN,
+    AES128_TAG_ZEROED, SECP256R1_ECDH_SHARED_SECRET_ZEROED, SECP256R1_PUBLIC_KEY_ZEROED,
+    SHA256_HASH_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::fabric::Fabric;

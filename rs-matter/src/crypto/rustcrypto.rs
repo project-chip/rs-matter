@@ -105,6 +105,10 @@ where
         = p256::SecretKey
     where
         Self: 'a;
+    type Secp256r1SigningSecretKey<'a>
+        = p256::SecretKey
+    where
+        Self: 'a;
     type UInt384<'a>
         = crypto_bigint::U384
     where
@@ -160,6 +164,12 @@ where
         secret_key: &CanonSecp256r1SecretKey,
     ) -> Result<Self::Secp256r1SecretKey<'_>, Error> {
         Ok(SecretKey::from_slice(secret_key)?)
+    }
+
+    fn secp256r1_secret_key_signing_singleton(
+        &self,
+    ) -> Result<Self::Secp256r1SigningSecretKey<'_>, Error> {
+        todo!()
     }
 
     fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error> {
@@ -305,12 +315,10 @@ impl super::PublicKey<'_, { super::SECP256R1_CANON_POINT_LEN }, { super::SECP256
 }
 
 impl<'a>
-    super::SecretKey<
+    super::SigningSecretKey<
         'a,
-        { super::SECP256R1_CANON_SECRET_KEY_LEN },
         { super::SECP256R1_CANON_POINT_LEN },
         { super::SECP256R1_SIGNATURE_LEN },
-        { super::SECP256R1_ECDH_SHARED_SECRET_LEN },
     > for p256::SecretKey
 {
     type PublicKey<'s>
@@ -396,6 +404,27 @@ impl<'a>
         self.public_key()
     }
 
+    fn sign(&self, data: &[u8], signature: &mut [u8; super::SECP256R1_SIGNATURE_LEN]) {
+        use p256::ecdsa::signature::Signer;
+
+        let signing_key = SigningKey::from(self);
+        let sign: Signature = signing_key.sign(data);
+        let sign_bytes = sign.to_bytes();
+
+        assert_eq!(sign_bytes.len(), SECP256R1_SIGNATURE_LEN);
+        signature[..sign_bytes.len()].copy_from_slice(&sign_bytes);
+    }
+}
+
+impl<'a>
+    super::SecretKey<
+        'a,
+        { super::SECP256R1_CANON_SECRET_KEY_LEN },
+        { super::SECP256R1_CANON_POINT_LEN },
+        { super::SECP256R1_SIGNATURE_LEN },
+        { super::SECP256R1_ECDH_SHARED_SECRET_LEN },
+    > for p256::SecretKey
+{
     fn canon_into(&self, key: &mut [u8; super::SECP256R1_CANON_SECRET_KEY_LEN]) {
         let bytes = self.to_bytes();
         let slice = bytes.as_slice();
@@ -422,17 +451,6 @@ impl<'a>
         assert_eq!(slice.len(), super::SECP256R1_ECDH_SHARED_SECRET_LEN);
         shared_secret[..slice.len()].copy_from_slice(slice);
     }
-
-    fn sign(&self, data: &[u8], signature: &mut [u8; super::SECP256R1_SIGNATURE_LEN]) {
-        use p256::ecdsa::signature::Signer;
-
-        let signing_key = SigningKey::from(self);
-        let sign: Signature = signing_key.sign(data);
-        let sign_bytes = sign.to_bytes();
-
-        assert_eq!(sign_bytes.len(), SECP256R1_SIGNATURE_LEN);
-        signature[..sign_bytes.len()].copy_from_slice(&sign_bytes);
-    }
 }
 
 impl<'a> super::UInt<'a, { super::UINT384_CANON_LEN }> for crypto_bigint::U384 {
@@ -448,7 +466,7 @@ impl<'a> super::UInt<'a, { super::UINT384_CANON_LEN }> for crypto_bigint::U384 {
 
 pub struct ECScalar<C: CurveArithmetic>(Scalar<C>);
 
-impl<'a, C: CurveArithmetic> super::Scalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }>
+impl<'a, C: CurveArithmetic> super::CurveScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }>
     for ECScalar<C>
 where
     C::Scalar: Mul<Output = C::Scalar> + Clone,
