@@ -71,11 +71,7 @@ impl super::Crypto for MbedtlsCrypto {
         Self: 'a;
 
     type Secp256r1SecretKey<'a>
-        = ECPointScalar<
-        'a,
-        { super::SECP256R1_CANON_SCALAR_LEN },
-        { super::SECP256R1_CANON_POINT_LEN },
-    >
+        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
     where
         Self: 'a;
 
@@ -85,11 +81,7 @@ impl super::Crypto for MbedtlsCrypto {
         Self: 'a;
 
     type Secp256r1Scalar<'a>
-        = ECPointScalar<
-        'a,
-        { super::SECP256R1_CANON_SCALAR_LEN },
-        { super::SECP256R1_CANON_POINT_LEN },
-    >
+        = ECScalar<'a, { super::SECP256R1_CANON_SCALAR_LEN }, { super::SECP256R1_CANON_POINT_LEN }>
     where
         Self: 'a;
 
@@ -154,7 +146,7 @@ impl super::Crypto for MbedtlsCrypto {
         &self,
         scalar: &super::CanonSecp256r1Scalar,
     ) -> Result<Self::Secp256r1Scalar<'_>, Error> {
-        let mut result = ECPointScalar::new(&self.secp256r1_group);
+        let mut result = ECScalar::new(&self.secp256r1_group);
         result.set(scalar);
 
         Ok(result)
@@ -192,14 +184,14 @@ pub struct Sha256 {
 
 impl Sha256 {
     fn new() -> Self {
-        let mut ctx = Default::default();
+        let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_init(&mut ctx);
-            esp_mbedtls_sys::mbedtls_sha256_starts(&mut ctx, 0);
+            esp_mbedtls_sys::mbedtls_sha256_init(&mut raw);
+            esp_mbedtls_sys::mbedtls_sha256_starts(&mut raw, 0);
         }
 
-        Self { raw: ctx }
+        Self { raw }
     }
 }
 
@@ -213,14 +205,14 @@ impl Drop for Sha256 {
 
 impl Clone for Sha256 {
     fn clone(&self) -> Self {
-        let mut ctx = Default::default();
+        let mut raw = Default::default();
 
         unsafe {
-            esp_mbedtls_sys::mbedtls_sha256_init(&mut ctx);
-            esp_mbedtls_sys::mbedtls_sha256_clone(&mut ctx, &self.raw);
+            esp_mbedtls_sys::mbedtls_sha256_init(&mut raw);
+            esp_mbedtls_sys::mbedtls_sha256_clone(&mut raw, &self.raw);
         }
 
-        Self { raw: ctx }
+        Self { raw }
     }
 }
 
@@ -474,6 +466,64 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
     }
 }
 
+pub struct Mpi {
+    raw: esp_mbedtls_sys::mbedtls_mpi,
+}
+
+impl Mpi {
+    fn new() -> Self {
+        let mut raw = Default::default();
+
+        unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_init(&mut raw);
+        }
+
+        Self { raw }
+    }
+
+    fn set(&mut self, uint: &[u8]) {
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_read_binary(&mut self.raw, uint.as_ptr(), uint.len())
+        })
+        .unwrap();
+    }
+
+    fn write(&self, uint: &mut [u8]) {
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_write_binary(&self.raw, uint.as_mut_ptr(), uint.len())
+        })
+        .unwrap();
+    }
+}
+
+impl Drop for Mpi {
+    fn drop(&mut self) {
+        unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_free(&mut self.raw);
+        }
+    }
+}
+
+impl<const LEN: usize> super::UInt<'_, LEN> for Mpi {
+    fn rem(&self, other: &Self) -> Option<Self> {
+        let mut result = Mpi::new();
+
+        let result_code = merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.raw, &self.raw, &other.raw)
+        });
+
+        if result_code.is_ok() {
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    fn canon_into(&self, buf: &mut [u8; LEN]) {
+        self.write(buf);
+    }
+}
+
 pub struct ECGroup<const LEN: usize, const SCALAR_LEN: usize> {
     raw: esp_mbedtls_sys::mbedtls_ecp_group,
 }
@@ -557,6 +607,80 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECPoint<'_, LEN, SCALAR
     }
 }
 
+impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, SCALAR_LEN>
+    for ECPoint<'a, LEN, SCALAR_LEN>
+{
+    type Scalar<'s>
+        = ECScalar<'s, SCALAR_LEN, LEN>
+    where
+        Self: 'a + 's;
+
+    fn neg(&self) -> Self {
+        let mut result = ECPoint::new(self.group);
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_X, &self.raw.private_X)
+        })
+        .unwrap();
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
+        })
+        .unwrap();
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_sub_mpi(
+                &mut result.raw.private_Y,
+                &self.group.raw.P,
+                &self.raw.private_Y,
+            )
+        })
+        .unwrap();
+
+        result
+    }
+
+    fn mul(&self, scalar: &Self::Scalar<'a>) -> Self {
+        let mut result = ECPoint::new(self.group);
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_ecp_mul(
+                self.group as *const _ as *mut _,
+                &mut result.raw,
+                &scalar.mpi.raw,
+                &self.raw,
+                None, // TODO
+                core::ptr::null_mut(),
+            )
+        })
+        .unwrap();
+
+        result
+    }
+
+    fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self {
+        let mut result = ECPoint::new(self.group);
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_ecp_muladd(
+                self.group as *const _ as *mut _,
+                &mut result.raw,
+                &s1.mpi.raw,
+                &self.raw,
+                &s2.mpi.raw,
+                &p2.raw,
+            )
+        })
+        .unwrap();
+
+        result
+    }
+
+    fn canon_into(&self, point: &mut [u8; LEN]) {
+        self.write(point);
+    }
+}
+
 impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize>
     super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN>
 {
@@ -596,12 +720,12 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
     }
 }
 
-pub struct ECPointScalar<'a, const LEN: usize, const POINT_LEN: usize> {
+pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize> {
     group: &'a ECGroup<POINT_LEN, LEN>,
     mpi: Mpi,
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> ECPointScalar<'a, LEN, POINT_LEN> {
+impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> {
     fn new(group: &'a ECGroup<POINT_LEN, LEN>) -> Self {
         Self {
             group,
@@ -618,6 +742,25 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> ECPointScalar<'a, LEN, POINT_
     }
 }
 
+impl<'a, const LEN: usize, const POINT_LEN: usize> super::Scalar<'a, LEN>
+    for ECScalar<'a, LEN, POINT_LEN>
+{
+    fn mul(&self, other: &Self) -> Self {
+        let mut result = ECScalar::new(self.group);
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_mpi_mul_mpi(&mut result.mpi.raw, &self.mpi.raw, &other.mpi.raw)
+        })
+        .unwrap();
+
+        result
+    }
+
+    fn canon_into(&self, scalar: &mut [u8; LEN]) {
+        self.write(scalar);
+    }
+}
+
 impl<
         'a,
         const KEY_LEN: usize,
@@ -625,7 +768,7 @@ impl<
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
     > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
-    for ECPointScalar<'a, KEY_LEN, PUB_KEY_LEN>
+    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
 {
     type PublicKey<'s>
         = ECPoint<'s, PUB_KEY_LEN, KEY_LEN>
@@ -790,153 +933,9 @@ impl<
     }
 }
 
-pub struct Mpi {
-    raw: esp_mbedtls_sys::mbedtls_mpi,
-}
-
-impl Mpi {
-    fn new() -> Self {
-        let mut raw = Default::default();
-
-        unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_init(&mut raw);
-        }
-
-        Self { raw }
-    }
-
-    fn set(&mut self, uint: &[u8]) {
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_read_binary(&mut self.raw, uint.as_ptr(), uint.len())
-        })
-        .unwrap();
-    }
-
-    fn write(&self, uint: &mut [u8]) {
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_write_binary(&self.raw, uint.as_mut_ptr(), uint.len())
-        })
-        .unwrap();
-    }
-}
-
-impl Drop for Mpi {
-    fn drop(&mut self) {
-        unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_free(&mut self.raw);
-        }
-    }
-}
-
-impl<const LEN: usize> super::UInt<'_, LEN> for Mpi {
-    fn rem(&self, other: &Self) -> Option<Self> {
-        let mut result = Mpi::new();
-
-        let result_code = merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_mod_mpi(&mut result.raw, &self.raw, &other.raw)
-        });
-
-        if result_code.is_ok() {
-            Some(result)
-        } else {
-            None
-        }
-    }
-
-    fn canon_into(&self, buf: &mut [u8; LEN]) {
-        self.write(buf);
-    }
-}
-
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::Scalar<'a, LEN>
-    for ECPointScalar<'a, LEN, POINT_LEN>
-{
-    fn mul(&self, other: &Self) -> Self {
-        let mut result = ECPointScalar::new(self.group);
-
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_mul_mpi(&mut result.mpi.raw, &self.mpi.raw, &other.mpi.raw)
-        })
-        .unwrap();
-
-        result
-    }
-
-    fn canon_into(&self, scalar: &mut [u8; LEN]) {
-        self.write(scalar);
-    }
-}
-
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::CurvePoint<'a, LEN, SCALAR_LEN>
-    for ECPoint<'a, LEN, SCALAR_LEN>
-{
-    type Scalar<'s>
-        = ECPointScalar<'s, SCALAR_LEN, LEN>
-    where
-        Self: 'a + 's;
-
-    fn neg(&self) -> Self {
-        let mut result = ECPoint::new(self.group);
-
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_X, &self.raw.private_X)
-        })
-        .unwrap();
-
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_Z, &self.raw.private_Z)
-        })
-        .unwrap();
-
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_mpi_sub_mpi(
-                &mut result.raw.private_Y,
-                &self.group.raw.P,
-                &self.raw.private_Y,
-            )
-        })
-        .unwrap();
-
-        result
-    }
-
-    fn mul(&self, scalar: &Self::Scalar<'a>) -> Self {
-        let mut result = ECPoint::new(self.group);
-
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_mul(
-                self.group as *const _ as *mut _,
-                &mut result.raw,
-                &scalar.mpi.raw,
-                &self.raw,
-                None, // TODO
-                core::ptr::null_mut(),
-            )
-        })
-        .unwrap();
-
-        result
-    }
-
-    fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self {
-        let mut result = ECPoint::new(self.group);
-
-        merr!(unsafe {
-            esp_mbedtls_sys::mbedtls_ecp_muladd(
-                self.group as *const _ as *mut _,
-                &mut result.raw,
-                &s1.mpi.raw,
-                &self.raw,
-                &s2.mpi.raw,
-                &p2.raw,
-            )
-        })
-        .unwrap();
-
-        result
-    }
-
-    fn canon_into(&self, point: &mut [u8; LEN]) {
-        self.write(point);
+#[no_mangle]
+unsafe extern "C" fn mbedtls_platform_zeroize(dst: *mut core::ffi::c_uchar, len: u32) {
+    for i in 0..len as isize {
+        dst.offset(i).write_volatile(0);
     }
 }
