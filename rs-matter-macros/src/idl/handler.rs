@@ -473,16 +473,14 @@ fn handler_attribute_write(
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
+    } else if delegate {
+        quote!(
+            fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
+                T::#attr_name(self, ctx, value)
+            }
+        )
     } else {
-        let stream = quote!(
-            async fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>
-        );
-
-        if delegate {
-            quote!(#stream { T::#attr_name(self, ctx, value).await })
-        } else {
-            quote!(#stream;)
-        }
+        quote!(async fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error>;)
     }
 }
 
@@ -538,90 +536,90 @@ fn handler_command(
         if let Some((field_resp, field_resp_builder)) = field_resp {
             if field_resp_builder {
                 let stream = quote!(
-                    async fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                    fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
                         response: #field_resp,
-                    ) -> Result<P, #krate::error::Error>
+                    )
                 );
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, request, response).await })
+                    quote!(#stream -> impl core::future::Future<Output = Result<P, #krate::error::Error>> { T::#cmd_name(self, ctx, request, response) })
                 } else {
-                    quote!(#stream;)
+                    quote!(async #stream -> Result<P, #krate::error::Error>;)
                 }
             } else {
                 let stream = quote!(
-                    async fn #cmd_name(
+                    fn #cmd_name(
                         &self,
                         ctx: impl #krate::dm::InvokeContext,
                         request: #field_req,
-                    ) -> Result<#field_resp, #krate::error::Error>
+                    )
                 );
 
                 if delegate {
-                    quote!(#stream { T::#cmd_name(self, ctx, request).await })
+                    quote!(#stream -> impl core::future::Future<Output = Result<#field_resp, #krate::error::Error>> { T::#cmd_name(self, ctx, request) })
                 } else {
-                    quote!(#stream;)
+                    quote!(async #stream -> Result<#field_resp, #krate::error::Error>;)
                 }
             }
         } else {
             let stream = quote!(
-                async fn #cmd_name(
+                fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
                     request: #field_req,
-                ) -> Result<(), #krate::error::Error>
+                )
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx, request).await })
+                quote!(#stream -> impl core::future::Future<Output = Result<(), #krate::error::Error>> { T::#cmd_name(self, ctx, request) })
             } else {
-                quote!(#stream;)
+                quote!(async #stream -> Result<(), #krate::error::Error>;)
             }
         }
     } else if let Some((field_resp, field_resp_builder)) = field_resp {
         if field_resp_builder {
             let stream = quote!(
-                async fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
+                fn #cmd_name<P: #krate::tlv::TLVBuilderParent>(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
                     response: #field_resp,
-                ) -> Result<P, #krate::error::Error>
+                )
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx, response).await })
+                quote!(#stream -> impl core::future::Future<Output = Result<P, #krate::error::Error>> { T::#cmd_name(self, ctx, response) })
             } else {
-                quote!(#stream;)
+                quote!(async #stream -> Result<P, #krate::error::Error>;)
             }
         } else {
             let stream = quote!(
-                async fn #cmd_name(
+                fn #cmd_name(
                     &self,
                     ctx: impl #krate::dm::InvokeContext,
                 ) -> Result<#field_resp, #krate::error::Error>
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx).await })
+                quote!(#stream { T::#cmd_name(self, ctx) })
             } else {
-                quote!(#stream;)
+                quote!(async #stream;)
             }
         }
     } else {
         let stream = quote!(
-            async fn #cmd_name(
+            fn #cmd_name(
                 &self,
                 ctx: impl #krate::dm::InvokeContext,
-            ) -> Result<(), #krate::error::Error>
+            )
         );
 
         if delegate {
-            quote!(#stream { T::#cmd_name(self, ctx).await })
+            quote!(#stream -> impl core::future::Future<Output = Result<(), #krate::error::Error>> { T::#cmd_name(self, ctx) })
         } else {
-            quote!(#stream;)
+            quote!(async #stream -> Result<(), #krate::error::Error>;)
         }
     }
 }
@@ -1263,64 +1261,73 @@ mod tests {
                     > {
                         T::start_up_on_off(self, ctx)
                     }
-                    async fn set_on_time(
+                    fn set_on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::set_on_time(self, ctx, value).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::set_on_time(self, ctx, value)
                     }
-                    async fn set_off_wait_time(
+                    fn set_off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: u16,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::set_off_wait_time(self, ctx, value).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::set_off_wait_time(self, ctx, value)
                     }
-                    async fn set_start_up_on_off(
+                    fn set_start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
                         value: rs_matter_crate::tlv::Nullable<StartUpOnOffEnum>,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::set_start_up_on_off(self, ctx, value).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::set_start_up_on_off(self, ctx, value)
                     }
-                    async fn handle_off(
+                    fn handle_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_off(self, ctx).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::handle_off(self, ctx)
                     }
-                    async fn handle_on(
+                    fn handle_on(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_on(self, ctx).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::handle_on(self, ctx)
                     }
-                    async fn handle_toggle(
+                    fn handle_toggle(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_toggle(self, ctx).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::handle_toggle(self, ctx)
                     }
-                    async fn handle_off_with_effect(
+                    fn handle_off_with_effect(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OffWithEffectRequest<'_>,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_off_with_effect(self, ctx, request).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::handle_off_with_effect(self, ctx, request)
                     }
-                    async fn handle_on_with_recall_global_scene(
+                    fn handle_on_with_recall_global_scene(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_on_with_recall_global_scene(self, ctx).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::handle_on_with_recall_global_scene(self, ctx)
                     }
-                    async fn handle_on_with_timed_off(
+                    fn handle_on_with_timed_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
                         request: OnWithTimedOffRequest<'_>,
-                    ) -> Result<(), rs_matter_crate::error::Error> {
-                        T::handle_on_with_timed_off(self, ctx, request).await
+                    ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>>
+                    {
+                        T::handle_on_with_timed_off(self, ctx, request)
                     }
                 }
             )

@@ -24419,819 +24419,802 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
             T::mei_int_8_u(self, ctx)
         }
-        async fn set_boolean(
+        fn set_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_boolean(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_boolean(self, ctx, value)
         }
-        async fn set_bitmap_8(
+        fn set_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap8MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_bitmap_8(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_bitmap_8(self, ctx, value)
         }
-        async fn set_bitmap_16(
+        fn set_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap16MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_bitmap_16(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_bitmap_16(self, ctx, value)
         }
-        async fn set_bitmap_32(
+        fn set_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap32MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_bitmap_32(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_bitmap_32(self, ctx, value)
         }
-        async fn set_bitmap_64(
+        fn set_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap64MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_bitmap_64(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_bitmap_64(self, ctx, value)
         }
-        async fn set_int_8_u(
+        fn set_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_8_u(self, ctx, value)
         }
-        async fn set_int_16_u(
+        fn set_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_16_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_16_u(self, ctx, value)
         }
-        async fn set_int_24_u(
+        fn set_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_24_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_24_u(self, ctx, value)
         }
-        async fn set_int_32_u(
+        fn set_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_32_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_32_u(self, ctx, value)
         }
-        async fn set_int_40_u(
+        fn set_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_40_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_40_u(self, ctx, value)
         }
-        async fn set_int_48_u(
+        fn set_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_48_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_48_u(self, ctx, value)
         }
-        async fn set_int_56_u(
+        fn set_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_56_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_56_u(self, ctx, value)
         }
-        async fn set_int_64_u(
+        fn set_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_64_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_64_u(self, ctx, value)
         }
-        async fn set_int_8_s(
+        fn set_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_8_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_8_s(self, ctx, value)
         }
-        async fn set_int_16_s(
+        fn set_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_16_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_16_s(self, ctx, value)
         }
-        async fn set_int_24_s(
+        fn set_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_24_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_24_s(self, ctx, value)
         }
-        async fn set_int_32_s(
+        fn set_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_32_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_32_s(self, ctx, value)
         }
-        async fn set_int_40_s(
+        fn set_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_40_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_40_s(self, ctx, value)
         }
-        async fn set_int_48_s(
+        fn set_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_48_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_48_s(self, ctx, value)
         }
-        async fn set_int_56_s(
+        fn set_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_56_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_56_s(self, ctx, value)
         }
-        async fn set_int_64_s(
+        fn set_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_int_64_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_int_64_s(self, ctx, value)
         }
-        async fn set_enum_8(
+        fn set_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_enum_8(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_enum_8(self, ctx, value)
         }
-        async fn set_enum_16(
+        fn set_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_enum_16(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_enum_16(self, ctx, value)
         }
-        async fn set_float_single(
+        fn set_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: f32,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_float_single(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_float_single(self, ctx, value)
         }
-        async fn set_float_double(
+        fn set_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: f64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_float_double(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_float_double(self, ctx, value)
         }
-        async fn set_octet_string(
+        fn set_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_octet_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_octet_string(self, ctx, value)
         }
-        async fn set_list_int_8_u(
+        fn set_list_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, u8>,
                 u8,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_list_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_list_int_8_u(self, ctx, value)
         }
-        async fn set_list_octet_string(
+        fn set_list_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_list_octet_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_list_octet_string(self, ctx, value)
         }
-        async fn set_list_struct_octet_string(
+        fn set_list_struct_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
                 TestListStructOctet<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_list_struct_octet_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_list_struct_octet_string(self, ctx, value)
         }
-        async fn set_long_octet_string(
+        fn set_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_long_octet_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_long_octet_string(self, ctx, value)
         }
-        async fn set_char_string(
+        fn set_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_char_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_char_string(self, ctx, value)
         }
-        async fn set_long_char_string(
+        fn set_long_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_long_char_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_long_char_string(self, ctx, value)
         }
-        async fn set_epoch_us(
+        fn set_epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_epoch_us(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_epoch_us(self, ctx, value)
         }
-        async fn set_epoch_s(
+        fn set_epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_epoch_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_epoch_s(self, ctx, value)
         }
-        async fn set_vendor_id(
+        fn set_vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_vendor_id(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_vendor_id(self, ctx, value)
         }
-        async fn set_list_nullables_and_optionals_struct(
+        fn set_list_nullables_and_optionals_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
                 NullablesAndOptionalsStruct<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_list_nullables_and_optionals_struct(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_list_nullables_and_optionals_struct(self, ctx, value)
         }
-        async fn set_enum_attr(
+        fn set_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleEnum,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_enum_attr(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_enum_attr(self, ctx, value)
         }
-        async fn set_struct_attr(
+        fn set_struct_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleStruct<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_struct_attr(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_struct_attr(self, ctx, value)
         }
-        async fn set_range_restricted_int_8_u(
+        fn set_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_range_restricted_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_range_restricted_int_8_u(self, ctx, value)
         }
-        async fn set_range_restricted_int_8_s(
+        fn set_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_range_restricted_int_8_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_range_restricted_int_8_s(self, ctx, value)
         }
-        async fn set_range_restricted_int_16_u(
+        fn set_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_range_restricted_int_16_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_range_restricted_int_16_u(self, ctx, value)
         }
-        async fn set_range_restricted_int_16_s(
+        fn set_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_range_restricted_int_16_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_range_restricted_int_16_s(self, ctx, value)
         }
-        async fn set_list_long_octet_string(
+        fn set_list_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_list_long_octet_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_list_long_octet_string(self, ctx, value)
         }
-        async fn set_list_fabric_scoped(
+        fn set_list_fabric_scoped(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
                 TestFabricScoped<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_list_fabric_scoped(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_list_fabric_scoped(self, ctx, value)
         }
-        async fn set_timed_write_boolean(
+        fn set_timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_timed_write_boolean(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_timed_write_boolean(self, ctx, value)
         }
-        async fn set_general_error_boolean(
+        fn set_general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_general_error_boolean(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_general_error_boolean(self, ctx, value)
         }
-        async fn set_cluster_error_boolean(
+        fn set_cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_cluster_error_boolean(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_cluster_error_boolean(self, ctx, value)
         }
-        async fn set_unsupported(
+        fn set_unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_unsupported(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_unsupported(self, ctx, value)
         }
-        async fn set_nullable_boolean(
+        fn set_nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<bool>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_boolean(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_boolean(self, ctx, value)
         }
-        async fn set_nullable_bitmap_8(
+        fn set_nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_bitmap_8(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_bitmap_8(self, ctx, value)
         }
-        async fn set_nullable_bitmap_16(
+        fn set_nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_bitmap_16(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_bitmap_16(self, ctx, value)
         }
-        async fn set_nullable_bitmap_32(
+        fn set_nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_bitmap_32(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_bitmap_32(self, ctx, value)
         }
-        async fn set_nullable_bitmap_64(
+        fn set_nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_bitmap_64(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_bitmap_64(self, ctx, value)
         }
-        async fn set_nullable_int_8_u(
+        fn set_nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_8_u(self, ctx, value)
         }
-        async fn set_nullable_int_16_u(
+        fn set_nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_16_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_16_u(self, ctx, value)
         }
-        async fn set_nullable_int_24_u(
+        fn set_nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_24_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_24_u(self, ctx, value)
         }
-        async fn set_nullable_int_32_u(
+        fn set_nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_32_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_32_u(self, ctx, value)
         }
-        async fn set_nullable_int_40_u(
+        fn set_nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_40_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_40_u(self, ctx, value)
         }
-        async fn set_nullable_int_48_u(
+        fn set_nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_48_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_48_u(self, ctx, value)
         }
-        async fn set_nullable_int_56_u(
+        fn set_nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_56_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_56_u(self, ctx, value)
         }
-        async fn set_nullable_int_64_u(
+        fn set_nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_64_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_64_u(self, ctx, value)
         }
-        async fn set_nullable_int_8_s(
+        fn set_nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_8_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_8_s(self, ctx, value)
         }
-        async fn set_nullable_int_16_s(
+        fn set_nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_16_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_16_s(self, ctx, value)
         }
-        async fn set_nullable_int_24_s(
+        fn set_nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_24_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_24_s(self, ctx, value)
         }
-        async fn set_nullable_int_32_s(
+        fn set_nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_32_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_32_s(self, ctx, value)
         }
-        async fn set_nullable_int_40_s(
+        fn set_nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_40_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_40_s(self, ctx, value)
         }
-        async fn set_nullable_int_48_s(
+        fn set_nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_48_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_48_s(self, ctx, value)
         }
-        async fn set_nullable_int_56_s(
+        fn set_nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_56_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_56_s(self, ctx, value)
         }
-        async fn set_nullable_int_64_s(
+        fn set_nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_int_64_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_int_64_s(self, ctx, value)
         }
-        async fn set_nullable_enum_8(
+        fn set_nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_enum_8(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_enum_8(self, ctx, value)
         }
-        async fn set_nullable_enum_16(
+        fn set_nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_enum_16(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_enum_16(self, ctx, value)
         }
-        async fn set_nullable_float_single(
+        fn set_nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f32>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_float_single(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_float_single(self, ctx, value)
         }
-        async fn set_nullable_float_double(
+        fn set_nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f64>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_float_double(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_float_double(self, ctx, value)
         }
-        async fn set_nullable_octet_string(
+        fn set_nullable_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_octet_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_octet_string(self, ctx, value)
         }
-        async fn set_nullable_char_string(
+        fn set_nullable_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_char_string(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_char_string(self, ctx, value)
         }
-        async fn set_nullable_enum_attr(
+        fn set_nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_enum_attr(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_enum_attr(self, ctx, value)
         }
-        async fn set_nullable_struct(
+        fn set_nullable_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_struct(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_struct(self, ctx, value)
         }
-        async fn set_nullable_range_restricted_int_8_u(
+        fn set_nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_range_restricted_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_range_restricted_int_8_u(self, ctx, value)
         }
-        async fn set_nullable_range_restricted_int_8_s(
+        fn set_nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_range_restricted_int_8_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_range_restricted_int_8_s(self, ctx, value)
         }
-        async fn set_nullable_range_restricted_int_16_u(
+        fn set_nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_range_restricted_int_16_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_range_restricted_int_16_u(self, ctx, value)
         }
-        async fn set_nullable_range_restricted_int_16_s(
+        fn set_nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_nullable_range_restricted_int_16_s(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_nullable_range_restricted_int_16_s(self, ctx, value)
         }
-        async fn set_write_only_int_8_u(
+        fn set_write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_write_only_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_write_only_int_8_u(self, ctx, value)
         }
-        async fn set_mei_int_8_u(
+        fn set_mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::set_mei_int_8_u(self, ctx, value).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::set_mei_int_8_u(self, ctx, value)
         }
-        async fn handle_test(
+        fn handle_test(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::handle_test(self, ctx).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::handle_test(self, ctx)
         }
-        async fn handle_test_not_handled(
+        fn handle_test_not_handled(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::handle_test_not_handled(self, ctx).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::handle_test_not_handled(self, ctx)
         }
-        async fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             response: TestSpecificResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_specific(self, ctx, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_specific(self, ctx, response)
         }
-        async fn handle_test_unknown_command(
+        fn handle_test_unknown_command(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::handle_test_unknown_command(self, ctx).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::handle_test_unknown_command(self, ctx)
         }
-        async fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_add_arguments(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_add_arguments(self, ctx, request, response)
         }
-        async fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_simple_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_simple_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_struct_array_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_struct_array_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_struct_array_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_struct_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_struct_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_nested_struct_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_nested_struct_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_nested_struct_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_list_struct_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_list_struct_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_list_struct_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_list_int_8_u_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_list_int_8_u_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_list_int_8_u_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_nested_struct_list_argument_request<
+        fn handle_test_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_nested_struct_list_argument_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_nested_struct_list_argument_request(self, ctx, request, response)
         }
-        async fn handle_test_list_nested_struct_list_argument_request<
+        fn handle_test_list_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_list_nested_struct_list_argument_request(self, ctx, request, response)
-                .await
         }
-        async fn handle_test_list_int_8_u_reverse_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_list_int_8_u_reverse_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_list_int_8_u_reverse_request(self, ctx, request, response)
         }
-        async fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_enums_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_enums_request(self, ctx, request, response)
         }
-        async fn handle_test_nullable_optional_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_nullable_optional_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_nullable_optional_request(self, ctx, request, response)
         }
-        async fn handle_test_complex_nullable_optional_request<
+        fn handle_test_complex_nullable_optional_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_complex_nullable_optional_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_complex_nullable_optional_request(self, ctx, request, response)
         }
-        async fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_simple_struct_echo_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_simple_struct_echo_request(self, ctx, request, response)
         }
-        async fn handle_timed_invoke_request(
+        fn handle_timed_invoke_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::handle_timed_invoke_request(self, ctx).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::handle_timed_invoke_request(self, ctx)
         }
-        async fn handle_test_simple_optional_argument_request(
+        fn handle_test_simple_optional_argument_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error> {
-            T::handle_test_simple_optional_argument_request(self, ctx, request).await
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            T::handle_test_simple_optional_argument_request(self, ctx, request)
         }
-        async fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_emit_test_event_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_emit_test_event_request(self, ctx, request, response)
         }
-        async fn handle_test_emit_test_fabric_scoped_event_request<
+        fn handle_test_emit_test_fabric_scoped_event_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_emit_test_fabric_scoped_event_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_emit_test_fabric_scoped_event_request(self, ctx, request, response)
         }
-        async fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_batch_helper_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_batch_helper_request(self, ctx, request, response)
         }
-        async fn handle_test_second_batch_helper_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_second_batch_helper_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_second_batch_helper_request(self, ctx, request, response)
         }
-        async fn handle_test_different_vendor_mei_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestDifferentVendorMeiRequestRequest<'_>,
             response: TestDifferentVendorMeiResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error> {
-            T::handle_test_different_vendor_mei_request(self, ctx, request, response).await
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            T::handle_test_different_vendor_mei_request(self, ctx, request, response)
         }
     }
     #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
