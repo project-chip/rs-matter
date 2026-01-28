@@ -420,7 +420,7 @@ where
         let verifying_key = unwrap!(VerifyingKey::<C>::from_affine(*self.0.as_affine()));
         let signature = unwrap!(Signature::<C>::from_slice(signature));
 
-        ecdsa::signature::Verifier::verify(&verifying_key, data.into(), &signature).is_ok()
+        ecdsa::signature::Verifier::verify(&verifying_key, data, &signature).is_ok()
     }
 
     fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
@@ -662,7 +662,7 @@ impl<const LEN: usize, const LIMBS: usize> Uint<LEN, LIMBS> {
 
 impl<const LEN: usize, const LIMBS: usize> super::UInt<'_, LEN> for Uint<LEN, LIMBS> {
     fn rem(&self, other: &Self) -> Option<Self> {
-        let other = NonZero::new(other.0.clone()).into_option();
+        let other = NonZero::new(other.0).into_option();
         other.map(|other| Self(self.0.rem(&other)))
     }
 
@@ -686,7 +686,7 @@ impl<const LEN: usize, const LIMBS: usize> super::UInt<'_, LEN> for Uint<LEN, LI
 /// it can be used with any curve implementing those traits (including hardware-accelerated ones).
 pub struct ECScalar<const LEN: usize, C: CurveArithmetic>(Scalar<C>);
 
-impl<'a, const LEN: usize, C> ECScalar<LEN, C>
+impl<const LEN: usize, C> ECScalar<LEN, C>
 where
     C: CurveArithmetic,
     Scalar<C>: PrimeField + Mul<Output = C::Scalar> + Clone,
