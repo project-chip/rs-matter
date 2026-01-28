@@ -145,10 +145,12 @@ impl ClusterHandler for GenCommHandler<'_> {
         self.dataver.changed();
     }
 
+    #[inline(always)]
     async fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(ctx.exchange().matter().failsafe.borrow_mut().breadcrumb())
     }
 
+    #[inline(always)]
     async fn set_breadcrumb(&self, ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         ctx.exchange()
             .matter()
@@ -158,6 +160,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         Ok(())
     }
 
+    #[inline(always)]
     async fn basic_commissioning_info<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -169,6 +172,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             .end()
     }
 
+    #[inline(always)]
     async fn regulatory_config(
         &self,
         _ctx: impl ReadContext,
@@ -176,6 +180,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         Ok(RegulatoryLocationTypeEnum::IndoorOutdoor)
     }
 
+    #[inline(always)]
     async fn location_capability(
         &self,
         _ctx: impl ReadContext,
@@ -183,10 +188,12 @@ impl ClusterHandler for GenCommHandler<'_> {
         Ok(self.commissioning_policy.location_cap())
     }
 
+    #[inline(always)]
     async fn supports_concurrent_connection(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.commissioning_policy.concurrent_connection_supported())
     }
 
+    #[inline(always)]
     async fn handle_arm_fail_safe<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
@@ -206,6 +213,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         response.error_code(status)?.debug_text("")?.end()
     }
 
+    #[inline(always)]
     async fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
@@ -235,6 +243,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             .end()
     }
 
+    #[inline(always)]
     async fn handle_commissioning_complete<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
@@ -270,6 +279,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         response.error_code(status)?.debug_text("")?.end()
     }
 
+    #[inline(always)]
     async fn handle_set_tc_acknowledgements<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
