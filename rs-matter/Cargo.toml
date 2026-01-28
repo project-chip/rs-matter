@@ -101,7 +101,7 @@ backtrace = []
 alloc = ["defmt?/alloc"]
 openssl = ["alloc", "dep:openssl", "foreign-types", "hmac", "sha2"]
 mbedtls = ["alloc", "dep:esp-mbedtls-sys"]
-rustcrypto = ["alloc", "digest", "sha2", "hmac", "pbkdf2", "hkdf", "aes", "ccm", "p256", "sec1", "elliptic-curve", "crypto-bigint", "x509-cert", "rand_core"]
+rustcrypto = ["alloc", "rand_core", "digest", "cipher", "ccm", "elliptic-curve", "primeorder", "ecdsa", "sec1", "signature", "hmac", "hkdf", "pbkdf2", "crypto-bigint", "sha2", "aes", "p256", "x509-cert"]
 defmt = ["dep:defmt", "heapless/defmt-03", "embassy-time/defmt"]
 log = ["dep:log", "embassy-time/log"]
 debug-tlv-payload = []
@@ -137,18 +137,24 @@ foreign-types = { version = "0.3", optional = true }
 esp-mbedtls-sys = { git = "https://github.com/esp-rs/esp-mbedtls", branch = "extra-headers", optional = true }
 
 # rust-crypto
-digest = { version = "0.10", default-features = false, optional = true }
-sha2 = { version = "0.10", default-features = false, optional = true }
-hmac = { version = "0.12", optional = true }
-pbkdf2 = { version = "0.12", optional = true }
-hkdf = { version = "0.12", optional = true }
-aes = { version = "0.8", optional = true }
-ccm = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
-p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
-sec1 = { version = "0.7", default-features = false, optional = true }
-elliptic-curve = { version = "0.13", optional = true }
-crypto-bigint = { version = "0.6", default-features = false, optional = true }
+# Generic traits and traitified structures
 rand_core = { version = "0.6", default-features = false, optional = true }
+digest = { version = "0.10", default-features = false, optional = true }
+cipher = { version = "0.4.4", default-features = false, optional = true }
+ccm = { version = "0.5", default-features = false, features = ["alloc"], optional = true }
+elliptic-curve = { version = "0.13", default-features = false, optional = true }
+primeorder = { version = "0.13", default-features = false, optional = true }
+ecdsa = { version = "0.16", default-features = false, features = ["der"], optional = true }
+sec1 = { version = "0.7", default-features = false, optional = true }
+signature = { version = "2.2", default-features = false, optional = true }
+hmac = { version = "0.12", optional = true }
+# Concrete algorithms
+hkdf = { version = "0.12", optional = true }
+pbkdf2 = { version = "0.12", optional = true }
+crypto-bigint = { version = "0.6", default-features = false, optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+aes = { version = "0.8", optional = true }
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "ecdsa"], optional = true }
 x509-cert = { version = "0.2", default-features = false, features = ["pem"], optional = true } # TODO: requires `alloc`
 
 # STD
