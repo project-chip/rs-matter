@@ -27,13 +27,13 @@ use super::clusters::gen_comm::{self, ClusterHandler as _, CommPolicy, GenCommHa
 use super::clusters::gen_diag::{self, ClusterHandler as _, GenDiag, GenDiagHandler, NetifDiag};
 use super::clusters::grp_key_mgmt::{self, ClusterHandler as _, GrpKeyMgmtHandler};
 use super::clusters::net_comm::{
-    self, ClusterAsyncHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
+    self, ClusterHandler as _, NetCommHandler, NetCtl, NetCtlStatus, NetworkType, Networks,
 };
 use super::clusters::noc::{self, ClusterHandler as _, NocHandler};
 use super::clusters::thread_diag::{self, ClusterHandler as _, ThreadDiag, ThreadDiagHandler};
 use super::clusters::wifi_diag::{self, ClusterHandler as _, WifiDiag, WifiDiagHandler};
 use super::networks::eth::{EthNetCtl, EthNetwork};
-use super::types::{Async, ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
+use super::types::{ChainedHandler, Dataver, Endpoint, EndptId, EpClMatcher};
 
 /// A utility function to create a root (Endpoint 0) object using the requested operational network type.
 pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {
@@ -47,43 +47,43 @@ pub const fn root_endpoint(net_type: NetworkType) -> Endpoint<'static> {
 /// A type alias for the handler chain returned by `with_eth()`.
 pub type EthHandler<'a, H> = NetHandler<
     'a,
-    net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, EthNetCtl>>,
-    Async<eth_diag::HandlerAdaptor<EthDiagHandler>>,
+    net_comm::HandlerAdaptor<NetCommHandler<'a, EthNetCtl>>,
+    eth_diag::HandlerAdaptor<EthDiagHandler>,
     H,
 >;
 
 /// A type alias for the handler chain returned by `with_wifi()`.
 pub type WifiHandler<'a, T, H> = NetHandler<
     'a,
-    net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>,
-    Async<wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>>,
+    net_comm::HandlerAdaptor<NetCommHandler<'a, T>>,
+    wifi_diag::HandlerAdaptor<WifiDiagHandler<'a>>,
     H,
 >;
 
 /// A type alias for the handler chain returned by `with_thread()`.
 pub type ThreadHandler<'a, T, H> = NetHandler<
     'a,
-    net_comm::HandlerAsyncAdaptor<NetCommHandler<'a, T>>,
-    Async<thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>>,
+    net_comm::HandlerAdaptor<NetCommHandler<'a, T>>,
+    thread_diag::HandlerAdaptor<ThreadDiagHandler<'a>>,
     H,
 >;
 
 pub type NetHandler<'a, NETCOMM, NETDIAG, H> = handler_chain_type!(
     EpClMatcher => NETCOMM,
     EpClMatcher => NETDIAG,
-    EpClMatcher => Async<gen_diag::HandlerAdaptor<GenDiagHandler<'a>>>
+    EpClMatcher => gen_diag::HandlerAdaptor<GenDiagHandler<'a>>
     | H
 );
 
 /// A type alias for the handler chain returned by `with_sys()`.
 pub type SysHandler<'a, H> = handler_chain_type!(
-    EpClMatcher => Async<desc::HandlerAdaptor<DescHandler<'a>>>,
-    EpClMatcher => Async<basic_info::HandlerAdaptor<BasicInfoHandler>>,
-    EpClMatcher => Async<gen_comm::HandlerAdaptor<GenCommHandler<'a>>>,
-    EpClMatcher => Async<adm_comm::HandlerAdaptor<AdminCommHandler>>,
-    EpClMatcher => Async<noc::HandlerAdaptor<NocHandler>>,
-    EpClMatcher => Async<acl::HandlerAdaptor<acl::AclHandler>>,
-    EpClMatcher => Async<grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>>
+    EpClMatcher => desc::HandlerAdaptor<DescHandler<'a>>,
+    EpClMatcher => basic_info::HandlerAdaptor<BasicInfoHandler>,
+    EpClMatcher => gen_comm::HandlerAdaptor<GenCommHandler<'a>>,
+    EpClMatcher => adm_comm::HandlerAdaptor<AdminCommHandler>,
+    EpClMatcher => noc::HandlerAdaptor<NocHandler>,
+    EpClMatcher => acl::HandlerAdaptor<acl::AclHandler>,
+    EpClMatcher => grp_key_mgmt::HandlerAdaptor<GrpKeyMgmtHandler>
     | H
 );
 
@@ -114,12 +114,12 @@ pub fn with_eth<'a, H>(
 
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
+        GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt(),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(EthDiagHandler::CLUSTER.id)),
-        Async(EthDiagHandler::new(Dataver::new_rand(rand)).adapt()),
+        EthDiagHandler::new(Dataver::new_rand(rand)).adapt(),
     )
     .chain(
         EpClMatcher::new(
@@ -157,12 +157,12 @@ where
 {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
+        GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt(),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(WifiDiagHandler::CLUSTER.id)),
-        Async(WifiDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt()),
+        WifiDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt(),
     )
     .chain(
         EpClMatcher::new(
@@ -199,12 +199,12 @@ where
 {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenDiagHandler::CLUSTER.id)),
-        Async(GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt()),
+        GenDiagHandler::new(Dataver::new_rand(rand), gen_diag, netif_diag).adapt(),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(ThreadDiagHandler::CLUSTER.id)),
-        Async(ThreadDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt()),
+        ThreadDiagHandler::new(Dataver::new_rand(rand), net_ctl).adapt(),
     )
     .chain(
         EpClMatcher::new(
@@ -229,31 +229,31 @@ where
 pub fn with_sys<H>(comm_policy: &dyn CommPolicy, rand: Rand, handler: H) -> SysHandler<'_, H> {
     ChainedHandler::new(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GrpKeyMgmtHandler::CLUSTER.id)),
-        Async(GrpKeyMgmtHandler::new(Dataver::new_rand(rand)).adapt()),
+        GrpKeyMgmtHandler::new(Dataver::new_rand(rand)).adapt(),
         handler,
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AclHandler::CLUSTER.id)),
-        Async(AclHandler::new(Dataver::new_rand(rand)).adapt()),
+        AclHandler::new(Dataver::new_rand(rand)).adapt(),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(NocHandler::CLUSTER.id)),
-        Async(NocHandler::new(Dataver::new_rand(rand)).adapt()),
+        NocHandler::new(Dataver::new_rand(rand)).adapt(),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(AdminCommHandler::CLUSTER.id)),
-        Async(AdminCommHandler::new(Dataver::new_rand(rand)).adapt()),
+        AdminCommHandler::new(Dataver::new_rand(rand)).adapt(),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(GenCommHandler::CLUSTER.id)),
-        Async(GenCommHandler::new(Dataver::new_rand(rand), comm_policy).adapt()),
+        GenCommHandler::new(Dataver::new_rand(rand), comm_policy).adapt(),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(BasicInfoHandler::CLUSTER.id)),
-        Async(BasicInfoHandler::new(Dataver::new_rand(rand)).adapt()),
+        BasicInfoHandler::new(Dataver::new_rand(rand)).adapt(),
     )
     .chain(
         EpClMatcher::new(Some(ROOT_ENDPOINT_ID), Some(DescHandler::CLUSTER.id)),
-        Async(DescHandler::new(Dataver::new_rand(rand)).adapt()),
+        DescHandler::new(Dataver::new_rand(rand)).adapt(),
     )
 }

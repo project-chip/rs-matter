@@ -16,7 +16,7 @@
  */
 
 use rs_matter::dm::clusters::on_off::{
-    self, test::TestOnOffDeviceLogic, ClusterAsyncHandler as _, NoLevelControl,
+    self, test::TestOnOffDeviceLogic, ClusterHandler as _, NoLevelControl,
 };
 use rs_matter::dm::GlobalElements;
 use rs_matter::im::GenericPath;

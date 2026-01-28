@@ -53,7 +53,7 @@ impl ClusterHandler for EthDiagHandler {
         self.dataver.changed();
     }
 
-    fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    async fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 }

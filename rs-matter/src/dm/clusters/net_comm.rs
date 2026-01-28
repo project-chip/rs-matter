@@ -673,12 +673,12 @@ impl<'a, T> NetCommHandler<'a, T> {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> HandlerAsyncAdaptor<Self> {
-        HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> HandlerAdaptor<Self> {
+        HandlerAdaptor(self)
     }
 }
 
-impl<T> ClusterAsyncHandler for NetCommHandler<'_, T>
+impl<T> ClusterHandler for NetCommHandler<'_, T>
 where
     T: NetCtl + NetCtlStatus,
 {
