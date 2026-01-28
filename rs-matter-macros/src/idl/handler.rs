@@ -74,6 +74,7 @@ pub fn handler(
 
     if delegate {
         let run = quote!(
+            #[inline(always)]
             fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
                 (**self).run(ctx)
             }
@@ -100,6 +101,7 @@ pub fn handler(
         )
     } else {
         let run = quote!(
+            #[inline(always)]
             fn run(&self, _ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
                 core::future::pending::<Result::<(), #krate::error::Error>>()
             }
@@ -252,6 +254,7 @@ pub fn handler_adaptor(
     };
 
     let run = quote!(
+        #[inline(always)]
         fn run(&self, ctx: impl #krate::dm::HandlerContext) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
             self.0.run(ctx)
         }
@@ -268,6 +271,7 @@ pub fn handler_adaptor(
             T: #handler_name,
         {
             #[allow(unreachable_code)]
+           #[inline(always)]
             async fn read(
                 &self,
                 ctx: impl #krate::dm::ReadContext,
@@ -285,6 +289,7 @@ pub fn handler_adaptor(
             }
 
             #[allow(unreachable_code)]
+            #[inline(always)]
             async fn write(
                 &self,
                 ctx: impl #krate::dm::WriteContext,
@@ -303,6 +308,7 @@ pub fn handler_adaptor(
             }
 
             #[allow(unreachable_code)]
+            #[inline(always)]
             async fn invoke(
                 &self,
                 ctx: impl #krate::dm::InvokeContext,
@@ -394,12 +400,14 @@ fn handler_attribute(
 
         if !delegate && attr.field.is_optional {
             quote!(
+                #[inline(always)]
                 async fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> Result<P, #krate::error::Error> {
                     Err(#krate::error::ErrorCode::InvalidAction.into())
                 }
             )
         } else if delegate {
             quote!(
+                #[inline(always)]
                 fn #attr_name<P: #krate::tlv::TLVBuilderParent>(&self, ctx: impl #krate::dm::ReadContext, builder: #attr_type) -> impl core::future::Future<Output = Result<P, #krate::error::Error>> {
                     T::#attr_name(self, ctx, builder)
                 }
@@ -409,12 +417,14 @@ fn handler_attribute(
         }
     } else if !delegate && attr.field.is_optional {
         quote!(
+            #[inline(always)]
             async fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> Result<#attr_type, #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else if delegate {
         quote!(
+            #[inline(always)]
             fn #attr_name(&self, ctx: impl #krate::dm::ReadContext) -> impl core::future::Future<Output = Result<#attr_type, #krate::error::Error>> {
                 T::#attr_name(self, ctx)
             }
@@ -469,12 +479,14 @@ fn handler_attribute_write(
 
     if !delegate && attr.field.is_optional {
         quote!(
+            #[inline(always)]
             async fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> Result<(), #krate::error::Error> {
                 Err(#krate::error::ErrorCode::InvalidAction.into())
             }
         )
     } else if delegate {
         quote!(
+            #[inline(always)]
             fn #attr_name(&self, ctx: impl #krate::dm::WriteContext, value: #attr_type) -> impl core::future::Future<Output = Result<(), #krate::error::Error>> {
                 T::#attr_name(self, ctx, value)
             }
@@ -545,7 +557,9 @@ fn handler_command(
                 );
 
                 if delegate {
-                    quote!(#stream -> impl core::future::Future<Output = Result<P, #krate::error::Error>> { T::#cmd_name(self, ctx, request, response) })
+                    quote!(
+                        #[inline(always)]
+                        #stream -> impl core::future::Future<Output = Result<P, #krate::error::Error>> { T::#cmd_name(self, ctx, request, response) })
                 } else {
                     quote!(async #stream -> Result<P, #krate::error::Error>;)
                 }
@@ -559,7 +573,9 @@ fn handler_command(
                 );
 
                 if delegate {
-                    quote!(#stream -> impl core::future::Future<Output = Result<#field_resp, #krate::error::Error>> { T::#cmd_name(self, ctx, request) })
+                    quote!(
+                        #[inline(always)]
+                        #stream -> impl core::future::Future<Output = Result<#field_resp, #krate::error::Error>> { T::#cmd_name(self, ctx, request) })
                 } else {
                     quote!(async #stream -> Result<#field_resp, #krate::error::Error>;)
                 }
@@ -574,7 +590,9 @@ fn handler_command(
             );
 
             if delegate {
-                quote!(#stream -> impl core::future::Future<Output = Result<(), #krate::error::Error>> { T::#cmd_name(self, ctx, request) })
+                quote!(
+                    #[inline(always)]
+                    #stream -> impl core::future::Future<Output = Result<(), #krate::error::Error>> { T::#cmd_name(self, ctx, request) })
             } else {
                 quote!(async #stream -> Result<(), #krate::error::Error>;)
             }
@@ -590,7 +608,9 @@ fn handler_command(
             );
 
             if delegate {
-                quote!(#stream -> impl core::future::Future<Output = Result<P, #krate::error::Error>> { T::#cmd_name(self, ctx, response) })
+                quote!(
+                    #[inline(always)]
+                    #stream -> impl core::future::Future<Output = Result<P, #krate::error::Error>> { T::#cmd_name(self, ctx, response) })
             } else {
                 quote!(async #stream -> Result<P, #krate::error::Error>;)
             }
@@ -603,7 +623,9 @@ fn handler_command(
             );
 
             if delegate {
-                quote!(#stream { T::#cmd_name(self, ctx) })
+                quote!(
+                    #[inline(always)]
+                    #stream { T::#cmd_name(self, ctx) })
             } else {
                 quote!(async #stream;)
             }
@@ -617,7 +639,9 @@ fn handler_command(
         );
 
         if delegate {
-            quote!(#stream -> impl core::future::Future<Output = Result<(), #krate::error::Error>> { T::#cmd_name(self, ctx) })
+            quote!(
+                #[inline(always)]
+                #stream -> impl core::future::Future<Output = Result<(), #krate::error::Error>> { T::#cmd_name(self, ctx) })
         } else {
             quote!(async #stream -> Result<(), #krate::error::Error>;)
         }
@@ -1099,7 +1123,7 @@ mod tests {
         let cluster = get_cluster_named(&idl, "OnOff").expect("Cluster exists");
         let context = IdlGenerateContext::new("rs_matter_crate");
 
-        // panic!("====\n{}\n====", &handler(false, false, cluster, &context));
+        // panic!("====\n{}\n====", &handler(false, cluster, &idl.globals, &context));
 
         assert_tokenstreams_eq!(
             &handler(false, cluster, &idl.globals, &context),
@@ -1110,6 +1134,7 @@ mod tests {
                     const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
                     fn dataver(&self) -> u32;
                     fn dataver_changed(&self);
+                    #[inline(always)]
                     fn run(
                         &self,
                         _ctx: impl rs_matter_crate::dm::HandlerContext,
@@ -1121,24 +1146,28 @@ mod tests {
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error>;
+                    #[inline(always)]
                     async fn global_scene_control(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<bool, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
+                    #[inline(always)]
                     async fn on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
+                    #[inline(always)]
                     async fn off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
                     ) -> Result<u16, rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
+                    #[inline(always)]
                     async fn start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1148,6 +1177,7 @@ mod tests {
                     > {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
+                    #[inline(always)]
                     async fn set_on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1155,6 +1185,7 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
+                    #[inline(always)]
                     async fn set_off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1162,6 +1193,7 @@ mod tests {
                     ) -> Result<(), rs_matter_crate::error::Error> {
                         Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
                     }
+                    #[inline(always)]
                     async fn set_start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1215,6 +1247,7 @@ mod tests {
                     fn dataver_changed(&self) {
                         T::dataver_changed(self)
                     }
+                    #[inline(always)]
                     fn run(
                         &self,
                         ctx: impl rs_matter_crate::dm::HandlerContext,
@@ -1222,6 +1255,7 @@ mod tests {
                     {
                         (**self).run(ctx)
                     }
+                    #[inline(always)]
                     fn on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1229,6 +1263,7 @@ mod tests {
                     {
                         T::on_off(self, ctx)
                     }
+                    #[inline(always)]
                     fn global_scene_control(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1236,6 +1271,7 @@ mod tests {
                     {
                         T::global_scene_control(self, ctx)
                     }
+                    #[inline(always)]
                     fn on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1243,6 +1279,7 @@ mod tests {
                     {
                         T::on_time(self, ctx)
                     }
+                    #[inline(always)]
                     fn off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1250,6 +1287,7 @@ mod tests {
                     {
                         T::off_wait_time(self, ctx)
                     }
+                    #[inline(always)]
                     fn start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1261,6 +1299,7 @@ mod tests {
                     > {
                         T::start_up_on_off(self, ctx)
                     }
+                    #[inline(always)]
                     fn set_on_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1269,6 +1308,7 @@ mod tests {
                     {
                         T::set_on_time(self, ctx, value)
                     }
+                    #[inline(always)]
                     fn set_off_wait_time(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1277,6 +1317,7 @@ mod tests {
                     {
                         T::set_off_wait_time(self, ctx, value)
                     }
+                    #[inline(always)]
                     fn set_start_up_on_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1285,6 +1326,7 @@ mod tests {
                     {
                         T::set_start_up_on_off(self, ctx, value)
                     }
+                    #[inline(always)]
                     fn handle_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1292,6 +1334,7 @@ mod tests {
                     {
                         T::handle_off(self, ctx)
                     }
+                    #[inline(always)]
                     fn handle_on(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1299,6 +1342,7 @@ mod tests {
                     {
                         T::handle_on(self, ctx)
                     }
+                    #[inline(always)]
                     fn handle_toggle(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1306,6 +1350,7 @@ mod tests {
                     {
                         T::handle_toggle(self, ctx)
                     }
+                    #[inline(always)]
                     fn handle_off_with_effect(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1314,6 +1359,7 @@ mod tests {
                     {
                         T::handle_off_with_effect(self, ctx, request)
                     }
+                    #[inline(always)]
                     fn handle_on_with_recall_global_scene(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1321,6 +1367,7 @@ mod tests {
                     {
                         T::handle_on_with_recall_global_scene(self, ctx)
                     }
+                    #[inline(always)]
                     fn handle_on_with_timed_off(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1355,6 +1402,7 @@ mod tests {
                     T: ClusterHandler,
                 {
                     #[allow(unreachable_code)]
+                    #[inline(always)]
                     async fn read(
                         &self,
                         ctx: impl rs_matter_crate::dm::ReadContext,
@@ -1514,6 +1562,7 @@ mod tests {
                         }
                     }
                     #[allow(unreachable_code)]
+                    #[inline(always)]
                     async fn write(
                         &self,
                         ctx: impl rs_matter_crate::dm::WriteContext,
@@ -1630,6 +1679,7 @@ mod tests {
                         Ok(())
                     }
                     #[allow(unreachable_code)]
+                    #[inline(always)]
                     async fn invoke(
                         &self,
                         ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -1812,6 +1862,7 @@ mod tests {
                         self.0.dataver_changed();
                         Ok(())
                     }
+                    #[inline(always)]
                     fn run(
                         &self,
                         ctx: impl rs_matter_crate::dm::HandlerContext,

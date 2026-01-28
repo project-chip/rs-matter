@@ -22779,6 +22779,7 @@ pub mod unit_testing {
         const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
         fn dataver(&self) -> u32;
         fn dataver_changed(&self);
+        #[inline(always)]
         fn run(
             &self,
             _ctx: impl rs_matter_crate::dm::HandlerContext,
@@ -23002,6 +23003,7 @@ pub mod unit_testing {
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error>;
+        #[inline(always)]
         async fn unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23149,6 +23151,7 @@ pub mod unit_testing {
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
+        #[inline(always)]
         async fn write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23412,6 +23415,7 @@ pub mod unit_testing {
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error>;
+        #[inline(always)]
         async fn set_unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -23584,6 +23588,7 @@ pub mod unit_testing {
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> Result<(), rs_matter_crate::error::Error>;
+        #[inline(always)]
         async fn set_write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -23770,12 +23775,14 @@ pub mod unit_testing {
         fn dataver_changed(&self) {
             T::dataver_changed(self)
         }
+        #[inline(always)]
         fn run(
             &self,
             ctx: impl rs_matter_crate::dm::HandlerContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             (**self).run(ctx)
         }
+        #[inline(always)]
         fn boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23783,6 +23790,7 @@ pub mod unit_testing {
         {
             T::boolean(self, ctx)
         }
+        #[inline(always)]
         fn bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23790,6 +23798,7 @@ pub mod unit_testing {
         {
             T::bitmap_8(self, ctx)
         }
+        #[inline(always)]
         fn bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23797,6 +23806,7 @@ pub mod unit_testing {
         {
             T::bitmap_16(self, ctx)
         }
+        #[inline(always)]
         fn bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23804,6 +23814,7 @@ pub mod unit_testing {
         {
             T::bitmap_32(self, ctx)
         }
+        #[inline(always)]
         fn bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23811,12 +23822,14 @@ pub mod unit_testing {
         {
             T::bitmap_64(self, ctx)
         }
+        #[inline(always)]
         fn int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
             T::int_8_u(self, ctx)
         }
+        #[inline(always)]
         fn int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23824,6 +23837,7 @@ pub mod unit_testing {
         {
             T::int_16_u(self, ctx)
         }
+        #[inline(always)]
         fn int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23831,6 +23845,7 @@ pub mod unit_testing {
         {
             T::int_24_u(self, ctx)
         }
+        #[inline(always)]
         fn int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23838,6 +23853,7 @@ pub mod unit_testing {
         {
             T::int_32_u(self, ctx)
         }
+        #[inline(always)]
         fn int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23845,6 +23861,7 @@ pub mod unit_testing {
         {
             T::int_40_u(self, ctx)
         }
+        #[inline(always)]
         fn int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23852,6 +23869,7 @@ pub mod unit_testing {
         {
             T::int_48_u(self, ctx)
         }
+        #[inline(always)]
         fn int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23859,6 +23877,7 @@ pub mod unit_testing {
         {
             T::int_56_u(self, ctx)
         }
+        #[inline(always)]
         fn int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23866,12 +23885,14 @@ pub mod unit_testing {
         {
             T::int_64_u(self, ctx)
         }
+        #[inline(always)]
         fn int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i8, rs_matter_crate::error::Error>> {
             T::int_8_s(self, ctx)
         }
+        #[inline(always)]
         fn int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23879,6 +23900,7 @@ pub mod unit_testing {
         {
             T::int_16_s(self, ctx)
         }
+        #[inline(always)]
         fn int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23886,6 +23908,7 @@ pub mod unit_testing {
         {
             T::int_24_s(self, ctx)
         }
+        #[inline(always)]
         fn int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23893,6 +23916,7 @@ pub mod unit_testing {
         {
             T::int_32_s(self, ctx)
         }
+        #[inline(always)]
         fn int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23900,6 +23924,7 @@ pub mod unit_testing {
         {
             T::int_40_s(self, ctx)
         }
+        #[inline(always)]
         fn int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23907,6 +23932,7 @@ pub mod unit_testing {
         {
             T::int_48_s(self, ctx)
         }
+        #[inline(always)]
         fn int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23914,6 +23940,7 @@ pub mod unit_testing {
         {
             T::int_56_s(self, ctx)
         }
+        #[inline(always)]
         fn int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23921,12 +23948,14 @@ pub mod unit_testing {
         {
             T::int_64_s(self, ctx)
         }
+        #[inline(always)]
         fn enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
             T::enum_8(self, ctx)
         }
+        #[inline(always)]
         fn enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23934,6 +23963,7 @@ pub mod unit_testing {
         {
             T::enum_16(self, ctx)
         }
+        #[inline(always)]
         fn float_single(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23941,6 +23971,7 @@ pub mod unit_testing {
         {
             T::float_single(self, ctx)
         }
+        #[inline(always)]
         fn float_double(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23948,6 +23979,7 @@ pub mod unit_testing {
         {
             T::float_double(self, ctx)
         }
+        #[inline(always)]
         fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23955,6 +23987,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::octet_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23965,6 +23998,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::list_int_8_u(self, ctx, builder)
         }
+        #[inline(always)]
         fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23975,6 +24009,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::list_octet_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23985,6 +24020,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::list_struct_octet_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23992,6 +24028,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::long_octet_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23999,6 +24036,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::char_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24006,6 +24044,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::long_char_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24013,6 +24052,7 @@ pub mod unit_testing {
         {
             T::epoch_us(self, ctx)
         }
+        #[inline(always)]
         fn epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24020,6 +24060,7 @@ pub mod unit_testing {
         {
             T::epoch_s(self, ctx)
         }
+        #[inline(always)]
         fn vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24027,6 +24068,7 @@ pub mod unit_testing {
         {
             T::vendor_id(self, ctx)
         }
+        #[inline(always)]
         fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24037,6 +24079,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::list_nullables_and_optionals_struct(self, ctx, builder)
         }
+        #[inline(always)]
         fn enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24044,6 +24087,7 @@ pub mod unit_testing {
         {
             T::enum_attr(self, ctx)
         }
+        #[inline(always)]
         fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24051,18 +24095,21 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::struct_attr(self, ctx, builder)
         }
+        #[inline(always)]
         fn range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
             T::range_restricted_int_8_u(self, ctx)
         }
+        #[inline(always)]
         fn range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i8, rs_matter_crate::error::Error>> {
             T::range_restricted_int_8_s(self, ctx)
         }
+        #[inline(always)]
         fn range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24070,6 +24117,7 @@ pub mod unit_testing {
         {
             T::range_restricted_int_16_u(self, ctx)
         }
+        #[inline(always)]
         fn range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24077,6 +24125,7 @@ pub mod unit_testing {
         {
             T::range_restricted_int_16_s(self, ctx)
         }
+        #[inline(always)]
         fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24087,6 +24136,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::list_long_octet_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24097,6 +24147,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::list_fabric_scoped(self, ctx, builder)
         }
+        #[inline(always)]
         fn timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24104,6 +24155,7 @@ pub mod unit_testing {
         {
             T::timed_write_boolean(self, ctx)
         }
+        #[inline(always)]
         fn general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24111,6 +24163,7 @@ pub mod unit_testing {
         {
             T::general_error_boolean(self, ctx)
         }
+        #[inline(always)]
         fn cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24118,6 +24171,7 @@ pub mod unit_testing {
         {
             T::cluster_error_boolean(self, ctx)
         }
+        #[inline(always)]
         fn unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24125,6 +24179,7 @@ pub mod unit_testing {
         {
             T::unsupported(self, ctx)
         }
+        #[inline(always)]
         fn nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24133,6 +24188,7 @@ pub mod unit_testing {
         > {
             T::nullable_boolean(self, ctx)
         }
+        #[inline(always)]
         fn nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24144,6 +24200,7 @@ pub mod unit_testing {
         > {
             T::nullable_bitmap_8(self, ctx)
         }
+        #[inline(always)]
         fn nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24155,6 +24212,7 @@ pub mod unit_testing {
         > {
             T::nullable_bitmap_16(self, ctx)
         }
+        #[inline(always)]
         fn nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24166,6 +24224,7 @@ pub mod unit_testing {
         > {
             T::nullable_bitmap_32(self, ctx)
         }
+        #[inline(always)]
         fn nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24177,6 +24236,7 @@ pub mod unit_testing {
         > {
             T::nullable_bitmap_64(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24185,6 +24245,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_8_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24193,6 +24254,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_16_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24201,6 +24263,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_24_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24209,6 +24272,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_32_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24217,6 +24281,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_40_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24225,6 +24290,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_48_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24233,6 +24299,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_56_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24241,6 +24308,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_64_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24249,6 +24317,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_8_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24257,6 +24326,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_16_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24265,6 +24335,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_24_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24273,6 +24344,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_32_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24281,6 +24353,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_40_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24289,6 +24362,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_48_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24297,6 +24371,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_56_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24305,6 +24380,7 @@ pub mod unit_testing {
         > {
             T::nullable_int_64_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24313,6 +24389,7 @@ pub mod unit_testing {
         > {
             T::nullable_enum_8(self, ctx)
         }
+        #[inline(always)]
         fn nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24321,6 +24398,7 @@ pub mod unit_testing {
         > {
             T::nullable_enum_16(self, ctx)
         }
+        #[inline(always)]
         fn nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24329,6 +24407,7 @@ pub mod unit_testing {
         > {
             T::nullable_float_single(self, ctx)
         }
+        #[inline(always)]
         fn nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24337,6 +24416,7 @@ pub mod unit_testing {
         > {
             T::nullable_float_double(self, ctx)
         }
+        #[inline(always)]
         fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24347,6 +24427,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::nullable_octet_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24357,6 +24438,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::nullable_char_string(self, ctx, builder)
         }
+        #[inline(always)]
         fn nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24368,6 +24450,7 @@ pub mod unit_testing {
         > {
             T::nullable_enum_attr(self, ctx)
         }
+        #[inline(always)]
         fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24375,6 +24458,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::nullable_struct(self, ctx, builder)
         }
+        #[inline(always)]
         fn nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24383,6 +24467,7 @@ pub mod unit_testing {
         > {
             T::nullable_range_restricted_int_8_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24391,6 +24476,7 @@ pub mod unit_testing {
         > {
             T::nullable_range_restricted_int_8_s(self, ctx)
         }
+        #[inline(always)]
         fn nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24399,6 +24485,7 @@ pub mod unit_testing {
         > {
             T::nullable_range_restricted_int_16_u(self, ctx)
         }
+        #[inline(always)]
         fn nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24407,18 +24494,21 @@ pub mod unit_testing {
         > {
             T::nullable_range_restricted_int_16_s(self, ctx)
         }
+        #[inline(always)]
         fn write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
             T::write_only_int_8_u(self, ctx)
         }
+        #[inline(always)]
         fn mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
             T::mei_int_8_u(self, ctx)
         }
+        #[inline(always)]
         fn set_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24426,6 +24516,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_boolean(self, ctx, value)
         }
+        #[inline(always)]
         fn set_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24433,6 +24524,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_bitmap_8(self, ctx, value)
         }
+        #[inline(always)]
         fn set_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24440,6 +24532,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_bitmap_16(self, ctx, value)
         }
+        #[inline(always)]
         fn set_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24447,6 +24540,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_bitmap_32(self, ctx, value)
         }
+        #[inline(always)]
         fn set_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24454,6 +24548,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_bitmap_64(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24461,6 +24556,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24468,6 +24564,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_16_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24475,6 +24572,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_24_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24482,6 +24580,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_32_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24489,6 +24588,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_40_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24496,6 +24596,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_48_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24503,6 +24604,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_56_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24510,6 +24612,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_64_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24517,6 +24620,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_8_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24524,6 +24628,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_16_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24531,6 +24636,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_24_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24538,6 +24644,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_32_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24545,6 +24652,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_40_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24552,6 +24660,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_48_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24559,6 +24668,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_56_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24566,6 +24676,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_int_64_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24573,6 +24684,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_enum_8(self, ctx, value)
         }
+        #[inline(always)]
         fn set_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24580,6 +24692,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_enum_16(self, ctx, value)
         }
+        #[inline(always)]
         fn set_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24587,6 +24700,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_float_single(self, ctx, value)
         }
+        #[inline(always)]
         fn set_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24594,6 +24708,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_float_double(self, ctx, value)
         }
+        #[inline(always)]
         fn set_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24601,6 +24716,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_octet_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_list_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24611,6 +24727,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_list_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_list_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24621,6 +24738,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_list_octet_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_list_struct_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24631,6 +24749,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_list_struct_octet_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24638,6 +24757,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_long_octet_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24645,6 +24765,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_char_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_long_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24652,6 +24773,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_long_char_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24659,6 +24781,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_epoch_us(self, ctx, value)
         }
+        #[inline(always)]
         fn set_epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24666,6 +24789,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_epoch_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24673,6 +24797,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_vendor_id(self, ctx, value)
         }
+        #[inline(always)]
         fn set_list_nullables_and_optionals_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24683,6 +24808,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_list_nullables_and_optionals_struct(self, ctx, value)
         }
+        #[inline(always)]
         fn set_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24690,6 +24816,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_enum_attr(self, ctx, value)
         }
+        #[inline(always)]
         fn set_struct_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24697,6 +24824,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_struct_attr(self, ctx, value)
         }
+        #[inline(always)]
         fn set_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24704,6 +24832,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_range_restricted_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24711,6 +24840,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_range_restricted_int_8_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24718,6 +24848,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_range_restricted_int_16_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24725,6 +24856,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_range_restricted_int_16_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_list_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24735,6 +24867,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_list_long_octet_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_list_fabric_scoped(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24745,6 +24878,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_list_fabric_scoped(self, ctx, value)
         }
+        #[inline(always)]
         fn set_timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24752,6 +24886,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_timed_write_boolean(self, ctx, value)
         }
+        #[inline(always)]
         fn set_general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24759,6 +24894,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_general_error_boolean(self, ctx, value)
         }
+        #[inline(always)]
         fn set_cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24766,6 +24902,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_cluster_error_boolean(self, ctx, value)
         }
+        #[inline(always)]
         fn set_unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24773,6 +24910,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_unsupported(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24780,6 +24918,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_boolean(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24787,6 +24926,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_bitmap_8(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24794,6 +24934,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_bitmap_16(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24801,6 +24942,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_bitmap_32(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24808,6 +24950,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_bitmap_64(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24815,6 +24958,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24822,6 +24966,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_16_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24829,6 +24974,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_24_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24836,6 +24982,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_32_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24843,6 +24990,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_40_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24850,6 +24998,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_48_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24857,6 +25006,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_56_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24864,6 +25014,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_64_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24871,6 +25022,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_8_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24878,6 +25030,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_16_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24885,6 +25038,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_24_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24892,6 +25046,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_32_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24899,6 +25054,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_40_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24906,6 +25062,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_48_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24913,6 +25070,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_56_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24920,6 +25078,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_int_64_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24927,6 +25086,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_enum_8(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24934,6 +25094,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_enum_16(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24941,6 +25102,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_float_single(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24948,6 +25110,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_float_double(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24955,6 +25118,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_octet_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24962,6 +25126,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_char_string(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24969,6 +25134,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_enum_attr(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24976,6 +25142,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_struct(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24983,6 +25150,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_range_restricted_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24990,6 +25158,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_range_restricted_int_8_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24997,6 +25166,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_range_restricted_int_16_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -25004,6 +25174,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_nullable_range_restricted_int_16_s(self, ctx, value)
         }
+        #[inline(always)]
         fn set_write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -25011,6 +25182,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_write_only_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn set_mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -25018,18 +25190,21 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::set_mei_int_8_u(self, ctx, value)
         }
+        #[inline(always)]
         fn handle_test(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::handle_test(self, ctx)
         }
+        #[inline(always)]
         fn handle_test_not_handled(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::handle_test_not_handled(self, ctx)
         }
+        #[inline(always)]
         fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25037,12 +25212,14 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_specific(self, ctx, response)
         }
+        #[inline(always)]
         fn handle_test_unknown_command(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::handle_test_unknown_command(self, ctx)
         }
+        #[inline(always)]
         fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25051,6 +25228,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_add_arguments(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25059,6 +25237,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_simple_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25067,6 +25246,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_struct_array_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25075,6 +25255,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_struct_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25083,6 +25264,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_nested_struct_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25091,6 +25273,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_list_struct_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25099,6 +25282,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_list_int_8_u_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25109,6 +25293,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_nested_struct_list_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_list_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25119,6 +25304,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_list_nested_struct_list_argument_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25127,6 +25313,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_list_int_8_u_reverse_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25135,6 +25322,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_enums_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25143,6 +25331,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_nullable_optional_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_complex_nullable_optional_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25153,6 +25342,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_complex_nullable_optional_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25161,12 +25351,14 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_simple_struct_echo_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_timed_invoke_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::handle_timed_invoke_request(self, ctx)
         }
+        #[inline(always)]
         fn handle_test_simple_optional_argument_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25174,6 +25366,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             T::handle_test_simple_optional_argument_request(self, ctx, request)
         }
+        #[inline(always)]
         fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25182,6 +25375,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_emit_test_event_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_emit_test_fabric_scoped_event_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25192,6 +25386,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_emit_test_fabric_scoped_event_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25200,6 +25395,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_batch_helper_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25208,6 +25404,7 @@ pub mod unit_testing {
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
             T::handle_test_second_batch_helper_request(self, ctx, request, response)
         }
+        #[inline(always)]
         fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -25226,6 +25423,7 @@ pub mod unit_testing {
         T: ClusterHandler,
     {
         #[allow(unreachable_code)]
+        #[inline(always)]
         async fn read(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -27837,6 +28035,7 @@ pub mod unit_testing {
             }
         }
         #[allow(unreachable_code)]
+        #[inline(always)]
         async fn write(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -30246,6 +30445,7 @@ pub mod unit_testing {
             Ok(())
         }
         #[allow(unreachable_code)]
+        #[inline(always)]
         async fn invoke(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -31714,6 +31914,7 @@ pub mod unit_testing {
             self.0.dataver_changed();
             Ok(())
         }
+        #[inline(always)]
         fn run(
             &self,
             ctx: impl rs_matter_crate::dm::HandlerContext,
