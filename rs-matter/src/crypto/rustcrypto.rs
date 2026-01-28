@@ -16,6 +16,18 @@
  */
 
 //! A RustCrypto backend for the crypto traits
+//!
+//! Besides implementation of the main `Crypto` trait, this module also provides
+//! implementations for various other crypto traits defined in the `crypto` module,
+//! where those implementations are as generic as possible (i.e., not tied to a specific
+//! RustCrypto curve or algorithm) but rather - **coded against the generic RustCrypto traits**
+//! describing the notions of ciphers, digests, AEAD, elliptic-curves and so on.
+//!
+//! This is a deliberate decision which - while increasing a bit the implementation complexity -
+//! allows the user to more easily implement hardware acceleration for specific algorithms/curves
+//! **IF** the hardware-accelerated algorithm implementation already implements the corresponding
+//! RustCrypto traits, because in that case the HW-accelerated algorithm should be piossible to reuse
+//! as-is, without additional adaptation.
 
 #![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
 
@@ -225,10 +237,19 @@ where
     }
 }
 
+/// A digest implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `digest` traits, so
+/// it can be used with any hasher implementing those traits (including hardware-accelerated ones).
 #[derive(Clone)]
 pub struct Digest<const HASH_LEN: usize, T>(T);
 
 impl<const HASH_LEN: usize, T> Digest<HASH_LEN, T> {
+    /// Create a new Digest
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the hasher
+    /// produces a hash of length `HASH_LEN`.
     unsafe fn new(hasher: T) -> Self {
         Self(hasher)
     }
@@ -248,6 +269,7 @@ where
     }
 }
 
+/// A HKDF implementation using SHA-256
 // TODO: Generalize for more than Sha256
 pub struct HkdfSha256(());
 
@@ -259,9 +281,14 @@ impl super::Kdf for HkdfSha256 {
     }
 }
 
+/// A PBKDF2 implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `digest` traits, so
+/// it can be used with any hasher implementing those traits (including hardware-accelerated ones).
 pub struct Pbkdf2<T>(PhantomData<T>);
 
 impl<T> Pbkdf2<T> {
+    /// Create a new PBKDF2 instance
     fn new() -> Self {
         Self(PhantomData)
     }
@@ -276,6 +303,10 @@ where
     }
 }
 
+/// An AEAD-CCM implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `cipher` traits, so
+/// it can be used with any cipher implementing those traits (including hardware-accelerated ones).
 pub struct AeadCcm<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>(
     PhantomData<(C, M, N)>,
 );
@@ -283,6 +314,12 @@ pub struct AeadCcm<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: 
 impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize, C, M, N>
     AeadCcm<KEY_LEN, NONCE_LEN, TAG_LEN, C, M, N>
 {
+    /// Create a new AEAD-CCM instance
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that the
+    /// generic parameters C, M, and N correspond to the KEY_LEN, NONCE_LEN,
+    /// and TAG_LEN const generics.
     const unsafe fn new() -> Self {
         Self(PhantomData)
     }
@@ -338,6 +375,10 @@ where
     }
 }
 
+/// An elliptic-curve based public key implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
 pub struct ECPublicKey<const KEY_LEN: usize, const SIGNATURE_LEN: usize, C: CurveArithmetic>(
     PublicKey<C>,
 );
@@ -350,6 +391,11 @@ where
     <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
     SignatureSize<C>: ArrayLength<u8>,
 {
+    /// Create a new EC public key from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `KEY_LEN` and `SIGNATURE_LEN` const generics.
     unsafe fn new(pub_key: &[u8; KEY_LEN]) -> Self {
         let encoded_point = EncodedPoint::<C>::from_bytes(pub_key).unwrap();
 
@@ -386,6 +432,10 @@ where
     }
 }
 
+/// An elliptic-curve based secret key implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
 pub struct ECSecretKey<
     const KEY_LEN: usize,
     const PUB_KEY_LEN: usize,
@@ -411,10 +461,22 @@ where
     der::MaxSize<C>: ArrayLength<u8>,
     <FieldBytesSize<C> as Add>::Output: Add<der::MaxOverhead> + ArrayLength<u8>,
 {
+    /// Create a new EC secret key from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
+    /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
     unsafe fn new(secret_key: &[u8; KEY_LEN]) -> Self {
         Self(SecretKey::<C>::from_slice(secret_key).unwrap())
     }
 
+    /// Create a new random EC secret key
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
+    /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
     unsafe fn new_random<R: CryptoRngCore>(rng: &mut R) -> Self {
         Self(SecretKey::<C>::random(rng))
     }
@@ -580,9 +642,19 @@ where
     }
 }
 
+/// A unsigned integer implementation using RustCrypto
+/// based on the `crypto-bigint` crate.
+///
+/// When using hardware acceleration, this type needs to be
+/// replaced with a custom one.
 pub struct Uint<const LEN: usize, const LIMBS: usize>(crypto_bigint::Uint<LIMBS>);
 
 impl<const LEN: usize, const LIMBS: usize> Uint<LEN, LIMBS> {
+    /// Create a new Uint from its canonical representation (BE bytes)
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the `LIMBS` const generic corresponds to the `LEN` const generic.
     unsafe fn new(uint: &[u8; LEN]) -> Self {
         Self(crypto_bigint::Uint::from_be_slice(uint))
     }
@@ -608,6 +680,10 @@ impl<const LEN: usize, const LIMBS: usize> super::UInt<'_, LEN> for Uint<LEN, LI
     }
 }
 
+/// An elliptic-curve based scalar implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
 pub struct ECScalar<const LEN: usize, C: CurveArithmetic>(Scalar<C>);
 
 impl<'a, const LEN: usize, C> ECScalar<LEN, C>
@@ -615,10 +691,20 @@ where
     C: CurveArithmetic,
     Scalar<C>: PrimeField + Mul<Output = C::Scalar> + Clone,
 {
+    /// Create a new EC scalar from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
     unsafe fn new(scalar: &[u8; LEN]) -> Self {
         Self(Scalar::<C>::from_repr(GenericArray::from_slice(scalar).clone()).unwrap())
     }
 
+    /// Create a new random EC scalar
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
     unsafe fn new_random<R: CryptoRngCore>(rng: &mut R) -> Self {
         Self(Scalar::<C>::random(rng))
     }
@@ -638,6 +724,10 @@ where
     }
 }
 
+/// An elliptic-curve based point implementation using RustCrypto
+///
+/// The implementation is parameterized with the generic RustCrypto `elliptic_curve` traits, so
+/// it can be used with any curve implementing those traits (including hardware-accelerated ones).
 pub struct ECPoint<const LEN: usize, const SCALAR_LEN: usize, C: CurveArithmetic>(
     ProjectivePoint<C>,
 );
@@ -653,6 +743,13 @@ where
         + Add<Output = C::ProjectivePoint>
         + Clone,
 {
+    /// Create a new EC point from its canonical representation
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` and `SCALAR_LEN` const generics.
+    /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
+    /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
     unsafe fn new(point: &[u8; LEN]) -> Self {
         let affine_point =
             AffinePoint::<C>::from_encoded_point(&EncodedPoint::<C>::from_bytes(point).unwrap())
@@ -661,6 +758,13 @@ where
         Self(affine_point.into())
     }
 
+    /// Create the EC generator point
+    ///
+    /// # Safety
+    /// This function is unsafe because the caller must ensure that
+    /// the curve `C` corresponds to the `LEN` and `SCALAR_LEN` const generics.
+    /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
+    /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
     unsafe fn generator() -> Self {
         Self(AffinePoint::<C>::GENERATOR.into())
     }
@@ -703,6 +807,10 @@ where
     }
 }
 
+/// A helper buffer for the AEAD cipher implementing the `ccm::aead::Buffer` trait
+///
+/// The helper is also used in the X509 CSR generation to provide a buffer implementing
+/// the `x509_cert::der::Writer` trait.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct SliceBuffer<'a> {

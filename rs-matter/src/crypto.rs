@@ -235,6 +235,10 @@ pub const SESSION_KEY_ZEROED: SessionKey = AEAD_KEY_ZEROED;
 /// Trait representing a cryptographic backend.
 ///
 /// The backend should provide all the cryptographic primitives required by the Matter spec.
+///
+/// The trait is designed in a way where it allows customizing a concrete implementation by
+/// swapping out its out of the box algorithms with custom (potentially HW-accelerated) ones,
+/// by decorating the original implementation and replacing only the required types and methods.
 pub trait Crypto {
     /// Hasher type returned by `Crypto::hash`.
     ///
@@ -410,42 +414,52 @@ where
         = T::Hash<'a>
     where
         Self: 'a;
+
     type Hmac<'a>
         = T::Hmac<'a>
     where
         Self: 'a;
+
     type Kdf<'a>
         = T::Kdf<'a>
     where
         Self: 'a;
+
     type PbKdf<'a>
         = T::PbKdf<'a>
     where
         Self: 'a;
+
     type Aead<'a>
         = T::Aead<'a>
     where
         Self: 'a;
+
     type PublicKey<'a>
         = T::PublicKey<'a>
     where
         Self: 'a;
+
     type SecretKey<'a>
         = T::SecretKey<'a>
     where
         Self: 'a;
+
     type SigningSecretKey<'a>
         = T::SigningSecretKey<'a>
     where
         Self: 'a;
+
     type UInt384<'a>
         = T::UInt384<'a>
     where
         Self: 'a;
+
     type EcScalar<'a>
         = T::EcScalar<'a>
     where
         Self: 'a;
+
     type EcPoint<'a>
         = T::EcPoint<'a>
     where
