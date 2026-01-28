@@ -151,7 +151,9 @@ impl super::Crypto for MbedtlsCrypto {
 
     fn ec_scalar(&self, scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
         let mut result = ECScalar::new(&self.ec_group);
-        result.set(scalar);
+        unsafe {
+            result.set(scalar);
+        }
 
         Ok(result)
     }
@@ -162,7 +164,9 @@ impl super::Crypto for MbedtlsCrypto {
 
     fn ec_point(&self, point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
         let mut result = ECPoint::new(&self.ec_group);
-        result.set(point);
+        unsafe {
+            result.set(point);
+        }
 
         Ok(result)
     }
@@ -618,7 +622,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN>
     }
 
     /// Set the EC point from the given byte representation.
-    fn set(&mut self, point: &[u8; LEN]) {
+    unsafe fn set(&mut self, point: &[u8; LEN]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_point_read_binary(
                 &self.group.raw,
@@ -739,7 +743,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         let mut r = Mpi::new();
         let mut s = Mpi::new();
 
-        let (r_signature, s_signature) = signature.split_at(super::PKC_SIGNATURE_LEN / 2);
+        let (r_signature, s_signature) = signature.split_at(SIGNATURE_LEN / 2);
 
         r.set(r_signature);
         s.set(s_signature);
@@ -792,7 +796,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> 
     }
 
     /// Set the EC scalar from the given byte representation.
-    fn set(&mut self, scalar: &[u8; LEN]) {
+    unsafe fn set(&mut self, scalar: &[u8; LEN]) {
         self.mpi.set(scalar);
     }
 
