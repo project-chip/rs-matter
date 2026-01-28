@@ -15,7 +15,15 @@
  *    limitations under the License.
  */
 
-use std::marker::PhantomData;
+//! This module handles Spake2+ specific instructions.
+//!
+//! In itself, the module is independent from the concrete BigNum and EC implementation
+//! which is provided vya the `Crypto` trait and which is required for Spake2+.
+//!
+//! In the case of the verifier, we don't actually release the Ke until we
+//! validate that the cA is confirmed.
+
+use core::marker::PhantomData;
 
 use subtle::ConstantTimeEq;
 
@@ -28,13 +36,6 @@ use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
 use crate::utils::init::{init, init_zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
-
-// This file handles Spake2+ specific instructions. In itself, this file is
-// independent from the BigNum and EC operations that are typically required
-// Spake2+.
-//
-// In the case of the verifier, we don't actually release the Ke until we
-// validate that the cA is confirmed.
 
 const MATTER_M_BIN: &CanonEcPoint = &[
     0x04, 0x88, 0x6e, 0x2f, 0x97, 0xac, 0xe4, 0x6e, 0x55, 0xba, 0x9d, 0xd7, 0x24, 0x25, 0x79, 0xf2,
