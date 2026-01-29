@@ -419,16 +419,18 @@ impl ClusterHandler for BasicInfoHandler {
     fn dataver_changed(&self) {
         self.0.changed();
     }
+}
 
-    async fn data_model_revision(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+impl ClusterSyncHandler for BasicInfoHandler {
+    fn data_model_revision(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).data_model_revision)
     }
 
-    async fn vendor_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+    fn vendor_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).vid)
     }
 
-    async fn vendor_name<P: TLVBuilderParent>(
+    fn vendor_name<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
@@ -436,11 +438,11 @@ impl ClusterHandler for BasicInfoHandler {
         out.set(Self::config(ctx.exchange()).vendor_name)
     }
 
-    async fn product_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+    fn product_id(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).pid)
     }
 
-    async fn product_name<P: TLVBuilderParent>(
+    fn product_name<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
@@ -448,11 +450,11 @@ impl ClusterHandler for BasicInfoHandler {
         out.set(Self::config(ctx.exchange()).product_name)
     }
 
-    async fn hardware_version(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+    fn hardware_version(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).hw_ver)
     }
 
-    async fn hardware_version_string<P: TLVBuilderParent>(
+    fn hardware_version_string<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
@@ -460,11 +462,11 @@ impl ClusterHandler for BasicInfoHandler {
         out.set(Self::config(ctx.exchange()).hw_ver_str)
     }
 
-    async fn software_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
+    fn software_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(Self::config(ctx.exchange()).sw_ver)
     }
 
-    async fn software_version_string<P: TLVBuilderParent>(
+    fn software_version_string<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
@@ -472,7 +474,7 @@ impl ClusterHandler for BasicInfoHandler {
         out.set(Self::config(ctx.exchange()).sw_ver_str)
     }
 
-    async fn node_label<P: TLVBuilderParent>(
+    fn node_label<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
@@ -480,7 +482,7 @@ impl ClusterHandler for BasicInfoHandler {
         out.set(Self::settings(ctx.exchange()).borrow().node_label.as_str())
     }
 
-    async fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
+    fn set_node_label(&self, ctx: impl WriteContext, label: &str) -> Result<(), Error> {
         if label.len() > 32 {
             return Err(ErrorCode::ConstraintError.into());
         }
@@ -499,7 +501,7 @@ impl ClusterHandler for BasicInfoHandler {
         Ok(())
     }
 
-    async fn location<P: TLVBuilderParent>(
+    fn location<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         out: Utf8StrBuilder<P>,
@@ -508,7 +510,7 @@ impl ClusterHandler for BasicInfoHandler {
         out.set(settings.location.as_ref().map_or("XX", |loc| loc.as_str()))
     }
 
-    async fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
+    fn set_location(&self, ctx: impl WriteContext, location: &str) -> Result<(), Error> {
         if location.len() != 2 {
             return Err(ErrorCode::ConstraintError.into());
         }
@@ -522,7 +524,7 @@ impl ClusterHandler for BasicInfoHandler {
         Ok(())
     }
 
-    async fn capability_minima<P: TLVBuilderParent>(
+    fn capability_minima<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: CapabilityMinimaStructBuilder<P>,
@@ -535,23 +537,23 @@ impl ClusterHandler for BasicInfoHandler {
             .end()
     }
 
-    async fn specification_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
+    fn specification_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(Self::config(ctx.exchange()).specification_version)
     }
 
-    async fn max_paths_per_invoke(&self, ctx: impl ReadContext) -> Result<u16, Error> {
+    fn max_paths_per_invoke(&self, ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(Self::config(ctx.exchange()).max_paths_per_invoke)
     }
 
-    async fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
+    fn configuration_version(&self, ctx: impl ReadContext) -> Result<u32, Error> {
         Ok(Self::config(ctx.exchange()).configuration_version)
     }
 
-    async fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_mfg_specific_ping(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 
-    async fn manufacturing_date<P: TLVBuilderParent>(
+    fn manufacturing_date<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
@@ -559,7 +561,7 @@ impl ClusterHandler for BasicInfoHandler {
         builder.set(Self::config(ctx.exchange()).manufacturing_date)
     }
 
-    async fn part_number<P: TLVBuilderParent>(
+    fn part_number<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
@@ -567,7 +569,7 @@ impl ClusterHandler for BasicInfoHandler {
         builder.set(Self::config(ctx.exchange()).part_number)
     }
 
-    async fn product_url<P: TLVBuilderParent>(
+    fn product_url<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
@@ -575,7 +577,7 @@ impl ClusterHandler for BasicInfoHandler {
         builder.set(Self::config(ctx.exchange()).product_url)
     }
 
-    async fn product_label<P: TLVBuilderParent>(
+    fn product_label<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
@@ -583,7 +585,7 @@ impl ClusterHandler for BasicInfoHandler {
         builder.set(Self::config(ctx.exchange()).product_label)
     }
 
-    async fn serial_number<P: TLVBuilderParent>(
+    fn serial_number<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
@@ -591,17 +593,13 @@ impl ClusterHandler for BasicInfoHandler {
         builder.set(Self::config(ctx.exchange()).serial_no)
     }
 
-    async fn local_config_disabled(&self, ctx: impl ReadContext) -> Result<bool, Error> {
+    fn local_config_disabled(&self, ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(Self::settings(ctx.exchange())
             .borrow()
             .local_config_disabled)
     }
 
-    async fn set_local_config_disabled(
-        &self,
-        ctx: impl WriteContext,
-        value: bool,
-    ) -> Result<(), Error> {
+    fn set_local_config_disabled(&self, ctx: impl WriteContext, value: bool) -> Result<(), Error> {
         let mut settings = Self::settings(ctx.exchange()).borrow_mut();
 
         settings.local_config_disabled = value;
@@ -612,7 +610,7 @@ impl ClusterHandler for BasicInfoHandler {
         Ok(())
     }
 
-    async fn unique_id<P: TLVBuilderParent>(
+    fn unique_id<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: Utf8StrBuilder<P>,
@@ -620,7 +618,7 @@ impl ClusterHandler for BasicInfoHandler {
         builder.set(Self::config(ctx.exchange()).unique_id)
     }
 
-    async fn product_appearance<P: TLVBuilderParent>(
+    fn product_appearance<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ProductAppearanceStructBuilder<P>,

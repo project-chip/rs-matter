@@ -402,19 +402,18 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn channel(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+impl ClusterSyncHandler for ThreadDiagHandler<'_> {
+    fn channel(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.channel()?))
     }
 
-    async fn routing_role(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<RoutingRoleEnum>, Error> {
+    fn routing_role(&self, _ctx: impl ReadContext) -> Result<Nullable<RoutingRoleEnum>, Error> {
         Ok(Nullable::new(self.diag.routing_role()?))
     }
 
-    async fn network_name<P: TLVBuilderParent>(
+    fn network_name<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, Utf8StrBuilder<P>>,
@@ -435,15 +434,15 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         Ok(unwrap!(parent))
     }
 
-    async fn pan_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn pan_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.pan_id()?))
     }
 
-    async fn extended_pan_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+    fn extended_pan_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(Nullable::new(self.diag.extended_pan_id()?))
     }
 
-    async fn mesh_local_prefix<P: TLVBuilderParent>(
+    fn mesh_local_prefix<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
@@ -468,7 +467,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         Ok(unwrap!(parent))
     }
 
-    async fn neighbor_table<P: TLVBuilderParent>(
+    fn neighbor_table<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
@@ -513,7 +512,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         }
     }
 
-    async fn route_table<P: TLVBuilderParent>(
+    fn route_table<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<RouteTableStructArrayBuilder<P>, RouteTableStructBuilder<P>>,
@@ -555,27 +554,27 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         }
     }
 
-    async fn partition_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
+    fn partition_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u32>, Error> {
         Ok(Nullable::new(self.diag.partition_id()?))
     }
 
-    async fn weighting(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn weighting(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.weighting()?))
     }
 
-    async fn data_version(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn data_version(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.data_version()?))
     }
 
-    async fn stable_data_version(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn stable_data_version(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.stable_data_version()?))
     }
 
-    async fn leader_router_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn leader_router_id(&self, _ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         Ok(Nullable::new(self.diag.leader_router_id()?))
     }
 
-    async fn security_policy<P: TLVBuilderParent>(
+    fn security_policy<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, SecurityPolicyBuilder<P>>,
@@ -592,7 +591,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         }
     }
 
-    async fn channel_page_0_mask<P: TLVBuilderParent>(
+    fn channel_page_0_mask<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
@@ -613,7 +612,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         Ok(unwrap!(parent.take()))
     }
 
-    async fn operational_dataset_components<P: TLVBuilderParent>(
+    fn operational_dataset_components<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, OperationalDatasetComponentsBuilder<P>>,
@@ -634,7 +633,7 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
         Ok(unwrap!(parent))
     }
 
-    async fn active_network_faults_list<P: TLVBuilderParent>(
+    fn active_network_faults_list<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<
@@ -678,15 +677,15 @@ impl ClusterHandler for ThreadDiagHandler<'_> {
             ArrayAttributeRead::ReadNone(builder) => builder.end(),
         }
     }
-    async fn ext_address(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
+    fn ext_address(&self, _ctx: impl ReadContext) -> Result<Nullable<u64>, Error> {
         Ok(Nullable::new(self.diag.ext_address()?))
     }
 
-    async fn rloc_16(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn rloc_16(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         Ok(Nullable::new(self.diag.rloc_16()?))
     }
 
-    async fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 }

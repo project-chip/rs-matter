@@ -149,8 +149,10 @@ impl ClusterHandler for AclHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn acl<P: TLVBuilderParent>(
+impl ClusterSyncHandler for AclHandler {
+    fn acl<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<
@@ -165,25 +167,19 @@ impl ClusterHandler for AclHandler {
         )
     }
 
-    async fn subjects_per_access_control_entry(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<u16, Error> {
+    fn subjects_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::MAX_SUBJECTS_PER_ACL_ENTRY as _)
     }
 
-    async fn targets_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+    fn targets_per_access_control_entry(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::MAX_TARGETS_PER_ACL_ENTRY as _)
     }
 
-    async fn access_control_entries_per_fabric(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<u16, Error> {
+    fn access_control_entries_per_fabric(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
         Ok(acl::MAX_ACL_ENTRIES_PER_FABRIC as _)
     }
 
-    async fn set_acl(
+    fn set_acl(
         &self,
         ctx: impl WriteContext,
         value: ArrayAttributeWrite<
@@ -199,7 +195,7 @@ impl ClusterHandler for AclHandler {
         )
     }
 
-    async fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
+    fn handle_review_fabric_restrictions<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: ReviewFabricRestrictionsRequest<'_>,

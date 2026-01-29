@@ -288,8 +288,10 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn reachable(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+impl bridged_device_basic_information::ClusterSyncHandler for BridgedHandler {
+    fn reachable(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         // This is the only mandatory attribute.
         //
         // We always report that the bridged device is reachable,
@@ -298,7 +300,7 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         Ok(true)
     }
 
-    async fn unique_id<P: TLVBuilderParent>(
+    fn unique_id<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         _builder: Utf8StrBuilder<P>,
@@ -306,7 +308,7 @@ impl bridged_device_basic_information::ClusterHandler for BridgedHandler {
         todo!()
     }
 
-    async fn handle_keep_active(
+    fn handle_keep_active(
         &self,
         _ctx: impl InvokeContext,
         _request: KeepActiveRequest<'_>,

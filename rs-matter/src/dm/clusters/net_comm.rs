@@ -692,18 +692,6 @@ where
         self.dataver.changed();
     }
 
-    async fn max_networks(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        self.networks.max_networks()
-    }
-
-    async fn connect_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.net_ctl.connect_max_time_seconds())
-    }
-
-    async fn scan_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
-        Ok(self.net_ctl.scan_max_time_seconds())
-    }
-
     async fn supported_wi_fi_bands<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -749,17 +737,6 @@ where
         }
     }
 
-    async fn supported_thread_features(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<ThreadCapabilitiesBitmap, Error> {
-        Ok(self.net_ctl.supported_thread_features())
-    }
-
-    async fn thread_version(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
-        Ok(self.net_ctl.thread_version())
-    }
-
     async fn networks<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
@@ -802,10 +779,6 @@ where
         }
     }
 
-    async fn interface_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
-        self.networks.enabled()
-    }
-
     async fn last_networking_status(
         &self,
         _ctx: impl ReadContext,
@@ -825,21 +798,6 @@ where
                 builder.null()
             }
         })
-    }
-
-    async fn last_connect_error_value(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<i32>, Error> {
-        Ok(Nullable::new(self.net_ctl.last_connect_error_value()?))
-    }
-
-    async fn set_interface_enabled(
-        &self,
-        _ctx: impl WriteContext,
-        value: bool,
-    ) -> Result<(), Error> {
-        self.networks.set_enabled(value)
     }
 
     async fn handle_scan_networks<P: TLVBuilderParent>(
@@ -1108,13 +1066,53 @@ where
 
         status.read_into(index, response)
     }
+}
 
-    async fn handle_query_identity<P: TLVBuilderParent>(
+impl<T> ClusterSyncHandler for NetCommHandler<'_, T>
+where
+    T: NetCtl + NetCtlStatus,
+{
+    fn max_networks(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        self.networks.max_networks()
+    }
+
+    fn connect_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.net_ctl.connect_max_time_seconds())
+    }
+
+    fn scan_max_time_seconds(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+        Ok(self.net_ctl.scan_max_time_seconds())
+    }
+
+    fn supported_thread_features(
+        &self,
+        _ctx: impl ReadContext,
+    ) -> Result<ThreadCapabilitiesBitmap, Error> {
+        Ok(self.net_ctl.supported_thread_features())
+    }
+
+    fn thread_version(&self, _ctx: impl ReadContext) -> Result<u16, Error> {
+        Ok(self.net_ctl.thread_version())
+    }
+
+    fn handle_query_identity<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: QueryIdentityRequest<'_>,
         _response: QueryIdentityResponseBuilder<P>,
     ) -> Result<P, Error> {
         Err(ErrorCode::InvalidAction.into())
+    }
+
+    fn interface_enabled(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+        self.networks.enabled()
+    }
+
+    fn last_connect_error_value(&self, _ctx: impl ReadContext) -> Result<Nullable<i32>, Error> {
+        Ok(Nullable::new(self.net_ctl.last_connect_error_value()?))
+    }
+
+    fn set_interface_enabled(&self, _ctx: impl WriteContext, value: bool) -> Result<(), Error> {
+        self.networks.set_enabled(value)
     }
 }

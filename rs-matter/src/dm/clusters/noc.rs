@@ -109,8 +109,10 @@ impl ClusterHandler for NocHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn nocs<P: TLVBuilderParent>(
+impl ClusterSyncHandler for NocHandler {
+    fn nocs<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<NOCStructArrayBuilder<P>, NOCStructBuilder<P>>,
@@ -165,7 +167,7 @@ impl ClusterHandler for NocHandler {
         }
     }
 
-    async fn fabrics<P: TLVBuilderParent>(
+    fn fabrics<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<
@@ -219,15 +221,15 @@ impl ClusterHandler for NocHandler {
         }
     }
 
-    async fn supported_fabrics(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
+    fn supported_fabrics(&self, _ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(MAX_FABRICS as u8)
     }
 
-    async fn commissioned_fabrics(&self, ctx: impl ReadContext) -> Result<u8, Error> {
+    fn commissioned_fabrics(&self, ctx: impl ReadContext) -> Result<u8, Error> {
         Ok(ctx.exchange().matter().fabric_mgr.borrow().iter().count() as _)
     }
 
-    async fn trusted_root_certificates<P: TLVBuilderParent>(
+    fn trusted_root_certificates<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,
         builder: ArrayAttributeRead<OctetsArrayBuilder<P>, OctetsBuilder<P>>,
@@ -260,12 +262,12 @@ impl ClusterHandler for NocHandler {
         }
     }
 
-    async fn current_fabric_index(&self, ctx: impl ReadContext) -> Result<u8, Error> {
+    fn current_fabric_index(&self, ctx: impl ReadContext) -> Result<u8, Error> {
         let attr = ctx.attr();
         Ok(attr.fab_idx)
     }
 
-    async fn handle_attestation_request<P: TLVBuilderParent>(
+    fn handle_attestation_request<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: AttestationRequestRequest<'_>,
@@ -322,7 +324,7 @@ impl ClusterHandler for NocHandler {
         })
     }
 
-    async fn handle_certificate_chain_request<P: TLVBuilderParent>(
+    fn handle_certificate_chain_request<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: CertificateChainRequestRequest<'_>,
@@ -354,7 +356,7 @@ impl ClusterHandler for NocHandler {
         Ok(parent)
     }
 
-    async fn handle_csr_request<P: TLVBuilderParent>(
+    fn handle_csr_request<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: CSRRequestRequest<'_>,
@@ -413,7 +415,7 @@ impl ClusterHandler for NocHandler {
         })
     }
 
-    async fn handle_add_noc<P: TLVBuilderParent>(
+    fn handle_add_noc<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: AddNOCRequest<'_>,
@@ -477,7 +479,7 @@ impl ClusterHandler for NocHandler {
             .end()
     }
 
-    async fn handle_update_noc<P: TLVBuilderParent>(
+    fn handle_update_noc<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: UpdateNOCRequest<'_>,
@@ -513,7 +515,7 @@ impl ClusterHandler for NocHandler {
             .end()
     }
 
-    async fn handle_update_fabric_label<P: TLVBuilderParent>(
+    fn handle_update_fabric_label<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: UpdateFabricLabelRequest<'_>,
@@ -551,7 +553,7 @@ impl ClusterHandler for NocHandler {
             .end()
     }
 
-    async fn handle_remove_fabric<P: TLVBuilderParent>(
+    fn handle_remove_fabric<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         request: RemoveFabricRequest<'_>,
@@ -615,7 +617,7 @@ impl ClusterHandler for NocHandler {
             .end()
     }
 
-    async fn handle_add_trusted_root_certificate(
+    fn handle_add_trusted_root_certificate(
         &self,
         ctx: impl InvokeContext,
         request: AddTrustedRootCertificateRequest<'_>,
@@ -631,7 +633,7 @@ impl ClusterHandler for NocHandler {
         })
     }
 
-    async fn handle_set_vid_verification_statement(
+    fn handle_set_vid_verification_statement(
         &self,
         _ctx: impl InvokeContext,
         _request: SetVIDVerificationStatementRequest<'_>,
@@ -639,7 +641,7 @@ impl ClusterHandler for NocHandler {
         Ok(()) // TODO
     }
 
-    async fn handle_sign_vid_verification_request<P: TLVBuilderParent>(
+    fn handle_sign_vid_verification_request<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SignVIDVerificationRequestRequest<'_>,

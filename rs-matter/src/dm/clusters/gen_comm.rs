@@ -144,12 +144,14 @@ impl ClusterHandler for GenCommHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {
+impl ClusterSyncHandler for GenCommHandler<'_> {
+    fn breadcrumb(&self, ctx: impl ReadContext) -> Result<u64, Error> {
         Ok(ctx.exchange().matter().failsafe.borrow_mut().breadcrumb())
     }
 
-    async fn set_breadcrumb(&self, ctx: impl WriteContext, value: u64) -> Result<(), Error> {
+    fn set_breadcrumb(&self, ctx: impl WriteContext, value: u64) -> Result<(), Error> {
         ctx.exchange()
             .matter()
             .failsafe
@@ -158,7 +160,7 @@ impl ClusterHandler for GenCommHandler<'_> {
         Ok(())
     }
 
-    async fn basic_commissioning_info<P: TLVBuilderParent>(
+    fn basic_commissioning_info<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: BasicCommissioningInfoBuilder<P>,
@@ -169,28 +171,28 @@ impl ClusterHandler for GenCommHandler<'_> {
             .end()
     }
 
-    async fn regulatory_config(
+    fn regulatory_config(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<RegulatoryLocationTypeEnum, Error> {
         Ok(RegulatoryLocationTypeEnum::IndoorOutdoor)
     }
 
-    async fn location_capability(
+    fn location_capability(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<RegulatoryLocationTypeEnum, Error> {
         Ok(self.commissioning_policy.location_cap())
     }
 
-    async fn supports_concurrent_connection(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
+    fn supports_concurrent_connection(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.commissioning_policy.concurrent_connection_supported())
     }
 
-    async fn handle_arm_fail_safe<P: TLVBuilderParent>(
+    fn handle_arm_fail_safe<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
-        request: ArmFailSafeRequest<'_>,
+        request: ArmFailSafeRequest,
         response: ArmFailSafeResponseBuilder<P>,
     ) -> Result<P, Error> {
         let mut failsafe = ctx.exchange().matter().failsafe.borrow_mut();
@@ -206,10 +208,10 @@ impl ClusterHandler for GenCommHandler<'_> {
         response.error_code(status)?.debug_text("")?.end()
     }
 
-    async fn handle_set_regulatory_config<P: TLVBuilderParent>(
+    fn handle_set_regulatory_config<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
-        request: SetRegulatoryConfigRequest<'_>,
+        request: SetRegulatoryConfigRequest,
         response: SetRegulatoryConfigResponseBuilder<P>,
     ) -> Result<P, Error> {
         let country_code = request.country_code()?;
@@ -235,7 +237,7 @@ impl ClusterHandler for GenCommHandler<'_> {
             .end()
     }
 
-    async fn handle_commissioning_complete<P: TLVBuilderParent>(
+    fn handle_commissioning_complete<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: CommissioningCompleteResponseBuilder<P>,
@@ -270,10 +272,10 @@ impl ClusterHandler for GenCommHandler<'_> {
         response.error_code(status)?.debug_text("")?.end()
     }
 
-    async fn handle_set_tc_acknowledgements<P: TLVBuilderParent>(
+    fn handle_set_tc_acknowledgements<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
-        _request: SetTCAcknowledgementsRequest<'_>,
+        _request: SetTCAcknowledgementsRequest,
         response: SetTCAcknowledgementsResponseBuilder<P>,
     ) -> Result<P, Error> {
         // TODO

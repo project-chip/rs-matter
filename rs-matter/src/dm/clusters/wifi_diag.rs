@@ -127,8 +127,10 @@ impl ClusterHandler for WifiDiagHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn bssid<P: TLVBuilderParent>(
+impl ClusterSyncHandler for WifiDiagHandler<'_> {
+    fn bssid<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: NullableBuilder<P, OctetsBuilder<P>>,
@@ -151,29 +153,23 @@ impl ClusterHandler for WifiDiagHandler<'_> {
         Ok(unwrap!(parent.take()))
     }
 
-    async fn security_type(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<SecurityTypeEnum>, Error> {
+    fn security_type(&self, _ctx: impl ReadContext) -> Result<Nullable<SecurityTypeEnum>, Error> {
         self.diag.security_type()
     }
 
-    async fn wi_fi_version(
-        &self,
-        _ctx: impl ReadContext,
-    ) -> Result<Nullable<WiFiVersionEnum>, Error> {
+    fn wi_fi_version(&self, _ctx: impl ReadContext) -> Result<Nullable<WiFiVersionEnum>, Error> {
         self.diag.wi_fi_version()
     }
 
-    async fn channel_number(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn channel_number(&self, _ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         self.diag.channel_number()
     }
 
-    async fn rssi(&self, _ctx: impl ReadContext) -> Result<Nullable<i8>, Error> {
+    fn rssi(&self, _ctx: impl ReadContext) -> Result<Nullable<i8>, Error> {
         self.diag.rssi()
     }
 
-    async fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_reset_counts(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         Err(ErrorCode::InvalidAction.into())
     }
 }

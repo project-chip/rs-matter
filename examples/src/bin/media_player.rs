@@ -268,15 +268,17 @@ impl media_playback::ClusterHandler for MediaHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn current_state(
+impl media_playback::ClusterSyncHandler for MediaHandler {
+    fn current_state(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<media_playback::PlaybackStateEnum, Error> {
         Ok(self.state.get())
     }
 
-    async fn handle_play<P: TLVBuilderParent>(
+    fn handle_play<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: media_playback::PlaybackResponseBuilder<P>,
@@ -288,7 +290,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
-    async fn handle_pause<P: TLVBuilderParent>(
+    fn handle_pause<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: PlaybackResponseBuilder<P>,
@@ -300,7 +302,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
-    async fn handle_stop<P: TLVBuilderParent>(
+    fn handle_stop<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: PlaybackResponseBuilder<P>,
@@ -312,7 +314,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
-    async fn handle_start_over<P: TLVBuilderParent>(
+    fn handle_start_over<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
@@ -321,7 +323,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_previous<P: TLVBuilderParent>(
+    fn handle_previous<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
@@ -330,7 +332,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_next<P: TLVBuilderParent>(
+    fn handle_next<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
@@ -339,7 +341,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_rewind<P: TLVBuilderParent>(
+    fn handle_rewind<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: RewindRequest<'_>,
@@ -349,7 +351,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_fast_forward<P: TLVBuilderParent>(
+    fn handle_fast_forward<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: FastForwardRequest<'_>,
@@ -359,7 +361,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_skip_forward<P: TLVBuilderParent>(
+    fn handle_skip_forward<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SkipForwardRequest<'_>,
@@ -369,7 +371,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_skip_backward<P: TLVBuilderParent>(
+    fn handle_skip_backward<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SkipBackwardRequest<'_>,
@@ -379,7 +381,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_seek<P: TLVBuilderParent>(
+    fn handle_seek<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SeekRequest<'_>,
@@ -389,7 +391,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_activate_audio_track(
+    fn handle_activate_audio_track(
         &self,
         _ctx: impl InvokeContext,
         _request: ActivateAudioTrackRequest<'_>,
@@ -398,7 +400,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_activate_text_track(
+    fn handle_activate_text_track(
         &self,
         _ctx: impl InvokeContext,
         _request: ActivateTextTrackRequest<'_>,
@@ -407,7 +409,7 @@ impl media_playback::ClusterHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_deactivate_text_track(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_deactivate_text_track(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         // Not supported
         Err(ErrorCode::InvalidCommand.into())
     }
@@ -444,8 +446,10 @@ impl content_launcher::ClusterHandler for ContentHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn accept_header<P: TLVBuilderParent>(
+impl content_launcher::ClusterSyncHandler for ContentHandler {
+    fn accept_header<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<Utf8StrArrayBuilder<P>, Utf8StrBuilder<P>>,
@@ -488,14 +492,14 @@ impl content_launcher::ClusterHandler for ContentHandler {
         }
     }
 
-    async fn supported_streaming_protocols(
+    fn supported_streaming_protocols(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<SupportedProtocolsBitmap, Error> {
         Ok(SupportedProtocolsBitmap::all())
     }
 
-    async fn handle_launch_url<P: TLVBuilderParent>(
+    fn handle_launch_url<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         request: LaunchURLRequest<'_>,
@@ -509,7 +513,7 @@ impl content_launcher::ClusterHandler for ContentHandler {
             .end()
     }
 
-    async fn handle_launch_content<P: TLVBuilderParent>(
+    fn handle_launch_content<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         request: LaunchContentRequest<'_>,
@@ -552,8 +556,10 @@ impl keypad_input::ClusterHandler for KeypadInputHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn handle_send_key<P: TLVBuilderParent>(
+impl keypad_input::ClusterSyncHandler for KeypadInputHandler {
+    fn handle_send_key<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         request: SendKeyRequest<'_>,

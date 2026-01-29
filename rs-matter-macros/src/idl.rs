@@ -33,6 +33,7 @@ mod parser;
 mod struct_in;
 mod struct_out;
 
+use crate::idl::handler::HandlerType;
 use crate::idl::parser::Entities;
 pub use parser::Idl;
 
@@ -100,8 +101,9 @@ fn cluster_internal(
     let command_response_id = cluster::command_response_id(entities, context);
     let cluster_meta = cluster::cluster(cluster, globals, context);
 
-    let handler = handler::handler(false, cluster, globals, context);
-    let handler_inherent_impl = handler::handler(true, cluster, globals, context);
+    let handler = handler::handler(HandlerType::Handler, cluster, globals, context);
+    let sync_handler = handler::handler(HandlerType::Sync, cluster, globals, context);
+    let handler_inherent_impl = handler::handler(HandlerType::Delegate, cluster, globals, context);
     let handler_adaptor = handler::handler_adaptor(cluster, globals, context);
 
     let quote = quote!(
@@ -122,6 +124,8 @@ fn cluster_internal(
         #command_response_id
 
         #cluster_meta
+
+        #sync_handler
 
         #handler
 
@@ -22774,995 +22778,3442 @@ pub mod unit_testing {
     #[doc = "A helper struct to generate the cluster debug info."]
     struct MetadataDebug<T>(pub T);
     #[doc = "The handler trait for the cluster."]
-    pub trait ClusterHandler {
-        #[doc = "The cluster-metadata corresponding to this handler trait."]
-        const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
-        fn dataver(&self) -> u32;
-        fn dataver_changed(&self);
-        #[inline(always)]
-        fn run(
+    pub trait ClusterSyncHandler {
+        fn boolean(
             &self,
-            _ctx: impl rs_matter_crate::dm::HandlerContext,
-        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            core::future::pending::<Result<(), rs_matter_crate::error::Error>>()
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn boolean (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
         }
-        async fn boolean(
+        fn bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<bool, rs_matter_crate::error::Error>;
-        async fn bitmap_8(
+        ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn bitmap_8 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<Bitmap8MaskMap, rs_matter_crate::error::Error>;
-        async fn bitmap_16(
+        ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn bitmap_16 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<Bitmap16MaskMap, rs_matter_crate::error::Error>;
-        async fn bitmap_32(
+        ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn bitmap_32 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<Bitmap32MaskMap, rs_matter_crate::error::Error>;
-        async fn bitmap_64(
+        ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn bitmap_64 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<Bitmap64MaskMap, rs_matter_crate::error::Error>;
-        async fn int_8_u(
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_8_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u8, rs_matter_crate::error::Error>;
-        async fn int_16_u(
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_16_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u16, rs_matter_crate::error::Error>;
-        async fn int_24_u(
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_24_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u32, rs_matter_crate::error::Error>;
-        async fn int_32_u(
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_32_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u32, rs_matter_crate::error::Error>;
-        async fn int_40_u(
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_40_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u64, rs_matter_crate::error::Error>;
-        async fn int_48_u(
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_48_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u64, rs_matter_crate::error::Error>;
-        async fn int_56_u(
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_56_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u64, rs_matter_crate::error::Error>;
-        async fn int_64_u(
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_64_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u64, rs_matter_crate::error::Error>;
-        async fn int_8_s(
+        ) -> Result<i8, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_8_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i8, rs_matter_crate::error::Error>;
-        async fn int_16_s(
+        ) -> Result<i16, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_16_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i16, rs_matter_crate::error::Error>;
-        async fn int_24_s(
+        ) -> Result<i32, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_24_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i32, rs_matter_crate::error::Error>;
-        async fn int_32_s(
+        ) -> Result<i32, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_32_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i32, rs_matter_crate::error::Error>;
-        async fn int_40_s(
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_40_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i64, rs_matter_crate::error::Error>;
-        async fn int_48_s(
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_48_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i64, rs_matter_crate::error::Error>;
-        async fn int_56_s(
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_56_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i64, rs_matter_crate::error::Error>;
-        async fn int_64_s(
+        ) -> Result<i64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn int_64_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i64, rs_matter_crate::error::Error>;
-        async fn enum_8(
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn enum_8 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u8, rs_matter_crate::error::Error>;
-        async fn enum_16(
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn enum_16 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn float_single(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u16, rs_matter_crate::error::Error>;
-        async fn float_single(
+        ) -> Result<f32, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn float_single (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn float_double(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<f32, rs_matter_crate::error::Error>;
-        async fn float_double(
-            &self,
-            ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<f64, rs_matter_crate::error::Error>;
-        async fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<f64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn float_double (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn octet_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: OctetsBuilder < P >)");
+            }
+        }
+        fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::ToTLVArrayBuilder<P, u8>,
                 rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn list_int_8_u < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: dm :: ArrayAttributeRead < rs_matter_crate :: tlv :: ToTLVArrayBuilder < P , u8 > , rs_matter_crate :: tlv :: ToTLVBuilder < P , u8 > >)");
+            }
+        }
+        fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn list_octet_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: dm :: ArrayAttributeRead < rs_matter_crate :: tlv :: OctetsArrayBuilder < P > , rs_matter_crate :: tlv :: OctetsBuilder < P > >)");
+            }
+        }
+        fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestListStructOctetArrayBuilder<P>,
                 TestListStructOctetBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn list_struct_octet_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: dm :: ArrayAttributeRead < TestListStructOctetArrayBuilder < P > , TestListStructOctetBuilder < P > >)");
+            }
+        }
+        fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn long_octet_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: OctetsBuilder < P >)");
+            }
+        }
+        fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn char_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: Utf8StrBuilder < P >)");
+            }
+        }
+        fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn epoch_us(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn long_char_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: Utf8StrBuilder < P >)");
+            }
+        }
+        fn epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u64, rs_matter_crate::error::Error>;
-        async fn epoch_s(
+        ) -> Result<u64, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn epoch_us (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u32, rs_matter_crate::error::Error>;
-        async fn vendor_id(
+        ) -> Result<u32, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn epoch_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u16, rs_matter_crate::error::Error>;
-        async fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn vendor_id (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 NullablesAndOptionalsStructArrayBuilder<P>,
                 NullablesAndOptionalsStructBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn enum_attr(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn list_nullables_and_optionals_struct < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: dm :: ArrayAttributeRead < NullablesAndOptionalsStructArrayBuilder < P > , NullablesAndOptionalsStructBuilder < P > >)");
+            }
+        }
+        fn enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<SimpleEnum, rs_matter_crate::error::Error>;
-        async fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<SimpleEnum, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn enum_attr (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: SimpleStructBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn range_restricted_int_8_u(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn struct_attr < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : SimpleStructBuilder < P >)");
+            }
+        }
+        fn range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u8, rs_matter_crate::error::Error>;
-        async fn range_restricted_int_8_s(
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn range_restricted_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i8, rs_matter_crate::error::Error>;
-        async fn range_restricted_int_16_u(
+        ) -> Result<i8, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn range_restricted_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u16, rs_matter_crate::error::Error>;
-        async fn range_restricted_int_16_s(
+        ) -> Result<u16, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn range_restricted_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<i16, rs_matter_crate::error::Error>;
-        async fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<i16, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn range_restricted_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 rs_matter_crate::tlv::OctetsArrayBuilder<P>,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn list_long_octet_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: dm :: ArrayAttributeRead < rs_matter_crate :: tlv :: OctetsArrayBuilder < P > , rs_matter_crate :: tlv :: OctetsBuilder < P > >)");
+            }
+        }
+        fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::dm::ArrayAttributeRead<
                 TestFabricScopedArrayBuilder<P>,
                 TestFabricScopedBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn timed_write_boolean(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn list_fabric_scoped < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: dm :: ArrayAttributeRead < TestFabricScopedArrayBuilder < P > , TestFabricScopedBuilder < P > >)");
+            }
+        }
+        fn timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<bool, rs_matter_crate::error::Error>;
-        async fn general_error_boolean(
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn timed_write_boolean (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<bool, rs_matter_crate::error::Error>;
-        async fn cluster_error_boolean(
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn general_error_boolean (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<bool, rs_matter_crate::error::Error>;
-        #[inline(always)]
-        async fn unsupported(
+        ) -> Result<bool, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn cluster_error_boolean (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<bool, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
-        async fn nullable_boolean(
+        fn nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>;
-        async fn nullable_bitmap_8(
+        ) -> Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_boolean (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>;
-        async fn nullable_bitmap_16(
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>, rs_matter_crate::error::Error>
+        {
+            const {
+                core :: panic ! ("You must implement fn nullable_bitmap_8 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>;
-        async fn nullable_bitmap_32(
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>, rs_matter_crate::error::Error>
+        {
+            const {
+                core :: panic ! ("You must implement fn nullable_bitmap_16 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>;
-        async fn nullable_bitmap_64(
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>, rs_matter_crate::error::Error>
+        {
+            const {
+                core :: panic ! ("You must implement fn nullable_bitmap_32 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>;
-        async fn nullable_int_8_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>, rs_matter_crate::error::Error>
+        {
+            const {
+                core :: panic ! ("You must implement fn nullable_bitmap_64 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
-        async fn nullable_int_16_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
-        async fn nullable_int_24_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>;
-        async fn nullable_int_32_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_24_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>;
-        async fn nullable_int_40_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_32_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_48_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_40_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_56_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_48_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_64_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_56_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_8_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_64_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>;
-        async fn nullable_int_16_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
-        async fn nullable_int_24_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>;
-        async fn nullable_int_32_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_24_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>;
-        async fn nullable_int_40_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_32_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_48_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_40_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_56_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_48_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
-        async fn nullable_int_64_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_56_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>;
-        async fn nullable_enum_8(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_int_64_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
-        async fn nullable_enum_16(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_enum_8 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
-        async fn nullable_float_single(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_enum_16 (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>;
-        async fn nullable_float_double(
+        ) -> Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_float_single (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>;
-        async fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_float_double (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_octet_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: NullableBuilder < P , rs_matter_crate :: tlv :: OctetsBuilder < P > >)");
+            }
+        }
+        fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<
                 P,
                 rs_matter_crate::tlv::Utf8StrBuilder<P>,
             >,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn nullable_enum_attr(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_char_string < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: NullableBuilder < P , rs_matter_crate :: tlv :: Utf8StrBuilder < P > >)");
+            }
+        }
+        fn nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>;
-        async fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<rs_matter_crate::tlv::Nullable<SimpleEnum>, rs_matter_crate::error::Error>
+        {
+            const {
+                core :: panic ! ("You must implement fn nullable_enum_attr (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn nullable_range_restricted_int_8_u(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_struct < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: ReadContext , builder : rs_matter_crate :: tlv :: NullableBuilder < P , SimpleStructBuilder < P > >)");
+            }
+        }
+        fn nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>;
-        async fn nullable_range_restricted_int_8_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_range_restricted_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>;
-        async fn nullable_range_restricted_int_16_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_range_restricted_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>;
-        async fn nullable_range_restricted_int_16_s(
+        ) -> Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_range_restricted_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>;
-        #[inline(always)]
-        async fn write_only_int_8_u(
+        ) -> Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn nullable_range_restricted_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> Result<u8, rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
-        async fn mei_int_8_u(
+        fn mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
-        ) -> Result<u8, rs_matter_crate::error::Error>;
-        async fn set_boolean(
+        ) -> Result<u8, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn mei_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: ReadContext)");
+            }
+        }
+        fn set_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_bitmap_8(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_boolean (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : bool)");
+            }
+        }
+        fn set_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap8MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_bitmap_16(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_bitmap_8 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : Bitmap8MaskMap)");
+            }
+        }
+        fn set_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap16MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_bitmap_32(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_bitmap_16 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : Bitmap16MaskMap)");
+            }
+        }
+        fn set_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap32MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_bitmap_64(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_bitmap_32 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : Bitmap32MaskMap)");
+            }
+        }
+        fn set_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap64MaskMap,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_8_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_bitmap_64 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : Bitmap64MaskMap)");
+            }
+        }
+        fn set_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_16_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u8)");
+            }
+        }
+        fn set_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_24_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u16)");
+            }
+        }
+        fn set_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_32_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_24_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u32)");
+            }
+        }
+        fn set_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_40_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_32_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u32)");
+            }
+        }
+        fn set_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_48_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_40_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u64)");
+            }
+        }
+        fn set_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_56_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_48_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u64)");
+            }
+        }
+        fn set_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_64_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_56_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u64)");
+            }
+        }
+        fn set_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_8_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_64_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u64)");
+            }
+        }
+        fn set_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_16_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i8)");
+            }
+        }
+        fn set_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_24_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i16)");
+            }
+        }
+        fn set_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_32_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_24_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i32)");
+            }
+        }
+        fn set_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_40_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_32_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i32)");
+            }
+        }
+        fn set_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_48_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_40_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i64)");
+            }
+        }
+        fn set_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_56_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_48_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i64)");
+            }
+        }
+        fn set_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_int_64_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_56_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i64)");
+            }
+        }
+        fn set_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_enum_8(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_int_64_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i64)");
+            }
+        }
+        fn set_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_enum_16(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_enum_8 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u8)");
+            }
+        }
+        fn set_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_float_single(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_enum_16 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u16)");
+            }
+        }
+        fn set_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: f32,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_float_double(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_float_single (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : f32)");
+            }
+        }
+        fn set_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: f64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_octet_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_float_double (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : f64)");
+            }
+        }
+        fn set_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_list_int_8_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_octet_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: OctetStr < '_ >)");
+            }
+        }
+        fn set_list_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, u8>,
                 u8,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_list_octet_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_list_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: dm :: ArrayAttributeWrite < rs_matter_crate :: tlv :: TLVArray < '_ , u8 > , u8 >)");
+            }
+        }
+        fn set_list_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_list_struct_octet_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_list_octet_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: dm :: ArrayAttributeWrite < rs_matter_crate :: tlv :: TLVArray < '_ , rs_matter_crate :: tlv :: OctetStr < '_ > > , rs_matter_crate :: tlv :: OctetStr < '_ > >)");
+            }
+        }
+        fn set_list_struct_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
                 TestListStructOctet<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_long_octet_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_list_struct_octet_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: dm :: ArrayAttributeWrite < rs_matter_crate :: tlv :: TLVArray < '_ , TestListStructOctet < '_ > > , TestListStructOctet < '_ > >)");
+            }
+        }
+        fn set_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_char_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_long_octet_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: OctetStr < '_ >)");
+            }
+        }
+        fn set_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_long_char_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_char_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Utf8Str < '_ >)");
+            }
+        }
+        fn set_long_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_epoch_us(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_long_char_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Utf8Str < '_ >)");
+            }
+        }
+        fn set_epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_epoch_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_epoch_us (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u64)");
+            }
+        }
+        fn set_epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_vendor_id(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_epoch_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u32)");
+            }
+        }
+        fn set_vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_list_nullables_and_optionals_struct(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_vendor_id (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u16)");
+            }
+        }
+        fn set_list_nullables_and_optionals_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
                 NullablesAndOptionalsStruct<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_enum_attr(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_list_nullables_and_optionals_struct (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: dm :: ArrayAttributeWrite < rs_matter_crate :: tlv :: TLVArray < '_ , NullablesAndOptionalsStruct < '_ > > , NullablesAndOptionalsStruct < '_ > >)");
+            }
+        }
+        fn set_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleEnum,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_struct_attr(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_enum_attr (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : SimpleEnum)");
+            }
+        }
+        fn set_struct_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleStruct<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_range_restricted_int_8_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_struct_attr (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : SimpleStruct < '_ >)");
+            }
+        }
+        fn set_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_range_restricted_int_8_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_range_restricted_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u8)");
+            }
+        }
+        fn set_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_range_restricted_int_16_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_range_restricted_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i8)");
+            }
+        }
+        fn set_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_range_restricted_int_16_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_range_restricted_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u16)");
+            }
+        }
+        fn set_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_list_long_octet_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_range_restricted_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : i16)");
+            }
+        }
+        fn set_list_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_list_fabric_scoped(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_list_long_octet_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: dm :: ArrayAttributeWrite < rs_matter_crate :: tlv :: TLVArray < '_ , rs_matter_crate :: tlv :: OctetStr < '_ > > , rs_matter_crate :: tlv :: OctetStr < '_ > >)");
+            }
+        }
+        fn set_list_fabric_scoped(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::dm::ArrayAttributeWrite<
                 rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
                 TestFabricScoped<'_>,
             >,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_timed_write_boolean(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_list_fabric_scoped (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: dm :: ArrayAttributeWrite < rs_matter_crate :: tlv :: TLVArray < '_ , TestFabricScoped < '_ > > , TestFabricScoped < '_ > >)");
+            }
+        }
+        fn set_timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_general_error_boolean(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_timed_write_boolean (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : bool)");
+            }
+        }
+        fn set_general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_cluster_error_boolean(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_general_error_boolean (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : bool)");
+            }
+        }
+        fn set_cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        #[inline(always)]
-        async fn set_unsupported(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_cluster_error_boolean (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : bool)");
+            }
+        }
+        fn set_unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
-        async fn set_nullable_boolean(
+        fn set_nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<bool>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_bitmap_8(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_boolean (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < bool >)");
+            }
+        }
+        fn set_nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_bitmap_16(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_bitmap_8 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < Bitmap8MaskMap >)");
+            }
+        }
+        fn set_nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_bitmap_32(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_bitmap_16 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < Bitmap16MaskMap >)");
+            }
+        }
+        fn set_nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_bitmap_64(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_bitmap_32 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < Bitmap32MaskMap >)");
+            }
+        }
+        fn set_nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_8_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_bitmap_64 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < Bitmap64MaskMap >)");
+            }
+        }
+        fn set_nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_16_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u8 >)");
+            }
+        }
+        fn set_nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_24_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u16 >)");
+            }
+        }
+        fn set_nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_32_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_24_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u32 >)");
+            }
+        }
+        fn set_nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_40_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_32_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u32 >)");
+            }
+        }
+        fn set_nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_48_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_40_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u64 >)");
+            }
+        }
+        fn set_nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_56_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_48_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u64 >)");
+            }
+        }
+        fn set_nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_64_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_56_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u64 >)");
+            }
+        }
+        fn set_nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_8_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_64_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u64 >)");
+            }
+        }
+        fn set_nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_16_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i8 >)");
+            }
+        }
+        fn set_nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_24_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i16 >)");
+            }
+        }
+        fn set_nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_32_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_24_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i32 >)");
+            }
+        }
+        fn set_nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_40_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_32_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i32 >)");
+            }
+        }
+        fn set_nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_48_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_40_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i64 >)");
+            }
+        }
+        fn set_nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_56_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_48_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i64 >)");
+            }
+        }
+        fn set_nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_int_64_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_56_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i64 >)");
+            }
+        }
+        fn set_nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_enum_8(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_int_64_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i64 >)");
+            }
+        }
+        fn set_nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_enum_16(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_enum_8 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u8 >)");
+            }
+        }
+        fn set_nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_float_single(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_enum_16 (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u16 >)");
+            }
+        }
+        fn set_nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f32>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_float_double(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_float_single (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < f32 >)");
+            }
+        }
+        fn set_nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f64>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_octet_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_float_double (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < f64 >)");
+            }
+        }
+        fn set_nullable_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_char_string(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_octet_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < rs_matter_crate :: tlv :: OctetStr < '_ > >)");
+            }
+        }
+        fn set_nullable_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_enum_attr(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_char_string (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < rs_matter_crate :: tlv :: Utf8Str < '_ > >)");
+            }
+        }
+        fn set_nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_struct(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_enum_attr (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < SimpleEnum >)");
+            }
+        }
+        fn set_nullable_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_range_restricted_int_8_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_struct (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < SimpleStruct < '_ > >)");
+            }
+        }
+        fn set_nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_range_restricted_int_8_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_range_restricted_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u8 >)");
+            }
+        }
+        fn set_nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_range_restricted_int_16_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_range_restricted_int_8_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i8 >)");
+            }
+        }
+        fn set_nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn set_nullable_range_restricted_int_16_s(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_range_restricted_int_16_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < u16 >)");
+            }
+        }
+        fn set_nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        #[inline(always)]
-        async fn set_write_only_int_8_u(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_nullable_range_restricted_int_16_s (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : rs_matter_crate :: tlv :: Nullable < i16 >)");
+            }
+        }
+        fn set_write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> Result<(), rs_matter_crate::error::Error> {
             Err(rs_matter_crate::error::ErrorCode::InvalidAction.into())
         }
-        async fn set_mei_int_8_u(
+        fn set_mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn handle_test(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn set_mei_int_8_u (& self , ctx : impl rs_matter_crate :: dm :: WriteContext , value : u8)");
+            }
+        }
+        fn handle_test(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn handle_test_not_handled(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext)");
+            }
+        }
+        fn handle_test_not_handled(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_not_handled (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext)");
+            }
+        }
+        fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             response: TestSpecificResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_unknown_command(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_specific < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , response : TestSpecificResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_unknown_command(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_unknown_command (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext)");
+            }
+        }
+        fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_add_arguments < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestAddArgumentsRequest < '_ > , response : TestAddArgumentsResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_struct_array_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_simple_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestSimpleArgumentRequestRequest < '_ > , response : TestSimpleArgumentResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_struct_array_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestStructArrayArgumentRequestRequest < '_ > , response : TestStructArrayArgumentResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_nested_struct_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_struct_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestStructArgumentRequestRequest < '_ > , response : BooleanResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_list_struct_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_nested_struct_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestNestedStructArgumentRequestRequest < '_ > , response : BooleanResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_list_int_8_u_argument_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_list_struct_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestListStructArgumentRequestRequest < '_ > , response : BooleanResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_nested_struct_list_argument_request<
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_list_int_8_u_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestListInt8UArgumentRequestRequest < '_ > , response : BooleanResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_list_nested_struct_list_argument_request<
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_nested_struct_list_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestNestedStructListArgumentRequestRequest < '_ > , response : BooleanResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_list_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_list_int_8_u_reverse_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_list_nested_struct_list_argument_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestListNestedStructListArgumentRequestRequest < '_ > , response : BooleanResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_list_int_8_u_reverse_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestListInt8UReverseRequestRequest < '_ > , response : TestListInt8UReverseResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_enums_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestEnumsRequestRequest < '_ > , response : TestEnumsResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_complex_nullable_optional_request<
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_nullable_optional_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestNullableOptionalRequestRequest < '_ > , response : TestNullableOptionalResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_complex_nullable_optional_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_complex_nullable_optional_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestComplexNullableOptionalRequestRequest < '_ > , response : TestComplexNullableOptionalResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_timed_invoke_request(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_simple_struct_echo_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : SimpleStructEchoRequestRequest < '_ > , response : SimpleStructResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_timed_invoke_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn handle_test_simple_optional_argument_request(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_timed_invoke_request (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext)");
+            }
+        }
+        fn handle_test_simple_optional_argument_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
-        ) -> Result<(), rs_matter_crate::error::Error>;
-        async fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<(), rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_simple_optional_argument_request (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestSimpleOptionalArgumentRequestRequest < '_ > ,)");
+            }
+        }
+        fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_emit_test_fabric_scoped_event_request<
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_emit_test_event_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestEmitTestEventRequestRequest < '_ > , response : TestEmitTestEventResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_emit_test_fabric_scoped_event_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_emit_test_fabric_scoped_event_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestEmitTestFabricScopedEventRequestRequest < '_ > , response : TestEmitTestFabricScopedEventResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_second_batch_helper_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_batch_helper_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestBatchHelperRequestRequest < '_ > , response : TestBatchHelperResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
-        async fn handle_test_different_vendor_mei_request<
-            P: rs_matter_crate::tlv::TLVBuilderParent,
-        >(
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_second_batch_helper_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestSecondBatchHelperRequestRequest < '_ > , response : TestBatchHelperResponseBuilder < P > ,)");
+            }
+        }
+        fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestDifferentVendorMeiRequestRequest<'_>,
             response: TestDifferentVendorMeiResponseBuilder<P>,
-        ) -> Result<P, rs_matter_crate::error::Error>;
+        ) -> Result<P, rs_matter_crate::error::Error> {
+            const {
+                core :: panic ! ("You must implement fn handle_test_different_vendor_mei_request < P : rs_matter_crate :: tlv :: TLVBuilderParent > (& self , ctx : impl rs_matter_crate :: dm :: InvokeContext , request : TestDifferentVendorMeiRequestRequest < '_ > , response : TestDifferentVendorMeiResponseBuilder < P > ,)");
+            }
+        }
+    }
+    #[doc = "The handler trait for the cluster."]
+    pub trait ClusterHandler: ClusterSyncHandler {
+        #[doc = "The cluster-metadata corresponding to this handler trait."]
+        const CLUSTER: rs_matter_crate::dm::Cluster<'static>;
+        fn dataver(&self) -> u32;
+        fn dataver_changed(&self);
+        fn run(
+            &self,
+            _ctx: impl rs_matter_crate::dm::HandlerContext,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::pending::<Result<(), rs_matter_crate::error::Error>>()
+        }
+        fn boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::boolean(self, ctx))
+        }
+        fn bitmap_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<Bitmap8MaskMap, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::bitmap_8(self, ctx))
+        }
+        fn bitmap_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<Bitmap16MaskMap, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::bitmap_16(self, ctx))
+        }
+        fn bitmap_32(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<Bitmap32MaskMap, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::bitmap_32(self, ctx))
+        }
+        fn bitmap_64(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<Bitmap64MaskMap, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::bitmap_64(self, ctx))
+        }
+        fn int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::int_8_u(self, ctx))
+        }
+        fn int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_16_u(self, ctx))
+        }
+        fn int_24_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u32, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_24_u(self, ctx))
+        }
+        fn int_32_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u32, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_32_u(self, ctx))
+        }
+        fn int_40_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_40_u(self, ctx))
+        }
+        fn int_48_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_48_u(self, ctx))
+        }
+        fn int_56_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_56_u(self, ctx))
+        }
+        fn int_64_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_64_u(self, ctx))
+        }
+        fn int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::int_8_s(self, ctx))
+        }
+        fn int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i16, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_16_s(self, ctx))
+        }
+        fn int_24_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i32, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_24_s(self, ctx))
+        }
+        fn int_32_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i32, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_32_s(self, ctx))
+        }
+        fn int_40_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_40_s(self, ctx))
+        }
+        fn int_48_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_48_s(self, ctx))
+        }
+        fn int_56_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_56_s(self, ctx))
+        }
+        fn int_64_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::int_64_s(self, ctx))
+        }
+        fn enum_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::enum_8(self, ctx))
+        }
+        fn enum_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::enum_16(self, ctx))
+        }
+        fn float_single(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<f32, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::float_single(self, ctx))
+        }
+        fn float_double(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<f64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::float_double(self, ctx))
+        }
+        fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::OctetsBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::octet_string(
+                self, ctx, builder,
+            ))
+        }
+        fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
+                rs_matter_crate::tlv::ToTLVArrayBuilder<P, u8>,
+                rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::list_int_8_u(
+                self, ctx, builder,
+            ))
+        }
+        fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
+                rs_matter_crate::tlv::OctetsArrayBuilder<P>,
+                rs_matter_crate::tlv::OctetsBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::list_octet_string(
+                self, ctx, builder,
+            ))
+        }
+        fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
+                TestListStructOctetArrayBuilder<P>,
+                TestListStructOctetBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::list_struct_octet_string(
+                self, ctx, builder,
+            ))
+        }
+        fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::OctetsBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::long_octet_string(
+                self, ctx, builder,
+            ))
+        }
+        fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::char_string(
+                self, ctx, builder,
+            ))
+        }
+        fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::long_char_string(
+                self, ctx, builder,
+            ))
+        }
+        fn epoch_us(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::epoch_us(self, ctx))
+        }
+        fn epoch_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u32, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::epoch_s(self, ctx))
+        }
+        fn vendor_id(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::vendor_id(self, ctx))
+        }
+        fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
+                NullablesAndOptionalsStructArrayBuilder<P>,
+                NullablesAndOptionalsStructBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::list_nullables_and_optionals_struct(
+                    self, ctx, builder,
+                ),
+            )
+        }
+        fn enum_attr(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<SimpleEnum, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::enum_attr(self, ctx))
+        }
+        fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: SimpleStructBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::struct_attr(
+                self, ctx, builder,
+            ))
+        }
+        fn range_restricted_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::range_restricted_int_8_u(
+                self, ctx,
+            ))
+        }
+        fn range_restricted_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::range_restricted_int_8_s(
+                self, ctx,
+            ))
+        }
+        fn range_restricted_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::range_restricted_int_16_u(
+                self, ctx,
+            ))
+        }
+        fn range_restricted_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<i16, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::range_restricted_int_16_s(
+                self, ctx,
+            ))
+        }
+        fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
+                rs_matter_crate::tlv::OctetsArrayBuilder<P>,
+                rs_matter_crate::tlv::OctetsBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::list_long_octet_string(
+                self, ctx, builder,
+            ))
+        }
+        fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::dm::ArrayAttributeRead<
+                TestFabricScopedArrayBuilder<P>,
+                TestFabricScopedBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::list_fabric_scoped(
+                self, ctx, builder,
+            ))
+        }
+        fn timed_write_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::timed_write_boolean(self, ctx))
+        }
+        fn general_error_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::general_error_boolean(
+                self, ctx,
+            ))
+        }
+        fn cluster_error_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::cluster_error_boolean(
+                self, ctx,
+            ))
+        }
+        fn unsupported(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
+        {
+            core::future::ready(<Self as ClusterSyncHandler>::unsupported(self, ctx))
+        }
+        fn nullable_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_boolean(self, ctx))
+        }
+        fn nullable_bitmap_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<
+                rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+                rs_matter_crate::error::Error,
+            >,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_bitmap_8(self, ctx))
+        }
+        fn nullable_bitmap_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<
+                rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+                rs_matter_crate::error::Error,
+            >,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_bitmap_16(self, ctx))
+        }
+        fn nullable_bitmap_32(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<
+                rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+                rs_matter_crate::error::Error,
+            >,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_bitmap_32(self, ctx))
+        }
+        fn nullable_bitmap_64(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<
+                rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+                rs_matter_crate::error::Error,
+            >,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_bitmap_64(self, ctx))
+        }
+        fn nullable_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_8_u(self, ctx))
+        }
+        fn nullable_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_16_u(self, ctx))
+        }
+        fn nullable_int_24_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_24_u(self, ctx))
+        }
+        fn nullable_int_32_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_32_u(self, ctx))
+        }
+        fn nullable_int_40_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_40_u(self, ctx))
+        }
+        fn nullable_int_48_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_48_u(self, ctx))
+        }
+        fn nullable_int_56_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_56_u(self, ctx))
+        }
+        fn nullable_int_64_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_64_u(self, ctx))
+        }
+        fn nullable_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_8_s(self, ctx))
+        }
+        fn nullable_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_16_s(self, ctx))
+        }
+        fn nullable_int_24_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_24_s(self, ctx))
+        }
+        fn nullable_int_32_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_32_s(self, ctx))
+        }
+        fn nullable_int_40_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_40_s(self, ctx))
+        }
+        fn nullable_int_48_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_48_s(self, ctx))
+        }
+        fn nullable_int_56_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_56_s(self, ctx))
+        }
+        fn nullable_int_64_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_int_64_s(self, ctx))
+        }
+        fn nullable_enum_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_enum_8(self, ctx))
+        }
+        fn nullable_enum_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_enum_16(self, ctx))
+        }
+        fn nullable_float_single(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_float_single(
+                self, ctx,
+            ))
+        }
+        fn nullable_float_double(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_float_double(
+                self, ctx,
+            ))
+        }
+        fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::NullableBuilder<
+                P,
+                rs_matter_crate::tlv::OctetsBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_octet_string(
+                self, ctx, builder,
+            ))
+        }
+        fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::NullableBuilder<
+                P,
+                rs_matter_crate::tlv::Utf8StrBuilder<P>,
+            >,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_char_string(
+                self, ctx, builder,
+            ))
+        }
+        fn nullable_enum_attr(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<
+                rs_matter_crate::tlv::Nullable<SimpleEnum>,
+                rs_matter_crate::error::Error,
+            >,
+        > {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_enum_attr(self, ctx))
+        }
+        fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+            builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::nullable_struct(
+                self, ctx, builder,
+            ))
+        }
+        fn nullable_range_restricted_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::nullable_range_restricted_int_8_u(self, ctx),
+            )
+        }
+        fn nullable_range_restricted_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::nullable_range_restricted_int_8_s(self, ctx),
+            )
+        }
+        fn nullable_range_restricted_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::nullable_range_restricted_int_16_u(self, ctx),
+            )
+        }
+        fn nullable_range_restricted_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<
+            Output = Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
+        > {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::nullable_range_restricted_int_16_s(self, ctx),
+            )
+        }
+        fn write_only_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::write_only_int_8_u(self, ctx))
+        }
+        fn mei_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::ReadContext,
+        ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::mei_int_8_u(self, ctx))
+        }
+        fn set_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: bool,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_boolean(self, ctx, value))
+        }
+        fn set_bitmap_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: Bitmap8MaskMap,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_bitmap_8(self, ctx, value))
+        }
+        fn set_bitmap_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: Bitmap16MaskMap,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_bitmap_16(
+                self, ctx, value,
+            ))
+        }
+        fn set_bitmap_32(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: Bitmap32MaskMap,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_bitmap_32(
+                self, ctx, value,
+            ))
+        }
+        fn set_bitmap_64(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: Bitmap64MaskMap,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_bitmap_64(
+                self, ctx, value,
+            ))
+        }
+        fn set_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_8_u(self, ctx, value))
+        }
+        fn set_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u16,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_16_u(self, ctx, value))
+        }
+        fn set_int_24_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u32,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_24_u(self, ctx, value))
+        }
+        fn set_int_32_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u32,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_32_u(self, ctx, value))
+        }
+        fn set_int_40_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_40_u(self, ctx, value))
+        }
+        fn set_int_48_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_48_u(self, ctx, value))
+        }
+        fn set_int_56_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_56_u(self, ctx, value))
+        }
+        fn set_int_64_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_64_u(self, ctx, value))
+        }
+        fn set_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_8_s(self, ctx, value))
+        }
+        fn set_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i16,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_16_s(self, ctx, value))
+        }
+        fn set_int_24_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i32,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_24_s(self, ctx, value))
+        }
+        fn set_int_32_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i32,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_32_s(self, ctx, value))
+        }
+        fn set_int_40_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_40_s(self, ctx, value))
+        }
+        fn set_int_48_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_48_s(self, ctx, value))
+        }
+        fn set_int_56_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_56_s(self, ctx, value))
+        }
+        fn set_int_64_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_int_64_s(self, ctx, value))
+        }
+        fn set_enum_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_enum_8(self, ctx, value))
+        }
+        fn set_enum_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u16,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_enum_16(self, ctx, value))
+        }
+        fn set_float_single(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: f32,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_float_single(
+                self, ctx, value,
+            ))
+        }
+        fn set_float_double(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: f64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_float_double(
+                self, ctx, value,
+            ))
+        }
+        fn set_octet_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_octet_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_list_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
+                rs_matter_crate::tlv::TLVArray<'_, u8>,
+                u8,
+            >,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_list_int_8_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_list_octet_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
+                rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
+                rs_matter_crate::tlv::OctetStr<'_>,
+            >,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_list_octet_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_list_struct_octet_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
+                rs_matter_crate::tlv::TLVArray<'_, TestListStructOctet<'_>>,
+                TestListStructOctet<'_>,
+            >,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_list_struct_octet_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_long_octet_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::OctetStr<'_>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_long_octet_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_char_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_char_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_long_char_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Utf8Str<'_>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_long_char_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_epoch_us(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u64,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_epoch_us(self, ctx, value))
+        }
+        fn set_epoch_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u32,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_epoch_s(self, ctx, value))
+        }
+        fn set_vendor_id(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u16,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_vendor_id(
+                self, ctx, value,
+            ))
+        }
+        fn set_list_nullables_and_optionals_struct(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
+                rs_matter_crate::tlv::TLVArray<'_, NullablesAndOptionalsStruct<'_>>,
+                NullablesAndOptionalsStruct<'_>,
+            >,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::set_list_nullables_and_optionals_struct(
+                    self, ctx, value,
+                ),
+            )
+        }
+        fn set_enum_attr(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: SimpleEnum,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_enum_attr(
+                self, ctx, value,
+            ))
+        }
+        fn set_struct_attr(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: SimpleStruct<'_>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_struct_attr(
+                self, ctx, value,
+            ))
+        }
+        fn set_range_restricted_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_range_restricted_int_8_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_range_restricted_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_range_restricted_int_8_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_range_restricted_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u16,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_range_restricted_int_16_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_range_restricted_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: i16,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_range_restricted_int_16_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_list_long_octet_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
+                rs_matter_crate::tlv::TLVArray<'_, rs_matter_crate::tlv::OctetStr<'_>>,
+                rs_matter_crate::tlv::OctetStr<'_>,
+            >,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_list_long_octet_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_list_fabric_scoped(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::dm::ArrayAttributeWrite<
+                rs_matter_crate::tlv::TLVArray<'_, TestFabricScoped<'_>>,
+                TestFabricScoped<'_>,
+            >,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_list_fabric_scoped(
+                self, ctx, value,
+            ))
+        }
+        fn set_timed_write_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: bool,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_timed_write_boolean(
+                self, ctx, value,
+            ))
+        }
+        fn set_general_error_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: bool,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_general_error_boolean(
+                self, ctx, value,
+            ))
+        }
+        fn set_cluster_error_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: bool,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_cluster_error_boolean(
+                self, ctx, value,
+            ))
+        }
+        fn set_unsupported(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: bool,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_unsupported(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_boolean(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<bool>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_boolean(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_bitmap_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_bitmap_8(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_bitmap_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_bitmap_16(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_bitmap_32(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_bitmap_32(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_bitmap_64(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_bitmap_64(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_8_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_16_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_24_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_24_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_32_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u32>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_32_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_40_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_40_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_48_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_48_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_56_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_56_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_64_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_64_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_8_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_16_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_24_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_24_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_32_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i32>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_32_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_40_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_40_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_48_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_48_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_56_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_56_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_int_64_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_int_64_s(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_enum_8(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_enum_8(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_enum_16(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_enum_16(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_float_single(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<f32>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_float_single(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_float_double(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<f64>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_float_double(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_octet_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_octet_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_char_string(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_char_string(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_enum_attr(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_enum_attr(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_struct(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_nullable_struct(
+                self, ctx, value,
+            ))
+        }
+        fn set_nullable_range_restricted_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u8>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::set_nullable_range_restricted_int_8_u(
+                    self, ctx, value,
+                ),
+            )
+        }
+        fn set_nullable_range_restricted_int_8_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i8>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::set_nullable_range_restricted_int_8_s(
+                    self, ctx, value,
+                ),
+            )
+        }
+        fn set_nullable_range_restricted_int_16_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<u16>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::set_nullable_range_restricted_int_16_u(
+                    self, ctx, value,
+                ),
+            )
+        }
+        fn set_nullable_range_restricted_int_16_s(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: rs_matter_crate::tlv::Nullable<i16>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::set_nullable_range_restricted_int_16_s(
+                    self, ctx, value,
+                ),
+            )
+        }
+        fn set_write_only_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_write_only_int_8_u(
+                self, ctx, value,
+            ))
+        }
+        fn set_mei_int_8_u(
+            &self,
+            ctx: impl rs_matter_crate::dm::WriteContext,
+            value: u8,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::set_mei_int_8_u(
+                self, ctx, value,
+            ))
+        }
+        fn handle_test(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_test(self, ctx))
+        }
+        fn handle_test_not_handled(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_test_not_handled(
+                self, ctx,
+            ))
+        }
+        fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            response: TestSpecificResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_test_specific(
+                self, ctx, response,
+            ))
+        }
+        fn handle_test_unknown_command(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_test_unknown_command(
+                self, ctx,
+            ))
+        }
+        fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestAddArgumentsRequest<'_>,
+            response: TestAddArgumentsResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_test_add_arguments(
+                self, ctx, request, response,
+            ))
+        }
+        fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestSimpleArgumentRequestRequest<'_>,
+            response: TestSimpleArgumentResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_simple_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestStructArrayArgumentRequestRequest<'_>,
+            response: TestStructArrayArgumentResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_struct_array_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestStructArgumentRequestRequest<'_>,
+            response: BooleanResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_struct_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestNestedStructArgumentRequestRequest<'_>,
+            response: BooleanResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_nested_struct_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestListStructArgumentRequestRequest<'_>,
+            response: BooleanResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_list_struct_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestListInt8UArgumentRequestRequest<'_>,
+            response: BooleanResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_list_int_8_u_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_nested_struct_list_argument_request<
+            P: rs_matter_crate::tlv::TLVBuilderParent,
+        >(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestNestedStructListArgumentRequestRequest<'_>,
+            response: BooleanResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_nested_struct_list_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_list_nested_struct_list_argument_request<
+            P: rs_matter_crate::tlv::TLVBuilderParent,
+        >(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestListNestedStructListArgumentRequestRequest<'_>,
+            response: BooleanResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_list_nested_struct_list_argument_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestListInt8UReverseRequestRequest<'_>,
+            response: TestListInt8UReverseResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_list_int_8_u_reverse_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestEnumsRequestRequest<'_>,
+            response: TestEnumsResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_test_enums_request(
+                self, ctx, request, response,
+            ))
+        }
+        fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestNullableOptionalRequestRequest<'_>,
+            response: TestNullableOptionalResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_nullable_optional_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_complex_nullable_optional_request<
+            P: rs_matter_crate::tlv::TLVBuilderParent,
+        >(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestComplexNullableOptionalRequestRequest<'_>,
+            response: TestComplexNullableOptionalResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_complex_nullable_optional_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: SimpleStructEchoRequestRequest<'_>,
+            response: SimpleStructResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_simple_struct_echo_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_timed_invoke_request(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(<Self as ClusterSyncHandler>::handle_timed_invoke_request(
+                self, ctx,
+            ))
+        }
+        fn handle_test_simple_optional_argument_request(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestSimpleOptionalArgumentRequestRequest<'_>,
+        ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_simple_optional_argument_request(
+                    self, ctx, request,
+                ),
+            )
+        }
+        fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestEmitTestEventRequestRequest<'_>,
+            response: TestEmitTestEventResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_emit_test_event_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_emit_test_fabric_scoped_event_request<
+            P: rs_matter_crate::tlv::TLVBuilderParent,
+        >(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestEmitTestFabricScopedEventRequestRequest<'_>,
+            response: TestEmitTestFabricScopedEventResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_emit_test_fabric_scoped_event_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestBatchHelperRequestRequest<'_>,
+            response: TestBatchHelperResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_batch_helper_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestSecondBatchHelperRequestRequest<'_>,
+            response: TestBatchHelperResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_second_batch_helper_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
+        fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
+            &self,
+            ctx: impl rs_matter_crate::dm::InvokeContext,
+            request: TestDifferentVendorMeiRequestRequest<'_>,
+            response: TestDifferentVendorMeiResponseBuilder<P>,
+        ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
+            core::future::ready(
+                <Self as ClusterSyncHandler>::handle_test_different_vendor_mei_request(
+                    self, ctx, request, response,
+                ),
+            )
+        }
     }
     impl<T> ClusterHandler for &T
     where
@@ -23775,219 +26226,191 @@ pub mod unit_testing {
         fn dataver_changed(&self) {
             T::dataver_changed(self)
         }
-        #[inline(always)]
         fn run(
             &self,
             ctx: impl rs_matter_crate::dm::HandlerContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
             (**self).run(ctx)
         }
-        #[inline(always)]
         fn boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
         {
-            T::boolean(self, ctx)
+            <T as ClusterHandler>::boolean(self, ctx)
         }
-        #[inline(always)]
         fn bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<Bitmap8MaskMap, rs_matter_crate::error::Error>>
         {
-            T::bitmap_8(self, ctx)
+            <T as ClusterHandler>::bitmap_8(self, ctx)
         }
-        #[inline(always)]
         fn bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<Bitmap16MaskMap, rs_matter_crate::error::Error>>
         {
-            T::bitmap_16(self, ctx)
+            <T as ClusterHandler>::bitmap_16(self, ctx)
         }
-        #[inline(always)]
         fn bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<Bitmap32MaskMap, rs_matter_crate::error::Error>>
         {
-            T::bitmap_32(self, ctx)
+            <T as ClusterHandler>::bitmap_32(self, ctx)
         }
-        #[inline(always)]
         fn bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<Bitmap64MaskMap, rs_matter_crate::error::Error>>
         {
-            T::bitmap_64(self, ctx)
+            <T as ClusterHandler>::bitmap_64(self, ctx)
         }
-        #[inline(always)]
         fn int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
-            T::int_8_u(self, ctx)
+            <T as ClusterHandler>::int_8_u(self, ctx)
         }
-        #[inline(always)]
         fn int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
         {
-            T::int_16_u(self, ctx)
+            <T as ClusterHandler>::int_16_u(self, ctx)
         }
-        #[inline(always)]
         fn int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u32, rs_matter_crate::error::Error>>
         {
-            T::int_24_u(self, ctx)
+            <T as ClusterHandler>::int_24_u(self, ctx)
         }
-        #[inline(always)]
         fn int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u32, rs_matter_crate::error::Error>>
         {
-            T::int_32_u(self, ctx)
+            <T as ClusterHandler>::int_32_u(self, ctx)
         }
-        #[inline(always)]
         fn int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
         {
-            T::int_40_u(self, ctx)
+            <T as ClusterHandler>::int_40_u(self, ctx)
         }
-        #[inline(always)]
         fn int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
         {
-            T::int_48_u(self, ctx)
+            <T as ClusterHandler>::int_48_u(self, ctx)
         }
-        #[inline(always)]
         fn int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
         {
-            T::int_56_u(self, ctx)
+            <T as ClusterHandler>::int_56_u(self, ctx)
         }
-        #[inline(always)]
         fn int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
         {
-            T::int_64_u(self, ctx)
+            <T as ClusterHandler>::int_64_u(self, ctx)
         }
-        #[inline(always)]
         fn int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i8, rs_matter_crate::error::Error>> {
-            T::int_8_s(self, ctx)
+            <T as ClusterHandler>::int_8_s(self, ctx)
         }
-        #[inline(always)]
         fn int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i16, rs_matter_crate::error::Error>>
         {
-            T::int_16_s(self, ctx)
+            <T as ClusterHandler>::int_16_s(self, ctx)
         }
-        #[inline(always)]
         fn int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i32, rs_matter_crate::error::Error>>
         {
-            T::int_24_s(self, ctx)
+            <T as ClusterHandler>::int_24_s(self, ctx)
         }
-        #[inline(always)]
         fn int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i32, rs_matter_crate::error::Error>>
         {
-            T::int_32_s(self, ctx)
+            <T as ClusterHandler>::int_32_s(self, ctx)
         }
-        #[inline(always)]
         fn int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
         {
-            T::int_40_s(self, ctx)
+            <T as ClusterHandler>::int_40_s(self, ctx)
         }
-        #[inline(always)]
         fn int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
         {
-            T::int_48_s(self, ctx)
+            <T as ClusterHandler>::int_48_s(self, ctx)
         }
-        #[inline(always)]
         fn int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
         {
-            T::int_56_s(self, ctx)
+            <T as ClusterHandler>::int_56_s(self, ctx)
         }
-        #[inline(always)]
         fn int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i64, rs_matter_crate::error::Error>>
         {
-            T::int_64_s(self, ctx)
+            <T as ClusterHandler>::int_64_s(self, ctx)
         }
-        #[inline(always)]
         fn enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
-            T::enum_8(self, ctx)
+            <T as ClusterHandler>::enum_8(self, ctx)
         }
-        #[inline(always)]
         fn enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
         {
-            T::enum_16(self, ctx)
+            <T as ClusterHandler>::enum_16(self, ctx)
         }
-        #[inline(always)]
         fn float_single(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<f32, rs_matter_crate::error::Error>>
         {
-            T::float_single(self, ctx)
+            <T as ClusterHandler>::float_single(self, ctx)
         }
-        #[inline(always)]
         fn float_double(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<f64, rs_matter_crate::error::Error>>
         {
-            T::float_double(self, ctx)
+            <T as ClusterHandler>::float_double(self, ctx)
         }
-        #[inline(always)]
         fn octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::octet_string(self, ctx, builder)
+            <T as ClusterHandler>::octet_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn list_int_8_u<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -23996,9 +26419,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::ToTLVBuilder<P, u8>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::list_int_8_u(self, ctx, builder)
+            <T as ClusterHandler>::list_int_8_u(self, ctx, builder)
         }
-        #[inline(always)]
         fn list_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24007,9 +26429,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::list_octet_string(self, ctx, builder)
+            <T as ClusterHandler>::list_octet_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn list_struct_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24018,57 +26439,50 @@ pub mod unit_testing {
                 TestListStructOctetBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::list_struct_octet_string(self, ctx, builder)
+            <T as ClusterHandler>::list_struct_octet_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::OctetsBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::long_octet_string(self, ctx, builder)
+            <T as ClusterHandler>::long_octet_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::char_string(self, ctx, builder)
+            <T as ClusterHandler>::char_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn long_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::Utf8StrBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::long_char_string(self, ctx, builder)
+            <T as ClusterHandler>::long_char_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u64, rs_matter_crate::error::Error>>
         {
-            T::epoch_us(self, ctx)
+            <T as ClusterHandler>::epoch_us(self, ctx)
         }
-        #[inline(always)]
         fn epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u32, rs_matter_crate::error::Error>>
         {
-            T::epoch_s(self, ctx)
+            <T as ClusterHandler>::epoch_s(self, ctx)
         }
-        #[inline(always)]
         fn vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
         {
-            T::vendor_id(self, ctx)
+            <T as ClusterHandler>::vendor_id(self, ctx)
         }
-        #[inline(always)]
         fn list_nullables_and_optionals_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24077,55 +26491,48 @@ pub mod unit_testing {
                 NullablesAndOptionalsStructBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::list_nullables_and_optionals_struct(self, ctx, builder)
+            <T as ClusterHandler>::list_nullables_and_optionals_struct(self, ctx, builder)
         }
-        #[inline(always)]
         fn enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<SimpleEnum, rs_matter_crate::error::Error>>
         {
-            T::enum_attr(self, ctx)
+            <T as ClusterHandler>::enum_attr(self, ctx)
         }
-        #[inline(always)]
         fn struct_attr<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: SimpleStructBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::struct_attr(self, ctx, builder)
+            <T as ClusterHandler>::struct_attr(self, ctx, builder)
         }
-        #[inline(always)]
         fn range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
-            T::range_restricted_int_8_u(self, ctx)
+            <T as ClusterHandler>::range_restricted_int_8_u(self, ctx)
         }
-        #[inline(always)]
         fn range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i8, rs_matter_crate::error::Error>> {
-            T::range_restricted_int_8_s(self, ctx)
+            <T as ClusterHandler>::range_restricted_int_8_s(self, ctx)
         }
-        #[inline(always)]
         fn range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u16, rs_matter_crate::error::Error>>
         {
-            T::range_restricted_int_16_u(self, ctx)
+            <T as ClusterHandler>::range_restricted_int_16_u(self, ctx)
         }
-        #[inline(always)]
         fn range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<i16, rs_matter_crate::error::Error>>
         {
-            T::range_restricted_int_16_s(self, ctx)
+            <T as ClusterHandler>::range_restricted_int_16_s(self, ctx)
         }
-        #[inline(always)]
         fn list_long_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24134,9 +26541,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::list_long_octet_string(self, ctx, builder)
+            <T as ClusterHandler>::list_long_octet_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn list_fabric_scoped<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24145,50 +26551,44 @@ pub mod unit_testing {
                 TestFabricScopedBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::list_fabric_scoped(self, ctx, builder)
+            <T as ClusterHandler>::list_fabric_scoped(self, ctx, builder)
         }
-        #[inline(always)]
         fn timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
         {
-            T::timed_write_boolean(self, ctx)
+            <T as ClusterHandler>::timed_write_boolean(self, ctx)
         }
-        #[inline(always)]
         fn general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
         {
-            T::general_error_boolean(self, ctx)
+            <T as ClusterHandler>::general_error_boolean(self, ctx)
         }
-        #[inline(always)]
         fn cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
         {
-            T::cluster_error_boolean(self, ctx)
+            <T as ClusterHandler>::cluster_error_boolean(self, ctx)
         }
-        #[inline(always)]
         fn unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<bool, rs_matter_crate::error::Error>>
         {
-            T::unsupported(self, ctx)
+            <T as ClusterHandler>::unsupported(self, ctx)
         }
-        #[inline(always)]
         fn nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<bool>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_boolean(self, ctx)
+            <T as ClusterHandler>::nullable_boolean(self, ctx)
         }
-        #[inline(always)]
         fn nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24198,9 +26598,8 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         > {
-            T::nullable_bitmap_8(self, ctx)
+            <T as ClusterHandler>::nullable_bitmap_8(self, ctx)
         }
-        #[inline(always)]
         fn nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24210,9 +26609,8 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         > {
-            T::nullable_bitmap_16(self, ctx)
+            <T as ClusterHandler>::nullable_bitmap_16(self, ctx)
         }
-        #[inline(always)]
         fn nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24222,9 +26620,8 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         > {
-            T::nullable_bitmap_32(self, ctx)
+            <T as ClusterHandler>::nullable_bitmap_32(self, ctx)
         }
-        #[inline(always)]
         fn nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24234,189 +26631,168 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         > {
-            T::nullable_bitmap_64(self, ctx)
+            <T as ClusterHandler>::nullable_bitmap_64(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_8_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_8_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_16_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_16_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_24_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_24_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u32>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_32_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_32_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_40_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_40_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_48_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_48_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_56_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_56_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_64_u(self, ctx)
+            <T as ClusterHandler>::nullable_int_64_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_8_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_8_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_16_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_16_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_24_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_24_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i32>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_32_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_32_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_40_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_40_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_48_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_48_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_56_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_56_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_int_64_s(self, ctx)
+            <T as ClusterHandler>::nullable_int_64_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_enum_8(self, ctx)
+            <T as ClusterHandler>::nullable_enum_8(self, ctx)
         }
-        #[inline(always)]
         fn nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_enum_16(self, ctx)
+            <T as ClusterHandler>::nullable_enum_16(self, ctx)
         }
-        #[inline(always)]
         fn nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<f32>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_float_single(self, ctx)
+            <T as ClusterHandler>::nullable_float_single(self, ctx)
         }
-        #[inline(always)]
         fn nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<f64>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_float_double(self, ctx)
+            <T as ClusterHandler>::nullable_float_double(self, ctx)
         }
-        #[inline(always)]
         fn nullable_octet_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24425,9 +26801,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::OctetsBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::nullable_octet_string(self, ctx, builder)
+            <T as ClusterHandler>::nullable_octet_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn nullable_char_string<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24436,9 +26811,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::Utf8StrBuilder<P>,
             >,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::nullable_char_string(self, ctx, builder)
+            <T as ClusterHandler>::nullable_char_string(self, ctx, builder)
         }
-        #[inline(always)]
         fn nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -24448,275 +26822,241 @@ pub mod unit_testing {
                 rs_matter_crate::error::Error,
             >,
         > {
-            T::nullable_enum_attr(self, ctx)
+            <T as ClusterHandler>::nullable_enum_attr(self, ctx)
         }
-        #[inline(always)]
         fn nullable_struct<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
             builder: rs_matter_crate::tlv::NullableBuilder<P, SimpleStructBuilder<P>>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::nullable_struct(self, ctx, builder)
+            <T as ClusterHandler>::nullable_struct(self, ctx, builder)
         }
-        #[inline(always)]
         fn nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u8>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_range_restricted_int_8_u(self, ctx)
+            <T as ClusterHandler>::nullable_range_restricted_int_8_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i8>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_range_restricted_int_8_s(self, ctx)
+            <T as ClusterHandler>::nullable_range_restricted_int_8_s(self, ctx)
         }
-        #[inline(always)]
         fn nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<u16>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_range_restricted_int_16_u(self, ctx)
+            <T as ClusterHandler>::nullable_range_restricted_int_16_u(self, ctx)
         }
-        #[inline(always)]
         fn nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<
             Output = Result<rs_matter_crate::tlv::Nullable<i16>, rs_matter_crate::error::Error>,
         > {
-            T::nullable_range_restricted_int_16_s(self, ctx)
+            <T as ClusterHandler>::nullable_range_restricted_int_16_s(self, ctx)
         }
-        #[inline(always)]
         fn write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
-            T::write_only_int_8_u(self, ctx)
+            <T as ClusterHandler>::write_only_int_8_u(self, ctx)
         }
-        #[inline(always)]
         fn mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
         ) -> impl core::future::Future<Output = Result<u8, rs_matter_crate::error::Error>> {
-            T::mei_int_8_u(self, ctx)
+            <T as ClusterHandler>::mei_int_8_u(self, ctx)
         }
-        #[inline(always)]
         fn set_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_boolean(self, ctx, value)
+            <T as ClusterHandler>::set_boolean(self, ctx, value)
         }
-        #[inline(always)]
         fn set_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap8MaskMap,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_bitmap_8(self, ctx, value)
+            <T as ClusterHandler>::set_bitmap_8(self, ctx, value)
         }
-        #[inline(always)]
         fn set_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap16MaskMap,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_bitmap_16(self, ctx, value)
+            <T as ClusterHandler>::set_bitmap_16(self, ctx, value)
         }
-        #[inline(always)]
         fn set_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap32MaskMap,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_bitmap_32(self, ctx, value)
+            <T as ClusterHandler>::set_bitmap_32(self, ctx, value)
         }
-        #[inline(always)]
         fn set_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: Bitmap64MaskMap,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_bitmap_64(self, ctx, value)
+            <T as ClusterHandler>::set_bitmap_64(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_16_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_16_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_24_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_24_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_32_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_32_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_40_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_40_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_48_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_48_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_56_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_56_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_64_u(self, ctx, value)
+            <T as ClusterHandler>::set_int_64_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_8_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_8_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_16_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_16_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_24_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_24_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i32,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_32_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_32_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_40_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_40_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_48_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_48_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_56_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_56_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_int_64_s(self, ctx, value)
+            <T as ClusterHandler>::set_int_64_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_enum_8(self, ctx, value)
+            <T as ClusterHandler>::set_enum_8(self, ctx, value)
         }
-        #[inline(always)]
         fn set_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_enum_16(self, ctx, value)
+            <T as ClusterHandler>::set_enum_16(self, ctx, value)
         }
-        #[inline(always)]
         fn set_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: f32,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_float_single(self, ctx, value)
+            <T as ClusterHandler>::set_float_single(self, ctx, value)
         }
-        #[inline(always)]
         fn set_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: f64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_float_double(self, ctx, value)
+            <T as ClusterHandler>::set_float_double(self, ctx, value)
         }
-        #[inline(always)]
         fn set_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_octet_string(self, ctx, value)
+            <T as ClusterHandler>::set_octet_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_list_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24725,9 +27065,8 @@ pub mod unit_testing {
                 u8,
             >,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_list_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_list_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_list_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24736,9 +27075,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_list_octet_string(self, ctx, value)
+            <T as ClusterHandler>::set_list_octet_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_list_struct_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24747,57 +27085,50 @@ pub mod unit_testing {
                 TestListStructOctet<'_>,
             >,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_list_struct_octet_string(self, ctx, value)
+            <T as ClusterHandler>::set_list_struct_octet_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::OctetStr<'_>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_long_octet_string(self, ctx, value)
+            <T as ClusterHandler>::set_long_octet_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_char_string(self, ctx, value)
+            <T as ClusterHandler>::set_char_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_long_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Utf8Str<'_>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_long_char_string(self, ctx, value)
+            <T as ClusterHandler>::set_long_char_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_epoch_us(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u64,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_epoch_us(self, ctx, value)
+            <T as ClusterHandler>::set_epoch_us(self, ctx, value)
         }
-        #[inline(always)]
         fn set_epoch_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u32,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_epoch_s(self, ctx, value)
+            <T as ClusterHandler>::set_epoch_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_vendor_id(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_vendor_id(self, ctx, value)
+            <T as ClusterHandler>::set_vendor_id(self, ctx, value)
         }
-        #[inline(always)]
         fn set_list_nullables_and_optionals_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24806,57 +27137,50 @@ pub mod unit_testing {
                 NullablesAndOptionalsStruct<'_>,
             >,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_list_nullables_and_optionals_struct(self, ctx, value)
+            <T as ClusterHandler>::set_list_nullables_and_optionals_struct(self, ctx, value)
         }
-        #[inline(always)]
         fn set_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleEnum,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_enum_attr(self, ctx, value)
+            <T as ClusterHandler>::set_enum_attr(self, ctx, value)
         }
-        #[inline(always)]
         fn set_struct_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: SimpleStruct<'_>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_struct_attr(self, ctx, value)
+            <T as ClusterHandler>::set_struct_attr(self, ctx, value)
         }
-        #[inline(always)]
         fn set_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_range_restricted_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_range_restricted_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_range_restricted_int_8_s(self, ctx, value)
+            <T as ClusterHandler>::set_range_restricted_int_8_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u16,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_range_restricted_int_16_u(self, ctx, value)
+            <T as ClusterHandler>::set_range_restricted_int_16_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: i16,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_range_restricted_int_16_s(self, ctx, value)
+            <T as ClusterHandler>::set_range_restricted_int_16_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_list_long_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24865,9 +27189,8 @@ pub mod unit_testing {
                 rs_matter_crate::tlv::OctetStr<'_>,
             >,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_list_long_octet_string(self, ctx, value)
+            <T as ClusterHandler>::set_list_long_octet_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_list_fabric_scoped(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -24876,413 +27199,370 @@ pub mod unit_testing {
                 TestFabricScoped<'_>,
             >,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_list_fabric_scoped(self, ctx, value)
+            <T as ClusterHandler>::set_list_fabric_scoped(self, ctx, value)
         }
-        #[inline(always)]
         fn set_timed_write_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_timed_write_boolean(self, ctx, value)
+            <T as ClusterHandler>::set_timed_write_boolean(self, ctx, value)
         }
-        #[inline(always)]
         fn set_general_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_general_error_boolean(self, ctx, value)
+            <T as ClusterHandler>::set_general_error_boolean(self, ctx, value)
         }
-        #[inline(always)]
         fn set_cluster_error_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_cluster_error_boolean(self, ctx, value)
+            <T as ClusterHandler>::set_cluster_error_boolean(self, ctx, value)
         }
-        #[inline(always)]
         fn set_unsupported(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: bool,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_unsupported(self, ctx, value)
+            <T as ClusterHandler>::set_unsupported(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_boolean(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<bool>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_boolean(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_boolean(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_bitmap_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_bitmap_8(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_bitmap_8(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_bitmap_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_bitmap_16(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_bitmap_16(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_bitmap_32(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_bitmap_32(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_bitmap_32(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_bitmap_64(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_bitmap_64(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_bitmap_64(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_16_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_16_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_24_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_24_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_24_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_32_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u32>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_32_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_32_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_40_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_40_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_40_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_48_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_48_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_48_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_56_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_56_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_56_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_64_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_64_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_64_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_8_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_8_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_16_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_16_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_24_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_24_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_24_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_32_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i32>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_32_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_32_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_40_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_40_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_40_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_48_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_48_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_48_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_56_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_56_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_56_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_int_64_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_int_64_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_int_64_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_enum_8(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_enum_8(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_enum_8(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_enum_16(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_enum_16(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_enum_16(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_float_single(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f32>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_float_single(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_float_single(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_float_double(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<f64>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_float_double(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_float_double(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_octet_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::OctetStr<'_>>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_octet_string(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_octet_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_char_string(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<rs_matter_crate::tlv::Utf8Str<'_>>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_char_string(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_char_string(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_enum_attr(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleEnum>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_enum_attr(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_enum_attr(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_struct(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_struct(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_struct(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_range_restricted_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u8>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_range_restricted_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_range_restricted_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_range_restricted_int_8_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i8>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_range_restricted_int_8_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_range_restricted_int_8_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_range_restricted_int_16_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<u16>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_range_restricted_int_16_u(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_range_restricted_int_16_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_nullable_range_restricted_int_16_s(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: rs_matter_crate::tlv::Nullable<i16>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_nullable_range_restricted_int_16_s(self, ctx, value)
+            <T as ClusterHandler>::set_nullable_range_restricted_int_16_s(self, ctx, value)
         }
-        #[inline(always)]
         fn set_write_only_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_write_only_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_write_only_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn set_mei_int_8_u(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
             value: u8,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::set_mei_int_8_u(self, ctx, value)
+            <T as ClusterHandler>::set_mei_int_8_u(self, ctx, value)
         }
-        #[inline(always)]
         fn handle_test(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::handle_test(self, ctx)
+            <T as ClusterHandler>::handle_test(self, ctx)
         }
-        #[inline(always)]
         fn handle_test_not_handled(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::handle_test_not_handled(self, ctx)
+            <T as ClusterHandler>::handle_test_not_handled(self, ctx)
         }
-        #[inline(always)]
         fn handle_test_specific<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             response: TestSpecificResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_specific(self, ctx, response)
+            <T as ClusterHandler>::handle_test_specific(self, ctx, response)
         }
-        #[inline(always)]
         fn handle_test_unknown_command(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::handle_test_unknown_command(self, ctx)
+            <T as ClusterHandler>::handle_test_unknown_command(self, ctx)
         }
-        #[inline(always)]
         fn handle_test_add_arguments<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestAddArgumentsRequest<'_>,
             response: TestAddArgumentsResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_add_arguments(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_add_arguments(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_test_simple_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleArgumentRequestRequest<'_>,
             response: TestSimpleArgumentResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_simple_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_simple_argument_request(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_test_struct_array_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArrayArgumentRequestRequest<'_>,
             response: TestStructArrayArgumentResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_struct_array_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_struct_array_argument_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_struct_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_struct_argument_request(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_test_nested_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNestedStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_nested_struct_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_nested_struct_argument_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_list_struct_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListStructArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_list_struct_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_list_struct_argument_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_list_int_8_u_argument_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_list_int_8_u_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_list_int_8_u_argument_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25291,9 +27571,10 @@ pub mod unit_testing {
             request: TestNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_nested_struct_list_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_nested_struct_list_argument_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_list_nested_struct_list_argument_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25302,36 +27583,38 @@ pub mod unit_testing {
             request: TestListNestedStructListArgumentRequestRequest<'_>,
             response: BooleanResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_list_nested_struct_list_argument_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_list_nested_struct_list_argument_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_list_int_8_u_reverse_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestListInt8UReverseRequestRequest<'_>,
             response: TestListInt8UReverseResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_list_int_8_u_reverse_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_list_int_8_u_reverse_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_enums_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEnumsRequestRequest<'_>,
             response: TestEnumsResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_enums_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_enums_request(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_test_nullable_optional_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestNullableOptionalRequestRequest<'_>,
             response: TestNullableOptionalResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_nullable_optional_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_nullable_optional_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_complex_nullable_optional_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25340,42 +27623,39 @@ pub mod unit_testing {
             request: TestComplexNullableOptionalRequestRequest<'_>,
             response: TestComplexNullableOptionalResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_complex_nullable_optional_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_complex_nullable_optional_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_simple_struct_echo_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: SimpleStructEchoRequestRequest<'_>,
             response: SimpleStructResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_simple_struct_echo_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_simple_struct_echo_request(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_timed_invoke_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::handle_timed_invoke_request(self, ctx)
+            <T as ClusterHandler>::handle_timed_invoke_request(self, ctx)
         }
-        #[inline(always)]
         fn handle_test_simple_optional_argument_request(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSimpleOptionalArgumentRequestRequest<'_>,
         ) -> impl core::future::Future<Output = Result<(), rs_matter_crate::error::Error>> {
-            T::handle_test_simple_optional_argument_request(self, ctx, request)
+            <T as ClusterHandler>::handle_test_simple_optional_argument_request(self, ctx, request)
         }
-        #[inline(always)]
         fn handle_test_emit_test_event_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestEmitTestEventRequestRequest<'_>,
             response: TestEmitTestEventResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_emit_test_event_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_emit_test_event_request(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_test_emit_test_fabric_scoped_event_request<
             P: rs_matter_crate::tlv::TLVBuilderParent,
         >(
@@ -25384,36 +27664,40 @@ pub mod unit_testing {
             request: TestEmitTestFabricScopedEventRequestRequest<'_>,
             response: TestEmitTestFabricScopedEventResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_emit_test_fabric_scoped_event_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_emit_test_fabric_scoped_event_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_batch_helper_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_batch_helper_request(self, ctx, request, response)
         }
-        #[inline(always)]
         fn handle_test_second_batch_helper_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestSecondBatchHelperRequestRequest<'_>,
             response: TestBatchHelperResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_second_batch_helper_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_second_batch_helper_request(
+                self, ctx, request, response,
+            )
         }
-        #[inline(always)]
         fn handle_test_different_vendor_mei_request<P: rs_matter_crate::tlv::TLVBuilderParent>(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
             request: TestDifferentVendorMeiRequestRequest<'_>,
             response: TestDifferentVendorMeiResponseBuilder<P>,
         ) -> impl core::future::Future<Output = Result<P, rs_matter_crate::error::Error>> {
-            T::handle_test_different_vendor_mei_request(self, ctx, request, response)
+            <T as ClusterHandler>::handle_test_different_vendor_mei_request(
+                self, ctx, request, response,
+            )
         }
     }
+    impl<T> ClusterSyncHandler for &T where T: ClusterSyncHandler {}
     #[doc = "The handler adaptor for the cluster-specific handler. This adaptor implements the generic `rs-matter` handler trait."]
     #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
     #[cfg_attr(feature = "defmt", derive(rs_matter_crate::reexport::defmt::Format))]
@@ -25423,7 +27707,6 @@ pub mod unit_testing {
         T: ClusterHandler,
     {
         #[allow(unreachable_code)]
-        #[inline(always)]
         async fn read(
             &self,
             ctx: impl rs_matter_crate::dm::ReadContext,
@@ -25435,7 +27718,8 @@ pub mod unit_testing {
                 } else {
                     match AttributeId::try_from(ctx.attr().attr_id)? {
                         AttributeId::Boolean => {
-                            let attr_read_result = self.0.boolean(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::boolean(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25459,7 +27743,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap8 => {
-                            let attr_read_result = self.0.bitmap_8(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::bitmap_8(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25483,7 +27768,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap16 => {
-                            let attr_read_result = self.0.bitmap_16(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::bitmap_16(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25507,7 +27793,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap32 => {
-                            let attr_read_result = self.0.bitmap_32(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::bitmap_32(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25531,7 +27818,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Bitmap64 => {
-                            let attr_read_result = self.0.bitmap_64(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::bitmap_64(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25555,7 +27843,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int8u => {
-                            let attr_read_result = self.0.int_8_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_8_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25579,7 +27868,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int16u => {
-                            let attr_read_result = self.0.int_16_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_16_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25603,7 +27893,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int24u => {
-                            let attr_read_result = self.0.int_24_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_24_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25627,7 +27918,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int32u => {
-                            let attr_read_result = self.0.int_32_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_32_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25651,7 +27943,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int40u => {
-                            let attr_read_result = self.0.int_40_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_40_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25675,7 +27968,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int48u => {
-                            let attr_read_result = self.0.int_48_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_48_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25699,7 +27993,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int56u => {
-                            let attr_read_result = self.0.int_56_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_56_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25723,7 +28018,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int64u => {
-                            let attr_read_result = self.0.int_64_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_64_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25747,7 +28043,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int8s => {
-                            let attr_read_result = self.0.int_8_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_8_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25771,7 +28068,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int16s => {
-                            let attr_read_result = self.0.int_16_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_16_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25795,7 +28093,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int24s => {
-                            let attr_read_result = self.0.int_24_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_24_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25819,7 +28118,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int32s => {
-                            let attr_read_result = self.0.int_32_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_32_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25843,7 +28143,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int40s => {
-                            let attr_read_result = self.0.int_40_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_40_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25867,7 +28168,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int48s => {
-                            let attr_read_result = self.0.int_48_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_48_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25891,7 +28193,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int56s => {
-                            let attr_read_result = self.0.int_56_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_56_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25915,7 +28218,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Int64s => {
-                            let attr_read_result = self.0.int_64_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::int_64_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25939,7 +28243,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Enum8 => {
-                            let attr_read_result = self.0.enum_8(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::enum_8(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25963,7 +28268,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Enum16 => {
-                            let attr_read_result = self.0.enum_16(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::enum_16(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -25987,7 +28293,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::FloatSingle => {
-                            let attr_read_result = self.0.float_single(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::float_single(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26011,7 +28318,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::FloatDouble => {
-                            let attr_read_result = self.0.float_double(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::float_double(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26055,23 +28363,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .octet_string(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::OctetString, false)),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::octet_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::OctetString, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26116,24 +28423,23 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .list_int_8_u(
-                                    &ctx,
-                                    rs_matter_crate::dm::ArrayAttributeRead::new(
-                                        ctx.attr().list_index.clone(),
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::ListInt8u, false)),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::list_int_8_u(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
+                                    ctx.attr().list_index.clone(),
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::ListInt8u, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26178,27 +28484,23 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .list_octet_string(
-                                    &ctx,
-                                    rs_matter_crate::dm::ArrayAttributeRead::new(
-                                        ctx.attr().list_index.clone(),
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::ListOctetString,
-                                                    false,
-                                                )),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::list_octet_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
+                                    ctx.attr().list_index.clone(),
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::ListOctetString, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26243,27 +28545,26 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .list_struct_octet_string(
-                                    &ctx,
-                                    rs_matter_crate::dm::ArrayAttributeRead::new(
-                                        ctx.attr().list_index.clone(),
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
+                            let attr_read_result = <T as ClusterHandler>::list_struct_octet_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
+                                    ctx.attr().list_index.clone(),
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
                                             MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::ListStructOctetString,
-                                                    false,
-                                                )),
+                                                AttributeId::ListStructOctetString,
+                                                false,
                                             )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26308,26 +28609,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .long_octet_string(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::LongOctetString,
-                                                    false,
-                                                )),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::long_octet_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::LongOctetString, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26372,23 +28669,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .char_string(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::CharString, false)),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::char_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::CharString, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26433,23 +28729,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .long_char_string(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::LongCharString, false)),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::long_char_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::LongCharString, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26474,7 +28769,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::EpochUs => {
-                            let attr_read_result = self.0.epoch_us(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::epoch_us(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26498,7 +28794,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::EpochS => {
-                            let attr_read_result = self.0.epoch_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::epoch_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26522,7 +28819,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::VendorId => {
-                            let attr_read_result = self.0.vendor_id(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::vendor_id(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26572,9 +28870,9 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .list_nullables_and_optionals_struct(
+                            let attr_read_result =
+                                <T as ClusterHandler>::list_nullables_and_optionals_struct(
+                                    &self.0,
                                     &ctx,
                                     rs_matter_crate::dm::ArrayAttributeRead::new(
                                         ctx.attr().list_index.clone(),
@@ -26623,7 +28921,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::EnumAttr => {
-                            let attr_read_result = self.0.enum_attr(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::enum_attr(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26667,23 +28966,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .struct_attr(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::StructAttr, false)),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::struct_attr(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::StructAttr, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26708,7 +29006,9 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::RangeRestrictedInt8u => {
-                            let attr_read_result = self.0.range_restricted_int_8_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::range_restricted_int_8_u(&self.0, &ctx)
+                                    .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26732,7 +29032,9 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::RangeRestrictedInt8s => {
-                            let attr_read_result = self.0.range_restricted_int_8_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::range_restricted_int_8_s(&self.0, &ctx)
+                                    .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26756,7 +29058,9 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::RangeRestrictedInt16u => {
-                            let attr_read_result = self.0.range_restricted_int_16_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::range_restricted_int_16_u(&self.0, &ctx)
+                                    .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26780,7 +29084,9 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::RangeRestrictedInt16s => {
-                            let attr_read_result = self.0.range_restricted_int_16_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::range_restricted_int_16_s(&self.0, &ctx)
+                                    .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26824,27 +29130,26 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .list_long_octet_string(
-                                    &ctx,
-                                    rs_matter_crate::dm::ArrayAttributeRead::new(
-                                        ctx.attr().list_index.clone(),
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
+                            let attr_read_result = <T as ClusterHandler>::list_long_octet_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
+                                    ctx.attr().list_index.clone(),
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
                                             MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::ListLongOctetString,
-                                                    false,
-                                                )),
+                                                AttributeId::ListLongOctetString,
+                                                false,
                                             )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26889,27 +29194,23 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .list_fabric_scoped(
-                                    &ctx,
-                                    rs_matter_crate::dm::ArrayAttributeRead::new(
-                                        ctx.attr().list_index.clone(),
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::ListFabricScoped,
-                                                    false,
-                                                )),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::list_fabric_scoped(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::dm::ArrayAttributeRead::new(
+                                    ctx.attr().list_index.clone(),
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::ListFabricScoped, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26934,7 +29235,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::TimedWriteBoolean => {
-                            let attr_read_result = self.0.timed_write_boolean(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::timed_write_boolean(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26958,7 +29260,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::GeneralErrorBoolean => {
-                            let attr_read_result = self.0.general_error_boolean(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::general_error_boolean(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -26982,7 +29285,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::ClusterErrorBoolean => {
-                            let attr_read_result = self.0.cluster_error_boolean(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::cluster_error_boolean(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27006,7 +29310,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::Unsupported => {
-                            let attr_read_result = self.0.unsupported(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::unsupported(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27030,7 +29335,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBoolean => {
-                            let attr_read_result = self.0.nullable_boolean(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_boolean(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27054,7 +29360,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap8 => {
-                            let attr_read_result = self.0.nullable_bitmap_8(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_bitmap_8(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27078,7 +29385,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap16 => {
-                            let attr_read_result = self.0.nullable_bitmap_16(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_bitmap_16(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27102,7 +29410,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap32 => {
-                            let attr_read_result = self.0.nullable_bitmap_32(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_bitmap_32(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27126,7 +29435,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableBitmap64 => {
-                            let attr_read_result = self.0.nullable_bitmap_64(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_bitmap_64(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27150,7 +29460,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt8u => {
-                            let attr_read_result = self.0.nullable_int_8_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_8_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27174,7 +29485,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt16u => {
-                            let attr_read_result = self.0.nullable_int_16_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_16_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27198,7 +29510,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt24u => {
-                            let attr_read_result = self.0.nullable_int_24_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_24_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27222,7 +29535,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt32u => {
-                            let attr_read_result = self.0.nullable_int_32_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_32_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27246,7 +29560,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt40u => {
-                            let attr_read_result = self.0.nullable_int_40_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_40_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27270,7 +29585,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt48u => {
-                            let attr_read_result = self.0.nullable_int_48_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_48_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27294,7 +29610,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt56u => {
-                            let attr_read_result = self.0.nullable_int_56_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_56_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27318,7 +29635,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt64u => {
-                            let attr_read_result = self.0.nullable_int_64_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_64_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27342,7 +29660,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt8s => {
-                            let attr_read_result = self.0.nullable_int_8_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_8_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27366,7 +29685,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt16s => {
-                            let attr_read_result = self.0.nullable_int_16_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_16_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27390,7 +29710,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt24s => {
-                            let attr_read_result = self.0.nullable_int_24_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_24_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27414,7 +29735,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt32s => {
-                            let attr_read_result = self.0.nullable_int_32_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_32_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27438,7 +29760,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt40s => {
-                            let attr_read_result = self.0.nullable_int_40_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_40_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27462,7 +29785,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt48s => {
-                            let attr_read_result = self.0.nullable_int_48_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_48_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27486,7 +29810,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt56s => {
-                            let attr_read_result = self.0.nullable_int_56_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_56_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27510,7 +29835,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableInt64s => {
-                            let attr_read_result = self.0.nullable_int_64_s(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_int_64_s(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27534,7 +29860,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableEnum8 => {
-                            let attr_read_result = self.0.nullable_enum_8(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_enum_8(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27558,7 +29885,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableEnum16 => {
-                            let attr_read_result = self.0.nullable_enum_16(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_enum_16(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27582,7 +29910,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableFloatSingle => {
-                            let attr_read_result = self.0.nullable_float_single(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_float_single(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27606,7 +29935,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::NullableFloatDouble => {
-                            let attr_read_result = self.0.nullable_float_double(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_float_double(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27650,26 +29980,25 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .nullable_octet_string(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
+                            let attr_read_result = <T as ClusterHandler>::nullable_octet_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
                                             MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::NullableOctetString,
-                                                    false,
-                                                )),
+                                                AttributeId::NullableOctetString,
+                                                false,
                                             )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27714,26 +30043,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .nullable_char_string(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((
-                                                    AttributeId::NullableCharString,
-                                                    false,
-                                                )),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::nullable_char_string(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::NullableCharString, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27758,7 +30083,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::complete(writer)
                         }
                         AttributeId::NullableEnumAttr => {
-                            let attr_read_result = self.0.nullable_enum_attr(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::nullable_enum_attr(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27802,23 +30128,22 @@ pub mod unit_testing {
                             );
                             let tag = rs_matter_crate::dm::Reply::tag(&writer);
                             let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                            let attr_read_result = self
-                                .0
-                                .nullable_struct(
-                                    &ctx,
-                                    rs_matter_crate::tlv::TLVBuilder::new(
-                                        rs_matter_crate::tlv::TLVWriteParent::new(
-                                            MetadataDebug((
-                                                ctx.attr().endpoint_id,
-                                                self,
-                                                MetadataDebug((AttributeId::NullableStruct, false)),
-                                            )),
-                                            tw,
-                                        ),
-                                        tag,
-                                    )?,
-                                )
-                                .await;
+                            let attr_read_result = <T as ClusterHandler>::nullable_struct(
+                                &self.0,
+                                &ctx,
+                                rs_matter_crate::tlv::TLVBuilder::new(
+                                    rs_matter_crate::tlv::TLVWriteParent::new(
+                                        MetadataDebug((
+                                            ctx.attr().endpoint_id,
+                                            self,
+                                            MetadataDebug((AttributeId::NullableStruct, false)),
+                                        )),
+                                        tw,
+                                    ),
+                                    tag,
+                                )?,
+                            )
+                            .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27844,7 +30169,10 @@ pub mod unit_testing {
                         }
                         AttributeId::NullableRangeRestrictedInt8u => {
                             let attr_read_result =
-                                self.0.nullable_range_restricted_int_8_u(&ctx).await;
+                                <T as ClusterHandler>::nullable_range_restricted_int_8_u(
+                                    &self.0, &ctx,
+                                )
+                                .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27875,7 +30203,10 @@ pub mod unit_testing {
                         }
                         AttributeId::NullableRangeRestrictedInt8s => {
                             let attr_read_result =
-                                self.0.nullable_range_restricted_int_8_s(&ctx).await;
+                                <T as ClusterHandler>::nullable_range_restricted_int_8_s(
+                                    &self.0, &ctx,
+                                )
+                                .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27906,7 +30237,10 @@ pub mod unit_testing {
                         }
                         AttributeId::NullableRangeRestrictedInt16u => {
                             let attr_read_result =
-                                self.0.nullable_range_restricted_int_16_u(&ctx).await;
+                                <T as ClusterHandler>::nullable_range_restricted_int_16_u(
+                                    &self.0, &ctx,
+                                )
+                                .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27937,7 +30271,10 @@ pub mod unit_testing {
                         }
                         AttributeId::NullableRangeRestrictedInt16s => {
                             let attr_read_result =
-                                self.0.nullable_range_restricted_int_16_s(&ctx).await;
+                                <T as ClusterHandler>::nullable_range_restricted_int_16_s(
+                                    &self.0, &ctx,
+                                )
+                                .await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27967,7 +30304,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::WriteOnlyInt8u => {
-                            let attr_read_result = self.0.write_only_int_8_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::write_only_int_8_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -27991,7 +30329,8 @@ pub mod unit_testing {
                             rs_matter_crate::dm::Reply::set(writer, attr_read_result?)
                         }
                         AttributeId::MeiInt8u => {
-                            let attr_read_result = self.0.mei_int_8_u(&ctx).await;
+                            let attr_read_result =
+                                <T as ClusterHandler>::mei_int_8_u(&self.0, &ctx).await;
                             #[cfg(feature = "defmt")]
                             rs_matter_crate::reexport::defmt::debug!(
                                 "{:?} -> {:?}",
@@ -28035,7 +30374,6 @@ pub mod unit_testing {
             }
         }
         #[allow(unreachable_code)]
-        #[inline(always)]
         async fn write(
             &self,
             ctx: impl rs_matter_crate::dm::WriteContext,
@@ -28047,7 +30385,8 @@ pub mod unit_testing {
             match AttributeId::try_from(ctx.attr().attr_id)? {
                 AttributeId::Boolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_boolean(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_boolean(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28075,7 +30414,8 @@ pub mod unit_testing {
                 AttributeId::Bitmap8 => {
                     let attr_data: Bitmap8MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_8(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_bitmap_8(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28103,7 +30443,9 @@ pub mod unit_testing {
                 AttributeId::Bitmap16 => {
                     let attr_data: Bitmap16MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_16(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_bitmap_16(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28131,7 +30473,9 @@ pub mod unit_testing {
                 AttributeId::Bitmap32 => {
                     let attr_data: Bitmap32MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_32(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_bitmap_32(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28159,7 +30503,9 @@ pub mod unit_testing {
                 AttributeId::Bitmap64 => {
                     let attr_data: Bitmap64MaskMap =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_bitmap_64(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_bitmap_64(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28186,7 +30532,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_8_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_8_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28213,7 +30560,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int16u => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_16_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_16_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28240,7 +30588,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int24u => {
                     let attr_data: u32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_24_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_24_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28267,7 +30616,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int32u => {
                     let attr_data: u32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_32_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_32_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28294,7 +30644,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int40u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_40_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_40_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28321,7 +30672,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int48u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_48_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_48_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28348,7 +30700,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int56u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_56_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_56_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28375,7 +30728,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int64u => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_64_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_64_u(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28402,7 +30756,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int8s => {
                     let attr_data: i8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_8_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_8_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28429,7 +30784,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int16s => {
                     let attr_data: i16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_16_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_16_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28456,7 +30812,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int24s => {
                     let attr_data: i32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_24_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_24_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28483,7 +30840,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int32s => {
                     let attr_data: i32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_32_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_32_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28510,7 +30868,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int40s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_40_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_40_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28537,7 +30896,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int48s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_48_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_48_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28564,7 +30924,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int56s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_56_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_56_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28591,7 +30952,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Int64s => {
                     let attr_data: i64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_int_64_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_int_64_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28618,7 +30980,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Enum8 => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_enum_8(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_enum_8(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28645,7 +31008,8 @@ pub mod unit_testing {
                 }
                 AttributeId::Enum16 => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_enum_16(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_enum_16(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28672,7 +31036,9 @@ pub mod unit_testing {
                 }
                 AttributeId::FloatSingle => {
                     let attr_data: f32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_float_single(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_float_single(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28699,7 +31065,9 @@ pub mod unit_testing {
                 }
                 AttributeId::FloatDouble => {
                     let attr_data: f64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_float_double(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_float_double(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28727,7 +31095,9 @@ pub mod unit_testing {
                 AttributeId::OctetString => {
                     let attr_data: rs_matter_crate::tlv::OctetStr<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_octet_string(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_octet_string(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28757,7 +31127,9 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self.0.set_list_int_8_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_list_int_8_u(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28787,8 +31159,12 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result =
-                        self.0.set_list_octet_string(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_list_octet_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28818,10 +31194,12 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self
-                        .0
-                        .set_list_struct_octet_string(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_list_struct_octet_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28849,8 +31227,12 @@ pub mod unit_testing {
                 AttributeId::LongOctetString => {
                     let attr_data: rs_matter_crate::tlv::OctetStr<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_long_octet_string(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_long_octet_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28878,7 +31260,9 @@ pub mod unit_testing {
                 AttributeId::CharString => {
                     let attr_data: rs_matter_crate::tlv::Utf8Str<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_char_string(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_char_string(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28906,8 +31290,12 @@ pub mod unit_testing {
                 AttributeId::LongCharString => {
                     let attr_data: rs_matter_crate::tlv::Utf8Str<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_long_char_string(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_long_char_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28934,7 +31322,8 @@ pub mod unit_testing {
                 }
                 AttributeId::EpochUs => {
                     let attr_data: u64 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_epoch_us(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_epoch_us(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28961,7 +31350,8 @@ pub mod unit_testing {
                 }
                 AttributeId::EpochS => {
                     let attr_data: u32 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_epoch_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_epoch_s(&self.0, &ctx, attr_data.clone()).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -28988,7 +31378,9 @@ pub mod unit_testing {
                 }
                 AttributeId::VendorId => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_vendor_id(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_vendor_id(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29018,9 +31410,12 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self
-                        .0
-                        .set_list_nullables_and_optionals_struct(&ctx, attr_data.clone())
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_list_nullables_and_optionals_struct(
+                            &self.0,
+                            &ctx,
+                            attr_data.clone(),
+                        )
                         .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
@@ -29049,7 +31444,9 @@ pub mod unit_testing {
                 AttributeId::EnumAttr => {
                     let attr_data: SimpleEnum =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_enum_attr(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_enum_attr(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29077,7 +31474,9 @@ pub mod unit_testing {
                 AttributeId::StructAttr => {
                     let attr_data: SimpleStruct<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_struct_attr(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_struct_attr(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29104,10 +31503,12 @@ pub mod unit_testing {
                 }
                 AttributeId::RangeRestrictedInt8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_range_restricted_int_8_u(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_range_restricted_int_8_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29134,10 +31535,12 @@ pub mod unit_testing {
                 }
                 AttributeId::RangeRestrictedInt8s => {
                     let attr_data: i8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_range_restricted_int_8_s(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_range_restricted_int_8_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29164,10 +31567,12 @@ pub mod unit_testing {
                 }
                 AttributeId::RangeRestrictedInt16u => {
                     let attr_data: u16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_range_restricted_int_16_u(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_range_restricted_int_16_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29194,10 +31599,12 @@ pub mod unit_testing {
                 }
                 AttributeId::RangeRestrictedInt16s => {
                     let attr_data: i16 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_range_restricted_int_16_s(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_range_restricted_int_16_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29227,10 +31634,12 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result = self
-                        .0
-                        .set_list_long_octet_string(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_list_long_octet_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29260,8 +31669,12 @@ pub mod unit_testing {
                         ctx.attr().list_index.clone(),
                         ctx.data(),
                     )?;
-                    let attr_write_result =
-                        self.0.set_list_fabric_scoped(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_list_fabric_scoped(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29288,10 +31701,12 @@ pub mod unit_testing {
                 }
                 AttributeId::TimedWriteBoolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_timed_write_boolean(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_timed_write_boolean(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29318,10 +31733,12 @@ pub mod unit_testing {
                 }
                 AttributeId::GeneralErrorBoolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_general_error_boolean(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_general_error_boolean(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29348,10 +31765,12 @@ pub mod unit_testing {
                 }
                 AttributeId::ClusterErrorBoolean => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_cluster_error_boolean(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_cluster_error_boolean(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29378,7 +31797,9 @@ pub mod unit_testing {
                 }
                 AttributeId::Unsupported => {
                     let attr_data: bool = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_unsupported(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_unsupported(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29406,8 +31827,12 @@ pub mod unit_testing {
                 AttributeId::NullableBoolean => {
                     let attr_data: rs_matter_crate::tlv::Nullable<bool> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_boolean(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_boolean(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29435,8 +31860,12 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap8 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap8MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_bitmap_8(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_bitmap_8(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29464,8 +31893,12 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap16 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap16MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_bitmap_16(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_bitmap_16(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29493,8 +31926,12 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap32 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap32MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_bitmap_32(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_bitmap_32(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29522,8 +31959,12 @@ pub mod unit_testing {
                 AttributeId::NullableBitmap64 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<Bitmap64MaskMap> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_bitmap_64(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_bitmap_64(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29551,8 +31992,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt8u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_8_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_8_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29580,8 +32025,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt16u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_16_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_16_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29609,8 +32058,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt24u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_24_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_24_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29638,8 +32091,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt32u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_32_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_32_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29667,8 +32124,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt40u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_40_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_40_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29696,8 +32157,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt48u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_48_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_48_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29725,8 +32190,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt56u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_56_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_56_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29754,8 +32223,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt64u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_64_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_64_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29783,8 +32256,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt8s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_8_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_8_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29812,8 +32289,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt16s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_16_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_16_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29841,8 +32322,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt24s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_24_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_24_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29870,8 +32355,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt32s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_32_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_32_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29899,8 +32388,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt40s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_40_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_40_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29928,8 +32421,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt48s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_48_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_48_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29957,8 +32454,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt56s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_56_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_56_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -29986,8 +32487,12 @@ pub mod unit_testing {
                 AttributeId::NullableInt64s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_int_64_s(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_int_64_s(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30015,8 +32520,12 @@ pub mod unit_testing {
                 AttributeId::NullableEnum8 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_enum_8(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_enum_8(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30044,8 +32553,12 @@ pub mod unit_testing {
                 AttributeId::NullableEnum16 => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_enum_16(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_enum_16(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30073,10 +32586,12 @@ pub mod unit_testing {
                 AttributeId::NullableFloatSingle => {
                     let attr_data: rs_matter_crate::tlv::Nullable<f32> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_float_single(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_float_single(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30104,10 +32619,12 @@ pub mod unit_testing {
                 AttributeId::NullableFloatDouble => {
                     let attr_data: rs_matter_crate::tlv::Nullable<f64> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_float_double(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_float_double(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30136,10 +32653,12 @@ pub mod unit_testing {
                     let attr_data: rs_matter_crate::tlv::Nullable<
                         rs_matter_crate::tlv::OctetStr<'_>,
                     > = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_octet_string(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_octet_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30168,10 +32687,12 @@ pub mod unit_testing {
                     let attr_data: rs_matter_crate::tlv::Nullable<
                         rs_matter_crate::tlv::Utf8Str<'_>,
                     > = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_char_string(&ctx, attr_data.clone())
-                        .await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_char_string(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30199,8 +32720,12 @@ pub mod unit_testing {
                 AttributeId::NullableEnumAttr => {
                     let attr_data: rs_matter_crate::tlv::Nullable<SimpleEnum> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_enum_attr(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_enum_attr(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30228,8 +32753,12 @@ pub mod unit_testing {
                 AttributeId::NullableStruct => {
                     let attr_data: rs_matter_crate::tlv::Nullable<SimpleStruct<'_>> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_nullable_struct(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_nullable_struct(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30257,9 +32786,12 @@ pub mod unit_testing {
                 AttributeId::NullableRangeRestrictedInt8u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_range_restricted_int_8_u(&ctx, attr_data.clone())
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_nullable_range_restricted_int_8_u(
+                            &self.0,
+                            &ctx,
+                            attr_data.clone(),
+                        )
                         .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
@@ -30288,9 +32820,12 @@ pub mod unit_testing {
                 AttributeId::NullableRangeRestrictedInt8s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i8> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_range_restricted_int_8_s(&ctx, attr_data.clone())
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_nullable_range_restricted_int_8_s(
+                            &self.0,
+                            &ctx,
+                            attr_data.clone(),
+                        )
                         .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
@@ -30319,9 +32854,12 @@ pub mod unit_testing {
                 AttributeId::NullableRangeRestrictedInt16u => {
                     let attr_data: rs_matter_crate::tlv::Nullable<u16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_range_restricted_int_16_u(&ctx, attr_data.clone())
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_nullable_range_restricted_int_16_u(
+                            &self.0,
+                            &ctx,
+                            attr_data.clone(),
+                        )
                         .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
@@ -30350,9 +32888,12 @@ pub mod unit_testing {
                 AttributeId::NullableRangeRestrictedInt16s => {
                     let attr_data: rs_matter_crate::tlv::Nullable<i16> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self
-                        .0
-                        .set_nullable_range_restricted_int_16_s(&ctx, attr_data.clone())
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_nullable_range_restricted_int_16_s(
+                            &self.0,
+                            &ctx,
+                            attr_data.clone(),
+                        )
                         .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
@@ -30380,8 +32921,12 @@ pub mod unit_testing {
                 }
                 AttributeId::WriteOnlyInt8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result =
-                        self.0.set_write_only_int_8_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result = <T as ClusterHandler>::set_write_only_int_8_u(
+                        &self.0,
+                        &ctx,
+                        attr_data.clone(),
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30408,7 +32953,9 @@ pub mod unit_testing {
                 }
                 AttributeId::MeiInt8u => {
                     let attr_data: u8 = rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let attr_write_result = self.0.set_mei_int_8_u(&ctx, attr_data.clone()).await;
+                    let attr_write_result =
+                        <T as ClusterHandler>::set_mei_int_8_u(&self.0, &ctx, attr_data.clone())
+                            .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?}({:?}) -> {:?}",
@@ -30445,7 +32992,6 @@ pub mod unit_testing {
             Ok(())
         }
         #[allow(unreachable_code)]
-        #[inline(always)]
         async fn invoke(
             &self,
             ctx: impl rs_matter_crate::dm::InvokeContext,
@@ -30453,7 +32999,7 @@ pub mod unit_testing {
         ) -> Result<(), rs_matter_crate::error::Error> {
             match CommandId::try_from(ctx.cmd().cmd_id)? {
                 CommandId::Test => {
-                    let cmd_invoke_result = self.0.handle_test(&ctx).await;
+                    let cmd_invoke_result = <T as ClusterHandler>::handle_test(&self.0, &ctx).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -30477,7 +33023,8 @@ pub mod unit_testing {
                     cmd_invoke_result?;
                 }
                 CommandId::TestNotHandled => {
-                    let cmd_invoke_result = self.0.handle_test_not_handled(&ctx).await;
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_not_handled(&self.0, &ctx).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -30522,23 +33069,22 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(0u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_specific(
-                            &ctx,
-                            rs_matter_crate::tlv::TLVBuilder::new(
-                                rs_matter_crate::tlv::TLVWriteParent::new(
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::TestSpecific),
-                                    )),
-                                    tw,
-                                ),
-                                tag,
-                            )?,
-                        )
-                        .await;
+                    let cmd_invoke_result = <T as ClusterHandler>::handle_test_specific(
+                        &self.0,
+                        &ctx,
+                        rs_matter_crate::tlv::TLVBuilder::new(
+                            rs_matter_crate::tlv::TLVWriteParent::new(
+                                MetadataDebug((
+                                    ctx.cmd().endpoint_id,
+                                    self,
+                                    MetadataDebug(CommandId::TestSpecific),
+                                )),
+                                tw,
+                            ),
+                            tag,
+                        )?,
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} (end) -> {:?}",
@@ -30563,7 +33109,8 @@ pub mod unit_testing {
                     rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TestUnknownCommand => {
-                    let cmd_invoke_result = self.0.handle_test_unknown_command(&ctx).await;
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_unknown_command(&self.0, &ctx).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -30611,24 +33158,23 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(1u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_add_arguments(
-                            &ctx,
-                            cmd_data,
-                            rs_matter_crate::tlv::TLVBuilder::new(
-                                rs_matter_crate::tlv::TLVWriteParent::new(
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::TestAddArguments),
-                                    )),
-                                    tw,
-                                ),
-                                tag,
-                            )?,
-                        )
-                        .await;
+                    let cmd_invoke_result = <T as ClusterHandler>::handle_test_add_arguments(
+                        &self.0,
+                        &ctx,
+                        cmd_data,
+                        rs_matter_crate::tlv::TLVBuilder::new(
+                            rs_matter_crate::tlv::TLVWriteParent::new(
+                                MetadataDebug((
+                                    ctx.cmd().endpoint_id,
+                                    self,
+                                    MetadataDebug(CommandId::TestAddArguments),
+                                )),
+                                tw,
+                            ),
+                            tag,
+                        )?,
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} (end) -> {:?}",
@@ -30677,9 +33223,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(2u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_simple_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_simple_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -30743,9 +33289,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(3u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_struct_array_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_struct_array_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -30809,9 +33355,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(8u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_struct_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_struct_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -30875,9 +33421,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(8u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_nested_struct_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_nested_struct_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -30941,9 +33487,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(8u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_list_struct_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_list_struct_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31007,9 +33553,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(8u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_list_int_8_u_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_list_int_8_u_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31073,9 +33619,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(8u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_nested_struct_list_argument_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_nested_struct_list_argument_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31141,26 +33687,7 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(8u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_list_nested_struct_list_argument_request(
-                            &ctx,
-                            cmd_data,
-                            rs_matter_crate::tlv::TLVBuilder::new(
-                                rs_matter_crate::tlv::TLVWriteParent::new(
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(
-                                            CommandId::TestListNestedStructListArgumentRequest,
-                                        ),
-                                    )),
-                                    tw,
-                                ),
-                                tag,
-                            )?,
-                        )
-                        .await;
+                    let cmd_invoke_result = < T as ClusterHandler > :: handle_test_list_nested_struct_list_argument_request (& self . 0 , & ctx , cmd_data , rs_matter_crate :: tlv :: TLVBuilder :: new (rs_matter_crate :: tlv :: TLVWriteParent :: new (MetadataDebug ((ctx . cmd () . endpoint_id , self , MetadataDebug (CommandId :: TestListNestedStructListArgumentRequest))) , tw) , tag ,) ?) . await ;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} (end) -> {:?}",
@@ -31209,9 +33736,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(4u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_list_int_8_u_reverse_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_list_int_8_u_reverse_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31275,24 +33802,23 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(5u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_enums_request(
-                            &ctx,
-                            cmd_data,
-                            rs_matter_crate::tlv::TLVBuilder::new(
-                                rs_matter_crate::tlv::TLVWriteParent::new(
-                                    MetadataDebug((
-                                        ctx.cmd().endpoint_id,
-                                        self,
-                                        MetadataDebug(CommandId::TestEnumsRequest),
-                                    )),
-                                    tw,
-                                ),
-                                tag,
-                            )?,
-                        )
-                        .await;
+                    let cmd_invoke_result = <T as ClusterHandler>::handle_test_enums_request(
+                        &self.0,
+                        &ctx,
+                        cmd_data,
+                        rs_matter_crate::tlv::TLVBuilder::new(
+                            rs_matter_crate::tlv::TLVWriteParent::new(
+                                MetadataDebug((
+                                    ctx.cmd().endpoint_id,
+                                    self,
+                                    MetadataDebug(CommandId::TestEnumsRequest),
+                                )),
+                                tw,
+                            ),
+                            tag,
+                        )?,
+                    )
+                    .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} (end) -> {:?}",
@@ -31341,9 +33867,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(6u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_nullable_optional_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_nullable_optional_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31407,9 +33933,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(7u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_complex_nullable_optional_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_complex_nullable_optional_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31475,9 +34001,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(9u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_simple_struct_echo_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_simple_struct_echo_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31517,7 +34043,8 @@ pub mod unit_testing {
                     rs_matter_crate::dm::Reply::complete(writer)?
                 }
                 CommandId::TimedInvokeRequest => {
-                    let cmd_invoke_result = self.0.handle_timed_invoke_request(&ctx).await;
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_timed_invoke_request(&self.0, &ctx).await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
                         "{:?} -> {:?}",
@@ -31543,9 +34070,12 @@ pub mod unit_testing {
                 CommandId::TestSimpleOptionalArgumentRequest => {
                     let cmd_data: TestSimpleOptionalArgumentRequestRequest<'_> =
                         rs_matter_crate::tlv::FromTLV::from_tlv(ctx.data())?;
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_simple_optional_argument_request(&ctx, cmd_data.clone())
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_simple_optional_argument_request(
+                            &self.0,
+                            &ctx,
+                            cmd_data.clone(),
+                        )
                         .await;
                     #[cfg(feature = "defmt")]
                     rs_matter_crate::reexport::defmt::debug!(
@@ -31596,9 +34126,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(10u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_emit_test_event_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_emit_test_event_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31662,9 +34192,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(11u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_emit_test_fabric_scoped_event_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_emit_test_fabric_scoped_event_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31730,9 +34260,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(12u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_batch_helper_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_batch_helper_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31796,9 +34326,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(12u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_second_batch_helper_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_second_batch_helper_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31862,9 +34392,9 @@ pub mod unit_testing {
                     let mut writer = reply.with_command(4294049979u32)?;
                     let tag = rs_matter_crate::dm::Reply::tag(&writer);
                     let tw = rs_matter_crate::dm::Reply::writer(&mut writer);
-                    let cmd_invoke_result = self
-                        .0
-                        .handle_test_different_vendor_mei_request(
+                    let cmd_invoke_result =
+                        <T as ClusterHandler>::handle_test_different_vendor_mei_request(
+                            &self.0,
                             &ctx,
                             cmd_data,
                             rs_matter_crate::tlv::TLVBuilder::new(
@@ -31914,7 +34444,6 @@ pub mod unit_testing {
             self.0.dataver_changed();
             Ok(())
         }
-        #[inline(always)]
         fn run(
             &self,
             ctx: impl rs_matter_crate::dm::HandlerContext,

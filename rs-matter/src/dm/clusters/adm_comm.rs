@@ -71,11 +71,10 @@ impl ClusterHandler for AdminCommHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn window_status(
-        &self,
-        ctx: impl ReadContext,
-    ) -> Result<CommissioningWindowStatusEnum, Error> {
+impl ClusterSyncHandler for AdminCommHandler {
+    fn window_status(&self, ctx: impl ReadContext) -> Result<CommissioningWindowStatusEnum, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();
         let comm_window = pase_mgr.comm_window(&ctx)?;
@@ -89,7 +88,7 @@ impl ClusterHandler for AdminCommHandler {
         })
     }
 
-    async fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
+    fn admin_fabric_index(&self, ctx: impl ReadContext) -> Result<Nullable<u8>, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();
         let comm_window = pase_mgr.comm_window(&ctx)?;
@@ -112,7 +111,7 @@ impl ClusterHandler for AdminCommHandler {
         Ok(Nullable::none())
     }
 
-    async fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
+    fn admin_vendor_id(&self, ctx: impl ReadContext) -> Result<Nullable<u16>, Error> {
         let matter = ctx.exchange().matter();
         let mut pase_mgr = matter.pase_mgr.borrow_mut();
         let comm_window = pase_mgr.comm_window(&ctx)?;
@@ -124,7 +123,7 @@ impl ClusterHandler for AdminCommHandler {
         ))
     }
 
-    async fn handle_open_commissioning_window(
+    fn handle_open_commissioning_window(
         &self,
         ctx: impl InvokeContext,
         request: OpenCommissioningWindowRequest<'_>,
@@ -143,7 +142,7 @@ impl ClusterHandler for AdminCommHandler {
         )
     }
 
-    async fn handle_open_basic_commissioning_window(
+    fn handle_open_basic_commissioning_window(
         &self,
         ctx: impl InvokeContext,
         request: OpenBasicCommissioningWindowRequest<'_>,
@@ -160,7 +159,7 @@ impl ClusterHandler for AdminCommHandler {
         )
     }
 
-    async fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_revoke_commissioning(&self, ctx: impl InvokeContext) -> Result<(), Error> {
         ctx.matter().pase_mgr.borrow_mut().close_comm_window(&ctx)?;
 
         // TODO: Send status code if no commissioning window is open?
