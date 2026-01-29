@@ -19,8 +19,10 @@
 
 #![allow(deprecated)] // Remove this once `hmac` updates to `generic-array` 1.x
 
+use core::borrow::Borrow;
 use core::ops::Mul;
 
+use crate::crypto::CanonPkcSecretKey;
 use crate::error::{Error, ErrorCode};
 
 use openssl::asn1::Asn1Type;
@@ -43,27 +45,31 @@ use openssl::x509::{X509NameBuilder, X509ReqBuilder};
 use hmac::{Hmac, Mac};
 
 /// An OpenSSL-based crypto backend
-pub struct OpenSslCrypto {
+pub struct OpenSslCrypto<S> {
     /// Elliptic curve group (secp256r1)
     ec_group: ECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>,
+    /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    singleton_secret_key: S,
 }
 
-impl OpenSslCrypto {
+impl<S> OpenSslCrypto<S> {
     /// Create a new OpenSSL crypto backend
-    pub fn new() -> Self {
+    ///
+    /// # Arguments
+    /// - `singleton_secret_key` - A singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    ///   The primary use-case for this secret key is to be used as the secret key for the Device Attestation credentials
+    pub fn new(singleton_secret_key: S) -> Self {
         Self {
             ec_group: unsafe { ECGroup::new(Nid::X9_62_PRIME256V1).unwrap() },
+            singleton_secret_key,
         }
     }
 }
 
-impl Default for OpenSslCrypto {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl super::Crypto for OpenSslCrypto {
+impl<S> super::Crypto for OpenSslCrypto<S>
+where
+    S: Borrow<CanonPkcSecretKey>,
+{
     type Hash<'a>
         = Hash<{ super::HASH_LEN }>
     where
@@ -152,7 +158,7 @@ impl super::Crypto for OpenSslCrypto {
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        todo!()
+        self.ec_scalar(self.singleton_secret_key.borrow())
     }
 
     fn uint384(&self, uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {

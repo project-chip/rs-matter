@@ -17,33 +17,55 @@
 
 //! MbedTLS-based crypto backend for Matter.
 
+use core::borrow::Borrow;
+use core::ffi::{c_int, c_uchar, c_void};
+
+use embassy_sync::blocking_mutex::raw::RawMutex;
+
 use esp_mbedtls_sys::merr;
 
+use rand::{CryptoRng, RngCore};
+use rand_core::CryptoRngCore;
+
+use crate::crypto::CanonPkcSecretKey;
 use crate::error::Error;
+use crate::utils::cell::RefCell;
+use crate::utils::sync::blocking::Mutex;
 
 /// MbedTLS-based crypto backend for Matter.
-pub struct MbedtlsCrypto {
+pub struct MbedtlsCrypto<M: RawMutex, T, S> {
     /// Elliptic curve group (secp256r1)
     ec_group: ECGroup<{ super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>,
+    /// A shared cryptographic random number generator
+    rng: Mutex<M, RefCell<T>>,
+    /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    singleton_secret_key: S,
 }
 
-impl MbedtlsCrypto {
+impl<M: RawMutex, T, S> MbedtlsCrypto<M, T, S> {
     /// Create a new MbedTLS crypto backend.
-    pub fn new() -> Self {
+    ///
+    /// # Arguments
+    /// - `rng` - A cryptographic random number generator
+    /// - `singleton_secret_key` - A singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    ///   The primary use-case for this secret key is to be used as the secret key for the Device Attestation credentials
+    pub fn new(rng: T, singleton_secret_key: S) -> Self {
         let mut ec_group = ECGroup::new();
         unsafe { ec_group.set(esp_mbedtls_sys::mbedtls_ecp_group_id_MBEDTLS_ECP_DP_SECP256R1) };
 
-        Self { ec_group }
+        Self {
+            ec_group,
+            rng: Mutex::new(RefCell::new(rng)),
+            singleton_secret_key,
+        }
     }
 }
 
-impl Default for MbedtlsCrypto {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl super::Crypto for MbedtlsCrypto {
+impl<M: RawMutex, T, S> super::Crypto for MbedtlsCrypto<M, T, S>
+where
+    T: CryptoRngCore,
+    S: Borrow<CanonPkcSecretKey>,
+{
     type Hash<'a>
         = Sha256
     where
@@ -70,17 +92,32 @@ impl super::Crypto for MbedtlsCrypto {
         Self: 'a;
 
     type PublicKey<'a>
-        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
+        = ECPoint<
+        'a,
+        { super::EC_CANON_POINT_LEN },
+        { super::EC_CANON_SCALAR_LEN },
+        Mutex<M, RefCell<T>>,
+    >
     where
         Self: 'a;
 
     type SecretKey<'a>
-        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
+        = ECScalar<
+        'a,
+        { super::EC_CANON_SCALAR_LEN },
+        { super::EC_CANON_POINT_LEN },
+        Mutex<M, RefCell<T>>,
+    >
     where
         Self: 'a;
 
     type SigningSecretKey<'a>
-        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
+        = ECScalar<
+        'a,
+        { super::EC_CANON_SCALAR_LEN },
+        { super::EC_CANON_POINT_LEN },
+        Mutex<M, RefCell<T>>,
+    >
     where
         Self: 'a;
 
@@ -90,12 +127,22 @@ impl super::Crypto for MbedtlsCrypto {
         Self: 'a;
 
     type EcScalar<'a>
-        = ECScalar<'a, { super::EC_CANON_SCALAR_LEN }, { super::EC_CANON_POINT_LEN }>
+        = ECScalar<
+        'a,
+        { super::EC_CANON_SCALAR_LEN },
+        { super::EC_CANON_POINT_LEN },
+        Mutex<M, RefCell<T>>,
+    >
     where
         Self: 'a;
 
     type EcPoint<'a>
-        = ECPoint<'a, { super::EC_CANON_POINT_LEN }, { super::EC_CANON_SCALAR_LEN }>
+        = ECPoint<
+        'a,
+        { super::EC_CANON_POINT_LEN },
+        { super::EC_CANON_SCALAR_LEN },
+        Mutex<M, RefCell<T>>,
+    >
     where
         Self: 'a;
 
@@ -138,7 +185,7 @@ impl super::Crypto for MbedtlsCrypto {
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        todo!()
+        self.ec_scalar(self.singleton_secret_key.borrow())
     }
 
     fn uint384(&self, uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {
@@ -150,7 +197,7 @@ impl super::Crypto for MbedtlsCrypto {
     }
 
     fn ec_scalar(&self, scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
-        let mut result = ECScalar::new(&self.ec_group);
+        let mut result = ECScalar::new(&self.ec_group, &self.rng);
         unsafe {
             result.set(scalar);
         }
@@ -163,7 +210,7 @@ impl super::Crypto for MbedtlsCrypto {
     }
 
     fn ec_point(&self, point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
-        let mut result = ECPoint::new(&self.ec_group);
+        let mut result = ECPoint::new(&self.ec_group, &self.rng);
         unsafe {
             result.set(point);
         }
@@ -172,7 +219,7 @@ impl super::Crypto for MbedtlsCrypto {
     }
 
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error> {
-        let mut result = ECPoint::new(&self.ec_group);
+        let mut result = ECPoint::new(&self.ec_group, &self.rng);
 
         merr!(unsafe { esp_mbedtls_sys::mbedtls_ecp_copy(&mut result.raw, &self.ec_group.raw.G) })
             .unwrap();
@@ -594,14 +641,16 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECGroup<LEN, SCALAR_LEN
 }
 
 /// Elliptic curve point implementation using MbedTLS.
-pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
+pub struct ECPoint<'a, const LEN: usize, const SCALAR_LEN: usize, R> {
     /// Associated EC group
     group: &'a ECGroup<LEN, SCALAR_LEN>,
+    /// The random number generator
+    rng: &'a R,
     /// Raw MbedTLS EC point
     raw: esp_mbedtls_sys::mbedtls_ecp_point,
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN> {
+impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> ECPoint<'a, LEN, SCALAR_LEN, R> {
     /// Create a new EC point instance with an empty point.
     ///
     /// The point MUST be initialized post-creation using `set()`.
@@ -611,14 +660,14 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN>
     ///
     /// # Returns
     /// - New EC point instance.
-    fn new(group: &'a ECGroup<LEN, SCALAR_LEN>) -> Self {
+    fn new(group: &'a ECGroup<LEN, SCALAR_LEN>, rng: &'a R) -> Self {
         let mut raw = Default::default();
 
         unsafe {
             esp_mbedtls_sys::mbedtls_ecp_point_init(&mut raw);
         }
 
-        Self { group, raw }
+        Self { group, rng, raw }
     }
 
     /// Set the EC point from the given byte representation.
@@ -654,7 +703,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> ECPoint<'a, LEN, SCALAR_LEN>
     }
 }
 
-impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECPoint<'_, LEN, SCALAR_LEN> {
+impl<const LEN: usize, const SCALAR_LEN: usize, R> Drop for ECPoint<'_, LEN, SCALAR_LEN, R> {
     fn drop(&mut self) {
         unsafe {
             esp_mbedtls_sys::mbedtls_ecp_point_free(&mut self.raw);
@@ -662,16 +711,18 @@ impl<const LEN: usize, const SCALAR_LEN: usize> Drop for ECPoint<'_, LEN, SCALAR
     }
 }
 
-impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCALAR_LEN>
-    for ECPoint<'a, LEN, SCALAR_LEN>
+impl<'a, const LEN: usize, const SCALAR_LEN: usize, R> super::EcPoint<'a, LEN, SCALAR_LEN>
+    for ECPoint<'a, LEN, SCALAR_LEN, R>
+where
+    for<'r> &'r R: CryptoRngCore,
 {
     type Scalar<'s>
-        = ECScalar<'s, SCALAR_LEN, LEN>
+        = ECScalar<'s, SCALAR_LEN, LEN, R>
     where
         Self: 'a + 's;
 
     fn neg(&self) -> Self {
-        let mut result = ECPoint::new(self.group);
+        let mut result = ECPoint::new(self.group, self.rng);
 
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_mpi_copy(&mut result.raw.private_X, &self.raw.private_X)
@@ -696,7 +747,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
     }
 
     fn mul(&self, scalar: &Self::Scalar<'a>) -> Self {
-        let mut result = ECPoint::new(self.group);
+        let mut result = ECPoint::new(self.group, self.rng);
 
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_mul(
@@ -704,8 +755,8 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
                 &mut result.raw,
                 &scalar.mpi.raw,
                 &self.raw,
-                None, // TODO
-                core::ptr::null_mut(),
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
             )
         })
         .unwrap();
@@ -714,7 +765,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
     }
 
     fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self {
-        let mut result = ECPoint::new(self.group);
+        let mut result = ECPoint::new(self.group, self.rng);
 
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_muladd(
@@ -736,8 +787,8 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
     }
 }
 
-impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize>
-    super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN>
+impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize, R>
+    super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN, R>
 {
     fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool {
         let mut r = Mpi::new();
@@ -776,21 +827,24 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
 }
 
 /// Elliptic curve scalar implementation using MbedTLS.
-pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize> {
+pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize, R> {
     /// Associated EC group
     group: &'a ECGroup<POINT_LEN, LEN>,
+    ///
+    rng: &'a R,
     /// Scalar
     mpi: Mpi,
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> {
+impl<'a, const LEN: usize, const POINT_LEN: usize, R> ECScalar<'a, LEN, POINT_LEN, R> {
     /// Create a new, empty EC scalar instance.
     ///
     /// The scalar value MUST be initialized post-creation
     /// using `set()`.
-    fn new(group: &'a ECGroup<POINT_LEN, LEN>) -> Self {
+    fn new(group: &'a ECGroup<POINT_LEN, LEN>, rng: &'a R) -> Self {
         Self {
             group,
+            rng,
             mpi: Mpi::new(),
         }
     }
@@ -806,11 +860,13 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> ECScalar<'a, LEN, POINT_LEN> 
     }
 }
 
-impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
-    for ECScalar<'a, LEN, POINT_LEN>
+impl<'a, const LEN: usize, const POINT_LEN: usize, R> super::EcScalar<'a, LEN>
+    for ECScalar<'a, LEN, POINT_LEN, R>
+where
+    for<'r> &'r R: CryptoRngCore,
 {
     fn mul(&self, other: &Self) -> Self {
-        let mut result = ECScalar::new(self.group);
+        let mut result = ECScalar::new(self.group, self.rng);
 
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_mpi_mul_mpi(&mut result.mpi.raw, &self.mpi.raw, &other.mpi.raw)
@@ -825,11 +881,14 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
     }
 }
 
-impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
-    super::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN> for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
+impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize, R>
+    super::SigningSecretKey<'a, PUB_KEY_LEN, SIGNATURE_LEN>
+    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, R>
+where
+    for<'r> &'r R: CryptoRngCore,
 {
     type PublicKey<'s>
-        = ECPoint<'s, PUB_KEY_LEN, KEY_LEN>
+        = ECPoint<'s, PUB_KEY_LEN, KEY_LEN, R>
     where
         Self: 's;
 
@@ -873,8 +932,8 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
                 &mut ec_ctx.private_Q,
                 &self.mpi.raw,
                 &self.group.raw.G,
-                None, // TODO
-                core::ptr::null_mut(),
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
             )
         })
         .unwrap();
@@ -913,7 +972,7 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     }
 
     fn pub_key(&self) -> Self::PublicKey<'a> {
-        let mut pub_key = ECPoint::new(self.group);
+        let mut pub_key = ECPoint::new(self.group, self.rng);
 
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_ecp_mul(
@@ -921,8 +980,8 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
                 &mut pub_key.raw,
                 &self.mpi.raw,
                 &self.group.raw.G,
-                None, // TODO
-                core::ptr::null_mut(),
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
             )
         })
         .unwrap();
@@ -950,8 +1009,8 @@ impl<'a, const KEY_LEN: usize, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
                 &self.mpi.raw,
                 hash.as_ptr(),
                 hash.len(),
-                None, // TODO
-                core::ptr::null_mut(),
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
             )
         };
 
@@ -970,8 +1029,11 @@ impl<
         const PUB_KEY_LEN: usize,
         const SIGNATURE_LEN: usize,
         const SHARED_SECRET_LEN: usize,
+        R,
     > super::SecretKey<'a, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
-    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN>
+    for ECScalar<'a, KEY_LEN, PUB_KEY_LEN, R>
+where
+    for<'r> &'r R: CryptoRngCore,
 {
     fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
         self.write(key);
@@ -990,8 +1052,8 @@ impl<
                 &mut z.raw,
                 &peer_pub_key.raw,
                 &self.mpi.raw,
-                None, // TODO
-                core::ptr::null_mut(),
+                Some(mbedtls_platform_rng::<R>),
+                self.rng as *const _ as *const _ as *mut _,
             )
         });
 
@@ -1001,8 +1063,352 @@ impl<
     }
 }
 
+/// MbedTLS platform CSPRNG function adapter used by `ECPoint` and `ECScalar`.`
+unsafe extern "C" fn mbedtls_platform_rng<T>(
+    ctx: *mut c_void,
+    buf: *mut c_uchar,
+    buf_len: usize,
+) -> c_int
+where
+    for<'a> &'a T: CryptoRngCore,
+{
+    let mut drbg = unsafe { (ctx as *const _ as *const T).as_ref() }.unwrap();
+
+    drbg.fill_bytes(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
+
+    0
+}
+
+impl<M: RawMutex, T: RngCore> RngCore for &Mutex<M, RefCell<T>> {
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.lock(|rng| {
+            rng.borrow_mut().fill_bytes(dest);
+        })
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0; 4];
+
+        self.fill_bytes(&mut bytes);
+
+        u32::from_le_bytes(bytes)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0; 8];
+
+        self.fill_bytes(&mut bytes);
+
+        u64::from_le_bytes(bytes)
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill_bytes(dest);
+
+        Ok(())
+    }
+}
+
+impl<M: RawMutex, T: CryptoRng + RngCore> CryptoRng for &Mutex<M, RefCell<T>> {}
+
+/// A type-safe wrapper around the MbedTLS DRBG cryptographically secure random number generator.
+///
+/// Implements the `CryptoRngCore` trait.
+pub struct MbedtlsDrbg<'a, T> {
+    /// Reference to the entropy source
+    _entropy: &'a mut T,
+    /// Raw MbedTLS CTR-DRBG context
+    raw: esp_mbedtls_sys::mbedtls_ctr_drbg_context,
+}
+
+impl<'a, T: Entropy> MbedtlsDrbg<'a, T> {
+    /// Create a new MbedTLS DRBG instance.
+    ///
+    /// # Arguments
+    /// - `entropy`: Reference to the entropy source.
+    /// - `personality`: Optional personality string.
+    pub fn new(entropy: &'a mut T, personality: Option<&[u8]>) -> Self {
+        let mut raw = Default::default();
+
+        unsafe {
+            esp_mbedtls_sys::mbedtls_ctr_drbg_init(&mut raw);
+        }
+
+        let pers_ptr = personality.map(|p| p.as_ptr()).unwrap_or(core::ptr::null());
+
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_ctr_drbg_seed(
+                &mut raw,
+                Some(mbedtls_platform_entropy::<T>),
+                entropy as *const _ as *const _ as *mut _,
+                pers_ptr,
+                personality.map(|p| p.len()).unwrap_or(0),
+            )
+        })
+        .unwrap();
+
+        Self {
+            _entropy: entropy,
+            raw,
+        }
+    }
+}
+
+impl<T> Drop for MbedtlsDrbg<'_, T> {
+    fn drop(&mut self) {
+        unsafe {
+            esp_mbedtls_sys::mbedtls_ctr_drbg_free(&mut self.raw);
+        }
+    }
+}
+
+impl<T: Entropy> RngCore for MbedtlsDrbg<'_, T> {
+    fn fill_bytes(&mut self, buf: &mut [u8]) {
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_ctr_drbg_random(
+                &mut self.raw as *mut _ as *mut _,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        })
+        .unwrap();
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0; 4];
+        self.fill_bytes(&mut bytes);
+
+        u32::from_le_bytes(bytes)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0; 8];
+        self.fill_bytes(&mut bytes);
+
+        u64::from_le_bytes(bytes)
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill_bytes(dest);
+
+        Ok(())
+    }
+}
+
+impl<T: Entropy> CryptoRng for MbedtlsDrbg<'_, T> {}
+
+/// An abstraction of an entropy.
+pub trait Entropy {
+    /// Fill the provided buffer with entropy bytes.
+    fn entropy(&self, buf: &mut [u8]);
+}
+
+impl<T> Entropy for &T
+where
+    T: Entropy,
+{
+    fn entropy(&self, buf: &mut [u8]) {
+        (**self).entropy(buf)
+    }
+}
+
+/// An abstraction of an entropy source for `MbedtlsEntropy`.
+pub trait EntropySource {
+    /// Indicates whether the entropy source is strong.
+    fn is_strong(&self) -> bool;
+
+    /// Fill the provided buffer with entropy bytes.
+    ///
+    /// Returns the number of bytes actually written.
+    fn entropy(&self, buf: &mut [u8]) -> usize;
+}
+
+impl<T> EntropySource for &T
+where
+    T: EntropySource,
+{
+    fn entropy(&self, buf: &mut [u8]) -> usize {
+        (**self).entropy(buf)
+    }
+
+    fn is_strong(&self) -> bool {
+        (**self).is_strong()
+    }
+}
+
+/// An adapter to use an `Entropy` implementation as an `EntropySource`.
+pub struct EntropyAsEntropySource<T> {
+    /// The underlying entropy implementation
+    entropy: T,
+    /// Whether the entropy source is strong
+    strong: bool,
+}
+
+impl<T: Entropy> EntropyAsEntropySource<T> {
+    /// Create a new `EntropyAsEntropySource` instance.
+    ///
+    /// # Arguments
+    /// - `entropy`: The underlying entropy implementation.
+    /// - `strong`: Whether the entropy source is strong.
+    pub const fn new(entropy: T, strong: bool) -> Self {
+        Self { entropy, strong }
+    }
+}
+
+impl<T: Entropy> EntropySource for EntropyAsEntropySource<T> {
+    fn entropy(&self, buf: &mut [u8]) -> usize {
+        self.entropy.entropy(buf);
+
+        buf.len()
+    }
+
+    fn is_strong(&self) -> bool {
+        self.strong
+    }
+}
+
+/// A type-safe wrapper around the MbedTLS entropy provider.
+///
+/// Implements the `Entropy` trait which can then be used by the MbedTLS DRBG impl - `MbedtlsDrbg`.
+pub struct MbedtlsEntropy<T> {
+    /// Raw MbedTLS entropy context
+    raw: Option<esp_mbedtls_sys::mbedtls_entropy_context>,
+    /// Registered entropy sources
+    entropy_sources: Option<T>,
+}
+
+impl MbedtlsEntropy<()> {
+    /// Create a new MbedTLS entropy instance.
+    pub fn new() -> Self {
+        let mut raw = Default::default();
+
+        unsafe {
+            esp_mbedtls_sys::mbedtls_entropy_init(&mut raw);
+        }
+
+        Self {
+            raw: Some(raw),
+            entropy_sources: Some(()),
+        }
+    }
+}
+
+impl<T> MbedtlsEntropy<T> {
+    /// Add an entropy source to the MbedTLS entropy instance.
+    ///
+    /// # Arguments
+    /// - `entropy_source`: Reference to the entropy source.
+    /// - `threshold`: Minimum number of bytes that should be provided by the source.
+    ///
+    /// # Returns
+    /// - New MbedTLS entropy instance with the added source.
+    pub fn add<E: EntropySource>(
+        mut self,
+        entropy_source: &mut E,
+        threshold: usize,
+    ) -> MbedtlsEntropy<(T, &mut E)> {
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_entropy_add_source(
+                &mut self.raw.unwrap(),
+                Some(mbedtls_platform_entropy_source::<E>),
+                entropy_source as *const _ as *const _ as *mut _,
+                threshold,
+                if entropy_source.is_strong() {
+                    esp_mbedtls_sys::MBEDTLS_ENTROPY_SOURCE_STRONG
+                } else {
+                    esp_mbedtls_sys::MBEDTLS_ENTROPY_SOURCE_WEAK
+                } as _,
+            )
+        })
+        .unwrap();
+
+        MbedtlsEntropy {
+            raw: self.raw.take(),
+            entropy_sources: Some((self.entropy_sources.take().unwrap(), entropy_source)),
+        }
+    }
+
+    /// Manually seed the entropy pool with the provided data.
+    ///
+    /// # Arguments
+    /// - `data`: The seed data.
+    pub fn seed(&mut self, data: &[u8]) {
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_entropy_update_manual(
+                self.raw.as_mut().unwrap(),
+                data.as_ptr(),
+                data.len(),
+            )
+        })
+        .unwrap();
+    }
+}
+
+impl<T> Drop for MbedtlsEntropy<T> {
+    fn drop(&mut self) {
+        if let Some(mut raw) = self.raw.take() {
+            unsafe {
+                esp_mbedtls_sys::mbedtls_entropy_free(&mut raw);
+            }
+        }
+    }
+}
+
+impl Default for MbedtlsEntropy<()> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Entropy for MbedtlsEntropy<T> {
+    fn entropy(&self, buf: &mut [u8]) {
+        merr!(unsafe {
+            esp_mbedtls_sys::mbedtls_entropy_func(
+                self.raw.as_ref().unwrap() as *const _ as *mut _,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        })
+        .unwrap();
+    }
+}
+
+/// MbedTLS platform entropy function adapter.
+unsafe extern "C" fn mbedtls_platform_entropy<T: Entropy>(
+    ctx: *mut c_void,
+    buf: *mut c_uchar,
+    buf_len: usize,
+) -> c_int {
+    let entropy = unsafe { (ctx as *const _ as *const T).as_ref() }.unwrap();
+
+    entropy.entropy(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
+
+    0
+}
+
+/// MbedTLS platform entropy source function adapter.
+unsafe extern "C" fn mbedtls_platform_entropy_source<T: EntropySource>(
+    ctx: *mut c_void,
+    buf: *mut c_uchar,
+    buf_len: usize,
+    olen: *mut usize,
+) -> c_int {
+    let entropy_source = unsafe { (ctx as *const _ as *const T).as_ref() }.unwrap();
+
+    let len = entropy_source.entropy(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
+
+    unsafe {
+        olen.write(len);
+    }
+
+    0
+}
+
+/// MbedTLS platform zeroize function.
+// TODO: Make it user-provided
+#[cfg(not(target_os = "espidf"))]
 #[no_mangle]
-unsafe extern "C" fn mbedtls_platform_zeroize(dst: *mut core::ffi::c_uchar, len: u32) {
+unsafe extern "C" fn mbedtls_platform_zeroize(dst: *mut c_uchar, len: u32) {
     for i in 0..len as isize {
         dst.offset(i).write_volatile(0);
     }

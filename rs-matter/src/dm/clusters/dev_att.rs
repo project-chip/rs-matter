@@ -32,9 +32,13 @@ pub trait DeviceAttestation {
     fn dac(&self) -> &[u8];
 
     /// Get the Device Attestation Certificate Public Key
+    // TODO: Remove from here as it is not really used and moreover,
+    // we now have `Crypto::singleton_singing_secret_key` from which
+    // the public key can be derived.
     fn dac_pub_key(&self) -> &CanonPkcPublicKey;
 
     /// Get the Device Attestation Certificate Private Key
+    // TODO: Remove from here as we now have `Crypto::singleton_singing_secret_key`
     fn dac_priv_key(&self) -> &CanonPkcSecretKey;
 }
 
