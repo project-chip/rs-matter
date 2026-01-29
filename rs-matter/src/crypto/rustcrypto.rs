@@ -31,6 +31,7 @@
 
 #![allow(deprecated)] // Remove this once `ccm` and `elliptic_curve` update to `generic-array` 1.x
 
+use core::borrow::Borrow;
 use core::convert::TryInto;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -80,21 +81,32 @@ use crate::utils::sync::blocking::Mutex;
 extern crate alloc;
 
 /// A RustCrypto backend for the crypto traits
-pub struct RustCrypto<M: RawMutex, T>(Mutex<M, RefCell<T>>);
+pub struct RustCrypto<M: RawMutex, T, S> {
+    /// A shared cryptographic random number generator
+    rng: Mutex<M, RefCell<T>>,
+    /// The singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    singleton_secret_key: S,
+}
 
-impl<M: RawMutex, T> RustCrypto<M, T> {
+impl<M: RawMutex, T, S> RustCrypto<M, T, S> {
     /// Create a new RustCrypto backend
     ///
     /// # Arguments
-    /// * `rng` - A cryptographic random number generator
-    pub const fn new(rng: T) -> Self {
-        Self(Mutex::new(RefCell::new(rng)))
+    /// - `rng` - A cryptographic random number generator
+    /// - `singleton_secret_key` - A singleton secret key to be returned by `Crypto::singleton_singing_secret_key`
+    ///   The primary use-case for this secret key is to be used as the secret key for the Device Attestation credentials
+    pub const fn new(rng: T, singleton_secret_key: S) -> Self {
+        Self {
+            rng: Mutex::new(RefCell::new(rng)),
+            singleton_secret_key,
+        }
     }
 }
 
-impl<M: RawMutex, T> Crypto for RustCrypto<M, T>
+impl<M: RawMutex, T, S> Crypto for RustCrypto<M, T, S>
 where
     T: CryptoRngCore,
+    S: Borrow<CanonPkcSecretKey>,
 {
     type Hash<'a>
         = Digest<{ super::HASH_LEN }, sha2::Sha256>
@@ -206,12 +218,12 @@ where
 
     fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error> {
         Ok(self
-            .0
+            .rng
             .lock(|rng| unsafe { ECSecretKey::new_random(&mut *rng.borrow_mut()) }))
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        todo!()
+        Ok(unsafe { ECSecretKey::new(self.singleton_secret_key.borrow()) })
     }
 
     fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error> {
@@ -224,7 +236,7 @@ where
 
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error> {
         Ok(self
-            .0
+            .rng
             .lock(|rng| unsafe { ECScalar::new_random(&mut *rng.borrow_mut()) }))
     }
 

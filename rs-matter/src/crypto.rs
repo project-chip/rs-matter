@@ -819,7 +819,7 @@ impl rand_core::RngCore for NoRng {
 impl rand_core::CryptoRng for NoRng {}
 
 pub fn test_crypto() -> impl Crypto {
-    rustcrypto::RustCrypto::<NoopRawMutex, _>::new(NoRng)
+    rustcrypto::RustCrypto::<NoopRawMutex, _, _>::new(NoRng, PKC_SECRET_KEY_ZEROED)
     //mbedtls::MbedtlsCrypto::new()
 }
 
