@@ -18,13 +18,12 @@
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::dm::IMBuffer;
-use crate::error::{Error, ErrorCode};
 use crate::tlv::TLVElement;
 use crate::transport::exchange::Exchange;
 use crate::utils::storage::pooled::{BufferAccess, PooledBuffers};
 use crate::Matter;
 
-use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId, InvokeReply, ReadReply};
+use super::{AttrDetails, AttrId, ClusterId, CmdDetails, EndptId};
 
 pub use asynch::*;
 
@@ -623,86 +622,6 @@ where
 pub trait DataModelHandler: super::AsyncMetadata + AsyncHandler {}
 impl<T> DataModelHandler for T where T: super::AsyncMetadata + AsyncHandler {}
 
-/// A version of the `AsyncHandler` trait that never awaits any operation.
-///
-/// Prefer this trait when implementing handlers that are known to be non-blocking and additionally,
-/// mark those with `NonBlockingHandler`.
-pub trait Handler {
-    /// Read from the requested attribute and encode the result using the provided reply type.
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error>;
-
-    /// Write into the requested attribute using the provided data.
-    fn write(&self, _ctx: impl WriteContext) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-
-    /// Invoke the requested command with the provided data and encode the result using the provided reply type.
-    fn invoke(&self, _ctx: impl InvokeContext, _reply: impl InvokeReply) -> Result<(), Error> {
-        Err(ErrorCode::CommandNotFound.into())
-    }
-}
-
-impl<T> Handler for &T
-where
-    T: Handler,
-{
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        (**self).read(ctx, reply)
-    }
-
-    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-        (**self).write(ctx)
-    }
-
-    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-        (**self).invoke(ctx, reply)
-    }
-}
-
-impl<T> Handler for &mut T
-where
-    T: Handler,
-{
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        (**self).read(ctx, reply)
-    }
-
-    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-        (**self).write(ctx)
-    }
-
-    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-        (**self).invoke(ctx, reply)
-    }
-}
-
-/// A marker trait that indicates that the handler is non-blocking.
-// TODO: Re-assess the need for this trait.
-pub trait NonBlockingHandler: Handler {}
-
-impl<T> NonBlockingHandler for &T where T: NonBlockingHandler {}
-
-impl<T> NonBlockingHandler for &mut T where T: NonBlockingHandler {}
-
-impl<M, H> Handler for (M, H)
-where
-    H: Handler,
-{
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        self.1.read(ctx, reply)
-    }
-
-    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-        self.1.write(ctx)
-    }
-
-    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-        self.1.invoke(ctx, reply)
-    }
-}
-
-impl<M, H> NonBlockingHandler for (M, H) where H: NonBlockingHandler {}
-
 /// A trait that defines a matcher for determining whether a handler - member of a handler-chain (`ChainedHandler`)
 /// should be invoked for a specific operation.
 pub trait Matcher {
@@ -803,14 +722,6 @@ impl EmptyHandler {
     }
 }
 
-impl Handler for EmptyHandler {
-    fn read(&self, _ctx: impl ReadContext, _reply: impl ReadReply) -> Result<(), Error> {
-        Err(ErrorCode::AttributeNotFound.into())
-    }
-}
-
-impl NonBlockingHandler for EmptyHandler {}
-
 /// A handler that chains two handlers together in a composite handler.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -854,45 +765,6 @@ impl<M, H, T> ChainedHandler<M, H, T> {
     pub const fn chain<M2, H2>(self, matcher: M2, handler: H2) -> ChainedHandler<M2, H2, Self> {
         ChainedHandler::new(matcher, handler, self)
     }
-}
-
-impl<M, H, T> Handler for ChainedHandler<M, H, T>
-where
-    M: Matcher,
-    H: Handler,
-    T: Handler,
-{
-    fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-        if self.matcher.matches(&ctx) {
-            self.handler.read(ctx, reply)
-        } else {
-            self.next.read(ctx, reply)
-        }
-    }
-
-    fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-        if self.matcher.matches(&ctx) {
-            self.handler.write(ctx)
-        } else {
-            self.next.write(ctx)
-        }
-    }
-
-    fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-        if self.matcher.matches(&ctx) {
-            self.handler.invoke(ctx, reply)
-        } else {
-            self.next.invoke(ctx, reply)
-        }
-    }
-}
-
-impl<M, H, T> NonBlockingHandler for ChainedHandler<M, H, T>
-where
-    M: Matcher,
-    H: NonBlockingHandler,
-    T: NonBlockingHandler,
-{
 }
 
 /// A helper macro that makes it easier to specify the full type of a `ChainedHandler` instantiation,
@@ -941,10 +813,7 @@ mod asynch {
     use crate::error::{Error, ErrorCode};
     use crate::utils::select::Coalesce;
 
-    use super::{
-        ChainedHandler, EmptyHandler, Handler, InvokeContext, NonBlockingHandler, ReadContext,
-        WriteContext,
-    };
+    use super::{ChainedHandler, EmptyHandler, InvokeContext, ReadContext, WriteContext};
 
     /// A handler for processing a single IM operation:
     /// read an attribute, write an attribute, or invoke a command.
@@ -1148,39 +1017,6 @@ mod asynch {
         }
     }
 
-    impl<T> AsyncHandler for Async<T>
-    where
-        T: NonBlockingHandler,
-    {
-        fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
-            false
-        }
-
-        fn write_awaits(&self, _ctx: impl WriteContext) -> bool {
-            false
-        }
-
-        fn invoke_awaits(&self, _ctx: impl InvokeContext) -> bool {
-            false
-        }
-
-        async fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-            Handler::read(&self.0, ctx, reply)
-        }
-
-        async fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-            Handler::write(&self.0, ctx)
-        }
-
-        async fn invoke(
-            &self,
-            ctx: impl InvokeContext,
-            reply: impl InvokeReply,
-        ) -> Result<(), Error> {
-            Handler::invoke(&self.0, ctx, reply)
-        }
-    }
-
     impl AsyncHandler for EmptyHandler {
         fn read_awaits(&self, _ctx: impl ReadContext) -> bool {
             false
@@ -1268,30 +1104,4 @@ mod asynch {
             select(&mut handler, &mut next).coalesce().await
         }
     }
-
-    /// An adaptor that adapts a `NonBlockingHandler` trait implementation to the `AsyncHandler` trait contract.
-    ///
-    /// The adaptor also implements `NonBlockingHandler` so that the adapted handler can be used in any context.
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct Async<T>(pub T);
-
-    impl<T> Handler for Async<T>
-    where
-        T: Handler,
-    {
-        fn read(&self, ctx: impl ReadContext, reply: impl ReadReply) -> Result<(), Error> {
-            self.0.read(ctx, reply)
-        }
-
-        fn write(&self, ctx: impl WriteContext) -> Result<(), Error> {
-            self.0.write(ctx)
-        }
-
-        fn invoke(&self, ctx: impl InvokeContext, reply: impl InvokeReply) -> Result<(), Error> {
-            self.0.invoke(ctx, reply)
-        }
-    }
-
-    impl<T> NonBlockingHandler for Async<T> where T: NonBlockingHandler {}
 }

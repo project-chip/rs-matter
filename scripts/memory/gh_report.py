@@ -140,7 +140,7 @@ class SizeContext:
 
     # Determine required size artifacts.
     artifact_limit = self.config['github.limit-artifacts']
-    required_artifact_ids: set[int] = set()
+    required_artifacts: Dict[int, str] = {}
     for group, group_reports in size_artifacts.items():
       logging.debug('ASG: group %s', group)
       for report in group_reports.values():
@@ -149,25 +149,26 @@ class SizeContext:
             logging.debug('ASN:  No match for %s', report.name)
             continue
           if (artifact_limit
-              and len(required_artifact_ids) >= artifact_limit):
+              and len(required_artifacts) >= artifact_limit):
             continue
           # We have size information for both this report and its
           # parent, so ensure that both artifacts are downloaded.
           parent = group_reports[report.parent]
-          required_artifact_ids.add(report.id)
-          required_artifact_ids.add(parent.id)
+          required_artifacts[report.id] = f"{parent.pr}: {parent.name}"
+          required_artifacts[parent.id] = f"{parent.pr}: {parent.name}"
           logging.debug('ASM:  Match %s', report.parent)
           logging.debug('ASR:    %s %s', report.id, report.name)
           logging.debug('ASP:    %s %s', parent.id, parent.name)
 
     # Download and add required artifacts.
-    for i in required_artifact_ids:
+    for i, name in required_artifacts.items():
       blob = self.gh.download_artifact(i)
       if blob:
         try:
           self.db.add_sizes_from_zipfile(io.BytesIO(blob),
                                          {'artifact': i})
         except Exception:
+          logging.error('Failed to process file: %s', name)
           # Report in case the zipfile is invalid, however do not fail
           # all the rest (behave as if artifact download has failed)
           traceback.print_exc()

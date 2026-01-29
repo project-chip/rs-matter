@@ -127,7 +127,9 @@ impl ClusterHandler for WifiDiagHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for WifiDiagHandler<'_> {
     fn bssid<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,

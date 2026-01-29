@@ -208,7 +208,9 @@ impl ClusterHandler for GenDiagHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for GenDiagHandler<'_> {
     fn network_interfaces<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,

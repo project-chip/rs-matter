@@ -109,7 +109,9 @@ impl ClusterHandler for NocHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for NocHandler {
     fn nocs<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,

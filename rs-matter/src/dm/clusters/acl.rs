@@ -149,7 +149,9 @@ impl ClusterHandler for AclHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for AclHandler {
     fn acl<P: TLVBuilderParent>(
         &self,
         ctx: impl ReadContext,

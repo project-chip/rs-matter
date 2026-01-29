@@ -528,7 +528,9 @@ impl ClusterHandler for UnitTestingHandler<'_> {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
+impl ClusterSyncHandler for UnitTestingHandler<'_> {
     fn boolean(&self, _ctx: impl ReadContext) -> Result<bool, Error> {
         Ok(self.data.borrow().boolean)
     }

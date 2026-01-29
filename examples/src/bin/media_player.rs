@@ -34,19 +34,19 @@ use log::info;
 
 // Import the MediaPlayback, ContentLauncher and KeypadInput clusters from `rs-matter`.
 //
-// User needs to implement the `ClusterAsyncHandler` trait or the `ClusterHandler` trait
+// User needs to implement the `ClusterHandler` trait
 // so as to handle the requests from the controller.
 use rs_matter::dm::clusters::decl::content_launcher::{
-    self, ClusterAsyncHandler as _, LaunchContentRequest, LaunchURLRequest,
-    LauncherResponseBuilder, SupportedProtocolsBitmap,
+    self, ClusterHandler as _, LaunchContentRequest, LaunchURLRequest, LauncherResponseBuilder,
+    SupportedProtocolsBitmap,
 };
 
 use rs_matter::dm::clusters::decl::keypad_input::{
-    self, ClusterAsyncHandler as _, SendKeyRequest, SendKeyResponseBuilder,
+    self, ClusterHandler as _, SendKeyRequest, SendKeyResponseBuilder,
 };
 
 use rs_matter::dm::clusters::decl::media_playback::{
-    self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterAsyncHandler as _,
+    self, ActivateAudioTrackRequest, ActivateTextTrackRequest, ClusterHandler as _,
     FastForwardRequest, PlaybackResponseBuilder, PlaybackStateEnum, RewindRequest, SeekRequest,
     SkipBackwardRequest, SkipForwardRequest, StatusEnum,
 };
@@ -61,8 +61,8 @@ use rs_matter::dm::endpoints;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
 use rs_matter::dm::{
-    ArrayAttributeRead, Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver,
-    EmptyHandler, Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
+    ArrayAttributeRead, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, EmptyHandler,
+    Endpoint, EpClMatcher, InvokeContext, Node, ReadContext,
 };
 use rs_matter::error::{Error, ErrorCode};
 use rs_matter::pairing::qr::QrTextType;
@@ -196,7 +196,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                 EmptyHandler
                     .chain(
                         EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
+                        desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt(),
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(MediaHandler::CLUSTER.id)),
@@ -212,7 +212,7 @@ fn dm_handler<'a, OH: OnOffHooks, LH: LevelControlHooks>(
                     )
                     .chain(
                         EpClMatcher::new(Some(1), Some(TestOnOffDeviceLogic::CLUSTER.id)),
-                        on_off::HandlerAsyncAdaptor(on_off),
+                        on_off::HandlerAdaptor(on_off),
                     ),
             ),
         ),
@@ -235,8 +235,8 @@ impl MediaHandler {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> media_playback::HandlerAsyncAdaptor<Self> {
-        media_playback::HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> media_playback::HandlerAdaptor<Self> {
+        media_playback::HandlerAdaptor(self)
     }
 
     /// Update the state of the handler
@@ -251,7 +251,7 @@ impl MediaHandler {
     }
 }
 
-impl media_playback::ClusterAsyncHandler for MediaHandler {
+impl media_playback::ClusterHandler for MediaHandler {
     /// The metadata cluster definition corresponding to the handler
     const CLUSTER: Cluster<'static> = media_playback::FULL_CLUSTER
         .with_attrs(with!(required))
@@ -268,15 +268,17 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn current_state(
+impl media_playback::ClusterSyncHandler for MediaHandler {
+    fn current_state(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<media_playback::PlaybackStateEnum, Error> {
         Ok(self.state.get())
     }
 
-    async fn handle_play<P: TLVBuilderParent>(
+    fn handle_play<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: media_playback::PlaybackResponseBuilder<P>,
@@ -288,7 +290,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
-    async fn handle_pause<P: TLVBuilderParent>(
+    fn handle_pause<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: PlaybackResponseBuilder<P>,
@@ -300,7 +302,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
-    async fn handle_stop<P: TLVBuilderParent>(
+    fn handle_stop<P: TLVBuilderParent>(
         &self,
         ctx: impl InvokeContext,
         response: PlaybackResponseBuilder<P>,
@@ -312,7 +314,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         response.status(StatusEnum::Success)?.data(None)?.end()
     }
 
-    async fn handle_start_over<P: TLVBuilderParent>(
+    fn handle_start_over<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
@@ -321,7 +323,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_previous<P: TLVBuilderParent>(
+    fn handle_previous<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
@@ -330,7 +332,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_next<P: TLVBuilderParent>(
+    fn handle_next<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _response: PlaybackResponseBuilder<P>,
@@ -339,7 +341,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_rewind<P: TLVBuilderParent>(
+    fn handle_rewind<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: RewindRequest<'_>,
@@ -349,7 +351,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_fast_forward<P: TLVBuilderParent>(
+    fn handle_fast_forward<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: FastForwardRequest<'_>,
@@ -359,7 +361,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_skip_forward<P: TLVBuilderParent>(
+    fn handle_skip_forward<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SkipForwardRequest<'_>,
@@ -369,7 +371,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_skip_backward<P: TLVBuilderParent>(
+    fn handle_skip_backward<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SkipBackwardRequest<'_>,
@@ -379,7 +381,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_seek<P: TLVBuilderParent>(
+    fn handle_seek<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         _request: SeekRequest<'_>,
@@ -389,7 +391,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_activate_audio_track(
+    fn handle_activate_audio_track(
         &self,
         _ctx: impl InvokeContext,
         _request: ActivateAudioTrackRequest<'_>,
@@ -398,7 +400,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_activate_text_track(
+    fn handle_activate_text_track(
         &self,
         _ctx: impl InvokeContext,
         _request: ActivateTextTrackRequest<'_>,
@@ -407,7 +409,7 @@ impl media_playback::ClusterAsyncHandler for MediaHandler {
         Err(ErrorCode::InvalidCommand.into())
     }
 
-    async fn handle_deactivate_text_track(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
+    fn handle_deactivate_text_track(&self, _ctx: impl InvokeContext) -> Result<(), Error> {
         // Not supported
         Err(ErrorCode::InvalidCommand.into())
     }
@@ -424,12 +426,12 @@ impl ContentHandler {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> content_launcher::HandlerAsyncAdaptor<Self> {
-        content_launcher::HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> content_launcher::HandlerAdaptor<Self> {
+        content_launcher::HandlerAdaptor(self)
     }
 }
 
-impl content_launcher::ClusterAsyncHandler for ContentHandler {
+impl content_launcher::ClusterHandler for ContentHandler {
     const CLUSTER: Cluster<'static> = content_launcher::FULL_CLUSTER
         .with_features(0b11)
         .with_attrs(
@@ -444,8 +446,10 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn accept_header<P: TLVBuilderParent>(
+impl content_launcher::ClusterSyncHandler for ContentHandler {
+    fn accept_header<P: TLVBuilderParent>(
         &self,
         _ctx: impl ReadContext,
         builder: ArrayAttributeRead<Utf8StrArrayBuilder<P>, Utf8StrBuilder<P>>,
@@ -488,14 +492,14 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
         }
     }
 
-    async fn supported_streaming_protocols(
+    fn supported_streaming_protocols(
         &self,
         _ctx: impl ReadContext,
     ) -> Result<SupportedProtocolsBitmap, Error> {
         Ok(SupportedProtocolsBitmap::all())
     }
 
-    async fn handle_launch_url<P: TLVBuilderParent>(
+    fn handle_launch_url<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         request: LaunchURLRequest<'_>,
@@ -509,7 +513,7 @@ impl content_launcher::ClusterAsyncHandler for ContentHandler {
             .end()
     }
 
-    async fn handle_launch_content<P: TLVBuilderParent>(
+    fn handle_launch_content<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         request: LaunchContentRequest<'_>,
@@ -535,12 +539,12 @@ impl KeypadInputHandler {
     }
 
     /// Adapt the handler instance to the generic `rs-matter` `AsyncHandler` trait
-    pub const fn adapt(self) -> keypad_input::HandlerAsyncAdaptor<Self> {
-        keypad_input::HandlerAsyncAdaptor(self)
+    pub const fn adapt(self) -> keypad_input::HandlerAdaptor<Self> {
+        keypad_input::HandlerAdaptor(self)
     }
 }
 
-impl keypad_input::ClusterAsyncHandler for KeypadInputHandler {
+impl keypad_input::ClusterHandler for KeypadInputHandler {
     const CLUSTER: Cluster<'static> = keypad_input::FULL_CLUSTER
         .with_attrs(with!(required))
         .with_cmds(with!(keypad_input::CommandId::SendKey));
@@ -552,8 +556,10 @@ impl keypad_input::ClusterAsyncHandler for KeypadInputHandler {
     fn dataver_changed(&self) {
         self.dataver.changed();
     }
+}
 
-    async fn handle_send_key<P: TLVBuilderParent>(
+impl keypad_input::ClusterSyncHandler for KeypadInputHandler {
+    fn handle_send_key<P: TLVBuilderParent>(
         &self,
         _ctx: impl InvokeContext,
         request: SendKeyRequest<'_>,
