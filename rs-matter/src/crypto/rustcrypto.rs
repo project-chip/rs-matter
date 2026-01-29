@@ -719,8 +719,8 @@ where
         Self(self.0.mul(other.0))
     }
 
-    fn write_canon(&self, _scalar: &mut [u8; LEN]) {
-        todo!()
+    fn write_canon(&self, scalar: &mut [u8; LEN]) {
+        scalar.copy_from_slice(self.0.to_repr().as_slice());
     }
 }
 
