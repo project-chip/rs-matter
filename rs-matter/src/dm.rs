@@ -838,17 +838,15 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, 'd, D, B, const NE: usize> {
+struct ReportDataResponder<'a, 'b, 'c, D, B, const NE: usize> {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
     invoker: HandlerInvoker<'b, 'c, D, B>,
-    event_reader: EventReader<'d, NE>,
+    event_reader: EventReader<'c, NE>,
 }
 
-// TODO(events): Untangle the two new lifetimes here, surely we don't need five of them, I'm just not clever enough to work out why rustc is upset with fewer
-//               also there must be some better structure to avoid these const sizes leaking all the way down here
-impl<'a, 'b, 'c, 'd, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, 'd, D, B, NE>
+impl<'a, 'b, 'c, D, B, const NE: usize> ReportDataResponder<'a, 'b, 'c, D, B, NE>
 where
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
@@ -863,7 +861,7 @@ where
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
         invoker: HandlerInvoker<'b, 'c, D, B>,
-        event_reader: EventReader<'d, NE>,
+        event_reader: EventReader<'c, NE>,
     ) -> Self {
         Self {
             req,
