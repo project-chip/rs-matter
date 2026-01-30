@@ -466,13 +466,6 @@ impl ReplyProcessor {
             for event_report in event_reports {
                 let mut event_report = event_report?;
 
-                if let EventResp::Data(_data) = &mut event_report {
-                    // TODO(events): We may need to strip out the event countere here if we can't make it deterministic?
-                    // if self.contains(Self::REMOVE_ATTRDATA_DATAVER) {
-                    //     data.data_ver = None;
-                    // }
-                }
-
                 event_report.to_tlv(&TLVTag::Anonymous, &mut wb)?;
             }
 

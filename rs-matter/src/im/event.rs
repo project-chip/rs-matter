@@ -15,7 +15,10 @@
  *    limitations under the License.
  */
 
-use crate::tlv::{FromTLV, TLVElement, ToTLV};
+use crate::{
+    error::{Error, ErrorCode},
+    tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV, TLV},
+};
 
 use super::{ClusterId, EndptId, GenericPath, IMStatusCode, Status};
 
@@ -94,7 +97,7 @@ pub enum EventDataTag {
 
 // TODO(events) not sure if this is the right way to do this, I'm using it for the match arm in the TLV reading
 impl TryFrom<u8> for EventDataTag {
-    type Error = ();
+    type Error = crate::Error;
 
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         match v {
@@ -110,7 +113,7 @@ impl TryFrom<u8> for EventDataTag {
                 Ok(EventDataTag::DeltaSystemTimestamp)
             }
             x if x == EventDataTag::Data as u8 => Ok(EventDataTag::Data),
-            _ => Err(()),
+            _ => Err(Error::new(ErrorCode::Invalid)),
         }
     }
 }
@@ -165,9 +168,8 @@ pub enum EventResp<'a> {
 /// A data response for an event in the Interaction Model.
 ///
 /// Corresponds to the `EventDataIB` TLV structure in the Interaction Model.
-#[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[tlvargs(lifetime = "'a")]
 pub struct EventData<'a> {
     /// The path to the event.
     pub path: EventPath,
@@ -202,13 +204,122 @@ impl<'a> EventData<'a> {
     }
 }
 
+// Manually implemented because of the tagged union used for the timestamp
+impl<'a> ToTLV for EventData<'a> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.start_struct(tag)?;
+        self.path
+            .to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
+        tw.u64(
+            &TagType::Context(EventDataTag::EventNumber as _),
+            self.event_number,
+        )?;
+        tw.u8(
+            &TagType::Context(EventDataTag::Priority as _),
+            self.priority,
+        )?;
+
+        match self.timestamp {
+            EventDataTimestamp::EpochTimestamp(ts) => {
+                tw.u64(&TagType::Context(EventDataTag::EpochTimestamp as _), ts)?
+            }
+            EventDataTimestamp::SystemTimestamp(ts) => {
+                tw.u64(&TagType::Context(EventDataTag::SystemTimestamp as _), ts)?
+            }
+            EventDataTimestamp::DeltaEpochTimestamp(ts) => tw.u64(
+                &TagType::Context(EventDataTag::DeltaEpochTimestamp as _),
+                ts,
+            )?,
+            EventDataTimestamp::DeltaSystemTimestamp(ts) => tw.u64(
+                &TagType::Context(EventDataTag::DeltaSystemTimestamp as _),
+                ts,
+            )?,
+        };
+
+        self.data
+            .to_tlv(&TagType::Context(EventDataTag::Data as _), &mut tw)?;
+
+        tw.end_container()
+    }
+
+    fn tlv_iter(&self, tag: crate::tlv::TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        let (timestamp_tag, timestamp_val) = match self.timestamp {
+            EventDataTimestamp::EpochTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
+            EventDataTimestamp::SystemTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
+            EventDataTimestamp::DeltaEpochTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
+            EventDataTimestamp::DeltaSystemTimestamp(ts) => (EventDataTag::EpochTimestamp, ts),
+        };
+
+        let header = [Ok(TLV::structure(tag))].into_iter();
+        let middle_fields = [
+            Ok(TLV::u64(
+                TLVTag::Context(EventDataTag::EventNumber as _),
+                self.event_number,
+            )),
+            Ok(TLV::u8(
+                TLVTag::Context(EventDataTag::Priority as _),
+                self.priority,
+            )),
+            Ok(TLV::u64(TLVTag::Context(timestamp_tag as _), timestamp_val)),
+        ]
+        .into_iter();
+        let trailer = [Ok(TLV::end_container())].into_iter();
+
+        header
+            .chain(self.path.tlv_iter(TLVTag::Context(EventDataTag::Path as _)))
+            .chain(middle_fields)
+            .chain(self.data.tlv_iter(TLVTag::Context(EventDataTag::Data as _)))
+            .chain(trailer)
+    }
+}
+
+impl<'a> FromTLV<'a> for EventData<'a> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, Error> {
+        let mut path = None;
+        let mut event_number = None;
+        let mut priority = None;
+        let mut timestamp = None;
+        let mut data = None;
+        for field in element.structure()?.iter() {
+            let el = field?;
+            match el.tag()? {
+                TLVTag::Context(tag) => match EventDataTag::try_from(tag)? {
+                    EventDataTag::Path => path = Some(EventPath::from_tlv(&el)?),
+                    EventDataTag::EventNumber => event_number = Some(el.u64()?),
+                    EventDataTag::Priority => priority = Some(el.u8()?),
+                    EventDataTag::EpochTimestamp => {
+                        timestamp = Some(EventDataTimestamp::EpochTimestamp(el.u64()?))
+                    }
+                    EventDataTag::SystemTimestamp => {
+                        timestamp = Some(EventDataTimestamp::SystemTimestamp(el.u64()?))
+                    }
+                    EventDataTag::DeltaEpochTimestamp => {
+                        timestamp = Some(EventDataTimestamp::DeltaEpochTimestamp(el.u64()?))
+                    }
+                    EventDataTag::DeltaSystemTimestamp => {
+                        timestamp = Some(EventDataTimestamp::DeltaSystemTimestamp(el.u64()?))
+                    }
+                    EventDataTag::Data => data = Some(el),
+                },
+                _ => return Err(Error::new(ErrorCode::Invalid)),
+            }
+        }
+        Ok(EventData::new(
+            path.ok_or(Error::new(ErrorCode::Invalid))?,
+            event_number.ok_or(Error::new(ErrorCode::Invalid))?,
+            priority.ok_or(Error::new(ErrorCode::Invalid))?,
+            timestamp.ok_or(Error::new(ErrorCode::Invalid))?,
+            data.ok_or(Error::new(ErrorCode::Invalid))?,
+        ))
+    }
+}
+
 // Timestamp on an EventData, corresponds to the mutually exclusive timestamp
 // options on EventDataIB in the Interaction Model
-#[derive(Debug, Clone, PartialEq, FromTLV, ToTLV)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EventDataTimestamp {
     // TODO(events) docstrings, see section 10.6.9.1->10.6.9.3
-    // TODO(events) how do we ensure these get TLV-encoded correctly? They should have fields 3,4,5 or 6, see 10.6.9 in the spec
     EpochTimestamp(u64),
     SystemTimestamp(u64),
     DeltaEpochTimestamp(u64),
