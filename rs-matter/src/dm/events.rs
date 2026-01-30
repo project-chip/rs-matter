@@ -18,7 +18,9 @@ use core::fmt::Debug;
 
 use crate::error::{Error, ErrorCode};
 use crate::im::{EventDataTag, EventDataTimestamp, EventPath, EventRespTag};
-use crate::tlv::{FromTLV, TLVElement, TLVSequence, TLVTag, TLVWrite, TagType, ToTLV};
+use crate::tlv::{
+    FromTLV, TLVElement, TLVSequence, TLVSequenceIter, TLVTag, TLVWrite, TagType, ToTLV,
+};
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
 use crate::utils::sync::blocking::Mutex;
@@ -100,35 +102,35 @@ where
 }
 
 /// This is the central event queue storage system. It's modeled after the tiered ring buffer design
-/// used in the C++ matter SDK. Every new event is written to the next slot in the DEBUG ring buffer.
-/// If there is not space for the new event, events are FIFO evicted from the first ring buffer.
-/// If the evicted event has a priority level as high as or higher than the next ring buffer in the chain,
+/// used in the C++ matter SDK. *Every* new event is written to the next slot in the DEBUG level buffer.
+/// If there is not space for the new event, events are FIFO evicted from the first level buffer.
+/// If the evicted event has a priority level as high as or higher than the next level buffer in the chain,
 /// then the evicted event is promoted to there, surviving to see another day.
 /// Promotion may in turn require more eviction in the next buffer, and so on up the chain.
-/// The end result is that critical events get to live in any of the ring buffers, making their way through
+/// The end result is that critical events get to live in any of the level buffers, making their way through
 /// all three until they finally age out. Info lives in one of the first two, and debug only in the first.
 ///
-/// TODO(events): Per discussion in PR, I don't understand how this design does not violate the spec; I don't mind
-///               violating the spec if the C++ impl does so as well, but I'm worried I've misunderstood something about
-///               the C++ implementation. Specifically this design allows critical events to be evicted to make space
-///               for Debug and/or info events. This happens when the oldest event in the debug and info ring buffers are
-///               Critical events, which will cause promotion to the last buffer and eviction there of the oldest critical event
+/// n.b. the discussion in PR #361 that introduced this: We were not able to determine a way to
+/// implement a priority queue that both met the specs requirements (low-prio events must not cause
+/// eviction of high-prio events) while also allowing debug and info-prio events to be emitted at all.
+/// Instead we opted to replicate the approach used in the C++ impl, which we believe is reasonable but
+/// also seemingly in violation of the spec.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 struct EventsInner<const N: usize> {
     // TODO(events): Allow per-ring const generics
-    buf_debug: TLVRingBuf<N>,
-    buf_info: TLVRingBuf<N>,
-    buf_critical: TLVRingBuf<N>,
+    buf_debug: LevelBuf<N>,
+    buf_info: LevelBuf<N>,
+    buf_critical: LevelBuf<N>,
     next_event_no: u64,
 }
 
 impl<const N: usize> EventsInner<N> {
     const fn new() -> Self {
         Self {
-            buf_debug: TLVRingBuf::new(),
-            buf_info: TLVRingBuf::new(),
-            buf_critical: TLVRingBuf::new(),
+            buf_debug: LevelBuf::new(),
+            buf_info: LevelBuf::new(),
+            buf_critical: LevelBuf::new(),
             // TODO(events): This needs persistence
             next_event_no: 0,
         }
@@ -136,9 +138,9 @@ impl<const N: usize> EventsInner<N> {
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            buf_debug <- TLVRingBuf::init(),
-            buf_info <- TLVRingBuf::init(),
-            buf_critical <- TLVRingBuf::init(),
+            buf_debug <- LevelBuf::init(),
+            buf_info <- LevelBuf::init(),
+            buf_critical <- LevelBuf::init(),
             // TODO(events): This needs persistence
             next_event_no: 0,
         })
@@ -151,7 +153,7 @@ impl<const N: usize> EventsInner<N> {
         priority: u8,
         timestamp: EventDataTimestamp,
     ) -> Result<EventQueueWriter<'a, N>, Error> {
-        let mut tw = EventQueueWriter::new(self, BufLevel::Debug);
+        let mut tw = EventQueueWriter::new(self, Level::Debug);
         tw.start_struct(&TLVTag::Context(EventRespTag::Data as _))?;
         path.to_tlv(&TagType::Context(EventDataTag::Path as _), &mut tw)?;
         tw.u64(
@@ -181,7 +183,7 @@ impl<const N: usize> EventsInner<N> {
     fn iter<'a>(&'a self) -> EventQueueIter<'a, N> {
         EventQueueIter {
             queue: self,
-            buf_ref: BufLevel::Critical,
+            buf_ref: Level::Critical,
             buf_iter: self.buf_critical.iter(),
         }
     }
@@ -189,8 +191,8 @@ impl<const N: usize> EventsInner<N> {
 
 struct EventQueueIter<'a, const N: usize> {
     queue: &'a EventsInner<N>,
-    buf_ref: BufLevel<N>,
-    buf_iter: TLVRingBufIter<'a, N>,
+    buf_ref: Level<N>,
+    buf_iter: TLVSequenceIter<'a>,
 }
 
 impl<'a, const N: usize> Iterator for EventQueueIter<'a, N> {
@@ -258,13 +260,13 @@ fn parse_event<'a>(tr: TLVElement<'a>) -> Result<EventData<'a>, Error> {
 
 pub struct EventQueueWriter<'a, const N: usize> {
     queue: &'a mut EventsInner<N>,
-    buf_ref: BufLevel<N>,
+    buf_ref: Level<N>,
     // Used in Drop to ensure clients call end(), otherwise data corruption happens
     ended: bool,
 }
 
 impl<'a, const N: usize> EventQueueWriter<'a, N> {
-    fn new(queue: &'a mut EventsInner<N>, buf_ref: BufLevel<N>) -> Self {
+    fn new(queue: &'a mut EventsInner<N>, buf_ref: Level<N>) -> Self {
         Self {
             queue,
             buf_ref,
@@ -284,8 +286,8 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
     // Evict one entry from the given buffer, potentially promoting it to the next buffer if
     // it meets the priority threshold. If promotion happens the eviction "cascades", until
     // we either evict an event that doesn't meet the next buffers prio level or we run out of
-    // ring buffers and drop the oldest critical event.
-    fn evict(&mut self, buf_ref: BufLevel<N>) -> Result<(), Error> {
+    // level buffers and drop the oldest critical event.
+    fn evict(&mut self, buf_ref: Level<N>) -> Result<(), Error> {
         let (victim_prio, victim_ref) = self.prepare_eviction(buf_ref.get(self.queue))?;
 
         if let Some(next_buf_ref) = buf_ref.next_level() {
@@ -300,7 +302,7 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
     }
 
     // Work out the size and priority of the next victim in the given buffer
-    fn prepare_eviction(&self, buf: &TLVRingBuf<N>) -> Result<(u8, VictimRef), Error> {
+    fn prepare_eviction(&self, buf: &LevelBuf<N>) -> Result<(u8, VictimRef), Error> {
         let victim_ref = buf.prepare_eviction()?;
         let priority = victim_ref
             .tlv(buf)
@@ -313,8 +315,8 @@ impl<'a, const N: usize> EventQueueWriter<'a, N> {
     // Promotes victim_ref from src to dst, making space in dst (potentially cascading) if needed
     fn promote(
         &mut self,
-        src_buf: BufLevel<N>,
-        dst_buf: BufLevel<N>,
+        src_buf: Level<N>,
+        dst_buf: Level<N>,
         victim_ref: VictimRef,
     ) -> Result<(), Error> {
         // Make space
@@ -349,28 +351,37 @@ impl<'a, const N: usize> TLVWrite for EventQueueWriter<'a, N> {
         }
         while let Err(OverflowError {}) = self.buf_ref.get_mut(self.queue).write(byte) {
             // Overflow, need to evict an entry
-            self.evict(BufLevel::Debug)?;
+            self.evict(Level::Debug)?;
         }
         Ok(())
     }
 
     fn get_tail(&self) -> Self::Position {
-        // n.b. TLVWrite calls the next position to be written "tail", but our ring buffer calls that position "head"
+        // n.b. TLVWrite calls the next position to be written "tail", but our level buffer calls that position "head"
         self.queue.buf_debug.head
     }
 }
 
+/// LevelBuf stores one "level" of events, see the doc string on EventsInner for more info on that.
+///
+/// This behaves very similar to a ring buffer - you can append data at the write head, and eventually
+/// the head will catch up and "eat" the tail, implementing a sort of sliding window of visible data.
+///
+/// This is a much less efficient variant though - it left-shifts the entire buffer to "evict" old records,
+/// rather than just track head/tail pointers with wrap-around.
+///
+/// The thing we gain from the less efficient implementation is that records are never "split up", they are
+/// always complete TLVs in contiguous memory, which allows us to use TLVElement to read the records.
+///
+/// If you feel enthusiastic, it might give some performance gains to replace this with a real ring buffer.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct TLVRingBuf<const N: usize> {
+struct LevelBuf<const N: usize> {
     data: [u8; N],
     head: usize,
-    // n.b. there is no tail. We don't have a way to read streaming TLVs, so we can't have a TLV "wrap around" at the end
-    // and continue at the start of data. Instead, tail is always zero, and whenever we evict we left-shift the entire buffer
-    // see evict.
 }
 
-impl<const N: usize> TLVRingBuf<N> {
+impl<const N: usize> LevelBuf<N> {
     const fn new() -> Self {
         Self {
             data: [0; N],
@@ -424,8 +435,8 @@ impl<const N: usize> TLVRingBuf<N> {
         self.head -= victim.len();
     }
 
-    fn iter(&self) -> TLVRingBufIter<'_, N> {
-        TLVRingBufIter { buf: self, pos: 0 }
+    fn iter(&self) -> TLVSequenceIter<'_> {
+        TLVSequence(&self.data[0..self.head]).iter()
     }
 }
 
@@ -438,45 +449,16 @@ struct VictimRef {
 }
 
 impl VictimRef {
-    fn tlv<'a, const N: usize>(&self, buf: &'a TLVRingBuf<N>) -> TLVElement<'a> {
+    fn tlv<'a, const N: usize>(&self, buf: &'a LevelBuf<N>) -> TLVElement<'a> {
         TLVElement::new(self.raw(buf))
     }
 
-    fn raw<'a, const N: usize>(&self, buf: &'a TLVRingBuf<N>) -> &'a [u8] {
+    fn raw<'a, const N: usize>(&self, buf: &'a LevelBuf<N>) -> &'a [u8] {
         &buf.data[0..self.victim_len]
     }
 
     fn len(&self) -> usize {
         self.victim_len
-    }
-}
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-struct TLVRingBufIter<'a, const N: usize> {
-    buf: &'a TLVRingBuf<N>,
-    pos: usize,
-}
-
-impl<'a, const N: usize> Iterator for TLVRingBufIter<'a, N> {
-    type Item = Result<TLVElement<'a>, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // TODO(events) this doesn't handle wrap-around
-        if self.pos >= self.buf.head as _ {
-            return None;
-        }
-        let record_len = match self.buf.record_len(self.pos) {
-            Ok(raw) => raw,
-            Err(e) => return Some(Err(e)),
-        };
-
-        let start = self.pos;
-        self.pos += record_len;
-
-        Some(Ok(TLVElement::new(
-            &self.buf.data[start..start + record_len],
-        )))
     }
 }
 
@@ -486,35 +468,35 @@ struct OverflowError;
 // This is how we handle the "levels" of buffers, using this reference we can access the current
 // level and get access to the next level, if there is one
 #[derive(PartialEq, Clone, Copy)]
-enum BufLevel<const N: usize> {
+enum Level<const N: usize> {
     Debug,
     Info,
     Critical,
 }
 
-impl<const N: usize> BufLevel<N> {
+impl<const N: usize> Level<N> {
     fn threshold(&self) -> u8 {
         // 7.19.2.17
         match self {
-            BufLevel::Debug => 0,
-            BufLevel::Info => 1,
-            BufLevel::Critical => 2,
+            Level::Debug => 0,
+            Level::Info => 1,
+            Level::Critical => 2,
         }
     }
 
-    fn get_mut<'a>(&self, queue: &'a mut EventsInner<N>) -> &'a mut TLVRingBuf<N> {
+    fn get_mut<'a>(&self, queue: &'a mut EventsInner<N>) -> &'a mut LevelBuf<N> {
         match self {
-            BufLevel::Debug => &mut queue.buf_debug,
-            BufLevel::Info => &mut queue.buf_info,
-            BufLevel::Critical => &mut queue.buf_critical,
+            Level::Debug => &mut queue.buf_debug,
+            Level::Info => &mut queue.buf_info,
+            Level::Critical => &mut queue.buf_critical,
         }
     }
 
-    fn get<'a>(&self, queue: &'a EventsInner<N>) -> &'a TLVRingBuf<N> {
+    fn get<'a>(&self, queue: &'a EventsInner<N>) -> &'a LevelBuf<N> {
         match self {
-            BufLevel::Debug => &queue.buf_debug,
-            BufLevel::Info => &queue.buf_info,
-            BufLevel::Critical => &queue.buf_critical,
+            Level::Debug => &queue.buf_debug,
+            Level::Info => &queue.buf_info,
+            Level::Critical => &queue.buf_critical,
         }
     }
 
@@ -522,30 +504,30 @@ impl<const N: usize> BufLevel<N> {
     fn get_mut_and_next<'a>(
         &self,
         queue: &'a mut EventsInner<N>,
-    ) -> (&'a mut TLVRingBuf<N>, Option<&'a mut TLVRingBuf<N>>) {
+    ) -> (&'a mut LevelBuf<N>, Option<&'a mut LevelBuf<N>>) {
         match self {
-            BufLevel::Debug => (&mut queue.buf_debug, Some(&mut queue.buf_info)),
-            BufLevel::Info => (&mut queue.buf_info, Some(&mut queue.buf_critical)),
-            BufLevel::Critical => (&mut queue.buf_critical, None),
+            Level::Debug => (&mut queue.buf_debug, Some(&mut queue.buf_info)),
+            Level::Info => (&mut queue.buf_info, Some(&mut queue.buf_critical)),
+            Level::Critical => (&mut queue.buf_critical, None),
         }
     }
 
-    fn next_level(&self) -> Option<BufLevel<N>> {
+    fn next_level(&self) -> Option<Level<N>> {
         match self {
-            BufLevel::Debug => Some(BufLevel::Info),
-            BufLevel::Info => Some(BufLevel::Critical),
-            BufLevel::Critical => None,
+            Level::Debug => Some(Level::Info),
+            Level::Info => Some(Level::Critical),
+            Level::Critical => None,
         }
     }
 
     /// Used during iteration, note that this goes "backwards" compared to get_mut_and_next;
     /// when iterating we want to start with the oldest events, so we start with the "highest"
     /// level where the oldest survivors are and work back
-    fn prior_level(&self) -> Option<BufLevel<N>> {
+    fn prior_level(&self) -> Option<Level<N>> {
         match self {
-            BufLevel::Debug => None,
-            BufLevel::Info => Some(BufLevel::Debug),
-            BufLevel::Critical => Some(BufLevel::Info),
+            Level::Debug => None,
+            Level::Info => Some(Level::Debug),
+            Level::Critical => Some(Level::Info),
         }
     }
 }
@@ -615,7 +597,7 @@ mod tests {
             }
         }
 
-        fn vec_from(buf: &TLVRingBuf<64>) -> Result<heapless::Vec<TestEvent, 16>, Error> {
+        fn vec_from(buf: &LevelBuf<64>) -> Result<heapless::Vec<TestEvent, 16>, Error> {
             let mut out = heapless::Vec::new();
             for tr in buf.iter() {
                 let e = parse_event(tr?)?;

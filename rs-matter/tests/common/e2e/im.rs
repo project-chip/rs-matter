@@ -18,9 +18,7 @@
 use bitflags::bitflags;
 
 use rs_matter::error::Error;
-use rs_matter::im::{
-    AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath, EventResp,
-};
+use rs_matter::im::{AttrPath, AttrResp, AttrStatus, DataVersionFilter, EventFilter, EventPath};
 use rs_matter::im::{OpCode, PROTO_ID_INTERACTION_MODEL};
 use rs_matter::im::{ReportDataResp, WriteReqTag};
 use rs_matter::tlv::{FromTLV, Slice, TLVElement, TLVTag, TLVWrite, ToTLV};
