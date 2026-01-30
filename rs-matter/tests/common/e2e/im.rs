@@ -464,9 +464,7 @@ impl ReplyProcessor {
             wb.start_array(&TLVTag::Context(2))?;
 
             for event_report in event_reports {
-                let mut event_report = event_report?;
-
-                event_report.to_tlv(&TLVTag::Anonymous, &mut wb)?;
+                event_report?.to_tlv(&TLVTag::Anonymous, &mut wb)?;
             }
 
             wb.end_container()?;
