@@ -830,7 +830,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
 pub struct ECScalar<'a, const LEN: usize, const POINT_LEN: usize, R> {
     /// Associated EC group
     group: &'a ECGroup<POINT_LEN, LEN>,
-    ///
+    /// The random number generator
     rng: &'a R,
     /// Scalar
     mpi: Mpi,
@@ -1087,19 +1087,11 @@ impl<M: RawMutex, T: RngCore> RngCore for &Mutex<M, RefCell<T>> {
     }
 
     fn next_u32(&mut self) -> u32 {
-        let mut bytes = [0; 4];
-
-        self.fill_bytes(&mut bytes);
-
-        u32::from_le_bytes(bytes)
+        rand_core::impls::next_u32_via_fill(self)
     }
 
     fn next_u64(&mut self) -> u64 {
-        let mut bytes = [0; 8];
-
-        self.fill_bytes(&mut bytes);
-
-        u64::from_le_bytes(bytes)
+        rand_core::impls::next_u64_via_fill(self)
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
@@ -1121,7 +1113,7 @@ pub struct MbedtlsDrbg<'a, T> {
     raw: esp_mbedtls_sys::mbedtls_ctr_drbg_context,
 }
 
-impl<'a, T: Entropy> MbedtlsDrbg<'a, T> {
+impl<'a, T: CryptoRngCore> MbedtlsDrbg<'a, T> {
     /// Create a new MbedTLS DRBG instance.
     ///
     /// # Arguments
@@ -1162,7 +1154,7 @@ impl<T> Drop for MbedtlsDrbg<'_, T> {
     }
 }
 
-impl<T: Entropy> RngCore for MbedtlsDrbg<'_, T> {
+impl<T: CryptoRngCore> RngCore for MbedtlsDrbg<'_, T> {
     fn fill_bytes(&mut self, buf: &mut [u8]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_ctr_drbg_random(
@@ -1175,17 +1167,11 @@ impl<T: Entropy> RngCore for MbedtlsDrbg<'_, T> {
     }
 
     fn next_u32(&mut self) -> u32 {
-        let mut bytes = [0; 4];
-        self.fill_bytes(&mut bytes);
-
-        u32::from_le_bytes(bytes)
+        rand_core::impls::next_u32_via_fill(self)
     }
 
     fn next_u64(&mut self) -> u64 {
-        let mut bytes = [0; 8];
-        self.fill_bytes(&mut bytes);
-
-        u64::from_le_bytes(bytes)
+        rand_core::impls::next_u64_via_fill(self)
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
@@ -1195,81 +1181,12 @@ impl<T: Entropy> RngCore for MbedtlsDrbg<'_, T> {
     }
 }
 
-impl<T: Entropy> CryptoRng for MbedtlsDrbg<'_, T> {}
-
-/// An abstraction of an entropy.
-pub trait Entropy {
-    /// Fill the provided buffer with entropy bytes.
-    fn entropy(&self, buf: &mut [u8]);
-}
-
-impl<T> Entropy for &T
-where
-    T: Entropy,
-{
-    fn entropy(&self, buf: &mut [u8]) {
-        (**self).entropy(buf)
-    }
-}
-
-/// An abstraction of an entropy source for `MbedtlsEntropy`.
-pub trait EntropySource {
-    /// Indicates whether the entropy source is strong.
-    fn is_strong(&self) -> bool;
-
-    /// Fill the provided buffer with entropy bytes.
-    ///
-    /// Returns the number of bytes actually written.
-    fn entropy(&self, buf: &mut [u8]) -> usize;
-}
-
-impl<T> EntropySource for &T
-where
-    T: EntropySource,
-{
-    fn entropy(&self, buf: &mut [u8]) -> usize {
-        (**self).entropy(buf)
-    }
-
-    fn is_strong(&self) -> bool {
-        (**self).is_strong()
-    }
-}
-
-/// An adapter to use an `Entropy` implementation as an `EntropySource`.
-pub struct EntropyAsEntropySource<T> {
-    /// The underlying entropy implementation
-    entropy: T,
-    /// Whether the entropy source is strong
-    strong: bool,
-}
-
-impl<T: Entropy> EntropyAsEntropySource<T> {
-    /// Create a new `EntropyAsEntropySource` instance.
-    ///
-    /// # Arguments
-    /// - `entropy`: The underlying entropy implementation.
-    /// - `strong`: Whether the entropy source is strong.
-    pub const fn new(entropy: T, strong: bool) -> Self {
-        Self { entropy, strong }
-    }
-}
-
-impl<T: Entropy> EntropySource for EntropyAsEntropySource<T> {
-    fn entropy(&self, buf: &mut [u8]) -> usize {
-        self.entropy.entropy(buf);
-
-        buf.len()
-    }
-
-    fn is_strong(&self) -> bool {
-        self.strong
-    }
-}
+impl<T: CryptoRngCore> CryptoRng for MbedtlsDrbg<'_, T> {}
 
 /// A type-safe wrapper around the MbedTLS entropy provider.
 ///
-/// Implements the `Entropy` trait which can then be used by the MbedTLS DRBG impl - `MbedtlsDrbg`.
+/// Implements the `CryptoRngCore` trait and can then be used by the MbedTLS DRBG impl - `MbedtlsDrbg`.
+/// or any other CSPRNG needing entropy.
 pub struct MbedtlsEntropy<T> {
     /// Raw MbedTLS entropy context
     raw: Option<esp_mbedtls_sys::mbedtls_entropy_context>,
@@ -1279,6 +1196,9 @@ pub struct MbedtlsEntropy<T> {
 
 impl MbedtlsEntropy<()> {
     /// Create a new MbedTLS entropy instance.
+    ///
+    /// NOTE: At least one non-weak entropy source should be registered
+    /// using `add()` or else `MbedtlsEntropy` would panic at runtime.
     pub fn new() -> Self {
         let mut raw = Default::default();
 
@@ -1302,9 +1222,40 @@ impl<T> MbedtlsEntropy<T> {
     ///
     /// # Returns
     /// - New MbedTLS entropy instance with the added source.
-    pub fn add<E: EntropySource>(
+    ///
+    /// NOTE: At least one non-weak entropy source should be registered
+    /// or else `MbedtlsEntropy` would panic at runtime.
+    pub fn add<E: CryptoRngCore>(
+        self,
+        entropy_source: &mut E,
+        threshold: usize,
+    ) -> MbedtlsEntropy<(T, &mut E)> {
+        self.internal_add(entropy_source, true, threshold)
+    }
+
+    /// Add a weak entropy source to the MbedTLS entropy instance.
+    ///
+    /// # Arguments
+    /// - `entropy_source`: Reference to the entropy source.
+    /// - `threshold`: Minimum number of bytes that should be provided by the source.
+    ///
+    /// # Returns
+    /// - New MbedTLS entropy instance with the added weak source.
+    ///
+    /// NOTE: At least one non-weak entropy source should be registered
+    /// using `add()` or else `MbedtlsEntropy` would panic at runtime.
+    pub fn add_weak<E: RngCore>(
+        self,
+        entropy_source: &mut E,
+        threshold: usize,
+    ) -> MbedtlsEntropy<(T, &mut E)> {
+        self.internal_add(entropy_source, false, threshold)
+    }
+
+    fn internal_add<E: RngCore>(
         mut self,
         entropy_source: &mut E,
+        strong: bool,
         threshold: usize,
     ) -> MbedtlsEntropy<(T, &mut E)> {
         merr!(unsafe {
@@ -1313,7 +1264,7 @@ impl<T> MbedtlsEntropy<T> {
                 Some(mbedtls_platform_entropy_source::<E>),
                 entropy_source as *const _ as *const _ as *mut _,
                 threshold,
-                if entropy_source.is_strong() {
+                if strong {
                     esp_mbedtls_sys::MBEDTLS_ENTROPY_SOURCE_STRONG
                 } else {
                     esp_mbedtls_sys::MBEDTLS_ENTROPY_SOURCE_WEAK
@@ -1360,8 +1311,8 @@ impl Default for MbedtlsEntropy<()> {
     }
 }
 
-impl<T> Entropy for MbedtlsEntropy<T> {
-    fn entropy(&self, buf: &mut [u8]) {
+impl<T> RngCore for &MbedtlsEntropy<T> {
+    fn fill_bytes(&mut self, buf: &mut [u8]) {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_entropy_func(
                 self.raw.as_ref().unwrap() as *const _ as *mut _,
@@ -1371,34 +1322,50 @@ impl<T> Entropy for MbedtlsEntropy<T> {
         })
         .unwrap();
     }
+
+    fn next_u32(&mut self) -> u32 {
+        rand_core::impls::next_u32_via_fill(self)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        rand_core::impls::next_u64_via_fill(self)
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill_bytes(dest);
+
+        Ok(())
+    }
 }
 
+impl<T> CryptoRng for &MbedtlsEntropy<T> {}
+
 /// MbedTLS platform entropy function adapter.
-unsafe extern "C" fn mbedtls_platform_entropy<T: Entropy>(
+unsafe extern "C" fn mbedtls_platform_entropy<T: RngCore>(
     ctx: *mut c_void,
     buf: *mut c_uchar,
     buf_len: usize,
 ) -> c_int {
-    let entropy = unsafe { (ctx as *const _ as *const T).as_ref() }.unwrap();
+    let entropy = unsafe { (ctx as *mut T).as_mut() }.unwrap();
 
-    entropy.entropy(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
+    entropy.fill_bytes(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
 
     0
 }
 
 /// MbedTLS platform entropy source function adapter.
-unsafe extern "C" fn mbedtls_platform_entropy_source<T: EntropySource>(
+unsafe extern "C" fn mbedtls_platform_entropy_source<T: RngCore>(
     ctx: *mut c_void,
     buf: *mut c_uchar,
     buf_len: usize,
     olen: *mut usize,
 ) -> c_int {
-    let entropy_source = unsafe { (ctx as *const _ as *const T).as_ref() }.unwrap();
+    let entropy_source = unsafe { (ctx as *mut T).as_mut() }.unwrap();
 
-    let len = entropy_source.entropy(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
+    entropy_source.fill_bytes(unsafe { core::slice::from_raw_parts_mut(buf, buf_len) });
 
     unsafe {
-        olen.write(len);
+        olen.write(buf_len);
     }
 
     0
