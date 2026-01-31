@@ -47,6 +47,7 @@ use rs_matter::dm::clusters::wifi_diag::WifiDiag;
 use rs_matter::dm::devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET};
 use rs_matter::dm::devices::DEV_TYPE_ON_OFF_LIGHT;
 use rs_matter::dm::endpoints;
+use rs_matter::dm::events::DefaultEvents;
 use rs_matter::dm::networks::unix::UnixNetifs;
 use rs_matter::dm::networks::wireless::{NetCtlState, NetCtlWithStatusImpl, WifiNetworks};
 use rs_matter::dm::subscriptions::DefaultSubscriptions;
@@ -132,6 +133,9 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the subscriptions
     let subscriptions = DefaultSubscriptions::new();
 
+    // Create the event queue
+    let events = DefaultEvents::new();
+
     // Our on-off cluster
     let on_off_handler = on_off::OnOffHandler::new_standalone(
         Dataver::new_rand(matter.rand()),
@@ -152,6 +156,7 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
         &matter,
         &buffers,
         &subscriptions,
+        &events,
         dm_handler(&matter, &on_off_handler, &net_ctl, &networks),
     );
 

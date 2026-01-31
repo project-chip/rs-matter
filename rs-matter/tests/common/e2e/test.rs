@@ -40,6 +40,17 @@ pub trait E2eTest {
     fn delay(&self) -> Option<u64> {
         None
     }
+
+    /// Optionally set up the test, allows you to emit events into the system-under-test
+    fn setup(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// Determine if the "direction" of the messages: Do we send our fill_input message first and then
+    /// expect a reply, or do we wait for a message we assert on with validate_result and then respond?
+    fn direction(&self) -> E2eTestDirection {
+        E2eTestDirection::ClientInitiated
+    }
 }
 
 impl E2eTest for &dyn E2eTest {
@@ -54,6 +65,22 @@ impl E2eTest for &dyn E2eTest {
     fn delay(&self) -> Option<u64> {
         (*self).delay()
     }
+
+    fn setup(&self) -> Result<(), Error> {
+        (*self).setup()
+    }
+
+    fn direction(&self) -> E2eTestDirection {
+        (*self).direction()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum E2eTestDirection {
+    /// Default - "driving" side sends a message and then validates response
+    ClientInitiated,
+    /// Wait for server to send a message, then respond with fill_input
+    ServerInitiated,
 }
 
 impl E2eRunner {
@@ -80,7 +107,9 @@ impl E2eRunner {
                 let mut exchange = self.initiate_exchange().await?;
 
                 for test in tests {
-                    Self::execute_test(&mut exchange, test).await?;
+                    self.execute_test(&mut exchange, test).await?;
+                    // TODO(events) without this the subscribe test hangs, need something smarter
+                    exchange.acknowledge().await?;
                 }
 
                 exchange.acknowledge().await?;
@@ -93,7 +122,39 @@ impl E2eRunner {
     }
 
     /// Execute the test via the provided exchange.
-    pub async fn execute_test<T>(exchange: &mut Exchange<'_>, test: T) -> Result<(), Error>
+    pub async fn execute_test<T>(&self, exchange: &mut Exchange<'_>, test: T) -> Result<(), Error>
+    where
+        T: E2eTest,
+    {
+        test.setup()?;
+        match test.direction() {
+            E2eTestDirection::ClientInitiated => {
+                self.execute_client_part_of_test(exchange, &test).await?;
+                self.execute_server_part_of_test(exchange, &test).await?;
+            }
+            E2eTestDirection::ServerInitiated => {
+                // TODO(events): this is not a good solution, it doesn't allow multi-step messaging in the peer-initiated exchange.. but it gives me a failing test to drive the car with for now
+                let mut peer_exchange = Exchange::accept(self.matter_client()).await?;
+                self.execute_server_part_of_test(&mut peer_exchange, &test)
+                    .await?;
+                self.execute_client_part_of_test(&mut peer_exchange, &test)
+                    .await?;
+                peer_exchange.acknowledge().await?;
+            }
+        }
+
+        let delay = test.delay().unwrap_or(0);
+        if delay > 0 {
+            Timer::after(Duration::from_millis(delay as _)).await;
+        }
+        Ok(())
+    }
+
+    async fn execute_client_part_of_test<T>(
+        &self,
+        exchange: &mut Exchange<'_>,
+        test: &T,
+    ) -> Result<(), Error>
     where
         T: E2eTest,
     {
@@ -104,20 +165,18 @@ impl E2eRunner {
                 Ok(Some(meta))
             })
             .await?;
-
-        {
-            // In a separate block so that the RX message is dropped before we start waiting
-
-            let rx = exchange.recv().await?;
-
-            test.validate_result(rx.meta(), rx.payload())?;
-        }
-
-        let delay = test.delay().unwrap_or(0);
-        if delay > 0 {
-            Timer::after(Duration::from_millis(delay as _)).await;
-        }
-
         Ok(())
+    }
+
+    async fn execute_server_part_of_test<T>(
+        &self,
+        exchange: &mut Exchange<'_>,
+        test: &T,
+    ) -> Result<(), Error>
+    where
+        T: E2eTest,
+    {
+        let rx = exchange.recv().await?;
+        test.validate_result(rx.meta(), rx.payload())
     }
 }
