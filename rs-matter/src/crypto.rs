@@ -102,11 +102,6 @@ pub const AEAD_NONCE_LEN: usize = 13;
 /// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 16-byte tag.
 pub const AEAD_TAG_LEN: usize = 16;
 
-/// Length of the additional authenticated data (AAD) used in AEAD operations in bytes.
-///
-/// As per the Matter spec, the AAD length in Matter messages is 8 bytes.
-pub const AEAD_AAD_LEN: usize = 8;
-
 /// Canonical representation of a hash value.
 ///
 /// As per the Matter spec, the hasher should be SHA-256.
@@ -152,14 +147,6 @@ pub type AeadTag = [u8; AEAD_TAG_LEN];
 
 /// Zeroed AEAD tag.
 pub const AEAD_TAG_ZEROED: AeadTag = [0u8; AEAD_TAG_LEN];
-
-/// Canonical representation of AEAD additional authenticated data (AAD).
-///
-/// As per the Matter spec, the AAD length in Matter messages is 8 bytes.
-pub type AeadAad = [u8; AEAD_AAD_LEN];
-
-/// Zeroed AEAD AAD.
-pub const AEAD_AAD_ZEROED: AeadAad = [0u8; AEAD_AAD_LEN];
 
 /// Canonical representation of an EC scalar.
 ///

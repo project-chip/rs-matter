@@ -27,7 +27,7 @@ use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, init_zeroed, Init, IntoFallibleInit};
+use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::Matter;
@@ -144,9 +144,9 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key <- init_zeroed(),
-            enc_key <- init_zeroed(),
-            att_challenge <- init_zeroed(),
+            dec_key <- zeroed(),
+            enc_key <- zeroed(),
+            att_challenge <- zeroed(),
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: Self::rand_msg_ctr(rand),
@@ -359,9 +359,9 @@ impl Session {
     /// Returns the range of the decoded packet payload
     pub(crate) fn decode_remaining<C: Crypto>(
         &self,
+        crypto: C,
         rx_header: &mut PacketHdr,
         mut pb: ParseBuf,
-        crypto: C,
     ) -> Result<(usize, usize), Error> {
         rx_header.decode_remaining(
             crypto,
@@ -377,9 +377,9 @@ impl Session {
 
     pub(crate) fn encode<C: Crypto>(
         &self,
+        crypto: C,
         tx: &PacketHdr,
         wb: &mut WriteBuf,
-        crypto: C,
     ) -> Result<(), Error> {
         tx.encode(crypto, self.get_enc_key(), self.local_nodeid, wb)
     }
@@ -507,8 +507,8 @@ impl<'a> ReservedSession<'a> {
     }
 
     pub async fn reserve<C: Crypto>(
-        matter: &'a Matter<'a>,
         crypto: C,
+        matter: &'a Matter<'a>,
     ) -> Result<ReservedSession<'a>, Error> {
         let session = Self::reserve_now(matter);
 

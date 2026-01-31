@@ -23,12 +23,12 @@ use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{Crypto, Digest, FabricSecretKey, Hash, Kdf};
+use crate::crypto::{CanonAeadKey, Crypto, Digest, FabricSecretKey, Hash, Kdf};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
-use crate::utils::init::{init, init_zeroed, Init, InitMaybeUninit, IntoFallibleInit};
+use crate::utils::init::{init, zeroed, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::MatterMdnsService;
 
@@ -63,7 +63,7 @@ pub struct Fabric {
     icac: Vec<u8, { MAX_CERT_TLV_LEN }>,
     /// Node Operational Certificate
     noc: Vec<u8, { MAX_CERT_TLV_LEN }>,
-    /// Intermediate Public Key
+    /// Identity Protection Key
     ipk: KeySet,
     /// Fabric label; unique accross all fabrics on the device
     label: String<32>,
@@ -87,7 +87,7 @@ impl Fabric {
             fabric_id: 0,
             vendor_id: 0,
             compressed_fabric_id: 0,
-            secret_key <- init_zeroed(),
+            secret_key <- zeroed(),
             root_ca <- Vec::init(),
             icac <- Vec::init(),
             noc <- Vec::init(),
@@ -102,13 +102,14 @@ impl Fabric {
     /// This method is supposed to be called right after `Fabric::init` or
     /// when the NOC of the fabric needs to be updated.
     #[allow(clippy::too_many_arguments)]
-    fn update(
+    fn update<C: Crypto>(
         &mut self,
-        compressed_fabric_id: u64,
+        crypto: C,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: Option<KeySet>,
+        secret_key: &FabricSecretKey,
+        epoch_key: Option<&CanonAeadKey>,
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
         mdns_notif: &mut dyn FnMut(),
@@ -123,18 +124,20 @@ impl Fabric {
             .extend_from_slice(noc)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
 
-        let noc_p = CertRef::new(TLVElement::new(noc));
+        let noc_cert = CertRef::new(TLVElement::new(noc));
 
-        self.node_id = noc_p.get_node_id()?;
-        self.fabric_id = noc_p.get_fabric_id()?;
-        self.compressed_fabric_id = compressed_fabric_id;
+        self.node_id = noc_cert.get_node_id()?;
+        self.fabric_id = noc_cert.get_fabric_id()?;
+        self.compressed_fabric_id =
+            Self::compute_compressed_fabric_id(&crypto, root_ca, self.fabric_id);
+
+        if let Some(epoch_key) = epoch_key {
+            self.ipk
+                .update(&crypto, epoch_key, &self.compressed_fabric_id)?;
+        }
 
         if let Some(vendor_id) = vendor_id {
             self.vendor_id = vendor_id;
-        }
-
-        if let Some(ipk) = ipk {
-            self.ipk = ipk;
         }
 
         if let Some(case_admin_subject) = case_admin_subject {
@@ -149,6 +152,8 @@ impl Fabric {
                 || ErrorCode::ResourceExhausted.into(),
             )?;
         }
+
+        self.secret_key.copy_from_slice(secret_key);
 
         mdns_notif();
 
@@ -169,9 +174,9 @@ impl Fabric {
     /// Is the fabric matching the privided destination ID
     pub fn is_dest_id<C: Crypto>(
         &self,
+        crypto: C,
         random: &[u8],
         target: &[u8],
-        crypto: C,
     ) -> Result<(), Error> {
         let mut mac = crypto.hmac(self.ipk.op_key())?;
 
@@ -374,9 +379,9 @@ impl Fabric {
 
     /// Compute the compressed fabric ID
     pub(crate) fn compute_compressed_fabric_id<C: Crypto>(
+        crypto: C,
         root_pubkey: &[u8],
         fabric_id: u64,
-        crypto: C,
     ) -> u64 {
         const COMPRESSED_FABRIC_ID_INFO: &[u8; 16] = &[
             0x43, 0x6f, 0x6d, 0x70, 0x72, 0x65, 0x73, 0x73, 0x65, 0x64, 0x46, 0x61, 0x62, 0x72,
@@ -556,27 +561,26 @@ impl FabricMgr {
     ///
     /// If this operation succeeds, the fabric immediately becomes operational.
     #[allow(clippy::too_many_arguments)]
-    pub fn add(
+    pub fn add<C: Crypto>(
         &mut self,
-        compressed_fabric_id: u64,
-        secret_key: FabricSecretKey,
+        crypto: C,
+        secret_key: &FabricSecretKey,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        ipk: KeySet,
+        epoch_key: Option<&CanonAeadKey>,
         vendor_id: u16,
         case_admin_subject: u64,
         mdns_notif: &mut dyn FnMut(),
     ) -> Result<&mut Fabric, Error> {
         self.add_with_post_init(|fabric| {
-            fabric.secret_key = secret_key;
-
             fabric.update(
-                compressed_fabric_id,
+                crypto,
                 root_ca,
                 noc,
                 icac,
-                Some(ipk),
+                secret_key,
+                epoch_key,
                 Some(vendor_id),
                 Some(case_admin_subject),
                 mdns_notif,
@@ -590,11 +594,11 @@ impl FabricMgr {
     /// Note however, that the caller is expected to remove all sessions associated with the fabric, as they would
     /// contain invalid keys after the NOC update.
     #[allow(clippy::too_many_arguments)]
-    pub fn update(
+    pub fn update<C: Crypto>(
         &mut self,
+        crypto: C,
         fab_idx: NonZeroU8,
-        compressed_fabric_id: u64,
-        secret_key: FabricSecretKey,
+        secret_key: &FabricSecretKey,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
@@ -608,17 +612,8 @@ impl FabricMgr {
             return Err(ErrorCode::NotFound.into());
         };
 
-        fabric.secret_key = secret_key;
-
         fabric.update(
-            compressed_fabric_id,
-            root_ca,
-            noc,
-            icac,
-            None,
-            None,
-            None,
-            mdns_notif,
+            crypto, root_ca, noc, icac, secret_key, None, None, None, mdns_notif,
         )?;
 
         self.changed = true;
@@ -666,12 +661,12 @@ impl FabricMgr {
     /// Get a fabric that matches the provided destination ID
     pub fn get_by_dest_id<C: Crypto>(
         &self,
+        crypto: C,
         random: &[u8],
         target: &[u8],
-        crypto: C,
     ) -> Option<&Fabric> {
         self.iter()
-            .find(|fabric| fabric.is_dest_id(random, target, &crypto).is_ok())
+            .find(|fabric| fabric.is_dest_id(&crypto, random, target).is_ok())
     }
 
     /// Get a fabric by its local index

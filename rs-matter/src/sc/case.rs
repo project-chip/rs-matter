@@ -33,7 +33,7 @@ use crate::sc::{
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, Optional, TLVElement, TLVTag, TLVWrite};
 use crate::transport::exchange::Exchange;
 use crate::transport::session::{NocCatIds, ReservedSession, SessionMode};
-use crate::utils::init::{init, init_zeroed, Init, InitMaybeUninit};
+use crate::utils::init::{init, zeroed, Init, InitMaybeUninit};
 use crate::utils::storage::WriteBuf;
 
 /// The CASE Session type used during the CASE handshake
@@ -79,9 +79,9 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
             peer_sessid: 0,
             local_sessid: 0,
             tt_hash <- Optional::init_none(),
-            shared_secret <- init_zeroed(),
-            our_pub_key <- init_zeroed(),
-            peer_pub_key <- init_zeroed(),
+            shared_secret <- zeroed(),
+            our_pub_key <- zeroed(),
+            peer_pub_key <- zeroed(),
             local_fabric_idx: 0,
             crypto,
         })
@@ -460,7 +460,7 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange to handle the CASE protocol on
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter(), self.session.crypto).await?;
+        let session = ReservedSession::reserve(self.session.crypto, exchange.matter()).await?;
 
         self.handle_casesigma1(exchange).await?;
 
@@ -488,7 +488,7 @@ impl<'a, C: Crypto + 'a> Case<'a, C> {
             .matter()
             .fabric_mgr
             .borrow()
-            .get_by_dest_id(r.initiator_random.0, r.dest_id.0, self.session.crypto)
+            .get_by_dest_id(self.session.crypto, r.initiator_random.0, r.dest_id.0)
             .map(|fabric| fabric.fab_idx());
         if local_fabric_idx.is_none() {
             error!("Fabric Index mismatch");

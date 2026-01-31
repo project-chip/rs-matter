@@ -71,11 +71,11 @@ impl NocHandler {
 
     /// Computes the attestation signature using the provided `DeviceAttestation`
     fn compute_attestation_signature<C: Crypto, D: DeviceAttestation>(
+        crypto: C,
         dev_att: D,
         attest_element: &mut WriteBuf,
         attest_challenge: &[u8],
         signature: &mut CanonPkcSignature,
-        crypto: C,
     ) -> Result<(), Error> {
         let dac_key = crypto.secret_key(dev_att.dac_priv_key())?;
 
@@ -288,11 +288,11 @@ impl ClusterHandler for NocHandler {
                 let len = wb.get_tail();
 
                 Self::compute_attestation_signature(
+                    ctx.crypto(),
                     dev_att,
                     &mut wb,
                     sess.get_att_challenge(),
                     signature,
-                    ctx.crypto(),
                 )?;
 
                 Ok(len)
@@ -350,9 +350,9 @@ impl ClusterHandler for NocHandler {
             let mut failsafe = ctx.exchange().matter().failsafe.borrow_mut();
 
             let secret_key = if request.is_for_update_noc()?.unwrap_or(false) {
-                failsafe.update_csr_req(sess.get_session_mode(), ctx.crypto())
+                failsafe.update_csr_req(ctx.crypto(), sess.get_session_mode())
             } else {
-                failsafe.add_csr_req(sess.get_session_mode(), ctx.crypto())
+                failsafe.add_csr_req(ctx.crypto(), sess.get_session_mode())
             }?;
 
             // Switch to raw writer for the response
@@ -383,11 +383,11 @@ impl ClusterHandler for NocHandler {
                 let len = wb.get_tail();
 
                 Self::compute_attestation_signature(
+                    ctx.crypto(),
                     ctx.exchange().matter().dev_att(),
                     &mut wb,
                     sess.get_att_challenge(),
                     signature,
-                    ctx.crypto(),
                 )?;
 
                 Ok(len)
@@ -422,6 +422,7 @@ impl ClusterHandler for NocHandler {
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
             let matter = ctx.exchange().matter();
             let fab_idx = ctx.exchange().matter().failsafe.borrow_mut().add_noc(
+                ctx.crypto(),
                 &ctx.exchange().matter().fabric_mgr,
                 sess.get_session_mode(),
                 request.admin_vendor_id()?,
@@ -431,7 +432,6 @@ impl ClusterHandler for NocHandler {
                 request.case_admin_subject()?,
                 buf,
                 &mut || matter.notify_mdns(),
-                ctx.crypto(),
             )?;
 
             let succeeded = Cell::new(false);
@@ -484,13 +484,13 @@ impl ClusterHandler for NocHandler {
 
         let status = NodeOperationalCertStatusEnum::map(ctx.exchange().with_session(|sess| {
             ctx.exchange().matter().failsafe.borrow_mut().update_noc(
+                ctx.crypto(),
                 &ctx.exchange().matter().fabric_mgr,
                 sess.get_session_mode(),
                 icac,
                 request.noc_value()?.0,
                 buf,
                 &mut || ctx.exchange().matter().notify_mdns(),
-                ctx.crypto(),
             )?;
 
             Ok(())

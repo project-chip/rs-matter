@@ -23,7 +23,7 @@ use crate::fmt::Bytes;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 
 use super::plain_hdr::PlainHdr;
-use super::proto_hdr::{encrypt_in_place, ProtoHdr};
+use super::proto_hdr::{self, ProtoHdr};
 
 #[derive(Debug, Default, Clone)]
 pub struct PacketHdr {
@@ -33,7 +33,7 @@ pub struct PacketHdr {
 
 impl PacketHdr {
     pub const HDR_RESERVE: usize = PlainHdr::MAX_LEN + ProtoHdr::MAX_LEN;
-    pub const TAG_RESERVE: usize = crypto::AEAD_TAG_LEN;
+    pub const TAIL_RESERVE: usize = crypto::AEAD_TAG_LEN;
 
     #[inline(always)]
     pub const fn new() -> Self {
@@ -76,36 +76,25 @@ impl PacketHdr {
         local_nodeid: u64,
         wb: &mut WriteBuf,
     ) -> Result<(), Error> {
-        // About to write the headers in the reserved space
-        let mut wbh = WriteBuf::new(wb.reserve_as_mut_slice());
-        assert!(wbh.get_tail() >= Self::HDR_RESERVE);
+        // TODO: Get rid of the temporary buffers
 
-        // Add the plain header
-        self.plain.encode(&mut wbh)?;
-        // The start of the data to be encrypted
-        // is _after_ the plain header and includes the proto header
-        // and the packet payload
-        let data_start = wbh.get_tail();
+        let mut tmp_buf = [0_u8; ProtoHdr::MAX_LEN];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        self.proto.encode(&mut write_buf)?;
+        wb.prepend(write_buf.as_slice())?;
 
-        // Add the protocol header
-        self.proto.encode(&mut wbh)?;
-
-        // Remove the empty space between the end of the headers and the start of the payload
-        let headers_end = wbh.get_tail();
-        wb.realign(headers_end);
+        let mut tmp_buf = [0_u8; PlainHdr::MAX_LEN];
+        let mut write_buf = WriteBuf::new(&mut tmp_buf);
+        self.plain.encode(&mut write_buf)?;
+        let plain_hdr_bytes = write_buf.as_slice();
 
         trace!("Unencrypted packet: {}", Bytes(wb.as_slice()));
         let ctr = self.plain.ctr;
-        if let Some(key) = enc_key {
-            // So that we do not encrypt the plain header
-            wb.reserve(data_start)?;
-
-            encrypt_in_place(crypto, key, ctr, local_nodeid, wb)?;
-
-            // Get back to the full packet including the plain header
-            wb.realign(data_start);
+        if let Some(enc_key) = enc_key {
+            proto_hdr::encrypt_in_place(crypto, enc_key, ctr, local_nodeid, plain_hdr_bytes, wb)?;
         }
 
+        wb.prepend(plain_hdr_bytes)?;
         trace!("Full encrypted packet: {}", Bytes(wb.as_slice()));
 
         Ok(())

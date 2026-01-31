@@ -18,7 +18,7 @@
 use crate::crypto::{self, CanonAeadKey, Crypto, Kdf};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, ToTLV};
-use crate::utils::init::{init, init_zeroed, Init};
+use crate::utils::init::{init, zeroed, Init};
 
 #[derive(Debug, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -37,32 +37,16 @@ impl KeySet {
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            epoch_key <- init_zeroed(),
-            op_key <- init_zeroed(),
+            epoch_key <- zeroed(),
+            op_key <- zeroed(),
         })
     }
 
-    pub fn new_from<C: Crypto>(
+    pub fn update<C: Crypto>(
+        &mut self,
         crypto: C,
-        epoch_key: &[u8],
+        epoch_key: &CanonAeadKey,
         compressed_fabric_id: &u64,
-    ) -> Result<Self, Error> {
-        let mut ks = KeySet::new();
-        Self::op_key_from_ipk(
-            crypto,
-            epoch_key,
-            &compressed_fabric_id.to_be_bytes(),
-            &mut ks.op_key,
-        )?;
-        ks.epoch_key.copy_from_slice(epoch_key);
-        Ok(ks)
-    }
-
-    fn op_key_from_ipk<C: Crypto>(
-        crypto: C,
-        ipk: &[u8],
-        compressed_id: &[u8],
-        opkey: &mut CanonAeadKey,
     ) -> Result<(), Error> {
         const GRP_KEY_INFO: &[u8] = &[
             0x47, 0x72, 0x6f, 0x75, 0x70, 0x4b, 0x65, 0x79, 0x20, 0x76, 0x31, 0x2e, 0x30,
@@ -70,8 +54,17 @@ impl KeySet {
 
         crypto
             .kdf()?
-            .expand(compressed_id, ipk, GRP_KEY_INFO, opkey)
-            .map_err(|_| ErrorCode::InvalidData.into())
+            .expand(
+                &compressed_fabric_id.to_be_bytes(),
+                epoch_key,
+                GRP_KEY_INFO,
+                &mut self.op_key,
+            )
+            .map_err(|_| ErrorCode::InvalidData)?;
+
+        self.epoch_key.copy_from_slice(epoch_key);
+
+        Ok(())
     }
 
     pub fn op_key(&self) -> &CanonAeadKey {

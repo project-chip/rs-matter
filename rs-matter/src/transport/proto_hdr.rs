@@ -17,11 +17,11 @@
 
 use core::fmt;
 
-use crate::crypto::{as_canon, Aead, AeadAad, Crypto};
+use crate::crypto::{self, Aead, Crypto};
+use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::transport::plain_hdr;
 use crate::utils::storage::{ParseBuf, WriteBuf};
-use crate::{crypto, error::*};
 
 use super::network::Address;
 
@@ -375,18 +375,19 @@ pub fn encrypt_in_place<C: Crypto>(
     key: &crypto::CanonAeadKey,
     send_ctr: u32,
     peer_nodeid: u64,
-    wb: &mut WriteBuf<'_>,
+    aad: &[u8],
+    writebuf: &mut WriteBuf<'_>,
 ) -> Result<(), Error> {
+    // TODO: Get rid of the temporary buffers
+
     // IV
     let mut iv = crypto::AEAD_NONCE_ZEROED;
     get_iv(send_ctr, peer_nodeid, &mut iv)?;
 
     // Cipher Text
     let tag_space = crypto::AEAD_TAG_ZEROED;
-    wb.append(&tag_space)?;
-
-    let (plain, cipher_text) = wb.split_mut();
-    let aad: &AeadAad = as_canon(plain)?;
+    writebuf.append(&tag_space)?;
+    let cipher_text = writebuf.as_mut_slice();
 
     let mut cypher = crypto.aead()?;
 
@@ -409,17 +410,26 @@ fn decrypt_in_place<C: Crypto>(
     peer_nodeid: u64,
     parsebuf: &mut ParseBuf<'_>,
 ) -> Result<(), Error> {
+    // TODO: Get rid of the temporary buffers
+
+    // AAD:
+    //    the unencrypted header of this packet
+    let mut aad = [0; 8];
+    let parsed_slice = parsebuf.parsed_as_slice();
+    if parsed_slice.len() == aad.len() {
+        // The plain_header is variable sized in length, I wonder if the AAD is fixed at 8, or the variable size.
+        // If so, we need to handle it cleanly here.
+        aad.copy_from_slice(parsed_slice);
+    } else {
+        Err(ErrorCode::InvalidAAD)?;
+    }
+
     // IV:
     //   the specific way for creating IV is in get_iv
     let mut iv = crypto::AEAD_NONCE_ZEROED;
     get_iv(recvd_ctr, peer_nodeid, &mut iv)?;
 
-    let (parsed, cipher_text) = parsebuf.split_mut();
-
-    // AAD:
-    //    the unencrypted header of this packet
-    let aad: &AeadAad = as_canon(parsed)?;
-
+    let cipher_text = parsebuf.as_mut_slice();
     //println!("AAD: {:x?}", aad);
     //println!("Cipher Text: {:x?}", cipher_text);
     //println!("IV: {:x?}", iv);
@@ -427,7 +437,7 @@ fn decrypt_in_place<C: Crypto>(
 
     let mut cypher = crypto.aead()?;
 
-    cypher.decrypt_in_place(key, &iv, aad, cipher_text)?;
+    cypher.decrypt_in_place(key, &iv, &aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);
     parsebuf.tail(crypto::AEAD_TAG_LEN)?;
 
@@ -482,18 +492,12 @@ mod tests {
         let mut main_buf: [u8; 52] = [0; 52];
         let mut writebuf = WriteBuf::new(&mut main_buf);
 
-        const PLAIN_HDR: &[u8; 8] = &[0x0, 0x11, 0x0, 0x0, 0x29, 0x0, 0x0, 0x0];
-
-        writebuf.append(PLAIN_HDR).unwrap();
+        const PLAIN_HDR: &[u8] = &[0x0, 0x11, 0x0, 0x0, 0x29, 0x0, 0x0, 0x0];
 
         const PLAIN_TEXT: &[u8] = &[
             5, 8, 0x58, 0x28, 0x01, 0x00, 0x15, 0x36, 0x00, 0x15, 0x37, 0x00, 0x24, 0x00, 0x01,
             0x24, 0x02, 0x06, 0x24, 0x03, 0x01, 0x18, 0x35, 0x01, 0x18, 0x18, 0x18, 0x18,
         ];
-
-        let data_start = writebuf.get_tail();
-        writebuf.reserve(data_start).unwrap();
-
         writebuf.append(PLAIN_TEXT).unwrap();
 
         const KEY: &CanonAeadKey = &[
@@ -501,9 +505,7 @@ mod tests {
             0x1b, 0x33,
         ];
 
-        encrypt_in_place(test_crypto(), KEY, send_ctr, 0, &mut writebuf).unwrap();
-        writebuf.realign(data_start);
-
+        encrypt_in_place(test_crypto(), KEY, send_ctr, 0, PLAIN_HDR, &mut writebuf).unwrap();
         assert_eq!(
             writebuf.as_slice(),
             [
