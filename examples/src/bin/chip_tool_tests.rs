@@ -32,6 +32,7 @@ use futures_lite::StreamExt;
 
 use log::info;
 
+use rs_matter::crypto::test_crypto;
 use rs_matter::dm::clusters::basic_info::{
     BasicInfoConfig, ColorEnum, PairingHintFlags, ProductAppearance, ProductFinishEnum,
 };
@@ -57,7 +58,7 @@ use rs_matter::pairing::qr::QrTextType;
 use rs_matter::pairing::DiscoveryCapabilities;
 use rs_matter::persist::{Psm, NO_NETWORKS};
 use rs_matter::respond::DefaultResponder;
-use rs_matter::sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS;
+use rs_matter::sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS;
 use rs_matter::transport::MATTER_SOCKET_BIND_ADDR;
 use rs_matter::utils::cell::RefCell;
 use rs_matter::utils::init::InitMaybeUninit;
@@ -144,12 +145,16 @@ fn main() -> Result<(), Error> {
         .uninit()
         .init_with(RefCell::init(UnitTestingHandlerData::init()));
 
+    // Create default crypto instance
+    let crypto = test_crypto();
+
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
         buffers,
         subscriptions,
         dm_handler(matter, unit_testing_data, &on_off_handler),
+        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -173,13 +178,13 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&socket, &socket)),
+        core::mem::size_of_val(&matter.run(&socket, &socket, &crypto)),
         core::mem::size_of_val(&mdns::run_mdns(matter))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
-    let mut transport = pin!(matter.run_transport(&socket, &socket));
+    let mut transport = pin!(matter.run_transport(&socket, &socket, &crypto));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());

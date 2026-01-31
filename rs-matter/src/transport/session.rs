@@ -21,12 +21,15 @@ use core::time::Duration;
 
 use cfg_if::cfg_if;
 
+use crate::crypto::{
+    CanonAeadKey, CanonAeadKeyRef, Crypto, CryptoSensitive, CryptoSensitiveRef, AEAD_KEY_ZEROED,
+};
 use crate::error::*;
 use crate::transport::exchange::ExchangeId;
 use crate::transport::mrp::ReliableMessage;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
+use crate::utils::init::{init, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 use crate::Matter;
@@ -43,6 +46,14 @@ pub const MAX_CAT_IDS_PER_NOC: usize = 3;
 pub type NocCatIds = [u32; MAX_CAT_IDS_PER_NOC];
 
 const MATTER_AES128_KEY_SIZE: usize = 16;
+
+pub type SessionKey = CanonAeadKey;
+pub type SessionKeyRef<'a> = CanonAeadKeyRef<'a>;
+
+pub type AttChallenge = CryptoSensitive<MATTER_AES128_KEY_SIZE>;
+pub type AttChallengeRef<'a> = CryptoSensitiveRef<'a, MATTER_AES128_KEY_SIZE>;
+
+pub const SESSION_KEY_ZEROED: SessionKey = AEAD_KEY_ZEROED;
 
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -81,9 +92,9 @@ pub struct Session {
     peer_nodeid: Option<u64>,
     // I find the session initiator/responder role getting confused with exchange initiator/responder
     // So, we might keep this as enc_key and dec_key for now
-    dec_key: [u8; MATTER_AES128_KEY_SIZE],
-    enc_key: [u8; MATTER_AES128_KEY_SIZE],
-    att_challenge: [u8; MATTER_AES128_KEY_SIZE],
+    dec_key: SessionKey,
+    enc_key: SessionKey,
+    att_challenge: CryptoSensitive<MATTER_AES128_KEY_SIZE>,
     local_sess_id: u16,
     peer_sess_id: u16,
     msg_ctr: u32,
@@ -115,9 +126,9 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key: [0; MATTER_AES128_KEY_SIZE],
-            enc_key: [0; MATTER_AES128_KEY_SIZE],
-            att_challenge: [0; MATTER_AES128_KEY_SIZE],
+            dec_key: SessionKey::new(),
+            enc_key: SessionKey::new(),
+            att_challenge: AttChallenge::new(),
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: Self::rand_msg_ctr(rand),
@@ -143,9 +154,9 @@ impl Session {
             peer_addr,
             local_nodeid: 0,
             peer_nodeid,
-            dec_key <- zeroed(),
-            enc_key <- zeroed(),
-            att_challenge <- zeroed(),
+            dec_key <- SessionKey::init(),
+            enc_key <- SessionKey::init(),
+            att_challenge <- AttChallenge::init(),
             peer_sess_id: 0,
             local_sess_id: 0,
             msg_ctr: Self::rand_msg_ctr(rand),
@@ -205,22 +216,27 @@ impl Session {
         ctr
     }
 
-    pub fn get_dec_key(&self) -> Option<&[u8]> {
+    pub fn get_dec_key(&self) -> Option<SessionKeyRef<'_>> {
         match self.mode {
-            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.dec_key),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(self.dec_key.reference()),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_enc_key(&self) -> Option<&[u8]> {
+    pub fn get_enc_key(&self) -> Option<SessionKeyRef<'_>> {
         match self.mode {
-            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(&self.enc_key),
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => Some(self.enc_key.reference()),
             SessionMode::PlainText => None,
         }
     }
 
-    pub fn get_att_challenge(&self) -> &[u8] {
-        &self.att_challenge
+    pub fn get_att_challenge(&self) -> Option<AttChallengeRef<'_>> {
+        match self.mode {
+            SessionMode::Case { .. } | SessionMode::Pase { .. } => {
+                Some(self.att_challenge.reference())
+            }
+            SessionMode::PlainText => None,
+        }
     }
 
     pub(crate) fn is_for_node(&self, fabric_idx: u8, peer_node_id: u64, secure: bool) -> bool {
@@ -240,6 +256,10 @@ impl Session {
             && self.peer_addr == *rx_peer
             && self.is_encrypted() == rx_plain.is_encrypted()
             && !self.reserved
+    }
+
+    pub(crate) fn is_for_tx(&self, session_id: u32) -> bool {
+        self.id == session_id
     }
 
     /// Return `true` if the session is expired.
@@ -352,15 +372,17 @@ impl Session {
     /// instance as it no longer would be necessary.
     ///
     /// Returns the range of the decoded packet payload
-    pub(crate) fn decode_remaining(
+    pub(crate) fn decode_remaining<C: Crypto>(
         &self,
+        crypto: C,
         rx_header: &mut PacketHdr,
         mut pb: ParseBuf,
     ) -> Result<(usize, usize), Error> {
         rx_header.decode_remaining(
-            &mut pb,
-            self.peer_nodeid.unwrap_or_default(),
+            crypto,
             self.get_dec_key(),
+            self.peer_nodeid.unwrap_or_default(),
+            &mut pb,
         )?;
 
         rx_header.proto.adjust_reliability(true, &self.peer_addr);
@@ -368,8 +390,13 @@ impl Session {
         Ok(pb.slice_range())
     }
 
-    pub(crate) fn encode(&self, tx: &PacketHdr, wb: &mut WriteBuf) -> Result<(), Error> {
-        tx.encode(wb, self.local_nodeid, self.get_enc_key())
+    pub(crate) fn encode<C: Crypto>(
+        &self,
+        crypto: C,
+        tx: &PacketHdr,
+        wb: &mut WriteBuf,
+    ) -> Result<(), Error> {
+        tx.encode(crypto, self.get_enc_key(), self.local_nodeid, wb)
     }
 
     fn update_last_used(&mut self, epoch: Epoch) {
@@ -494,13 +521,16 @@ impl<'a> ReservedSession<'a> {
         })
     }
 
-    pub async fn reserve(matter: &'a Matter<'a>) -> Result<ReservedSession<'a>, Error> {
+    pub async fn reserve<C: Crypto>(
+        crypto: C,
+        matter: &'a Matter<'a>,
+    ) -> Result<ReservedSession<'a>, Error> {
         let session = Self::reserve_now(matter);
 
         if let Ok(session) = session {
             Ok(session)
         } else {
-            matter.transport_mgr.evict_some_session().await?;
+            matter.transport_mgr.evict_some_session(crypto).await?;
 
             Self::reserve_now(matter)
         }
@@ -515,9 +545,9 @@ impl<'a> ReservedSession<'a> {
         local_sessid: u16,
         peer_addr: Address,
         mode: SessionMode,
-        dec_key: Option<&[u8]>,
-        enc_key: Option<&[u8]>,
-        att_challenge: Option<&[u8]>,
+        dec_key: Option<SessionKeyRef<'_>>,
+        enc_key: Option<SessionKeyRef<'_>>,
+        att_challenge: Option<AttChallengeRef<'_>>,
     ) -> Result<(), Error> {
         let mut mgr = self.session_mgr.borrow_mut();
         let session = mgr.get(self.id).ok_or(ErrorCode::NoSession)?;
@@ -530,15 +560,15 @@ impl<'a> ReservedSession<'a> {
         session.mode = mode;
 
         if let Some(dec_key) = dec_key {
-            session.dec_key.copy_from_slice(dec_key);
+            session.dec_key.load(dec_key);
         }
 
         if let Some(enc_key) = enc_key {
-            session.enc_key.copy_from_slice(enc_key);
+            session.enc_key.load(enc_key);
         }
 
         if let Some(att_challenge) = att_challenge {
-            session.att_challenge.copy_from_slice(att_challenge);
+            session.att_challenge.load(att_challenge);
         }
 
         Ok(())
@@ -856,6 +886,19 @@ impl SessionMgr {
             .sessions
             .iter_mut()
             .find(|sess| sess.is_for_rx(rx_peer, rx_plain));
+
+        if let Some(session) = session.as_mut() {
+            session.update_last_used(self.epoch);
+        }
+
+        session
+    }
+
+    pub(crate) fn get_for_tx(&mut self, session_id: u32) -> Option<&mut Session> {
+        let mut session = self
+            .sessions
+            .iter_mut()
+            .find(|sess| sess.is_for_tx(session_id));
 
         if let Some(session) = session.as_mut() {
             session.update_last_used(self.epoch);

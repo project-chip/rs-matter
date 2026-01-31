@@ -19,8 +19,12 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
-use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
+use spake2p::{Spake2P, VerifierData, SALT_LEN};
 
+use crate::crypto::{
+    CanonEcPointRef, Crypto, CryptoSensitive, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN,
+    EC_POINT_ZEROED, HMAC_HASH_ZEROED,
+};
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{BasicContext, BasicContextInstance};
@@ -33,7 +37,7 @@ use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, try_init, Init};
 use crate::utils::maybe::Maybe;
 use crate::utils::rand::Rand;
-use crate::{crypto, MatterMdnsService};
+use crate::MatterMdnsService;
 
 use super::SCStatusCodes;
 
@@ -460,22 +464,22 @@ struct Pake1Resp<'a> {
 }
 
 /// The PASE PAKE handler
-pub struct Pake {
-    spake2p: Spake2P,
+pub struct Pase<'a, C: Crypto> {
+    spake2p: Spake2P<'a, C>,
 }
 
-impl Pake {
+impl<'a, C: Crypto> Pase<'a, C> {
     /// Create a new PASE PAKE handler
-    pub const fn new() -> Self {
+    pub const fn new(crypto: &'a C) -> Self {
         // TODO: Can any PBKDF2 calculation be pre-computed here
         Self {
-            spake2p: Spake2P::new(),
+            spake2p: Spake2P::new(crypto),
         }
     }
 
-    pub fn init() -> impl Init<Self> {
+    pub fn init(crypto: &'a C) -> impl Init<Self> {
         init!(Self {
-            spake2p <- Spake2P::init(),
+            spake2p <- Spake2P::init(crypto),
         })
     }
 
@@ -484,7 +488,7 @@ impl Pake {
     /// # Arguments
     /// - `exchange` - The exchange
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter()).await?;
+        let session = ReservedSession::reserve(self.spake2p.crypto, exchange.matter()).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(());
@@ -525,7 +529,7 @@ impl Pake {
 
         let rx = exchange.rx()?;
 
-        let mut salt = [0; MAX_SALT_SIZE_BYTES];
+        let mut salt = [0; SALT_LEN];
         let mut count = 0;
 
         let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
@@ -616,18 +620,20 @@ impl Pake {
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
-        let pA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let mut pB: [u8; 65] = [0; 65];
-        let mut cB: [u8; 32] = [0; 32];
+        let root = get_root_node_struct(exchange.rx()?.payload())?;
+
+        let pA: CanonEcPointRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+        let mut pB = EC_POINT_ZEROED;
+        let mut cB = HMAC_HASH_ZEROED;
 
         let has_comm_window = {
             let matter = exchange.matter();
             let mut pase = matter.pase_mgr.borrow_mut();
-            let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
+            let ctx = BasicContextInstance::new(matter, matter);
 
             if let Some(comm_window) = pase.comm_window(&ctx)? {
                 self.spake2p.start_verifier(&comm_window.verifier)?;
-                self.spake2p.handle_pA(pA, &mut pB, &mut cB, pase.rand)?;
+                self.spake2p.handle_pA(pA, &mut pB, &mut cB)?;
 
                 true
             } else {
@@ -639,8 +645,8 @@ impl Pake {
             exchange
                 .send_with(|_, wb| {
                     let resp = Pake1Resp {
-                        pb: OctetStr::new(&pB),
-                        cb: OctetStr::new(&cB),
+                        pb: OctetStr::new(pB.access()),
+                        cb: OctetStr::new(cB.access()),
                     };
                     resp.to_tlv(&TagType::Anonymous, wb)?;
 
@@ -665,14 +671,23 @@ impl Pake {
     ) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake3)?;
 
-        let cA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
-        let (status, ke) = self.spake2p.handle_cA(cA);
+        let root = get_root_node_struct(exchange.rx()?.payload())?;
 
-        let result = if status == SCStatusCodes::SessionEstablishmentSuccess {
+        let cA: HmacHashRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
+        let result = self.spake2p.handle_cA(cA);
+
+        if result.is_ok() {
             // Get the keys
-            let ke = ke.ok_or(ErrorCode::Invalid)?;
-            let mut session_keys: [u8; 48] = [0; 48];
-            crypto::hkdf_sha256(&[], ke, SPAKE2_SESSION_KEYS_INFO, &mut session_keys)
+            let mut session_keys = CryptoSensitive::<{ AEAD_CANON_KEY_LEN * 3 }>::new(); // TODO: MEDIUM BUFFER
+            self.spake2p
+                .crypto
+                .kdf()?
+                .expand(
+                    &[],
+                    self.spake2p.ke(),
+                    SPAKE2_SESSION_KEYS_INFO,
+                    &mut session_keys,
+                )
                 .map_err(|_x| ErrorCode::InvalidData)?;
 
             // Create a session
@@ -681,6 +696,12 @@ impl Pake {
             let local_sessid: u16 = ((data >> 16) & 0xffff) as u16;
             let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
 
+            let (dec_key, remaining) = session_keys
+                .reference()
+                .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
+            let (enc_key, att_challenge) =
+                remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
+
             session.update(
                 0,
                 0,
@@ -688,15 +709,11 @@ impl Pake {
                 local_sessid,
                 peer_addr,
                 SessionMode::Pase { fab_idx: 0 },
-                Some(&session_keys[0..16]),
-                Some(&session_keys[16..32]),
-                Some(&session_keys[32..48]),
+                Some(dec_key),
+                Some(enc_key),
+                Some(att_challenge),
             )?;
-
-            Ok(())
-        } else {
-            Err(status)
-        };
+        }
 
         let status = match result {
             Ok(()) => {
@@ -776,19 +793,5 @@ impl Pake {
         let mut pase = exchange.matter().pase_mgr.borrow_mut();
 
         pase.session_timeout = None;
-    }
-
-    /// Extract the PAKEPake1 or PAKEPake3 parameters from the given buffer
-    #[allow(non_snake_case)]
-    fn extract_pasepake_1_or_3_params(buf: &[u8]) -> Result<&[u8], Error> {
-        let root = get_root_node_struct(buf)?;
-        let pA = root.structure()?.ctx(1)?.str()?;
-        Ok(pA)
-    }
-}
-
-impl Default for Pake {
-    fn default() -> Self {
-        Self::new()
     }
 }

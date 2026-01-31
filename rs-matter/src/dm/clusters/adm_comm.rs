@@ -19,7 +19,7 @@
 
 use crate::dm::{Cluster, Context, Dataver, InvokeContext, ReadContext};
 use crate::error::Error;
-use crate::sc::pake::{CommWindowOpener, CommWindowType};
+use crate::sc::pase::{CommWindowOpener, CommWindowType};
 use crate::tlv::Nullable;
 
 pub use crate::dm::clusters::decl::administrator_commissioning::*;

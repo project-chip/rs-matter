@@ -19,10 +19,10 @@ use core::num::NonZeroU8;
 use core::time::Duration;
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::KeyPair;
+use crate::crypto::{CanonAeadKeyRef, Crypto, SecretKey};
 use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
-use crate::fabric::FabricMgr;
+use crate::fabric::{FabricMgr, FabricSecretKey, FabricSecretKeyRef, FABRIC_SECRET_KEY_ZEROED};
 use crate::im::IMStatusCode;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
@@ -79,7 +79,7 @@ impl From<IMStatusCode> for IMError {
 
 pub struct FailSafe {
     state: State,
-    key_pair: Option<KeyPair>,
+    secret_key: FabricSecretKey,
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
     epoch: Epoch,
     rand: Rand,
@@ -91,7 +91,7 @@ impl FailSafe {
     pub const fn new(epoch: Epoch, rand: Rand) -> Self {
         Self {
             state: State::Idle,
-            key_pair: None,
+            secret_key: FABRIC_SECRET_KEY_ZEROED,
             root_ca: Vec::new(),
             epoch,
             rand,
@@ -102,7 +102,7 @@ impl FailSafe {
     pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
         init!(Self {
             state: State::Idle,
-            key_pair: None,
+            secret_key <- FabricSecretKey::init(),
             root_ca <- Vec::init(),
             epoch,
             rand,
@@ -216,7 +216,11 @@ impl FailSafe {
         Ok(())
     }
 
-    pub fn add_csr_req(&mut self, session_mode: &SessionMode) -> Result<&KeyPair, Error> {
+    pub fn add_csr_req<C: Crypto>(
+        &mut self,
+        crypto: C,
+        session_mode: &SessionMode,
+    ) -> Result<FabricSecretKeyRef<'_>, Error> {
         self.update_state_timeout();
 
         self.check_state(
@@ -226,14 +230,19 @@ impl FailSafe {
             NocFlags::ADD_CSR_REQ_RECVD,
         )?;
 
-        self.key_pair = Some(KeyPair::new(self.rand)?);
+        let crypto_secret_key = crypto.generate_secret_key()?;
+        crypto_secret_key.write_canon(&mut self.secret_key);
 
         self.add_flags(NocFlags::ADD_CSR_REQ_RECVD);
 
-        Ok(unwrap!(self.key_pair.as_ref()))
+        Ok(self.secret_key.reference())
     }
 
-    pub fn update_csr_req(&mut self, session_mode: &SessionMode) -> Result<&KeyPair, Error> {
+    pub fn update_csr_req<C: Crypto>(
+        &mut self,
+        crypto: C,
+        session_mode: &SessionMode,
+    ) -> Result<FabricSecretKeyRef<'_>, Error> {
         self.update_state_timeout();
 
         // Must be a CASE session
@@ -246,16 +255,19 @@ impl FailSafe {
             NocFlags::UPDATE_CSR_REQ_RECVD,
         )?;
 
-        self.key_pair = Some(KeyPair::new(self.rand)?);
+        crypto
+            .generate_secret_key()?
+            .write_canon(&mut self.secret_key);
 
         self.add_flags(NocFlags::UPDATE_CSR_REQ_RECVD);
 
-        Ok(unwrap!(self.key_pair.as_ref()))
+        Ok(self.secret_key.reference())
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn update_noc(
+    pub fn update_noc<C: Crypto>(
         &mut self,
+        crypto: C,
         fabric_mgr: &RefCell<FabricMgr>,
         session_mode: &SessionMode,
         icac: Option<&[u8]>,
@@ -275,6 +287,7 @@ impl FailSafe {
         )?;
 
         Self::validate_certs(
+            &crypto,
             &CertRef::new(TLVElement::new(noc)),
             icac.map(|icac| CertRef::new(TLVElement::new(icac)))
                 .as_ref(),
@@ -283,8 +296,9 @@ impl FailSafe {
         )?;
 
         fabric_mgr.borrow_mut().update(
+            &crypto,
             fab_idx,
-            unwrap!(self.key_pair.take()),
+            self.secret_key.reference(),
             &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
@@ -297,8 +311,9 @@ impl FailSafe {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn add_noc(
+    pub fn add_noc<C: Crypto>(
         &mut self,
+        crypto: C,
         fabric_mgr: &RefCell<FabricMgr>,
         session_mode: &SessionMode,
         vendor_id: u16,
@@ -319,6 +334,7 @@ impl FailSafe {
         )?;
 
         Self::validate_certs(
+            &crypto,
             &CertRef::new(TLVElement::new(noc)),
             icac.map(|icac| CertRef::new(TLVElement::new(icac)))
                 .as_ref(),
@@ -332,11 +348,12 @@ impl FailSafe {
         let fab_idx = fabric_mgr
             .borrow_mut()
             .add(
-                unwrap!(self.key_pair.take()),
+                &crypto,
+                self.secret_key.reference(),
                 &self.root_ca,
                 noc,
                 icac.unwrap_or(&[]),
-                ipk,
+                Some(CanonAeadKeyRef::try_new(ipk)?),
                 vendor_id,
                 case_admin_subject,
                 mdns_notif,
@@ -373,13 +390,14 @@ impl FailSafe {
         self.breadcrumb = value;
     }
 
-    fn validate_certs(
+    fn validate_certs<C: Crypto>(
+        crypto: C,
         noc: &CertRef,
         icac: Option<&CertRef>,
         root: &CertRef,
         buf: &mut [u8],
     ) -> Result<(), Error> {
-        let mut verifier = noc.verify_chain_start();
+        let mut verifier = noc.verify_chain_start(crypto);
 
         if let Some(icac) = icac {
             // If ICAC is present handle it

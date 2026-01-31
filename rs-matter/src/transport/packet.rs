@@ -17,15 +17,13 @@
 
 use core::fmt;
 
-use crate::crypto::AEAD_MIC_LEN_BYTES;
+use crate::crypto::{self, Crypto};
 use crate::error::Error;
 use crate::fmt::Bytes;
 use crate::utils::storage::{ParseBuf, WriteBuf};
 
-use super::{
-    plain_hdr::{self, PlainHdr},
-    proto_hdr::{self, ProtoHdr},
-};
+use super::plain_hdr::PlainHdr;
+use super::proto_hdr::{self, ProtoHdr};
 
 #[derive(Debug, Default, Clone)]
 pub struct PacketHdr {
@@ -34,8 +32,8 @@ pub struct PacketHdr {
 }
 
 impl PacketHdr {
-    pub const HDR_RESERVE: usize = plain_hdr::max_plain_hdr_len() + proto_hdr::max_proto_hdr_len();
-    pub const TAIL_RESERVE: usize = AEAD_MIC_LEN_BYTES;
+    pub const HDR_RESERVE: usize = PlainHdr::MAX_LEN + ProtoHdr::MAX_LEN;
+    pub const TAIL_RESERVE: usize = crypto::AEAD_TAG_LEN;
 
     #[inline(always)]
     pub const fn new() -> Self {
@@ -60,37 +58,40 @@ impl PacketHdr {
         self.plain.decode(pb)
     }
 
-    pub fn decode_remaining(
+    pub fn decode_remaining<C: Crypto>(
         &mut self,
-        pb: &mut ParseBuf,
+        crypto: C,
+        dec_key: Option<crypto::CanonAeadKeyRef<'_>>,
         peer_nodeid: u64,
-        dec_key: Option<&[u8]>,
+        pb: &mut ParseBuf,
     ) -> Result<(), Error> {
         self.proto
-            .decrypt_and_decode(&self.plain, pb, peer_nodeid, dec_key)
+            .decrypt_and_decode(crypto, dec_key, peer_nodeid, &self.plain, pb)
     }
 
-    pub fn encode(
+    pub fn encode<C: Crypto>(
         &self,
-        wb: &mut WriteBuf,
+        crypto: C,
+        enc_key: Option<crypto::CanonAeadKeyRef<'_>>,
         local_nodeid: u64,
-        enc_key: Option<&[u8]>,
+        wb: &mut WriteBuf,
     ) -> Result<(), Error> {
-        // Generate encrypted header
-        let mut tmp_buf = [0_u8; proto_hdr::max_proto_hdr_len()];
+        // TODO: Get rid of the temporary buffers
+
+        let mut tmp_buf = [0_u8; ProtoHdr::MAX_LEN];
         let mut write_buf = WriteBuf::new(&mut tmp_buf);
         self.proto.encode(&mut write_buf)?;
         wb.prepend(write_buf.as_slice())?;
 
-        let mut tmp_buf = [0_u8; plain_hdr::max_plain_hdr_len()];
+        let mut tmp_buf = [0_u8; PlainHdr::MAX_LEN];
         let mut write_buf = WriteBuf::new(&mut tmp_buf);
         self.plain.encode(&mut write_buf)?;
         let plain_hdr_bytes = write_buf.as_slice();
 
         trace!("Unencrypted packet: {}", Bytes(wb.as_slice()));
         let ctr = self.plain.ctr;
-        if let Some(e) = enc_key {
-            proto_hdr::encrypt_in_place(ctr, local_nodeid, plain_hdr_bytes, wb, e)?;
+        if let Some(enc_key) = enc_key {
+            proto_hdr::encrypt_in_place(crypto, enc_key, ctr, local_nodeid, plain_hdr_bytes, wb)?;
         }
 
         wb.prepend(plain_hdr_bytes)?;

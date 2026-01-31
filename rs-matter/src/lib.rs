@@ -79,8 +79,9 @@ use core::future::Future;
 
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
+use crate::crypto::Crypto;
 use crate::dm::clusters::basic_info::{BasicInfoConfig, BasicInfoSettings};
-use crate::dm::clusters::dev_att::DevAttDataFetcher;
+use crate::dm::clusters::dev_att::DeviceAttestation;
 use crate::error::{Error, ErrorCode};
 use crate::fabric::FabricMgr;
 use crate::failsafe::FailSafe;
@@ -88,7 +89,7 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
-use crate::sc::pake::PaseMgr;
+use crate::sc::pase::PaseMgr;
 use crate::transport::network::{NetworkReceive, NetworkSend};
 use crate::transport::TransportMgr;
 use crate::utils::cell::RefCell;
@@ -258,7 +259,7 @@ pub struct Matter<'a> {
     rand: Rand,
     dev_det: &'a BasicInfoConfig<'a>,
     dev_comm: BasicCommData,
-    dev_att: &'a dyn DevAttDataFetcher,
+    dev_att: &'a dyn DeviceAttestation,
     port: u16,
 }
 
@@ -278,7 +279,7 @@ impl<'a> Matter<'a> {
     pub const fn new_default(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> Self {
         use crate::utils::epoch::sys_epoch;
@@ -304,7 +305,7 @@ impl<'a> Matter<'a> {
     pub const fn new(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         epoch: Epoch,
         rand: Rand,
         port: u16,
@@ -341,7 +342,7 @@ impl<'a> Matter<'a> {
     pub fn init_default(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         port: u16,
     ) -> impl Init<Self> {
         use crate::utils::epoch::sys_epoch;
@@ -366,7 +367,7 @@ impl<'a> Matter<'a> {
     pub fn init(
         dev_det: &'a BasicInfoConfig<'a>,
         dev_comm: BasicCommData,
-        dev_att: &'a dyn DevAttDataFetcher,
+        dev_att: &'a dyn DeviceAttestation,
         epoch: Epoch,
         rand: Rand,
         port: u16,
@@ -398,7 +399,7 @@ impl<'a> Matter<'a> {
         self.dev_det
     }
 
-    pub fn dev_att(&self) -> &dyn DevAttDataFetcher {
+    pub fn dev_att(&self) -> &dyn DeviceAttestation {
         self.dev_att
     }
 
@@ -426,8 +427,8 @@ impl<'a> Matter<'a> {
         self.transport_mgr.tx_buffer()
     }
 
-    /// A utility method to replace the initial Device Attestation Data Fetcher with another one.
-    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DevAttDataFetcher) {
+    /// A utility method to replace the initial Device Attestation with another one.
+    pub fn replace_dev_att(&mut self, dev_att: &'a dyn DeviceAttestation) {
         self.dev_att = dev_att;
     }
 
@@ -574,12 +575,14 @@ impl<'a> Matter<'a> {
     /// # Arguments
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
-    pub async fn run<S, R>(&self, send: S, recv: R) -> Result<(), Error>
+    /// - `crypto`: The crypto backend
+    pub async fn run<S, R, C>(&self, send: S, recv: R, crypto: C) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
+        C: Crypto,
     {
-        self.run_transport(send, recv).await
+        self.run_transport(send, recv, crypto).await
     }
 
     /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -589,16 +592,23 @@ impl<'a> Matter<'a> {
     }
 
     /// Run the transport layer
-    pub fn run_transport<'t, S, R>(
+    ///
+    /// # Arguments
+    /// - `send`: The network send interface
+    /// - `recv`: The network receive interface
+    /// - `crypto`: The crypto backend
+    pub fn run_transport<'t, S, R, C>(
         &'t self,
         send: S,
         recv: R,
+        crypto: C,
     ) -> impl Future<Output = Result<(), Error>> + 't
     where
         S: NetworkSend + 't,
         R: NetworkReceive + 't,
+        C: Crypto + 't,
     {
-        self.transport_mgr.run(send, recv)
+        self.transport_mgr.run(send, recv, crypto)
     }
 
     /// Reset the Matter state by removing all fabrics and resetting basic info settings
