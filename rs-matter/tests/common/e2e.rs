@@ -169,10 +169,10 @@ impl E2eRunner {
             "Default",
             DataModel::new(
                 &self.matter,
+                &crypto,
                 &self.buffers,
                 &self.subscriptions,
                 handler,
-                &crypto,
             ),
             &self.matter,
             0,
@@ -180,14 +180,14 @@ impl E2eRunner {
 
         select3(
             matter_client.transport_mgr.run(
+                &crypto,
                 NetworkSendImpl(send_local),
                 NetworkReceiveImpl(recv_local),
-                &crypto,
             ),
             self.matter.transport_mgr.run(
+                &crypto,
                 NetworkSendImpl(send_remote),
                 NetworkReceiveImpl(recv_remote),
-                &crypto,
             ),
             responder.run::<4>(),
         )

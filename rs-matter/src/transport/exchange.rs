@@ -25,6 +25,7 @@ use crate::acl::Accessor;
 use crate::error::{Error, ErrorCode};
 use crate::im::{self, PROTO_ID_INTERACTION_MODEL};
 use crate::sc::{self, PROTO_ID_SECURE_CHANNEL};
+use crate::transport::TxPayloadState;
 use crate::utils::epoch::Epoch;
 use crate::utils::storage::WriteBuf;
 use crate::Matter;
@@ -638,7 +639,8 @@ impl TxMessage<'_> {
         M: Into<MessageMeta>,
     {
         if payload_start > payload_end
-            || payload_end > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE
+            || payload_end - payload_start
+                > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE
         {
             Err(ErrorCode::Invalid)?;
         }
@@ -655,7 +657,7 @@ impl TxMessage<'_> {
             .get(self.exchange_id.session_id())
             .ok_or(ErrorCode::NoSession)?;
 
-        let (peer, retansmission) = session.pre_send(
+        let (peer, retransmission) = session.pre_send(
             Some(self.exchange_id.exchange_index()),
             &mut self.packet.header,
             // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
@@ -668,10 +670,15 @@ impl TxMessage<'_> {
             self.matter.dev_det().sii,
         )?;
 
-        self.packet.tx_session_id = Some(session.id);
-        self.packet.tx_retransmit = retansmission;
         self.packet.peer = peer;
-        self.packet.buf.truncate(payload_end);
+        self.packet.payload_start = PacketHdr::HDR_RESERVE + payload_start;
+        self.packet
+            .buf
+            .truncate(PacketHdr::HDR_RESERVE + payload_end);
+        self.packet.tx_info.payload_state = TxPayloadState::NotEncoded {
+            session_id: session.id,
+        };
+        self.packet.tx_info.retransmission = retransmission;
         self.packet.clear_on_drop(false);
 
         Ok(())
