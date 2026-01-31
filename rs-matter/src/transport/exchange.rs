@@ -44,7 +44,7 @@ pub const MAX_EXCHANGE_RX_BUF_SIZE: usize = network::MAX_RX_PACKET_SIZE;
 /// Maximum buffer which should be allocated and used by user code that wants to send messages via `Exchange::send`
 // TODO: Revisit with large packets
 pub const MAX_EXCHANGE_TX_BUF_SIZE: usize =
-    network::MAX_TX_PACKET_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAG_RESERVE;
+    network::MAX_TX_PACKET_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE;
 
 /// An exchange identifier, uniquely identifying a session and an exchange within that session for a given Matter stack.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -622,7 +622,7 @@ pub struct TxMessage<'a> {
 impl TxMessage<'_> {
     /// Get a reference to the payload buffer of the TX message being built
     pub fn payload(&mut self) -> &mut [u8] {
-        &mut self.packet.buf[PacketHdr::HDR_RESERVE..MAX_TX_BUF_SIZE - PacketHdr::TAG_RESERVE]
+        &mut self.packet.buf[PacketHdr::HDR_RESERVE..MAX_TX_BUF_SIZE - PacketHdr::TAIL_RESERVE]
     }
 
     /// Complete and send a TX message by providing:
@@ -638,7 +638,7 @@ impl TxMessage<'_> {
         M: Into<MessageMeta>,
     {
         if payload_start > payload_end
-            || payload_end > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAG_RESERVE
+            || payload_end > MAX_TX_BUF_SIZE - PacketHdr::HDR_RESERVE - PacketHdr::TAIL_RESERVE
         {
             Err(ErrorCode::Invalid)?;
         }
@@ -655,7 +655,7 @@ impl TxMessage<'_> {
             .get(self.exchange_id.session_id())
             .ok_or(ErrorCode::NoSession)?;
 
-        let (peer, retansmit) = session.pre_send(
+        let (peer, retansmission) = session.pre_send(
             Some(self.exchange_id.exchange_index()),
             &mut self.packet.header,
             // NOTE: It is not entirely correct to use our own SAI/SII when sending to a peer,
@@ -669,7 +669,7 @@ impl TxMessage<'_> {
         )?;
 
         self.packet.tx_session_id = Some(session.id);
-        self.packet.tx_retransmit = retansmit;
+        self.packet.tx_retransmit = retansmission;
         self.packet.peer = peer;
         self.packet.buf.truncate(payload_end);
         self.packet.clear_on_drop(false);

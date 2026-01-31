@@ -74,7 +74,7 @@ pub mod fileio {
         /// Return an in-place initializer for `Psm`.
         pub fn init() -> impl Init<Self> {
             init!(Self {
-                buf <- crate::utils::init::init_zeroed(),
+                buf <- crate::utils::init::zeroed(),
             })
         }
 

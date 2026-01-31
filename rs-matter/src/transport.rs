@@ -826,7 +826,7 @@ impl TransportMgr {
         if let Some(session) = session_mgr.get_for_rx(&packet.peer, &packet.header.plain) {
             // Found existing session: decode, indicate packet payload slice and process further
 
-            let payload_range = session.decode_remaining(&mut packet.header, pb, &crypto)?;
+            let payload_range = session.decode_remaining(&crypto, &mut packet.header, pb)?;
             set_payload(packet, payload_range);
 
             return session.post_recv(&packet.header, epoch);
@@ -901,7 +901,7 @@ impl TransportMgr {
 
         let mut wb = WriteBuf::new_with(&mut packet.buf, packet.payload_start, payload_end);
         if let Some(session) = session {
-            session.encode(&packet.header, &mut wb, crypto)?;
+            session.encode(crypto, &packet.header, &mut wb)?;
         } else {
             packet.header.encode(crypto, None, 0, &mut wb)?;
         }

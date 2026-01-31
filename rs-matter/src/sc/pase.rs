@@ -487,7 +487,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
     /// # Arguments
     /// - `exchange` - The exchange
     pub async fn handle(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
-        let session = ReservedSession::reserve(exchange.matter(), self.spake2p.crypto).await?;
+        let session = ReservedSession::reserve(self.spake2p.crypto, exchange.matter()).await?;
 
         if !self.update_session_timeout(exchange, true).await? {
             return Ok(());

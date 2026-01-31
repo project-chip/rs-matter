@@ -34,7 +34,7 @@ use crate::crypto::{
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
-use crate::utils::init::{init, init_zeroed, Init, IntoFallibleInit};
+use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 use crate::utils::rand::Rand;
 
 const MATTER_M_BIN: &CanonEcPoint = &[
@@ -123,14 +123,18 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         let mut result_uint = UINT384_ZEROED;
         result.write_canon(&mut result_uint);
 
-        let result_scalar: &CanonEcScalar = unwrap!(as_canon(&result_uint[16..]));
+        let result_scalar: &CanonEcScalar = unwrap!(as_canon(
+            &result_uint[UINT384_CANON_LEN - EC_CANON_SCALAR_LEN..]
+        ));
 
         self.crypto.ec_scalar(result_scalar)
     }
 
     fn expand(&self, scalar: &CanonEcScalar) -> Result<C::UInt384<'a>, Error> {
         let mut operand_u384 = UINT384_ZEROED;
-        let scalar_buf: &mut CanonEcScalar = unwrap!(as_canon_mut(&mut operand_u384[16..]));
+        let scalar_buf: &mut CanonEcScalar = unwrap!(as_canon_mut(
+            &mut operand_u384[UINT384_CANON_LEN - EC_CANON_SCALAR_LEN..]
+        ));
         scalar_buf.copy_from_slice(scalar);
 
         self.crypto.uint384(&operand_u384)
@@ -379,8 +383,8 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
             crypto,
             context: None,
             spake2: None,
-            Ke <- init_zeroed(),
-            cA <- init_zeroed(),
+            Ke <- zeroed(),
+            cA <- zeroed(),
             app_data: 0,
         })
     }
@@ -549,8 +553,8 @@ impl VerifierData {
     fn init_empty() -> impl Init<Self> {
         init!(Self {
             password: None,
-            verifier <- init_zeroed(),
-            salt <- init_zeroed(),
+            verifier <- zeroed(),
+            salt <- zeroed(),
             count: SPAKE2_ITERATION_COUNT,
         })
     }
