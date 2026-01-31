@@ -253,7 +253,7 @@ impl ProtoHdr {
     pub fn decrypt_and_decode<C: Crypto>(
         &mut self,
         crypto: C,
-        dec_key: Option<&crypto::CanonAeadKey>,
+        dec_key: Option<crypto::CanonAeadKeyRef<'_>>,
         peer_nodeid: u64,
         plain_hdr: &plain_hdr::PlainHdr,
         parsebuf: &mut ParseBuf<'_>,
@@ -362,7 +362,7 @@ impl defmt::Format for ProtoHdr {
 
 fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::AeadNonce) -> Result<(), Error> {
     // The IV is the source address (64-bit) followed by the message counter (32-bit)
-    let mut write_buf = WriteBuf::new(iv);
+    let mut write_buf = WriteBuf::new(iv.access_mut());
     // For some reason, this is 0 in the 'bypass' mode
     write_buf.le_u8(0)?;
     write_buf.le_u32(recvd_ctr)?;
@@ -372,7 +372,7 @@ fn get_iv(recvd_ctr: u32, peer_nodeid: u64, iv: &mut crypto::AeadNonce) -> Resul
 
 pub fn encrypt_in_place<C: Crypto>(
     crypto: C,
-    key: &crypto::CanonAeadKey,
+    key: crypto::CanonAeadKeyRef<'_>,
     send_ctr: u32,
     peer_nodeid: u64,
     aad: &[u8],
@@ -386,14 +386,14 @@ pub fn encrypt_in_place<C: Crypto>(
 
     // Cipher Text
     let tag_space = crypto::AEAD_TAG_ZEROED;
-    writebuf.append(&tag_space)?;
+    writebuf.append(tag_space.access())?;
     let cipher_text = writebuf.as_mut_slice();
 
     let mut cypher = crypto.aead()?;
 
     cypher.encrypt_in_place(
         key,
-        &iv,
+        iv.reference(),
         aad,
         cipher_text,
         cipher_text.len() - crypto::AEAD_TAG_LEN,
@@ -405,7 +405,7 @@ pub fn encrypt_in_place<C: Crypto>(
 
 fn decrypt_in_place<C: Crypto>(
     crypto: C,
-    key: &crypto::CanonAeadKey,
+    key: crypto::CanonAeadKeyRef<'_>,
     recvd_ctr: u32,
     peer_nodeid: u64,
     parsebuf: &mut ParseBuf<'_>,
@@ -437,7 +437,7 @@ fn decrypt_in_place<C: Crypto>(
 
     let mut cypher = crypto.aead()?;
 
-    cypher.decrypt_in_place(key, &iv, &aad, cipher_text)?;
+    cypher.decrypt_in_place(key, iv.reference(), &aad, cipher_text)?;
     // println!("Plain Text: {:x?}", cipher_text);
     parsebuf.tail(crypto::AEAD_TAG_LEN)?;
 
@@ -446,7 +446,7 @@ fn decrypt_in_place<C: Crypto>(
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{test_crypto, CanonAeadKey};
+    use crate::crypto::{test_crypto, CanonAeadKeyRef};
 
     use super::*;
 
@@ -463,10 +463,10 @@ mod tests {
         ];
         let mut parsebuf = ParseBuf::new(&mut input_buf);
 
-        const KEY: &CanonAeadKey = &[
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new_from_slice(&[
             0x66, 0x63, 0x31, 0x97, 0x43, 0x9c, 0x17, 0xb9, 0x7e, 0x10, 0xee, 0x47, 0xc8, 0x8,
             0x80, 0x4a,
-        ];
+        ]);
 
         // decrypt_in_place() requires that the plain_text buffer of 8 bytes must be already parsed as AAD, we'll just fake it here
         parsebuf.le_u32().unwrap();
@@ -475,7 +475,7 @@ mod tests {
         decrypt_in_place(test_crypto(), KEY, recvd_ctr, 0, &mut parsebuf).unwrap();
         assert_eq!(
             parsebuf.as_slice(),
-            [
+            &[
                 0x5, 0x8, 0x70, 0x0, 0x1, 0x0, 0x15, 0x28, 0x0, 0x28, 0x1, 0x36, 0x2, 0x15, 0x37,
                 0x0, 0x24, 0x0, 0x0, 0x24, 0x1, 0x30, 0x24, 0x2, 0x2, 0x18, 0x35, 0x1, 0x24, 0x0,
                 0x0, 0x2c, 0x1, 0x2, 0x57, 0x57, 0x24, 0x2, 0x3, 0x25, 0x3, 0xb8, 0xb, 0x18, 0x18,
@@ -500,15 +500,15 @@ mod tests {
         ];
         writebuf.append(PLAIN_TEXT).unwrap();
 
-        const KEY: &CanonAeadKey = &[
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new_from_slice(&[
             0x44, 0xd4, 0x3c, 0x91, 0xd2, 0x27, 0xf3, 0xba, 0x08, 0x24, 0xc5, 0xd8, 0x7c, 0xb8,
             0x1b, 0x33,
-        ];
+        ]);
 
         encrypt_in_place(test_crypto(), KEY, send_ctr, 0, PLAIN_HDR, &mut writebuf).unwrap();
         assert_eq!(
             writebuf.as_slice(),
-            [
+            &[
                 189, 83, 250, 121, 38, 87, 97, 17, 153, 78, 243, 20, 36, 11, 131, 142, 136, 165,
                 227, 107, 204, 129, 193, 153, 42, 131, 138, 254, 22, 190, 76, 244, 116, 45, 156,
                 215, 229, 130, 215, 147, 73, 21, 88, 216

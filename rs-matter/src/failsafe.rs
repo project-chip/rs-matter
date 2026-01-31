@@ -19,17 +19,17 @@ use core::num::NonZeroU8;
 use core::time::Duration;
 
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{as_canon, Crypto, FabricSecretKey, SecretKey, FABRIC_SECRET_KEY_ZEROED};
+use crate::crypto::{CanonAeadKeyRef, Crypto, SecretKey};
 use crate::dm::BasicContext;
 use crate::error::{Error, ErrorCode};
-use crate::fabric::FabricMgr;
+use crate::fabric::{FabricMgr, FabricSecretKey, FabricSecretKeyRef, FABRIC_SECRET_KEY_ZEROED};
 use crate::im::IMStatusCode;
 use crate::tlv::TLVElement;
 use crate::transport::session::SessionMode;
 use crate::utils::bitflags::bitflags;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, zeroed, Init};
+use crate::utils::init::{init, Init};
 use crate::utils::rand::Rand;
 use crate::utils::storage::Vec;
 
@@ -102,7 +102,7 @@ impl FailSafe {
     pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
         init!(Self {
             state: State::Idle,
-            secret_key <- zeroed(),
+            secret_key <- FabricSecretKey::init(),
             root_ca <- Vec::init(),
             epoch,
             rand,
@@ -220,7 +220,7 @@ impl FailSafe {
         &mut self,
         crypto: C,
         session_mode: &SessionMode,
-    ) -> Result<&FabricSecretKey, Error> {
+    ) -> Result<FabricSecretKeyRef<'_>, Error> {
         self.update_state_timeout();
 
         self.check_state(
@@ -235,14 +235,14 @@ impl FailSafe {
 
         self.add_flags(NocFlags::ADD_CSR_REQ_RECVD);
 
-        Ok(&self.secret_key)
+        Ok(self.secret_key.reference())
     }
 
     pub fn update_csr_req<C: Crypto>(
         &mut self,
         crypto: C,
         session_mode: &SessionMode,
-    ) -> Result<&FabricSecretKey, Error> {
+    ) -> Result<FabricSecretKeyRef<'_>, Error> {
         self.update_state_timeout();
 
         // Must be a CASE session
@@ -261,7 +261,7 @@ impl FailSafe {
 
         self.add_flags(NocFlags::UPDATE_CSR_REQ_RECVD);
 
-        Ok(&self.secret_key)
+        Ok(self.secret_key.reference())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -298,7 +298,7 @@ impl FailSafe {
         fabric_mgr.borrow_mut().update(
             &crypto,
             fab_idx,
-            &self.secret_key,
+            self.secret_key.reference(),
             &self.root_ca,
             noc,
             icac.unwrap_or(&[]),
@@ -349,11 +349,11 @@ impl FailSafe {
             .borrow_mut()
             .add(
                 &crypto,
-                &self.secret_key,
+                self.secret_key.reference(),
                 &self.root_ca,
                 noc,
                 icac.unwrap_or(&[]),
-                Some(as_canon(ipk)?),
+                Some(CanonAeadKeyRef::try_new(ipk)?),
                 vendor_id,
                 case_admin_subject,
                 mdns_notif,

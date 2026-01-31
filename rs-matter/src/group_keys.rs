@@ -15,10 +15,10 @@
  *    limitations under the License.
  */
 
-use crate::crypto::{self, CanonAeadKey, Crypto, Kdf};
+use crate::crypto::{self, CanonAeadKey, CanonAeadKeyRef, Crypto, Kdf};
 use crate::error::{Error, ErrorCode};
 use crate::tlv::{FromTLV, ToTLV};
-use crate::utils::init::{init, zeroed, Init};
+use crate::utils::init::{init, Init};
 
 #[derive(Debug, Default, FromTLV, ToTLV)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -37,15 +37,15 @@ impl KeySet {
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            epoch_key <- zeroed(),
-            op_key <- zeroed(),
+            epoch_key <- CanonAeadKey::init(),
+            op_key <- CanonAeadKey::init(),
         })
     }
 
     pub fn update<C: Crypto>(
         &mut self,
         crypto: C,
-        epoch_key: &CanonAeadKey,
+        epoch_key: CanonAeadKeyRef<'_>,
         compressed_fabric_id: &u64,
     ) -> Result<(), Error> {
         const GRP_KEY_INFO: &[u8] = &[
@@ -56,22 +56,22 @@ impl KeySet {
             .kdf()?
             .expand(
                 &compressed_fabric_id.to_be_bytes(),
-                epoch_key,
+                epoch_key.access(),
                 GRP_KEY_INFO,
                 &mut self.op_key,
             )
             .map_err(|_| ErrorCode::InvalidData)?;
 
-        self.epoch_key.copy_from_slice(epoch_key);
+        self.epoch_key.load(epoch_key);
 
         Ok(())
     }
 
-    pub fn op_key(&self) -> &CanonAeadKey {
-        &self.op_key
+    pub fn op_key(&self) -> CanonAeadKeyRef<'_> {
+        self.op_key.reference()
     }
 
-    pub fn epoch_key(&self) -> &CanonAeadKey {
-        &self.epoch_key
+    pub fn epoch_key(&self) -> CanonAeadKeyRef<'_> {
+        self.epoch_key.reference()
     }
 }

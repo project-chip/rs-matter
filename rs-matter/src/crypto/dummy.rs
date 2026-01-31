@@ -24,7 +24,10 @@
 //! pulling in any crypto dependencies. Note that this module might be retired in future
 //! and `rustcrypto` might be used as the default backend.
 
-use crate::{crypto::Crypto, error::Error};
+use crate::{
+    crypto::{Crypto, CryptoSensitive, CryptoSensitiveRef},
+    error::Error,
+};
 
 /// A dummy crypto backend that panics on any operation.
 #[derive(Clone)]
@@ -90,7 +93,10 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn hmac(&self, _key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
+    fn hmac<const KEY_LEN: usize>(
+        &self,
+        _key: CryptoSensitiveRef<'_, KEY_LEN>,
+    ) -> Result<Self::Hmac<'_>, Error> {
         unimplemented!()
     }
 
@@ -106,7 +112,7 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn pub_key(&self, _key: &super::CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(&self, _key: super::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
         unimplemented!()
     }
 
@@ -114,7 +120,10 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn secret_key(&self, _key: &super::CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
+    fn secret_key(
+        &self,
+        _key: super::CanonPkcSecretKeyRef<'_>,
+    ) -> Result<Self::SecretKey<'_>, Error> {
         unimplemented!()
     }
 
@@ -122,11 +131,11 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn uint384(&self, _uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {
+    fn uint384(&self, _uint: super::CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
         unimplemented!()
     }
 
-    fn ec_scalar(&self, _scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(&self, _scalar: super::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
         unimplemented!()
     }
 
@@ -134,7 +143,7 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn ec_point(&self, _point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(&self, _point: super::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
         unimplemented!()
     }
 
@@ -148,19 +157,31 @@ impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for DummyCrypto {
         unimplemented!()
     }
 
-    fn finish(self, _out: &mut [u8; HASH_LEN]) {
+    fn finish(self, _out: &mut CryptoSensitive<HASH_LEN>) {
         unimplemented!()
     }
 }
 
 impl super::Kdf for DummyCrypto {
-    fn expand(self, _salt: &[u8], _ikm: &[u8], _info: &[u8], _key: &mut [u8]) -> Result<(), ()> {
+    fn expand<const N: usize>(
+        self,
+        _salt: &[u8],
+        _ikm: &[u8],
+        _info: &[u8],
+        _key: &mut CryptoSensitive<N>,
+    ) -> Result<(), ()> {
         unimplemented!()
     }
 }
 
 impl super::PbKdf for DummyCrypto {
-    fn derive(self, _password: &[u8], _iter: usize, _salt: &[u8], _out: &mut [u8]) {
+    fn derive<const N: usize>(
+        self,
+        _password: &[u8],
+        _iter: usize,
+        _salt: &[u8],
+        _out: &mut CryptoSensitive<N>,
+    ) {
         unimplemented!()
     }
 }
@@ -168,9 +189,9 @@ impl super::PbKdf for DummyCrypto {
 impl<const KEY_LEN: usize, const NONCE_LEN: usize> super::Aead<KEY_LEN, NONCE_LEN> for DummyCrypto {
     fn encrypt_in_place<'a>(
         &mut self,
-        _key: &[u8; KEY_LEN],
-        _nonce: &[u8; NONCE_LEN],
-        _ad: &[u8],
+        _key: CryptoSensitiveRef<'_, KEY_LEN>,
+        _nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
+        _aad: &[u8],
         _data: &'a mut [u8],
         _data_len: usize,
     ) -> Result<&'a [u8], Error> {
@@ -179,9 +200,9 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize> super::Aead<KEY_LEN, NONCE_LE
 
     fn decrypt_in_place<'a>(
         &mut self,
-        _key: &[u8; KEY_LEN],
-        _nonce: &[u8; NONCE_LEN],
-        _ad: &[u8],
+        _key: CryptoSensitiveRef<'_, KEY_LEN>,
+        _nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
+        _aad: &[u8],
         _data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
         unimplemented!()
@@ -191,11 +212,11 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize> super::Aead<KEY_LEN, NONCE_LE
 impl<const KEY_LEN: usize, const SIGNATURE_LEN: usize> super::PublicKey<'_, KEY_LEN, SIGNATURE_LEN>
     for DummyCrypto
 {
-    fn verify(&self, _msg: &[u8], _signature: &[u8; SIGNATURE_LEN]) -> bool {
+    fn verify(&self, _msg: &[u8], _signature: CryptoSensitiveRef<SIGNATURE_LEN>) -> bool {
         unimplemented!()
     }
 
-    fn write_canon(&self, _key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) {
         unimplemented!()
     }
 }
@@ -216,7 +237,7 @@ impl<const PUB_KEY_LEN: usize, const SIGNATURE_LEN: usize>
         unimplemented!()
     }
 
-    fn sign(&self, _data: &[u8], _signature: &mut [u8; SIGNATURE_LEN]) {
+    fn sign(&self, _data: &[u8], _signature: &mut CryptoSensitive<SIGNATURE_LEN>) {
         unimplemented!()
     }
 }
@@ -228,15 +249,15 @@ impl<
         const SHARED_SECRET_LEN: usize,
     > super::SecretKey<'_, KEY_LEN, PUB_KEY_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN> for DummyCrypto
 {
-    fn write_canon(&self, _key: &mut [u8; KEY_LEN]) {
-        unimplemented!()
-    }
-
     fn derive_shared_secret(
         &self,
         _peer_pub_key: &Self::PublicKey<'_>,
-        _shared_secret: &mut [u8; SHARED_SECRET_LEN],
+        _shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
     ) {
+        unimplemented!()
+    }
+
+    fn write_canon(&self, _key: &mut CryptoSensitive<KEY_LEN>) {
         unimplemented!()
     }
 }
@@ -246,7 +267,7 @@ impl<const LEN: usize> super::UInt<'_, LEN> for DummyCrypto {
         unimplemented!()
     }
 
-    fn write_canon(&self, _buf: &mut [u8; LEN]) {
+    fn write_canon(&self, _buf: &mut CryptoSensitive<LEN>) {
         unimplemented!()
     }
 }
@@ -256,7 +277,7 @@ impl<const LEN: usize> super::EcScalar<'_, LEN> for DummyCrypto {
         unimplemented!()
     }
 
-    fn write_canon(&self, _scalar: &mut [u8; LEN]) {
+    fn write_canon(&self, _scalar: &mut CryptoSensitive<LEN>) {
         unimplemented!()
     }
 }
@@ -278,7 +299,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
         unimplemented!()
     }
 
-    fn write_canon(&self, _point: &mut [u8; LEN]) {
+    fn write_canon(&self, _point: &mut CryptoSensitive<LEN>) {
         unimplemented!()
     }
 }

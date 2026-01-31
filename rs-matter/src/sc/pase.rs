@@ -19,10 +19,11 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
-use spake2p::{Spake2P, VerifierData, MAX_SALT_SIZE_BYTES};
+use spake2p::{Spake2P, VerifierData, SALT_LEN};
 
 use crate::crypto::{
-    as_canon, CanonPkcPublicKey, Crypto, Kdf, AEAD_CANON_KEY_LEN, EC_POINT_ZEROED,
+    CanonEcPointRef, Crypto, CryptoSensitive, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN,
+    EC_POINT_ZEROED, HMAC_HASH_ZEROED,
 };
 use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
@@ -528,7 +529,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
         let rx = exchange.rx()?;
 
-        let mut salt = [0; MAX_SALT_SIZE_BYTES];
+        let mut salt = [0; SALT_LEN];
         let mut count = 0;
 
         let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());
@@ -619,9 +620,11 @@ impl<'a, C: Crypto> Pase<'a, C> {
     async fn handle_pasepake1(&mut self, exchange: &mut Exchange<'_>) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake1)?;
 
-        let pA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
+        let root = get_root_node_struct(exchange.rx()?.payload())?;
+
+        let pA: CanonEcPointRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
         let mut pB = EC_POINT_ZEROED;
-        let mut cB: [u8; 32] = [0; 32];
+        let mut cB = HMAC_HASH_ZEROED;
 
         let has_comm_window = {
             let matter = exchange.matter();
@@ -642,8 +645,8 @@ impl<'a, C: Crypto> Pase<'a, C> {
             exchange
                 .send_with(|_, wb| {
                     let resp = Pake1Resp {
-                        pb: OctetStr::new(&pB),
-                        cb: OctetStr::new(&cB),
+                        pb: OctetStr::new(pB.access()),
+                        cb: OctetStr::new(cB.access()),
                     };
                     resp.to_tlv(&TagType::Anonymous, wb)?;
 
@@ -668,12 +671,14 @@ impl<'a, C: Crypto> Pase<'a, C> {
     ) -> Result<(), Error> {
         check_opcode(exchange, OpCode::PASEPake3)?;
 
-        let cA = Self::extract_pasepake_1_or_3_params(exchange.rx()?.payload())?;
+        let root = get_root_node_struct(exchange.rx()?.payload())?;
+
+        let cA: HmacHashRef<'_> = root.structure()?.ctx(1)?.str()?.try_into()?;
         let result = self.spake2p.handle_cA(cA);
 
         if result.is_ok() {
             // Get the keys
-            let mut session_keys = [0; AEAD_CANON_KEY_LEN * 3];
+            let mut session_keys = CryptoSensitive::<{ AEAD_CANON_KEY_LEN * 3 }>::new(); // TODO: MEDIUM BUFFER
             self.spake2p
                 .crypto
                 .kdf()?
@@ -691,6 +696,12 @@ impl<'a, C: Crypto> Pase<'a, C> {
             let local_sessid: u16 = ((data >> 16) & 0xffff) as u16;
             let peer_addr = exchange.with_session(|sess| Ok(sess.get_peer_addr()))?;
 
+            let (dec_key, remaining) = session_keys
+                .reference()
+                .split::<AEAD_CANON_KEY_LEN, { AEAD_CANON_KEY_LEN * 2 }>();
+            let (enc_key, att_challenge) =
+                remaining.split::<AEAD_CANON_KEY_LEN, AEAD_CANON_KEY_LEN>();
+
             session.update(
                 0,
                 0,
@@ -698,9 +709,9 @@ impl<'a, C: Crypto> Pase<'a, C> {
                 local_sessid,
                 peer_addr,
                 SessionMode::Pase { fab_idx: 0 },
-                Some(&session_keys[0..16]),
-                Some(&session_keys[16..32]),
-                Some(&session_keys[32..48]),
+                Some(dec_key),
+                Some(enc_key),
+                Some(att_challenge),
             )?;
         }
 
@@ -782,12 +793,5 @@ impl<'a, C: Crypto> Pase<'a, C> {
         let mut pase = exchange.matter().pase_mgr.borrow_mut();
 
         pase.session_timeout = None;
-    }
-
-    /// Extract the PASEPake1 or PASEPake3 parameters from the given buffer
-    #[allow(non_snake_case)]
-    fn extract_pasepake_1_or_3_params(data: &[u8]) -> Result<&CanonPkcPublicKey, Error> {
-        let root = get_root_node_struct(data)?;
-        as_canon(root.structure()?.ctx(1)?.str()?)
     }
 }

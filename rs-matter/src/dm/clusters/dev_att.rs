@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-use crate::crypto::{CanonPkcPublicKey, CanonPkcSecretKey};
+use crate::crypto::{CanonPkcPublicKeyRef, CanonPkcSecretKeyRef};
 
 /// The Device Attestation trait
 ///
@@ -35,11 +35,11 @@ pub trait DeviceAttestation {
     // TODO: Remove from here as it is not really used and moreover,
     // we now have `Crypto::singleton_singing_secret_key` from which
     // the public key can be derived.
-    fn dac_pub_key(&self) -> &CanonPkcPublicKey;
+    fn dac_pub_key(&self) -> CanonPkcPublicKeyRef<'_>;
 
     /// Get the Device Attestation Certificate Private Key
     // TODO: Remove from here as we now have `Crypto::singleton_singing_secret_key`
-    fn dac_priv_key(&self) -> &CanonPkcSecretKey;
+    fn dac_priv_key(&self) -> CanonPkcSecretKeyRef<'_>;
 }
 
 impl<T> DeviceAttestation for &T
@@ -58,11 +58,11 @@ where
         (*self).dac()
     }
 
-    fn dac_pub_key(&self) -> &CanonPkcPublicKey {
+    fn dac_pub_key(&self) -> CanonPkcPublicKeyRef<'_> {
         (*self).dac_pub_key()
     }
 
-    fn dac_priv_key(&self) -> &CanonPkcSecretKey {
+    fn dac_priv_key(&self) -> CanonPkcSecretKeyRef<'_> {
         (*self).dac_priv_key()
     }
 }
@@ -80,11 +80,11 @@ impl DeviceAttestation for &dyn DeviceAttestation {
         (*self).dac()
     }
 
-    fn dac_pub_key(&self) -> &CanonPkcPublicKey {
+    fn dac_pub_key(&self) -> CanonPkcPublicKeyRef<'_> {
         (*self).dac_pub_key()
     }
 
-    fn dac_priv_key(&self) -> &CanonPkcSecretKey {
+    fn dac_priv_key(&self) -> CanonPkcSecretKeyRef<'_> {
         (*self).dac_priv_key()
     }
 }

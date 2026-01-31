@@ -22,7 +22,7 @@
 use core::borrow::Borrow;
 use core::ops::Mul;
 
-use crate::crypto::CanonPkcSecretKey;
+use crate::crypto::{CanonPkcSecretKey, CryptoSensitive, CryptoSensitiveRef};
 use crate::error::{Error, ErrorCode};
 
 use openssl::asn1::Asn1Type;
@@ -129,8 +129,11 @@ where
         unsafe { Hash::new(MessageDigest::sha256()) }
     }
 
-    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
-        Ok(HmacSha256::new(key))
+    fn hmac<const KEY_LEN: usize>(
+        &self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+    ) -> Result<Self::Hmac<'_>, Error> {
+        Ok(HmacSha256::new(key.access()))
     }
 
     fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
@@ -145,7 +148,7 @@ where
         Ok(unsafe { Aead::new(openssl::cipher::Cipher::aes_128_ccm()) })
     }
 
-    fn pub_key(&self, key: &super::CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(&self, key: super::CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
         self.ec_point(key)
     }
 
@@ -153,22 +156,25 @@ where
         self.generate_ec_scalar() // TODO: Should be non-zero
     }
 
-    fn secret_key(&self, key: &super::CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
+    fn secret_key(
+        &self,
+        key: super::CanonPkcSecretKeyRef<'_>,
+    ) -> Result<Self::SecretKey<'_>, Error> {
         self.ec_scalar(key)
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        self.ec_scalar(self.singleton_secret_key.borrow())
+        self.ec_scalar(self.singleton_secret_key.borrow().reference())
     }
 
-    fn uint384(&self, uint: &super::CanonUint384) -> Result<Self::UInt384<'_>, Error> {
-        let uint = BigNum::from_slice(uint)?;
+    fn uint384(&self, uint: super::CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
+        let uint = BigNum::from_slice(uint.access())?;
 
         Ok(uint)
     }
 
-    fn ec_scalar(&self, scalar: &super::CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
-        let scalar = BigNum::from_slice(scalar)?;
+    fn ec_scalar(&self, scalar: super::CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
+        let scalar = BigNum::from_slice(scalar.access())?;
 
         Ok(Self::EcScalar {
             group: &self.ec_group,
@@ -190,10 +196,10 @@ where
         })
     }
 
-    fn ec_point(&self, point: &super::CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(&self, point: super::CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
         let mut ctx = BigNumContext::new()?;
 
-        let point = EcPoint::from_bytes(&self.ec_group.group, point, &mut ctx)?;
+        let point = EcPoint::from_bytes(&self.ec_group.group, point.access(), &mut ctx)?;
 
         Ok(Self::EcPoint {
             group: &self.ec_group,
@@ -236,9 +242,9 @@ impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for Hash<HASH_LEN> {
         unwrap!(self.0.update(data));
     }
 
-    fn finish(mut self, hash: &mut [u8; HASH_LEN]) {
+    fn finish(mut self, hash: &mut CryptoSensitive<HASH_LEN>) {
         let digest = unwrap!(self.0.finish());
-        hash.copy_from_slice(digest.as_ref());
+        hash.access_mut().copy_from_slice(digest.as_ref());
     }
 }
 
@@ -258,8 +264,9 @@ impl super::Digest<{ super::HASH_LEN }> for HmacSha256 {
         Mac::update(&mut self.0, data);
     }
 
-    fn finish(self, hash: &mut [u8; super::HASH_LEN]) {
-        hash.copy_from_slice(self.0.finalize().into_bytes().as_slice());
+    fn finish(self, hash: &mut CryptoSensitive<{ super::HASH_LEN }>) {
+        hash.access_mut()
+            .copy_from_slice(self.0.finalize().into_bytes().as_slice());
     }
 }
 
@@ -274,7 +281,13 @@ impl Hkdf {
 }
 
 impl super::Kdf for Hkdf {
-    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()> {
+    fn expand<const N: usize>(
+        self,
+        salt: &[u8],
+        ikm: &[u8],
+        info: &[u8],
+        key: &mut CryptoSensitive<N>,
+    ) -> Result<(), ()> {
         let mut ctx = PkeyCtx::new_id(Id::HKDF).unwrap();
 
         ctx.derive_init().unwrap();
@@ -288,7 +301,7 @@ impl super::Kdf for Hkdf {
 
         ctx.add_hkdf_info(info).unwrap();
 
-        ctx.derive(Some(key)).unwrap();
+        ctx.derive(Some(key.access_mut())).unwrap();
 
         Ok(())
     }
@@ -305,8 +318,14 @@ impl Pbkdf2Hmac {
 }
 
 impl super::PbKdf for Pbkdf2Hmac {
-    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) {
-        openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, self.0, key).unwrap();
+    fn derive<const N: usize>(
+        self,
+        pass: &[u8],
+        iter: usize,
+        salt: &[u8],
+        key: &mut CryptoSensitive<N>,
+    ) {
+        openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, self.0, key.access_mut()).unwrap();
     }
 }
 
@@ -336,8 +355,8 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 {
     fn encrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
@@ -346,7 +365,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
         let mut ctx = CipherCtx::new()?;
 
-        ctx.encrypt_init(Some(self.0), Some(key), Some(nonce))?;
+        ctx.encrypt_init(Some(self.0), Some(key.access()), Some(nonce.access()))?;
         //ctx.set_key_length(KEY_LEN)?;
         //ctx.set_iv_length(NONCE_LEN)?;
         ctx.set_tag_length(TAG_LEN)?;
@@ -364,8 +383,8 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
     fn decrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
@@ -375,7 +394,7 @@ impl<const KEY_LEN: usize, const NONCE_LEN: usize, const TAG_LEN: usize>
 
         let mut ctx = CipherCtx::new()?;
 
-        ctx.decrypt_init(Some(self.0), Some(key), Some(nonce))?;
+        ctx.decrypt_init(Some(self.0), Some(key.access()), Some(nonce.access()))?;
         //ctx.set_key_length(KEY_LEN)?;
         //ctx.set_iv_length(NONCE_LEN)?;
         ctx.set_tag(tag)?;
@@ -403,8 +422,9 @@ impl<'a, const LEN: usize> super::UInt<'a, LEN> for BigNum {
         }
     }
 
-    fn write_canon(&self, uint: &mut [u8; LEN]) {
-        uint.copy_from_slice(self.to_vec_padded(LEN as _).unwrap().as_slice());
+    fn write_canon(&self, uint: &mut CryptoSensitive<LEN>) {
+        uint.access_mut()
+            .copy_from_slice(self.to_vec_padded(LEN as _).unwrap().as_slice());
     }
 }
 
@@ -445,7 +465,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
     }
 
     /// Write the point in canonical form
-    fn write(&self, point: &mut [u8; LEN]) {
+    fn write(&self, point: &mut CryptoSensitive<LEN>) {
         let mut ctx = BigNumContext::new().unwrap();
 
         let tmp = self
@@ -457,7 +477,7 @@ impl<const LEN: usize, const SCALAR_LEN: usize> ECPoint<'_, LEN, SCALAR_LEN> {
             )
             .unwrap();
 
-        point.copy_from_slice(tmp.as_slice());
+        point.access_mut().copy_from_slice(tmp.as_slice());
     }
 }
 
@@ -514,7 +534,7 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
         }
     }
 
-    fn write_canon(&self, point: &mut [u8; LEN]) {
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) {
         self.write(point);
     }
 }
@@ -522,14 +542,14 @@ impl<'a, const LEN: usize, const SCALAR_LEN: usize> super::EcPoint<'a, LEN, SCAL
 impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN: usize>
     super::PublicKey<'a, KEY_LEN, SIGNATURE_LEN> for ECPoint<'a, KEY_LEN, SECRET_KEY_LEN>
 {
-    fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool {
+    fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>) -> bool {
         // First get the SHA256 of the message
         let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
         hasher.update(data).unwrap();
         let digest = hasher.finish().unwrap();
 
-        let r = BigNum::from_slice(&signature[..SIGNATURE_LEN / 2]).unwrap();
-        let s = BigNum::from_slice(&signature[SIGNATURE_LEN / 2..]).unwrap();
+        let r = BigNum::from_slice(&signature.access()[..SIGNATURE_LEN / 2]).unwrap();
+        let s = BigNum::from_slice(&signature.access()[SIGNATURE_LEN / 2..]).unwrap();
         let sig = EcdsaSig::from_private_components(r, s).unwrap();
 
         let ec_key = EcKey::from_public_key(&self.group.group, &self.point).unwrap();
@@ -537,7 +557,7 @@ impl<'a, const KEY_LEN: usize, const SECRET_KEY_LEN: usize, const SIGNATURE_LEN:
         sig.verify(&digest, &ec_key).unwrap()
     }
 
-    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) {
         self.write(key);
     }
 }
@@ -576,8 +596,10 @@ impl<const LEN: usize, const POINT_LEN: usize> ECScalar<'_, LEN, POINT_LEN> {
     }
 
     /// Write the scalar in canonical form
-    fn write(&self, scalar: &mut [u8; LEN]) {
-        scalar.copy_from_slice(self.scalar.to_vec_padded(LEN as _).unwrap().as_slice());
+    fn write(&self, scalar: &mut CryptoSensitive<LEN>) {
+        scalar
+            .access_mut()
+            .copy_from_slice(self.scalar.to_vec_padded(LEN as _).unwrap().as_slice());
     }
 }
 
@@ -591,7 +613,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize> super::EcScalar<'a, LEN>
         }
     }
 
-    fn write_canon(&self, scalar: &mut [u8; LEN]) {
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) {
         self.write(scalar);
     }
 }
@@ -649,7 +671,7 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
         pub_key
     }
 
-    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) {
+    fn sign(&self, data: &[u8], signature: &mut CryptoSensitive<SIGNATURE_LEN>) {
         // First get the SHA256 of the message
         let mut hasher = Hasher::new(MessageDigest::sha256()).unwrap();
         hasher.update(data).unwrap();
@@ -659,8 +681,10 @@ impl<'a, const LEN: usize, const POINT_LEN: usize, const SIGNATURE_LEN: usize>
 
         let sig = EcdsaSig::sign(&digest, &our_ec_key).unwrap();
 
-        signature[..super::PKC_SHARED_SECRET_LEN / 2].copy_from_slice(sig.r().to_vec().as_slice());
-        signature[super::PKC_SHARED_SECRET_LEN / 2..].copy_from_slice(sig.s().to_vec().as_slice());
+        signature.access_mut()[..super::PKC_SHARED_SECRET_LEN / 2]
+            .copy_from_slice(sig.r().to_vec().as_slice());
+        signature.access_mut()[super::PKC_SHARED_SECRET_LEN / 2..]
+            .copy_from_slice(sig.s().to_vec().as_slice());
     }
 }
 
@@ -673,14 +697,10 @@ impl<
     > super::SecretKey<'a, LEN, POINT_LEN, SIGNATURE_LEN, SHARED_SECRET_LEN>
     for ECScalar<'a, LEN, POINT_LEN>
 {
-    fn write_canon(&self, key: &mut [u8; LEN]) {
-        self.write(key);
-    }
-
     fn derive_shared_secret(
         &self,
         peer_pub_key: &Self::PublicKey<'a>,
-        shared_secret: &mut [u8; SHARED_SECRET_LEN],
+        shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
     ) {
         let our_priv_key = PKey::from_ec_key(self.ec_key()).unwrap();
         let peer_pub_key = PKey::from_ec_key(peer_pub_key.ec_key()).unwrap();
@@ -688,7 +708,11 @@ impl<
         let mut deriver = Deriver::new(&our_priv_key).unwrap();
 
         deriver.set_peer(&peer_pub_key).unwrap();
-        deriver.derive(shared_secret).unwrap();
+        deriver.derive(shared_secret.access_mut()).unwrap();
+    }
+
+    fn write_canon(&self, key: &mut CryptoSensitive<LEN>) {
+        self.write(key);
     }
 }
 
