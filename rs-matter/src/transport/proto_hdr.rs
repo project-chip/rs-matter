@@ -463,7 +463,7 @@ mod tests {
         ];
         let mut parsebuf = ParseBuf::new(&mut input_buf);
 
-        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new_from_slice(&[
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[
             0x66, 0x63, 0x31, 0x97, 0x43, 0x9c, 0x17, 0xb9, 0x7e, 0x10, 0xee, 0x47, 0xc8, 0x8,
             0x80, 0x4a,
         ]);
@@ -500,7 +500,7 @@ mod tests {
         ];
         writebuf.append(PLAIN_TEXT).unwrap();
 
-        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new_from_slice(&[
+        const KEY: CanonAeadKeyRef = CanonAeadKeyRef::new(&[
             0x44, 0xd4, 0x3c, 0x91, 0xd2, 0x27, 0xf3, 0xba, 0x08, 0x24, 0xc5, 0xd8, 0x7c, 0xb8,
             0x1b, 0x33,
         ]);

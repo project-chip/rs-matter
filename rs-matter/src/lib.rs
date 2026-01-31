@@ -314,7 +314,7 @@ impl<'a> Matter<'a> {
         Self {
             fabric_mgr: RefCell::new(FabricMgr::new()),
             pase_mgr: RefCell::new(PaseMgr::new(epoch, rand)),
-            failsafe: RefCell::new(FailSafe::new(epoch, rand)),
+            failsafe: RefCell::new(FailSafe::new(epoch)),
             transport_mgr: TransportMgr::new(dev_det, epoch, rand),
             basic_info_settings: RefCell::new(BasicInfoSettings::new()),
             persist_notification: Notification::new(),
@@ -377,7 +377,7 @@ impl<'a> Matter<'a> {
             Self {
                 fabric_mgr <- RefCell::init(FabricMgr::init()),
                 pase_mgr <- RefCell::init(PaseMgr::init(epoch, rand)),
-                failsafe: RefCell::new(FailSafe::new(epoch, rand)),
+                failsafe: RefCell::new(FailSafe::new(epoch)),
                 transport_mgr <- TransportMgr::init(dev_det, epoch, rand),
                 basic_info_settings <- RefCell::init(BasicInfoSettings::init()),
                 persist_notification: Notification::new(),

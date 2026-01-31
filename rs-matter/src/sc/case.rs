@@ -126,7 +126,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         tw.str(&TLVTag::Context(4), resumption_id)?;
         tw.end_container()?;
         //println!("TBE is {:x?}", write_buf.as_borrow_slice());
-        const NONCE: AeadNonceRef = AeadNonceRef::new_from_slice(&[
+        const NONCE: AeadNonceRef = AeadNonceRef::new(&[
             0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x32, 0x4e,
         ]);
         //        let nonce = GenericArray::from_slice(&nonce);
@@ -362,7 +362,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
         self.get_sigma3_key(ipk, &mut sigma3_key)?;
         // println!("Sigma3 Key: {:x?}", sigma3_key);
 
-        const NONCE: AeadNonceRef = AeadNonceRef::new_from_slice(&[
+        const NONCE: AeadNonceRef = AeadNonceRef::new(&[
             0x4e, 0x43, 0x41, 0x53, 0x45, 0x5f, 0x53, 0x69, 0x67, 0x6d, 0x61, 0x33, 0x4e,
         ]);
 

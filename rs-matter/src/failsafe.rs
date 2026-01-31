@@ -30,7 +30,6 @@ use crate::utils::bitflags::bitflags;
 use crate::utils::cell::RefCell;
 use crate::utils::epoch::Epoch;
 use crate::utils::init::{init, Init};
-use crate::utils::rand::Rand;
 use crate::utils::storage::Vec;
 
 bitflags! {
@@ -82,30 +81,27 @@ pub struct FailSafe {
     secret_key: FabricSecretKey,
     root_ca: Vec<u8, { MAX_CERT_TLV_LEN }>,
     epoch: Epoch,
-    rand: Rand,
     breadcrumb: u64,
 }
 
 impl FailSafe {
     #[inline(always)]
-    pub const fn new(epoch: Epoch, rand: Rand) -> Self {
+    pub const fn new(epoch: Epoch) -> Self {
         Self {
             state: State::Idle,
             secret_key: FABRIC_SECRET_KEY_ZEROED,
             root_ca: Vec::new(),
             epoch,
-            rand,
             breadcrumb: 0,
         }
     }
 
-    pub fn init(epoch: Epoch, rand: Rand) -> impl Init<Self> {
+    pub fn init(epoch: Epoch) -> impl Init<Self> {
         init!(Self {
             state: State::Idle,
             secret_key <- FabricSecretKey::init(),
             root_ca <- Vec::init(),
             epoch,
-            rand,
             breadcrumb: 0
         })
     }
