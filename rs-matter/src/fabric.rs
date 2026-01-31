@@ -23,14 +23,26 @@ use heapless::String;
 
 use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
-use crate::crypto::{CanonAeadKey, Crypto, Digest, FabricSecretKey, Hash, Kdf};
+use crate::crypto::{
+    CanonAeadKeyRef, CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey,
+    CanonPkcSecretKeyRef, Crypto, CryptoSensitive, Digest, Hash, Kdf, PKC_PUBLIC_KEY_ZEROED,
+    PKC_SECRET_KEY_ZEROED,
+};
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
 use crate::group_keys::KeySet;
 use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, TagType, ToTLV};
-use crate::utils::init::{init, zeroed, Init, InitMaybeUninit, IntoFallibleInit};
+use crate::utils::init::{init, Init, InitMaybeUninit, IntoFallibleInit};
 use crate::utils::storage::{Vec, WriteBuf};
 use crate::MatterMdnsService;
+
+pub type FabricSecretKey = CanonPkcSecretKey;
+pub type FabricSecretKeyRef<'a> = CanonPkcSecretKeyRef<'a>;
+pub const FABRIC_SECRET_KEY_ZEROED: FabricSecretKey = PKC_SECRET_KEY_ZEROED;
+
+pub type FabricPublicKey = CanonPkcPublicKey;
+pub type FabricPublicKeyRef<'a> = CanonPkcPublicKeyRef<'a>;
+pub const FABRIC_PUBLIC_KEY_ZEROED: FabricPublicKey = PKC_PUBLIC_KEY_ZEROED;
 
 const COMPRESSED_FABRIC_ID_LEN: usize = 8;
 
@@ -87,7 +99,7 @@ impl Fabric {
             fabric_id: 0,
             vendor_id: 0,
             compressed_fabric_id: 0,
-            secret_key <- zeroed(),
+            secret_key <- FabricSecretKey::init(),
             root_ca <- Vec::init(),
             icac <- Vec::init(),
             noc <- Vec::init(),
@@ -108,8 +120,8 @@ impl Fabric {
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        secret_key: &FabricSecretKey,
-        epoch_key: Option<&CanonAeadKey>,
+        secret_key: FabricSecretKeyRef<'_>,
+        epoch_key: Option<CanonAeadKeyRef<'_>>,
         vendor_id: Option<u16>,
         case_admin_subject: Option<u64>,
         mdns_notif: &mut dyn FnMut(),
@@ -153,7 +165,7 @@ impl Fabric {
             )?;
         }
 
-        self.secret_key.copy_from_slice(secret_key);
+        self.secret_key.load(secret_key);
 
         mdns_notif();
 
@@ -187,9 +199,9 @@ impl Fabric {
         mac.update(&self.node_id.to_le_bytes());
 
         let mut id = MaybeUninit::<Hash>::uninit(); // TODO MEDIUM BUFFER
-        let id = id.init_zeroed();
+        let id = id.init_with(Hash::init());
         mac.finish(id);
-        if id.as_slice() == target {
+        if id.access() == target {
             Ok(())
         } else {
             Err(ErrorCode::NotFound.into())
@@ -197,8 +209,8 @@ impl Fabric {
     }
 
     /// Return the secret key of the fabric
-    pub fn secret_key(&self) -> &FabricSecretKey {
-        &self.secret_key
+    pub fn secret_key(&self) -> FabricSecretKeyRef<'_> {
+        self.secret_key.reference()
     }
 
     /// Return the fabric's node ID
@@ -388,7 +400,7 @@ impl Fabric {
             0x69, 0x63,
         ];
 
-        let mut compressed_fabric_id = [0; COMPRESSED_FABRIC_ID_LEN];
+        let mut compressed_fabric_id = CryptoSensitive::<{ COMPRESSED_FABRIC_ID_LEN }>::new();
         unwrap!(crypto.kdf()).expand(
             &fabric_id.to_be_bytes(),
             &root_pubkey[1..],
@@ -396,7 +408,7 @@ impl Fabric {
             &mut compressed_fabric_id,
         );
 
-        u64::from_be_bytes(compressed_fabric_id)
+        u64::from_be_bytes(*compressed_fabric_id.access())
     }
 }
 
@@ -564,11 +576,11 @@ impl FabricMgr {
     pub fn add<C: Crypto>(
         &mut self,
         crypto: C,
-        secret_key: &FabricSecretKey,
+        secret_key: FabricSecretKeyRef<'_>,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],
-        epoch_key: Option<&CanonAeadKey>,
+        epoch_key: Option<CanonAeadKeyRef<'_>>,
         vendor_id: u16,
         case_admin_subject: u64,
         mdns_notif: &mut dyn FnMut(),
@@ -598,7 +610,7 @@ impl FabricMgr {
         &mut self,
         crypto: C,
         fab_idx: NonZeroU8,
-        secret_key: &FabricSecretKey,
+        secret_key: FabricSecretKeyRef<'_>,
         root_ca: &[u8],
         noc: &[u8],
         icac: &[u8],

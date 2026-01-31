@@ -20,7 +20,7 @@ use core::fmt::{self, Write};
 use num::FromPrimitive;
 use num_derive::FromPrimitive;
 
-use crate::crypto::{as_canon, Crypto, PublicKey};
+use crate::crypto::{Crypto, PublicKey};
 use crate::error::{Error, ErrorCode};
 use crate::fmt::Bytes;
 use crate::tlv::{FromTLV, Octets, TLVArray, TLVElement, TLVList, ToTLV};
@@ -779,8 +779,8 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
 
             let result = self
                 .crypto
-                .pub_key(as_canon(parent.pubkey()?)?)?
-                .verify(asn1, as_canon(self.cert.signature()?)?);
+                .pub_key(parent.pubkey()?.try_into()?)?
+                .verify(asn1, self.cert.signature()?.try_into()?);
 
             if !result {
                 error!(

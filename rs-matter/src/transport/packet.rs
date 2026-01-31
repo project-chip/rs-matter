@@ -61,7 +61,7 @@ impl PacketHdr {
     pub fn decode_remaining<C: Crypto>(
         &mut self,
         crypto: C,
-        dec_key: Option<&crypto::CanonAeadKey>,
+        dec_key: Option<crypto::CanonAeadKeyRef<'_>>,
         peer_nodeid: u64,
         pb: &mut ParseBuf,
     ) -> Result<(), Error> {
@@ -72,7 +72,7 @@ impl PacketHdr {
     pub fn encode<C: Crypto>(
         &self,
         crypto: C,
-        enc_key: Option<&crypto::CanonAeadKey>,
+        enc_key: Option<crypto::CanonAeadKeyRef<'_>>,
         local_nodeid: u64,
         wb: &mut WriteBuf,
     ) -> Result<(), Error> {

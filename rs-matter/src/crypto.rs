@@ -17,9 +17,13 @@
 
 //! Cryptographic abstractions and backend.
 
+use core::fmt::Debug;
+
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 use crate::error::{Error, ErrorCode};
+use crate::tlv::{FromTLV, TLVElement, TLVTag, TLVWrite, ToTLV, TLV};
+use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
 
 pub mod dummy;
 #[cfg(feature = "mbedtls")]
@@ -102,68 +106,312 @@ pub const AEAD_NONCE_LEN: usize = 13;
 /// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 16-byte tag.
 pub const AEAD_TAG_LEN: usize = 16;
 
+#[derive(Clone)]
+pub struct CryptoSensitive<const N: usize> {
+    data: [u8; N],
+}
+
+impl<const N: usize> CryptoSensitive<N> {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self { data: [0u8; N] }
+    }
+
+    #[inline(always)]
+    pub fn init() -> impl Init<Self> {
+        init!(Self {
+            data <- zeroed(),
+        })
+    }
+
+    pub const fn reference(&self) -> CryptoSensitiveRef<'_, N> {
+        CryptoSensitiveRef::new(&self.data)
+    }
+
+    pub fn load(&mut self, other: CryptoSensitiveRef<'_, N>) {
+        self.load_from_array(other.access());
+    }
+
+    pub fn load_from_array(&mut self, data: &[u8; N]) {
+        self.data.copy_from_slice(data);
+    }
+
+    pub fn try_load_from_slice(&mut self, data: &[u8]) -> Result<(), Error> {
+        if data.len() != N {
+            return Err(ErrorCode::InvalidData.into());
+        }
+
+        self.data.copy_from_slice(data);
+
+        Ok(())
+    }
+
+    pub fn access(&self) -> &[u8; N] {
+        &self.data
+    }
+
+    pub fn access_mut(&mut self) -> &mut [u8; N] {
+        &mut self.data
+    }
+}
+
+impl<const N: usize> Drop for CryptoSensitive<N> {
+    fn drop(&mut self) {
+        // Zero the material on drop
+        for b in &mut self.data {
+            *b = 0;
+        }
+    }
+}
+
+impl<const N: usize> Default for CryptoSensitive<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> Debug for CryptoSensitive<N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "CryptoSensitive<{}>(**hidden**)", N)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<const N: usize> defmt::Format for CryptoSensitive<N> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "CryptoSensitive<{}>(**hidden**)", N);
+    }
+}
+
+impl<const N: usize> From<CryptoSensitiveRef<'_, N>> for CryptoSensitive<N> {
+    fn from(other: CryptoSensitiveRef<'_, N>) -> Self {
+        let mut material = CryptoSensitive::new();
+
+        material.load(other);
+
+        material
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for CryptoSensitive<N> {
+    fn from(data: &[u8; N]) -> Self {
+        let mut material = CryptoSensitive::new();
+
+        material.load_from_array(data);
+
+        material
+    }
+}
+
+impl<const N: usize> TryFrom<&[u8]> for CryptoSensitive<N> {
+    type Error = Error;
+
+    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+        let mut material = CryptoSensitive::new();
+
+        material.try_load_from_slice(data)?;
+
+        Ok(material)
+    }
+}
+
+impl<'a, const N: usize> FromTLV<'a> for CryptoSensitive<N> {
+    fn from_tlv(element: &TLVElement<'a>) -> Result<Self, crate::error::Error> {
+        Ok(Self {
+            data: element
+                .str()?
+                .try_into()
+                .map_err(|_| ErrorCode::ConstraintError)?,
+        })
+    }
+
+    fn init_from_tlv(element: TLVElement<'a>) -> impl Init<Self, Error> {
+        Init::chain(Self::init().into_fallible(), move |this| {
+            let data = element.str()?;
+            if data.len() != N {
+                Err(ErrorCode::ConstraintError)?;
+            }
+
+            this.access_mut().copy_from_slice(data);
+
+            Ok(())
+        })
+    }
+}
+
+impl<const N: usize> ToTLV for CryptoSensitive<N> {
+    fn to_tlv<W: TLVWrite>(&self, tag: &TLVTag, mut tw: W) -> Result<(), Error> {
+        tw.str(tag, &self.data)
+    }
+
+    fn tlv_iter(&self, tag: TLVTag) -> impl Iterator<Item = Result<TLV<'_>, Error>> {
+        TLV::str(tag, self.data.as_slice()).into_tlv_iter()
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct CryptoSensitiveRef<'a, const N: usize> {
+    data: &'a [u8; N],
+}
+
+impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
+    #[inline(always)]
+    pub const fn new(material: &'a [u8; N]) -> Self {
+        Self { data: material }
+    }
+
+    #[inline(always)]
+    pub const fn new_from_slice(material: &'a [u8]) -> Self {
+        if material.len() != N {
+            panic!("Invalid length for CryptoSensitiveRef");
+        }
+
+        Self::new(Self::as_array(material).unwrap()) // TODO
+    }
+
+    #[inline(always)]
+    pub fn try_new(material: &'a [u8]) -> Result<Self, Error> {
+        if material.len() != N {
+            Err(ErrorCode::InvalidData)?;
+        }
+
+        Ok(Self::new(Self::as_array(material).unwrap())) // TODO
+    }
+
+    pub fn split<const M1: usize, const M2: usize>(
+        &self,
+    ) -> (CryptoSensitiveRef<'a, M1>, CryptoSensitiveRef<'a, M2>) {
+        let (left, right) = self.data.split_at(M1);
+
+        (
+            CryptoSensitiveRef::new_from_slice(left),
+            CryptoSensitiveRef::new_from_slice(right),
+        )
+    }
+
+    pub fn access(&self) -> &'a [u8; N] {
+        self.data
+    }
+
+    // TODO: `as_array` is not yet const fn in Rust core
+    const fn as_array<const L: usize>(slice: &'a [u8]) -> Option<&'a [u8; L]> {
+        if slice.len() == L {
+            let ptr = slice.as_ptr() as *const [u8; L];
+
+            // SAFETY: The underlying array of a slice can be reinterpreted as an actual array `[T; N]` if `N` is not greater than the slice's length.
+            let me = unsafe { &*ptr };
+            Some(me)
+        } else {
+            None
+        }
+    }
+}
+
+impl<const N: usize> Debug for CryptoSensitiveRef<'_, N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "CryptoSensitiveRef<{}>(**hidden**)", N)
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl<const N: usize> defmt::Format for CryptoSensitiveRef<'_, N> {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "CryptoSensitiveRef<{}>(**hidden**)", N);
+    }
+}
+
+impl<'a, const N: usize> From<&'a [u8; N]> for CryptoSensitiveRef<'a, N> {
+    fn from(data: &'a [u8; N]) -> Self {
+        Self::new(data)
+    }
+}
+
+impl<'a, const N: usize> TryFrom<&'a [u8]> for CryptoSensitiveRef<'a, N> {
+    type Error = Error;
+
+    fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
+        Self::try_new(data)
+    }
+}
+
 /// Canonical representation of a hash value.
 ///
 /// As per the Matter spec, the hasher should be SHA-256.
-pub type Hash = [u8; HASH_LEN];
+pub type Hash = CryptoSensitive<HASH_LEN>;
+
+pub type HashRef<'a> = CryptoSensitiveRef<'a, HASH_LEN>;
 
 /// Zeroed hash value.
-pub const HASH_ZEROED: Hash = [0u8; HASH_LEN];
+pub const HASH_ZEROED: Hash = CryptoSensitive::new();
 
 /// Canonical representation of an HMAC hash value.
 ///
 /// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.
-pub type HmacHash = [u8; HMAC_HASH_LEN];
+pub type HmacHash = CryptoSensitive<HMAC_HASH_LEN>;
+
+pub type HmacHashRef<'a> = CryptoSensitiveRef<'a, HMAC_HASH_LEN>;
 
 /// Zeroed HMAC hash value.
-pub const HMAC_HASH_ZEROED: Hash = [0u8; HMAC_HASH_LEN];
+pub const HMAC_HASH_ZEROED: Hash = CryptoSensitive::new();
 
 /// Canonical representation of a 384-bit unsigned integer (BE format).
-pub type CanonUint384 = [u8; UINT384_CANON_LEN];
+pub type CanonUint384 = CryptoSensitive<UINT384_CANON_LEN>;
+
+pub type CanonUint384Ref<'a> = CryptoSensitiveRef<'a, UINT384_CANON_LEN>;
 
 /// Zeroed 384-bit unsigned integer.
-pub const UINT384_ZEROED: CanonUint384 = [0u8; UINT384_CANON_LEN];
+pub const UINT384_ZEROED: CanonUint384 = CryptoSensitive::new();
 
 /// Canonical representation of an AEAD key.
 ///
 /// As per the Matter spec, the AEAD algorithm used is AES-CCM with 128-bit keys.
-pub type CanonAeadKey = [u8; AEAD_CANON_KEY_LEN];
+pub type CanonAeadKey = CryptoSensitive<AEAD_CANON_KEY_LEN>;
+
+pub type CanonAeadKeyRef<'a> = CryptoSensitiveRef<'a, AEAD_CANON_KEY_LEN>;
 
 /// Zeroed AEAD key.
-pub const AEAD_KEY_ZEROED: CanonAeadKey = [0u8; AEAD_CANON_KEY_LEN];
+pub const AEAD_KEY_ZEROED: CanonAeadKey = CryptoSensitive::new();
 
 /// Canonical representation of an AEAD nonce.
 ///
 /// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 13-byte nonce.
-pub type AeadNonce = [u8; AEAD_NONCE_LEN];
+pub type AeadNonce = CryptoSensitive<AEAD_NONCE_LEN>;
+
+pub type AeadNonceRef<'a> = CryptoSensitiveRef<'a, AEAD_NONCE_LEN>;
 
 /// Zeroed AEAD nonce.
-pub const AEAD_NONCE_ZEROED: AeadNonce = [0u8; AEAD_NONCE_LEN];
+pub const AEAD_NONCE_ZEROED: AeadNonce = CryptoSensitive::new();
 
 /// Canonical representation of an AEAD tag.
 ///
 /// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 16-byte tag.
-pub type AeadTag = [u8; AEAD_TAG_LEN];
+pub type AeadTag = CryptoSensitive<AEAD_TAG_LEN>;
+
+pub type AeadTagRef<'a> = CryptoSensitiveRef<'a, AEAD_TAG_LEN>;
 
 /// Zeroed AEAD tag.
-pub const AEAD_TAG_ZEROED: AeadTag = [0u8; AEAD_TAG_LEN];
+pub const AEAD_TAG_ZEROED: AeadTag = CryptoSensitive::new();
 
 /// Canonical representation of an EC scalar.
 ///
 /// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
-pub type CanonEcScalar = [u8; EC_CANON_SCALAR_LEN];
+pub type CanonEcScalar = CryptoSensitive<EC_CANON_SCALAR_LEN>;
+
+pub type CanonEcScalarRef<'a> = CryptoSensitiveRef<'a, EC_CANON_SCALAR_LEN>;
 
 /// Zeroed EC scalar.
-pub const EC_SCALAR_ZEROED: CanonEcScalar = [0u8; EC_CANON_SCALAR_LEN];
+pub const EC_SCALAR_ZEROED: CanonEcScalar = CryptoSensitive::new();
 
 /// Canonical representation of an EC point (one byte prefix and then two affine scalar coordinates),
 /// uncompressed.
 ///
 /// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
-pub type CanonEcPoint = [u8; EC_CANON_POINT_LEN];
+pub type CanonEcPoint = CryptoSensitive<EC_CANON_POINT_LEN>;
+
+pub type CanonEcPointRef<'a> = CryptoSensitiveRef<'a, EC_CANON_POINT_LEN>;
 
 /// Zeroed EC point.
-pub const EC_POINT_ZEROED: CanonEcPoint = [0u8; EC_CANON_POINT_LEN];
+pub const EC_POINT_ZEROED: CanonEcPoint = CryptoSensitive::new();
 
 /// Canonical representation of a Public Key Cryptography secret key.
 ///
@@ -172,6 +420,8 @@ pub const EC_POINT_ZEROED: CanonEcPoint = [0u8; EC_CANON_POINT_LEN];
 ///
 /// Note that this is the same as `CanonEcScalar`.
 pub type CanonPkcSecretKey = CanonEcScalar;
+
+pub type CanonPkcSecretKeyRef<'a> = CanonEcScalarRef<'a>;
 
 /// Zeroed PKC secret key.
 pub const PKC_SECRET_KEY_ZEROED: CanonPkcSecretKey = EC_SCALAR_ZEROED;
@@ -184,6 +434,8 @@ pub const PKC_SECRET_KEY_ZEROED: CanonPkcSecretKey = EC_SCALAR_ZEROED;
 /// Note that this is the same as `CanonEcPoint`.
 pub type CanonPkcPublicKey = CanonEcPoint;
 
+pub type CanonPkcPublicKeyRef<'a> = CanonEcPointRef<'a>;
+
 /// Zeroed PKC public key.
 pub const PKC_PUBLIC_KEY_ZEROED: CanonPkcPublicKey = EC_POINT_ZEROED;
 
@@ -194,10 +446,12 @@ pub const PKC_PUBLIC_KEY_ZEROED: CanonPkcPublicKey = EC_POINT_ZEROED;
 ///
 /// Note that this is `2 * EC_CANON_SCALAR_LEN`, as the signature contains
 /// the (r, s) scalars computed using ECDSA.
-pub type CanonPkcSignature = [u8; PKC_SIGNATURE_LEN];
+pub type CanonPkcSignature = CryptoSensitive<PKC_SIGNATURE_LEN>;
+
+pub type CanonPkcSignatureRef<'a> = CryptoSensitiveRef<'a, PKC_SIGNATURE_LEN>;
 
 /// Zeroed PKC signature.
-pub const EC_SIGNATURE_ZEROED: CanonPkcSignature = [0u8; PKC_SIGNATURE_LEN];
+pub const EC_SIGNATURE_ZEROED: CanonPkcSignature = CryptoSensitive::new();
 
 /// Canonical representation of a Public Key Cryptography shared secret.
 ///
@@ -205,19 +459,12 @@ pub const EC_SIGNATURE_ZEROED: CanonPkcSignature = [0u8; PKC_SIGNATURE_LEN];
 /// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
 ///
 /// The shared secret is the ECDH computed value.
-pub type CanonPkcSharedSecret = [u8; PKC_SHARED_SECRET_LEN];
+pub type CanonPkcSharedSecret = CryptoSensitive<PKC_SHARED_SECRET_LEN>;
+
+pub type CanonPkcSharedSecretRef<'a> = CryptoSensitiveRef<'a, PKC_SHARED_SECRET_LEN>;
 
 /// Zeroed PKC shared secret.
-pub const PKC_SHARED_SECRET_ZEROED: CanonPkcSharedSecret = [0u8; PKC_SHARED_SECRET_LEN];
-
-pub type FabricSecretKey = CanonPkcSecretKey;
-pub const FABRIC_SECRET_KEY_ZEROED: FabricSecretKey = PKC_SECRET_KEY_ZEROED;
-
-pub type FabricPublicKey = CanonPkcPublicKey;
-pub const FABRIC_PUBLIC_KEY_ZEROED: FabricPublicKey = PKC_PUBLIC_KEY_ZEROED;
-
-pub type SessionKey = CanonAeadKey;
-pub const SESSION_KEY_ZEROED: SessionKey = AEAD_KEY_ZEROED;
+pub const PKC_SHARED_SECRET_ZEROED: CanonPkcSharedSecret = CryptoSensitive::new();
 
 /// Trait representing a cryptographic backend.
 ///
@@ -352,7 +599,10 @@ pub trait Crypto {
     fn hash(&self) -> Result<Self::Hash<'_>, Error>;
 
     /// Create a new HMAC hasher instance with the given key.
-    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error>;
+    fn hmac<const KEY_LEN: usize>(
+        &self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+    ) -> Result<Self::Hmac<'_>, Error>;
 
     /// Create a new KDF instance.
     fn kdf(&self) -> Result<Self::Kdf<'_>, Error>;
@@ -364,10 +614,10 @@ pub trait Crypto {
     fn aead(&self) -> Result<Self::Aead<'_>, Error>;
 
     /// Create a public key instance from its canonical representation.
-    fn pub_key(&self, key: &CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error>;
+    fn pub_key(&self, key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error>;
 
     /// Create a secret key instance from its canonical representation.
-    fn secret_key(&self, key: &CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error>;
+    fn secret_key(&self, key: CanonPkcSecretKeyRef<'_>) -> Result<Self::SecretKey<'_>, Error>;
 
     /// Generate a new secret key instance.
     fn generate_secret_key(&self) -> Result<Self::SecretKey<'_>, Error>;
@@ -378,16 +628,16 @@ pub trait Crypto {
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error>;
 
     /// Create a 384-bit unsigned integer instance from its canonical representation.
-    fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error>;
+    fn uint384(&self, uint: CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error>;
 
     /// Create an EC scalar instance from its canonical representation.
-    fn ec_scalar(&self, scalar: &CanonEcScalar) -> Result<Self::EcScalar<'_>, Error>;
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error>;
 
     /// Generate a new random EC scalar instance.
     fn generate_ec_scalar(&self) -> Result<Self::EcScalar<'_>, Error>;
 
     /// Create an EC point instance from its canonical representation.
-    fn ec_point(&self, point: &CanonEcPoint) -> Result<Self::EcPoint<'_>, Error>;
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error>;
 
     /// Get the EC Generator point.
     fn ec_generator_point(&self) -> Result<Self::EcPoint<'_>, Error>;
@@ -456,7 +706,10 @@ where
         (*self).hash()
     }
 
-    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
+    fn hmac<const KEY_LEN: usize>(
+        &self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+    ) -> Result<Self::Hmac<'_>, Error> {
         (*self).hmac(key)
     }
 
@@ -472,7 +725,7 @@ where
         (*self).aead()
     }
 
-    fn pub_key(&self, key: &CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(&self, key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
         (*self).pub_key(key)
     }
 
@@ -480,7 +733,7 @@ where
         (*self).generate_secret_key()
     }
 
-    fn secret_key(&self, key: &CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
+    fn secret_key(&self, key: CanonPkcSecretKeyRef<'_>) -> Result<Self::SecretKey<'_>, Error> {
         (*self).secret_key(key)
     }
 
@@ -488,11 +741,11 @@ where
         (*self).singleton_singing_secret_key()
     }
 
-    fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error> {
+    fn uint384(&self, uint: CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
         (*self).uint384(uint)
     }
 
-    fn ec_scalar(&self, scalar: &CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
         (*self).ec_scalar(scalar)
     }
 
@@ -500,7 +753,7 @@ where
         (*self).generate_ec_scalar()
     }
 
-    fn ec_point(&self, point: &CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
         (*self).ec_point(point)
     }
 
@@ -519,21 +772,33 @@ pub trait Digest<const HASH_LEN: usize>: Clone {
     fn update(&mut self, data: &[u8]);
 
     /// Finish the digest and write the result into the given buffer.
-    fn finish(self, hash: &mut [u8; HASH_LEN]);
+    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>);
 }
 
 /// Trait representing a Key Derivation Function (KDF).
 pub trait Kdf {
     /// Expand the given input keying material (IKM) with the given salt and info
     /// to produce the output keying material (OKM) written into `key`.
-    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()>;
+    fn expand<const N: usize>(
+        self,
+        salt: &[u8],
+        ikm: &[u8],
+        info: &[u8],
+        key: &mut CryptoSensitive<N>,
+    ) -> Result<(), ()>;
 }
 
 /// Trait representing a Password-Based Key Derivation Function (PBKDF).
 pub trait PbKdf {
     /// Derive a key from the given password, salt and iteration count,
     /// writing the result into `key`.
-    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]);
+    fn derive<const N: usize>(
+        self,
+        pass: &[u8],
+        iter: usize,
+        salt: &[u8],
+        key: &mut CryptoSensitive<N>,
+    );
 }
 
 /// Trait representing an Authenticated Encryption with Associated Data (AEAD) algorithm.
@@ -552,8 +817,8 @@ pub trait Aead<const KEY_LEN: usize, const NONCE_LEN: usize> {
     /// - On failure, returns an `Error`.
     fn encrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
@@ -572,8 +837,8 @@ pub trait Aead<const KEY_LEN: usize, const NONCE_LEN: usize> {
     /// - On failure, returns an `Error`.
     fn decrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error>;
@@ -585,8 +850,8 @@ where
 {
     fn encrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
@@ -596,12 +861,12 @@ where
 
     fn decrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
-        ad: &[u8],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
+        aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
-        (*self).decrypt_in_place(key, nonce, ad, data)
+        (*self).decrypt_in_place(key, nonce, aad, data)
     }
 }
 
@@ -639,7 +904,7 @@ pub trait SigningSecretKey<'a, const PUB_KEY_LEN: usize, const SIGNATURE_LEN: us
     /// # Arguments
     /// - `data`: Data to sign.
     /// - `signature`: Buffer to write the signature into.
-    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]);
+    fn sign(&self, data: &[u8], signature: &mut CryptoSensitive<SIGNATURE_LEN>);
 }
 
 /// Trait representing a secret key.
@@ -662,11 +927,11 @@ pub trait SecretKey<
     fn derive_shared_secret(
         &self,
         peer_pub_key: &Self::PublicKey<'a>,
-        shared_secret: &mut [u8; SHARED_SECRET_LEN],
+        shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
     );
 
     /// Write the canonical representation of this secret key into the given buffer.
-    fn write_canon(&self, key: &mut [u8; KEY_LEN]);
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>);
 }
 
 /// Trait representing a public key.
@@ -679,10 +944,10 @@ pub trait PublicKey<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize> {
     ///
     /// # Returns
     /// - `true` if the signature is valid.
-    fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool;
+    fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<SIGNATURE_LEN>) -> bool;
 
     /// Write the canonical representation of this public key into the given buffer.
-    fn write_canon(&self, key: &mut [u8; KEY_LEN]);
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>);
 }
 
 impl<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<'a, KEY_LEN, SIGNATURE_LEN>
@@ -690,11 +955,11 @@ impl<'a, const KEY_LEN: usize, const SIGNATURE_LEN: usize, T> PublicKey<'a, KEY_
 where
     T: PublicKey<'a, KEY_LEN, SIGNATURE_LEN>,
 {
-    fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool {
+    fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<SIGNATURE_LEN>) -> bool {
         (*self).verify(data, signature)
     }
 
-    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) {
         (*self).write_canon(key)
     }
 }
@@ -712,7 +977,7 @@ pub trait UInt<'a, const LEN: usize>: Sized {
     fn rem(&self, other: &Self) -> Option<Self>;
 
     /// Write the canonical representation of this integer into the given buffer.
-    fn write_canon(&self, uint: &mut [u8; LEN]);
+    fn write_canon(&self, uint: &mut CryptoSensitive<LEN>);
 }
 
 /// Trait representing an Elliptic Curve (EC) scalar value.
@@ -727,7 +992,7 @@ pub trait EcScalar<'a, const LEN: usize> {
     fn mul(&self, other: &Self) -> Self;
 
     /// Write the canonical representation of this scalar into the given buffer.
-    fn write_canon(&self, scalar: &mut [u8; LEN]);
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>);
 }
 
 /// Trait representing an Elliptic Curve (EC) point.
@@ -756,31 +1021,7 @@ pub trait EcPoint<'a, const LEN: usize, const SCALAR_LEN: usize> {
     fn add_mul(&self, s1: &Self::Scalar<'a>, p2: &Self, s2: &Self::Scalar<'a>) -> Self;
 
     /// Write the canonical representation of this EC point into the given buffer.
-    fn write_canon(&self, point: &mut [u8; LEN]);
-}
-
-/// Convert a byte slice to a reference to an array of fixed length.
-///
-/// Panics if the slice length does not match the expected length.
-#[inline(always)]
-pub fn as_canon<const LEN: usize>(slice: &[u8]) -> Result<&[u8; LEN], Error> {
-    if slice.len() != LEN {
-        Err(ErrorCode::InvalidData)?;
-    }
-
-    Ok(unwrap!(slice.try_into()))
-}
-
-/// Convert a mutable byte slice to a mutable reference to an array of fixed length.
-///
-/// Panics if the slice length does not match the expected length.
-#[inline(always)]
-pub fn as_canon_mut<const LEN: usize>(slice: &mut [u8]) -> Result<&mut [u8; LEN], Error> {
-    if slice.len() != LEN {
-        Err(ErrorCode::InvalidData)?;
-    }
-
-    Ok(unwrap!(slice.try_into()))
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>);
 }
 
 pub struct NoRng;
@@ -812,7 +1053,9 @@ pub fn test_crypto() -> impl Crypto {
 
 #[cfg(test)]
 mod tests {
-    use crate::crypto::{test_crypto, CanonPkcPublicKey, CanonPkcSignature, Crypto, PublicKey};
+    use crate::crypto::{
+        test_crypto, CanonPkcPublicKeyRef, CanonPkcSignatureRef, Crypto, PublicKey,
+    };
 
     #[test]
     fn test_verify_msg_success() {
@@ -830,13 +1073,13 @@ mod tests {
         assert_eq!(key.verify(MSG1_FAIL, SIGNATURE1), false);
     }
 
-    const PUB_KEY1: &CanonPkcPublicKey = &[
+    const PUB_KEY1: CanonPkcPublicKeyRef = CanonPkcPublicKeyRef::new_from_slice(&[
         0x4, 0x56, 0x19, 0x77, 0x18, 0x3f, 0xd4, 0xff, 0x2b, 0x58, 0x3d, 0xe9, 0x79, 0x34, 0x66,
         0xdf, 0xe9, 0x0, 0xfb, 0x6d, 0xa1, 0xef, 0xe0, 0xcc, 0xdc, 0x77, 0x30, 0xc0, 0x6f, 0xb6,
         0x2d, 0xff, 0xbe, 0x54, 0xa0, 0x95, 0x75, 0xb, 0x8b, 0x7, 0xbc, 0x55, 0xdb, 0x9c, 0xb6,
         0x55, 0x13, 0x8, 0xb8, 0xdf, 0x2, 0xe3, 0x40, 0x6b, 0xae, 0x34, 0xf5, 0xc, 0xba, 0xc9,
         0xf2, 0xbf, 0xf1, 0xe7, 0x50,
-    ];
+    ]);
 
     const MSG1_SUCCESS: &[u8] = &[
         0x30, 0x82, 0x1, 0xa1, 0xa0, 0x3, 0x2, 0x1, 0x2, 0x2, 0x1, 0x1, 0x30, 0xa, 0x6, 0x8, 0x2a,
@@ -898,11 +1141,11 @@ mod tests {
         0x64, 0x81, 0xbc, 0x4f, 0x0, 0x78, 0xa3, 0x30, 0x48, 0xfe, 0x6e, 0x65, 0x86,
     ];
 
-    const SIGNATURE1: &CanonPkcSignature = &[
+    const SIGNATURE1: CanonPkcSignatureRef = CanonPkcSignatureRef::new_from_slice(&[
         0x20, 0x16, 0xd0, 0x13, 0x1e, 0xd0, 0xb3, 0x9d, 0x44, 0x25, 0x16, 0xea, 0x9c, 0xf2, 0x72,
         0x44, 0xd7, 0xb0, 0xf4, 0xae, 0x4a, 0xa4, 0x37, 0x32, 0xcd, 0x6a, 0x79, 0x7a, 0x4c, 0x48,
         0x3, 0x6d, 0xef, 0xe6, 0x26, 0x82, 0x39, 0x28, 0x9, 0x22, 0xc8, 0x9a, 0xde, 0xd5, 0x13,
         0x9f, 0xc5, 0x40, 0x25, 0x85, 0x2c, 0x69, 0xe0, 0xdb, 0x6a, 0x79, 0x5b, 0x21, 0x82, 0x13,
         0xb0, 0x20, 0xb9, 0x69,
-    ];
+    ]);
 }

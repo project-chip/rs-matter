@@ -71,7 +71,8 @@ use x509_cert::request::CertReq;
 use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
-    CanonEcPoint, CanonEcScalar, CanonPkcPublicKey, CanonPkcSecretKey, CanonUint384, Crypto,
+    CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKey,
+    CanonPkcSecretKeyRef, CanonUint384Ref, Crypto, CryptoSensitive, CryptoSensitiveRef,
 };
 use crate::error::Error;
 use crate::utils::cell::RefCell;
@@ -190,10 +191,15 @@ where
         Ok(unsafe { Digest::new(sha2::Sha256::new()) })
     }
 
-    fn hmac(&self, key: &[u8]) -> Result<Self::Hmac<'_>, Error> {
+    fn hmac<const KEY_LEN: usize>(
+        &self,
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+    ) -> Result<Self::Hmac<'_>, Error> {
         pub use hmac::Mac;
 
-        Ok(unsafe { Digest::new(hmac::Hmac::<sha2::Sha256>::new_from_slice(key).unwrap()) })
+        Ok(unsafe {
+            Digest::new(hmac::Hmac::<sha2::Sha256>::new_from_slice(key.access()).unwrap())
+        })
     }
 
     fn kdf(&self) -> Result<Self::Kdf<'_>, Error> {
@@ -208,11 +214,14 @@ where
         Ok(unsafe { AeadCcm::new() })
     }
 
-    fn pub_key(&self, pub_key: &CanonPkcPublicKey) -> Result<Self::PublicKey<'_>, Error> {
+    fn pub_key(&self, pub_key: CanonPkcPublicKeyRef<'_>) -> Result<Self::PublicKey<'_>, Error> {
         Ok(unsafe { ECPublicKey::new(pub_key) })
     }
 
-    fn secret_key(&self, secret_key: &CanonPkcSecretKey) -> Result<Self::SecretKey<'_>, Error> {
+    fn secret_key(
+        &self,
+        secret_key: CanonPkcSecretKeyRef<'_>,
+    ) -> Result<Self::SecretKey<'_>, Error> {
         Ok(unsafe { ECSecretKey::new(secret_key) })
     }
 
@@ -223,14 +232,14 @@ where
     }
 
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error> {
-        Ok(unsafe { ECSecretKey::new(self.singleton_secret_key.borrow()) })
+        Ok(unsafe { ECSecretKey::new(self.singleton_secret_key.borrow().reference()) })
     }
 
-    fn uint384(&self, uint: &CanonUint384) -> Result<Self::UInt384<'_>, Error> {
+    fn uint384(&self, uint: CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
         Ok(unsafe { Uint::new(uint) })
     }
 
-    fn ec_scalar(&self, scalar: &CanonEcScalar) -> Result<Self::EcScalar<'_>, Error> {
+    fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
         Ok(unsafe { ECScalar::new(scalar) })
     }
 
@@ -240,7 +249,7 @@ where
             .lock(|rng| unsafe { ECScalar::new_random(&mut *rng.borrow_mut()) }))
     }
 
-    fn ec_point(&self, point: &CanonEcPoint) -> Result<Self::EcPoint<'_>, Error> {
+    fn ec_point(&self, point: CanonEcPointRef<'_>) -> Result<Self::EcPoint<'_>, Error> {
         Ok(unsafe { ECPoint::new(point) })
     }
 
@@ -275,9 +284,9 @@ where
         digest::Update::update(&mut self.0, data);
     }
 
-    fn finish(self, hash: &mut [u8; HASH_LEN]) {
+    fn finish(self, hash: &mut CryptoSensitive<HASH_LEN>) {
         let output = digest::FixedOutput::finalize_fixed(self.0);
-        hash.copy_from_slice(output.as_slice());
+        hash.access_mut().copy_from_slice(output.as_slice());
     }
 }
 
@@ -286,10 +295,16 @@ where
 pub struct HkdfSha256(());
 
 impl super::Kdf for HkdfSha256 {
-    fn expand(self, salt: &[u8], ikm: &[u8], info: &[u8], key: &mut [u8]) -> Result<(), ()> {
+    fn expand<const N: usize>(
+        self,
+        salt: &[u8],
+        ikm: &[u8],
+        info: &[u8],
+        key: &mut CryptoSensitive<N>,
+    ) -> Result<(), ()> {
         let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm);
 
-        hkdf.expand(info, key).map_err(|_| ())
+        hkdf.expand(info, key.access_mut()).map_err(|_| ())
     }
 }
 
@@ -310,8 +325,19 @@ impl<T> super::PbKdf for Pbkdf2<T>
 where
     T: digest::KeyInit + digest::Update + digest::FixedOutput + Clone + Sync,
 {
-    fn derive(self, pass: &[u8], iter: usize, salt: &[u8], key: &mut [u8]) {
-        unwrap!(pbkdf2::pbkdf2::<T>(pass, salt, iter as u32, key));
+    fn derive<const N: usize>(
+        self,
+        pass: &[u8],
+        iter: usize,
+        salt: &[u8],
+        key: &mut CryptoSensitive<N>,
+    ) {
+        unwrap!(pbkdf2::pbkdf2::<T>(
+            pass,
+            salt,
+            iter as u32,
+            key.access_mut()
+        ));
     }
 }
 
@@ -349,18 +375,18 @@ where
 {
     fn encrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
         data_len: usize,
     ) -> Result<&'a [u8], Error> {
         use ccm::{AeadInPlace, KeyInit};
 
-        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key));
+        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
 
         let mut buffer = SliceBuffer::new(data, data_len);
-        cipher.encrypt_in_place(GenericArray::from_slice(nonce), aad, &mut buffer)?;
+        cipher.encrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)?;
 
         let len = buffer.len();
 
@@ -369,17 +395,17 @@ where
 
     fn decrypt_in_place<'a>(
         &mut self,
-        key: &[u8; KEY_LEN],
-        nonce: &[u8; NONCE_LEN],
+        key: CryptoSensitiveRef<'_, KEY_LEN>,
+        nonce: CryptoSensitiveRef<'_, NONCE_LEN>,
         aad: &[u8],
         data: &'a mut [u8],
     ) -> Result<&'a [u8], Error> {
         use ccm::{AeadInPlace, KeyInit};
 
-        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key));
+        let cipher = Ccm::<C, M, N>::new(GenericArray::from_slice(key.access()));
 
         let mut buffer = SliceBuffer::new(data, data.len());
-        cipher.decrypt_in_place(GenericArray::from_slice(nonce), aad, &mut buffer)?;
+        cipher.decrypt_in_place(GenericArray::from_slice(nonce.access()), aad, &mut buffer)?;
 
         let len = buffer.len();
 
@@ -408,8 +434,8 @@ where
     /// # Safety
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN` and `SIGNATURE_LEN` const generics.
-    unsafe fn new(pub_key: &[u8; KEY_LEN]) -> Self {
-        let encoded_point = EncodedPoint::<C>::from_bytes(pub_key).unwrap();
+    unsafe fn new(pub_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Self {
+        let encoded_point = EncodedPoint::<C>::from_bytes(pub_key.access()).unwrap();
 
         Self(
             PublicKey::<C>::from_encoded_point(&encoded_point)
@@ -428,19 +454,19 @@ where
     <FieldBytesSize<C> as Add>::Output: ArrayLength<u8>,
     SignatureSize<C>: ArrayLength<u8>,
 {
-    fn verify(&self, data: &[u8], signature: &[u8; SIGNATURE_LEN]) -> bool {
+    fn verify(&self, data: &[u8], signature: CryptoSensitiveRef<'_, SIGNATURE_LEN>) -> bool {
         let verifying_key = unwrap!(VerifyingKey::<C>::from_affine(*self.0.as_affine()));
-        let signature = unwrap!(Signature::<C>::from_slice(signature));
+        let signature = unwrap!(Signature::<C>::from_slice(signature.access()));
 
         ecdsa::signature::Verifier::verify(&verifying_key, data, &signature).is_ok()
     }
 
-    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) {
         let point = self.0.as_affine().to_encoded_point(false);
         let slice = point.as_bytes();
 
         assert_eq!(slice.len(), KEY_LEN);
-        key[..slice.len()].copy_from_slice(slice);
+        key.access_mut().copy_from_slice(slice);
     }
 }
 
@@ -479,8 +505,8 @@ where
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `KEY_LEN`, `PUB_KEY_LEN`,
     /// `SIGNATURE_LEN`, and `SHARED_SECRET_LEN` const generics.
-    unsafe fn new(secret_key: &[u8; KEY_LEN]) -> Self {
-        Self(SecretKey::<C>::from_slice(secret_key).unwrap())
+    unsafe fn new(secret_key: CryptoSensitiveRef<'_, KEY_LEN>) -> Self {
+        Self(SecretKey::<C>::from_slice(secret_key.access()).unwrap())
     }
 
     /// Create a new random EC secret key
@@ -542,8 +568,8 @@ where
             "x509 AttrValue creation failed"
         ))]);
 
-        let mut public_key = MaybeUninit::<[u8; PUB_KEY_LEN]>::uninit(); // TODO MEDIUM BUFFER
-        let public_key = public_key.init_zeroed();
+        let mut public_key = MaybeUninit::uninit();
+        let public_key = public_key.init_with(CryptoSensitive::<PUB_KEY_LEN>::init()); // TODO MEDIUM BUFFER
         super::PublicKey::write_canon(&self.pub_key(), public_key);
 
         let info = x509_cert::request::CertReqInfo {
@@ -562,7 +588,7 @@ where
                         "x509 OID creation failed"
                     )),
                 },
-                subject_public_key: BitString::from_bytes(&*public_key)?,
+                subject_public_key: BitString::from_bytes(public_key.access())?,
             },
             attributes: Default::default(),
         };
@@ -595,7 +621,7 @@ where
         ECPublicKey(self.0.public_key())
     }
 
-    fn sign(&self, data: &[u8], signature: &mut [u8; SIGNATURE_LEN]) {
+    fn sign(&self, data: &[u8], signature: &mut CryptoSensitive<SIGNATURE_LEN>) {
         use ecdsa::signature::Signer;
 
         let signing_key = SigningKey::<C>::from(&self.0);
@@ -603,7 +629,7 @@ where
         let sign_bytes = sign.to_bytes();
 
         assert_eq!(sign_bytes.len(), SIGNATURE_LEN);
-        signature[..sign_bytes.len()].copy_from_slice(&sign_bytes);
+        signature.access_mut().copy_from_slice(&sign_bytes);
     }
 }
 
@@ -629,7 +655,7 @@ where
     fn derive_shared_secret(
         &self,
         peer_pub_key: &Self::PublicKey<'_>,
-        shared_secret: &mut [u8; SHARED_SECRET_LEN],
+        shared_secret: &mut CryptoSensitive<SHARED_SECRET_LEN>,
     ) {
         // let encoded_point = EncodedPoint::from_bytes(peer_pub_key)?;
         // let peer_pubkey = PublicKey::from_encoded_point(&encoded_point).unwrap(); // TODO: defmt
@@ -642,15 +668,15 @@ where
         let slice = bytes.as_slice();
 
         assert_eq!(slice.len(), super::PKC_SHARED_SECRET_LEN);
-        shared_secret[..slice.len()].copy_from_slice(slice);
+        shared_secret.access_mut().copy_from_slice(slice);
     }
 
-    fn write_canon(&self, key: &mut [u8; KEY_LEN]) {
+    fn write_canon(&self, key: &mut CryptoSensitive<KEY_LEN>) {
         let bytes = self.0.to_bytes();
         let slice = bytes.as_slice();
 
         assert_eq!(slice.len(), KEY_LEN);
-        key[..slice.len()].copy_from_slice(slice);
+        key.access_mut().copy_from_slice(slice);
     }
 }
 
@@ -667,8 +693,8 @@ impl<const LEN: usize, const LIMBS: usize> Uint<LEN, LIMBS> {
     /// # Safety
     /// This function is unsafe because the caller must ensure that
     /// the `LIMBS` const generic corresponds to the `LEN` const generic.
-    unsafe fn new(uint: &[u8; LEN]) -> Self {
-        Self(crypto_bigint::Uint::from_be_slice(uint))
+    unsafe fn new(uint: CryptoSensitiveRef<'_, LEN>) -> Self {
+        Self(crypto_bigint::Uint::from_be_slice(uint.access()))
     }
 }
 
@@ -678,14 +704,14 @@ impl<const LEN: usize, const LIMBS: usize> super::UInt<'_, LEN> for Uint<LEN, LI
         other.map(|other| Self(self.0.rem(&other)))
     }
 
-    fn write_canon(&self, uint: &mut [u8; LEN]) {
+    fn write_canon(&self, uint: &mut CryptoSensitive<LEN>) {
         for (src, dst) in self
             .0
             .as_limbs()
             .iter()
             .rev()
             .cloned()
-            .zip(uint.chunks_exact_mut(Limb::BYTES))
+            .zip(uint.access_mut().chunks_exact_mut(Limb::BYTES))
         {
             dst.copy_from_slice(&src.0.to_be_bytes());
         }
@@ -708,8 +734,8 @@ where
     /// # Safety
     /// This function is unsafe because the caller must ensure that
     /// the curve `C` corresponds to the `LEN` const generic (i.e. its scalar length in SEC-1 representation is exactly `LEN` bytes).
-    unsafe fn new(scalar: &[u8; LEN]) -> Self {
-        Self(Scalar::<C>::from_repr(GenericArray::from_slice(scalar).clone()).unwrap())
+    unsafe fn new(scalar: CryptoSensitiveRef<'_, LEN>) -> Self {
+        Self(Scalar::<C>::from_repr(GenericArray::from_slice(scalar.access()).clone()).unwrap())
     }
 
     /// Create a new random EC scalar
@@ -731,8 +757,10 @@ where
         Self(self.0.mul(other.0))
     }
 
-    fn write_canon(&self, scalar: &mut [u8; LEN]) {
-        scalar.copy_from_slice(self.0.to_repr().as_slice());
+    fn write_canon(&self, scalar: &mut CryptoSensitive<LEN>) {
+        scalar
+            .access_mut()
+            .copy_from_slice(self.0.to_repr().as_slice());
     }
 }
 
@@ -762,10 +790,11 @@ where
     /// the curve `C` corresponds to the `LEN` and `SCALAR_LEN` const generics.
     /// I.e. the point length in SEC-1 representation is exactly `LEN` bytes,
     /// and the scalar length in SEC-1 representation is exactly `SCALAR_LEN` bytes.
-    unsafe fn new(point: &[u8; LEN]) -> Self {
-        let affine_point =
-            AffinePoint::<C>::from_encoded_point(&EncodedPoint::<C>::from_bytes(point).unwrap())
-                .unwrap();
+    unsafe fn new(point: CryptoSensitiveRef<'_, LEN>) -> Self {
+        let affine_point = AffinePoint::<C>::from_encoded_point(
+            &EncodedPoint::<C>::from_bytes(point.access()).unwrap(),
+        )
+        .unwrap();
 
         Self(affine_point.into())
     }
@@ -810,12 +839,12 @@ where
         Self(a.add(b))
     }
 
-    fn write_canon(&self, point: &mut [u8; LEN]) {
+    fn write_canon(&self, point: &mut CryptoSensitive<LEN>) {
         let encoded_point = self.0.to_affine().to_encoded_point(false);
         let slice = encoded_point.as_bytes();
 
         assert_eq!(slice.len(), LEN);
-        point[..slice.len()].copy_from_slice(slice);
+        point.access_mut().copy_from_slice(slice);
     }
 }
 

@@ -31,7 +31,7 @@ use crate::tlv::{
     Nullable, Octets, OctetsArrayBuilder, OctetsBuilder, TLVBuilder, TLVBuilderParent, TLVElement,
     TLVTag, TLVWrite,
 };
-use crate::transport::session::SessionMode;
+use crate::transport::session::{AttChallengeRef, SessionMode};
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::storage::WriteBuf;
 
@@ -74,12 +74,12 @@ impl NocHandler {
         crypto: C,
         dev_att: D,
         attest_element: &mut WriteBuf,
-        attest_challenge: &[u8],
+        attest_challenge: AttChallengeRef<'_>,
         signature: &mut CanonPkcSignature,
     ) -> Result<(), Error> {
         let dac_key = crypto.secret_key(dev_att.dac_priv_key())?;
 
-        attest_element.copy_from_slice(attest_challenge)?;
+        attest_element.copy_from_slice(attest_challenge.access())?;
         dac_key.sign(attest_element.as_slice(), signature);
 
         Ok(())
@@ -272,8 +272,8 @@ impl ClusterHandler for NocHandler {
 
             let epoch = (ctx.exchange().matter().epoch())().as_secs() as u32;
 
-            let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
-            let signature = signature.init_zeroed();
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
 
             writer.str_cb(&TLVTag::Context(0), |buf| {
                 let dev_att = ctx.exchange().matter().dev_att();
@@ -291,14 +291,14 @@ impl ClusterHandler for NocHandler {
                     ctx.crypto(),
                     dev_att,
                     &mut wb,
-                    sess.get_att_challenge(),
+                    sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
                     signature,
                 )?;
 
                 Ok(len)
             })?;
 
-            writer.str(&TLVTag::Context(1), signature)?;
+            writer.str(&TLVTag::Context(1), signature.access())?;
 
             writer.end_container()?;
 
@@ -364,8 +364,8 @@ impl ClusterHandler for NocHandler {
             // Struct is already started
             // writer.start_struct(&CmdDataWriter::TAG)?;
 
-            let mut signature = MaybeUninit::<CanonPkcSignature>::uninit(); // TODO MEDIUM BUFFER
-            let signature = signature.init_zeroed();
+            let mut signature = MaybeUninit::uninit();
+            let signature = signature.init_with(CanonPkcSignature::init()); // TODO MEDIUM BUFFER
 
             writer.str_cb(&TLVTag::Context(0), |buf| {
                 let mut wb = WriteBuf::new(buf);
@@ -386,14 +386,14 @@ impl ClusterHandler for NocHandler {
                     ctx.crypto(),
                     ctx.exchange().matter().dev_att(),
                     &mut wb,
-                    sess.get_att_challenge(),
+                    sess.get_att_challenge().ok_or(ErrorCode::InvalidState)?,
                     signature,
                 )?;
 
                 Ok(len)
             })?;
 
-            writer.str(&TLVTag::Context(1), signature)?;
+            writer.str(&TLVTag::Context(1), signature.access())?;
 
             writer.end_container()?;
 
