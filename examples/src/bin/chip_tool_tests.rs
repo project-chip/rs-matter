@@ -151,10 +151,10 @@ fn main() -> Result<(), Error> {
     // Create the Data Model instance
     let dm = DataModel::new(
         matter,
+        &crypto,
         buffers,
         subscriptions,
         dm_handler(matter, unit_testing_data, &on_off_handler),
-        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -178,13 +178,13 @@ fn main() -> Result<(), Error> {
 
     info!(
         "Transport memory: Transport fut (stack)={}B, mDNS fut (stack)={}B",
-        core::mem::size_of_val(&matter.run(&socket, &socket, &crypto)),
+        core::mem::size_of_val(&matter.run(&crypto, &socket, &socket)),
         core::mem::size_of_val(&mdns::run_mdns(matter))
     );
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(matter));
-    let mut transport = pin!(matter.run_transport(&socket, &socket, &crypto));
+    let mut transport = pin!(matter.run_transport(&crypto, &socket, &socket));
 
     // Create, load and run the persister
     let psm = PSM.uninit().init_with(Psm::init());

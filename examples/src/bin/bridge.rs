@@ -94,10 +94,10 @@ fn main() -> Result<(), Error> {
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
+        &crypto,
         &buffers,
         &subscriptions,
         dm_handler(&matter, &on_off_handler_ep2, &on_off_handler_ep3),
-        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions
@@ -116,7 +116,7 @@ fn main() -> Result<(), Error> {
 
     // Run the Matter and mDNS transports
     let mut mdns = pin!(mdns::run_mdns(&matter));
-    let mut transport = pin!(matter.run(&socket, &socket, &crypto));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket));
 
     // Create, load and run the persister
     let mut psm: Psm<4096> = Psm::new();

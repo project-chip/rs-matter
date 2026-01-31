@@ -71,25 +71,25 @@ pub trait InvokeReply {
     fn with_command(self, cmd: u32) -> Result<impl Reply, Error>;
 }
 
-pub struct HandlerInvoker<'a, 'b, D, B, C> {
+pub struct HandlerInvoker<'a, 'b, C, D, B> {
     exchange: &'b mut Exchange<'a>,
+    crypto: C,
     handler: D,
     buffers: B,
-    crypto: C,
 }
 
-impl<'a, 'b, D, B, C> HandlerInvoker<'a, 'b, D, B, C>
+impl<'a, 'b, C, D, B> HandlerInvoker<'a, 'b, C, D, B>
 where
+    C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
-    C: Crypto,
 {
-    pub const fn new(exchange: &'b mut Exchange<'a>, handler: D, buffers: B, crypto: C) -> Self {
+    pub const fn new(exchange: &'b mut Exchange<'a>, crypto: C, handler: D, buffers: B) -> Self {
         Self {
             exchange,
+            crypto,
             handler,
             buffers,
-            crypto,
         }
     }
 

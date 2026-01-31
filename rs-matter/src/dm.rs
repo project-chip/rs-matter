@@ -67,23 +67,23 @@ struct SubscriptionBuffer<B> {
 
 /// An `ExchangeHandler` implementation capable of handling responder exchanges for the Interaction Model protocol.
 /// The implementation needs a `DataModelHandler` instance to interact with the underlying clusters of the data model.
-pub struct DataModel<'a, const N: usize, B, T, C>
+pub struct DataModel<'a, const N: usize, C, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
     matter: &'a Matter<'a>,
-    buffers: &'a B,
     crypto: C,
+    buffers: &'a B,
     subscriptions: &'a Subscriptions<N>,
     subscriptions_buffers: RefCell<heapless::Vec<SubscriptionBuffer<B::Buffer<'a>>, N>>,
     handler: T,
 }
 
-impl<'a, const N: usize, B, T, C> DataModel<'a, N, B, T, C>
+impl<'a, const N: usize, C, B, T> DataModel<'a, N, C, B, T>
 where
+    C: Crypto,
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
-    C: Crypto,
 {
     /// Create the data model.
     ///
@@ -98,18 +98,18 @@ where
     #[inline(always)]
     pub const fn new(
         matter: &'a Matter<'a>,
+        crypto: C,
         buffers: &'a B,
         subscriptions: &'a Subscriptions<N>,
         handler: T,
-        crypto: C,
     ) -> Self {
         Self {
             matter,
+            crypto,
             buffers,
             subscriptions,
             subscriptions_buffers: RefCell::new(heapless::Vec::new()),
             handler,
-            crypto,
         }
     }
 
@@ -200,7 +200,7 @@ where
             &req,
             &node,
             None,
-            HandlerInvoker::new(exchange, &self.handler, &self.buffers, &self.crypto),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
         );
 
         resp.respond(self, &mut wb, true).await?;
@@ -242,7 +242,7 @@ where
             let mut resp = WriteResponder::new(
                 &req,
                 &node,
-                HandlerInvoker::new(exchange, &self.handler, &self.buffers, &self.crypto),
+                HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
             );
 
             resp.respond(self, &mut wb).await?;
@@ -288,7 +288,7 @@ where
         let mut resp = InvokeResponder::new(
             &req,
             &node,
-            HandlerInvoker::new(exchange, &self.handler, &self.buffers, &self.crypto),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
         );
 
         resp.respond(self, &mut wb, false).await
@@ -668,7 +668,7 @@ where
             &req,
             &node,
             Some(id),
-            HandlerInvoker::new(exchange, &self.handler, &self.buffers, &self.crypto),
+            HandlerInvoker::new(exchange, &self.crypto, &self.handler, &self.buffers),
         );
 
         let sub_valid = resp.respond(self, &mut wb, false).await?;
@@ -790,22 +790,22 @@ where
     }
 }
 
-impl<const N: usize, B, T, C> ExchangeHandler for DataModel<'_, N, B, T, C>
+impl<const N: usize, C, B, T> ExchangeHandler for DataModel<'_, N, C, B, T>
 where
+    C: Crypto,
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
-    C: Crypto,
 {
     fn handle(&self, exchange: &mut Exchange<'_>) -> impl Future<Output = Result<(), Error>> {
         DataModel::handle(self, exchange)
     }
 }
 
-impl<const N: usize, B, T, C> ChangeNotify for DataModel<'_, N, B, T, C>
+impl<const N: usize, C, B, T> ChangeNotify for DataModel<'_, N, C, B, T>
 where
+    C: Crypto,
     T: DataModelHandler,
     B: BufferAccess<IMBuffer>,
-    C: Crypto,
 {
     fn notify(&self, endpoint_id: EndptId, cluster_id: ClusterId, attr_id: AttrId) {
         self.subscriptions
@@ -821,18 +821,18 @@ where
 /// The responder handles chunking as needed. I.e. if reported data is too large to fit into a single
 /// Matter message, it will send the data in multiple chunks (i.e. with multiple Matter messages), waiting for
 /// a `Success` response from the peer after each chunk, and then continuing to send the next chunk until all data is sent.
-struct ReportDataResponder<'a, 'b, 'c, D, B, C> {
+struct ReportDataResponder<'a, 'b, 'c, C, D, B> {
     req: &'a ReportDataReq<'a>,
     node: &'a Node<'a>,
     subscription_id: Option<u32>,
-    invoker: HandlerInvoker<'b, 'c, D, B, C>,
+    invoker: HandlerInvoker<'b, 'c, C, D, B>,
 }
 
-impl<'a, 'b, 'c, D, B, C> ReportDataResponder<'a, 'b, 'c, D, B, C>
+impl<'a, 'b, 'c, C, D, B> ReportDataResponder<'a, 'b, 'c, C, D, B>
 where
+    C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
-    C: Crypto,
 {
     // This is the amount of space we reserve for the structure/array closing TLVs
     // to be attached towards the end of long reads
@@ -843,7 +843,7 @@ where
         req: &'a ReportDataReq<'a>,
         node: &'a Node<'a>,
         subscription_id: Option<u32>,
-        invoker: HandlerInvoker<'b, 'c, D, B, C>,
+        invoker: HandlerInvoker<'b, 'c, C, D, B>,
     ) -> Self {
         Self {
             req,
@@ -1121,23 +1121,23 @@ where
 /// the other peers is sending, but processing all of those chunks is not done here,
 /// but is rather - a responsibility of the caller who should call in a loop `WriteResponder::respond`
 /// for all the chunks of the write request, until the `WriteReq::more_chunks()` returns `false`.
-struct WriteResponder<'a, 'b, 'c, D, B, C> {
+struct WriteResponder<'a, 'b, 'c, C, D, B> {
     req: &'a WriteReq<'a>,
     node: &'a Node<'a>,
-    invoker: HandlerInvoker<'b, 'c, D, B, C>,
+    invoker: HandlerInvoker<'b, 'c, C, D, B>,
 }
 
-impl<'a, 'b, 'c, D, B, C> WriteResponder<'a, 'b, 'c, D, B, C>
+impl<'a, 'b, 'c, C, D, B> WriteResponder<'a, 'b, 'c, C, D, B>
 where
+    C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
-    C: Crypto,
 {
     /// Create a new `WriteResponder`.
     const fn new(
         req: &'a WriteReq<'a>,
         node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, D, B, C>,
+        invoker: HandlerInvoker<'b, 'c, C, D, B>,
     ) -> Self {
         Self { req, node, invoker }
     }
@@ -1193,23 +1193,23 @@ where
 /// The simplest strategy for chunking would be to simply - and unconditionally - send each individual
 /// command response in a separate Matter message, i.e. if the invoke request contains 3 commands,
 /// the responder will send 3 Matter messages, each containing a single command response.
-struct InvokeResponder<'a, 'b, 'c, D, B, C> {
+struct InvokeResponder<'a, 'b, 'c, C, D, B> {
     req: &'a InvReq<'a>,
     node: &'a Node<'a>,
-    invoker: HandlerInvoker<'b, 'c, D, B, C>,
+    invoker: HandlerInvoker<'b, 'c, C, D, B>,
 }
 
-impl<'a, 'b, 'c, D, B, C> InvokeResponder<'a, 'b, 'c, D, B, C>
+impl<'a, 'b, 'c, C, D, B> InvokeResponder<'a, 'b, 'c, C, D, B>
 where
+    C: Crypto,
     D: AsyncHandler,
     B: BufferAccess<IMBuffer>,
-    C: Crypto,
 {
     /// Create a new `InvokeResponder`.
     const fn new(
         req: &'a InvReq<'a>,
         node: &'a Node<'a>,
-        invoker: HandlerInvoker<'b, 'c, D, B, C>,
+        invoker: HandlerInvoker<'b, 'c, C, D, B>,
     ) -> Self {
         Self { req, node, invoker }
     }

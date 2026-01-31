@@ -263,18 +263,18 @@ impl TransportMgr {
         Ok(exchange)
     }
 
-    pub async fn run<S, R, C>(&self, send: S, recv: R, crypto: C) -> Result<(), Error>
+    pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
     where
+        C: Crypto,
         S: NetworkSend,
         R: NetworkReceive,
-        C: Crypto,
     {
         info!("Running Matter transport");
 
         let send = IfMutex::new(send);
 
-        let mut rx = pin!(self.process_rx(recv, &send, &crypto));
-        let mut tx = pin!(self.process_tx(&send, &crypto));
+        let mut rx = pin!(self.process_rx(&crypto, recv, &send));
+        let mut tx = pin!(self.process_tx(&crypto, &send));
         let mut orphaned = pin!(self.process_orphaned(&crypto));
 
         select3(&mut rx, &mut tx, &mut orphaned).coalesce().await
@@ -318,14 +318,14 @@ impl TransportMgr {
         packet_mutex.with(f).await
     }
 
-    async fn process_tx<S, C>(
+    async fn process_tx<C, S>(
         &self,
-        send: &IfMutex<NoopRawMutex, S>,
         crypto: C,
+        send: &IfMutex<NoopRawMutex, S>,
     ) -> Result<(), Error>
     where
-        S: NetworkSend,
         C: Crypto,
+        S: NetworkSend,
     {
         loop {
             trace!("Waiting for outgoing packet");
@@ -348,23 +348,23 @@ impl TransportMgr {
                     continue;
                 };
 
-                self.encode_packet0(&mut tx, Some(session), &crypto)?;
+                self.encode_packet(&crypto, &mut tx, Some(session))?;
             }
 
             Self::netw_send(send, tx.peer, &tx.buf[tx.payload_start..], false).await?;
         }
     }
 
-    async fn process_rx<R, S, C>(
+    async fn process_rx<C, R, S>(
         &self,
+        crypto: C,
         mut recv: R,
         send: &IfMutex<NoopRawMutex, S>,
-        crypto: C,
     ) -> Result<(), Error>
     where
+        C: Crypto,
         R: NetworkReceive,
         S: NetworkSend,
-        C: Crypto,
     {
         loop {
             trace!("Waiting for incoming packet");
@@ -384,7 +384,7 @@ impl TransportMgr {
             rx.buf.truncate(len);
             rx.payload_start = 0;
 
-            match self.handle_rx_packet(&mut rx, send, &crypto).await {
+            match self.handle_rx_packet(&crypto, &mut rx, send).await {
                 Ok(true) => {
                     // Leave the packet in place for accepting by responders
                     rx.clear_on_drop(false);
@@ -442,7 +442,7 @@ impl TransportMgr {
             let mut tx = self.get_if(&self.tx, |packet| packet.buf.is_empty()).await;
             tx.clear_on_drop(true); // In case of error, or if the future is dropped
 
-            let wait = match self.handle_dropped_exchange(&mut tx, &crypto) {
+            let wait = match self.handle_dropped_exchange(&crypto, &mut tx) {
                 Ok(wait) => {
                     tx.clear_on_drop(false);
                     wait
@@ -464,16 +464,17 @@ impl TransportMgr {
         }
     }
 
-    async fn handle_rx_packet<const N: usize, S, C: Crypto>(
+    async fn handle_rx_packet<const N: usize, C, S>(
         &self,
+        crypto: C,
         packet: &mut Packet<N>,
         send: &IfMutex<NoopRawMutex, S>,
-        crypto: C,
     ) -> Result<bool, Error>
     where
+        C: Crypto,
         S: NetworkSend,
     {
-        let result = self.decode_packet(packet, &crypto);
+        let result = self.decode_packet(&crypto, packet);
         match result {
             Err(e) if matches!(e.code(), ErrorCode::Duplicate) => {
                 if !packet.peer.is_reliable()
@@ -497,7 +498,7 @@ impl TransportMgr {
                         packet.header.proto.toggle_initiator();
                         packet.header.proto.set_ack(Some(ack));
 
-                        self.encode_packet(packet, Some(session), None, &crypto, |_| {
+                        self.write_encoded_packet(&crypto, packet, Some(session), None, |_| {
                             Ok(Some(OpCode::MRPStandAloneAck.into()))
                         })?;
                     }
@@ -522,7 +523,7 @@ impl TransportMgr {
                     packet.header.proto.toggle_initiator();
                     packet.header.proto.set_ack(Some(ack));
 
-                    self.encode_packet(packet, None, None, &crypto, |wb| {
+                    self.write_encoded_packet(&crypto, packet, None, None, |wb| {
                         sc_write(wb, SCStatusCodes::Busy, &[0xF4, 0x01])
                     })?;
 
@@ -575,7 +576,7 @@ impl TransportMgr {
                     let mut session = unwrap!(session_mgr.remove(session_id));
                     self.session_removed.notify();
 
-                    self.encode_packet(packet, Some(&mut session), None, &crypto, |wb| {
+                    self.write_encoded_packet(&crypto, packet, Some(&mut session), None, |wb| {
                         sc_write(wb, SCStatusCodes::CloseSession, &[])
                     })?;
                 }
@@ -735,8 +736,8 @@ impl TransportMgr {
 
     fn handle_dropped_exchange<const N: usize, C: Crypto>(
         &self,
-        packet: &mut Packet<N>,
         crypto: C,
+        packet: &mut Packet<N>,
     ) -> Result<bool, Error> {
         let mut session_mgr = self.session_mgr.borrow_mut();
 
@@ -777,9 +778,13 @@ impl TransportMgr {
             let exchange = unwrap!(session.exchanges[exch_index].as_mut());
 
             if exchange.mrp.is_ack_pending() {
-                self.encode_packet(packet, Some(session), Some(exch_index), &crypto, |_| {
-                    Ok(Some(OpCode::MRPStandAloneAck.into()))
-                })?;
+                self.write_encoded_packet(
+                    &crypto,
+                    packet,
+                    Some(session),
+                    Some(exch_index),
+                    |_| Ok(Some(OpCode::MRPStandAloneAck.into())),
+                )?;
             }
 
             warn!("Dropped exchange {}: Closed", exchange_id.display(session));
@@ -807,8 +812,8 @@ impl TransportMgr {
 
     fn decode_packet<const N: usize, C: Crypto>(
         &self,
-        packet: &mut Packet<N>,
         crypto: C,
+        packet: &mut Packet<N>,
     ) -> Result<bool, Error> {
         packet.header.reset();
 
@@ -861,11 +866,11 @@ impl TransportMgr {
         Err(ErrorCode::NoSession.into())
     }
 
-    fn encode_packet0<const N: usize, C: Crypto>(
+    fn encode_packet<const N: usize, C: Crypto>(
         &self,
+        crypto: C,
         packet: &mut Packet<N>,
         session: Option<&mut Session>,
-        crypto: C,
     ) -> Result<(), Error> {
         let payload_end = packet.buf.len();
 
@@ -915,15 +920,16 @@ impl TransportMgr {
         Ok(())
     }
 
-    fn encode_packet<const N: usize, F, C: Crypto>(
+    fn write_encoded_packet<const N: usize, C, F>(
         &self,
+        crypto: C,
         packet: &mut Packet<N>,
         mut session: Option<&mut Session>,
         exchange_index: Option<usize>,
-        crypto: C,
         payload_writer: F,
     ) -> Result<(), Error>
     where
+        C: Crypto,
         F: FnOnce(&mut WriteBuf) -> Result<Option<MessageMeta>, Error>,
     {
         // TODO: Resizing might be a bit expensive with large buffers
@@ -987,7 +993,7 @@ impl TransportMgr {
             packet.tx_session_id = None;
         }
 
-        self.encode_packet0(packet, session, crypto)
+        self.encode_packet(crypto, packet, session)
     }
 
     fn encode_evict_some_session<const N: usize, C: Crypto>(
@@ -1029,7 +1035,7 @@ impl TransportMgr {
             session.get_peer_sess_id()
         );
 
-        self.encode_packet(packet, Some(&mut session), None, &crypto, |wb| {
+        self.write_encoded_packet(&crypto, packet, Some(&mut session), None, |wb| {
             sc_write(wb, SCStatusCodes::CloseSession, &[])
         })?;
 

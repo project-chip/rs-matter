@@ -154,10 +154,10 @@ fn run<N: NetCtl + WifiDiag>(connection: &Connection, net_ctl: N) -> Result<(), 
     // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
+        &crypto,
         &buffers,
         &subscriptions,
         dm_handler(&matter, &on_off_handler, &net_ctl, &networks),
-        &crypto,
     );
 
     // Create a default responder capable of handling up to 3 subscriptions

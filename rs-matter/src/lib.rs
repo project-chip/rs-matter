@@ -574,16 +574,16 @@ impl<'a> Matter<'a> {
     /// Run the transport layer
     ///
     /// # Arguments
+    /// - `crypto`: The crypto backend
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
-    /// - `crypto`: The crypto backend
-    pub async fn run<S, R, C>(&self, send: S, recv: R, crypto: C) -> Result<(), Error>
+    pub async fn run<C, S, R>(&self, crypto: C, send: S, recv: R) -> Result<(), Error>
     where
         S: NetworkSend,
         R: NetworkReceive,
         C: Crypto,
     {
-        self.run_transport(send, recv, crypto).await
+        self.run_transport(crypto, send, recv).await
     }
 
     /// Resets the transport layer by clearing all sessions, exchanges, the RX buffer and the TX buffer
@@ -595,21 +595,21 @@ impl<'a> Matter<'a> {
     /// Run the transport layer
     ///
     /// # Arguments
+    /// - `crypto`: The crypto backend
     /// - `send`: The network send interface
     /// - `recv`: The network receive interface
-    /// - `crypto`: The crypto backend
-    pub fn run_transport<'t, S, R, C>(
+    pub fn run_transport<'t, C, S, R>(
         &'t self,
+        crypto: C,
         send: S,
         recv: R,
-        crypto: C,
     ) -> impl Future<Output = Result<(), Error>> + 't
     where
         S: NetworkSend + 't,
         R: NetworkReceive + 't,
         C: Crypto + 't,
     {
-        self.transport_mgr.run(send, recv, crypto)
+        self.transport_mgr.run(crypto, send, recv)
     }
 
     /// Reset the Matter state by removing all fabrics and resetting basic info settings

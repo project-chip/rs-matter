@@ -237,18 +237,18 @@ where
 }
 
 /// A type alias for the "default" responder handler, which is a chained handler of the `DataModel` and `SecureChannel` handlers.
-pub type DefaultExchangeHandler<'d, 'a, const N: usize, B, T, C> =
-    ChainedExchangeHandler<&'d DataModel<'a, N, B, T, C>, SecureChannel<&'d C>>;
+pub type DefaultExchangeHandler<'d, 'a, const N: usize, C, B, T> =
+    ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<&'d C>>;
 
-impl<'d, 'a, const N: usize, B, T, C: Crypto>
-    Responder<'a, DefaultExchangeHandler<'d, 'a, N, B, T, C>>
+impl<'d, 'a, const N: usize, C, B, T> Responder<'a, DefaultExchangeHandler<'d, 'a, N, C, B, T>>
 where
+    C: Crypto,
     B: BufferAccess<IMBuffer>,
 {
     /// Creates a "default" responder. This is a responder that composes and uses the `rs-matter`-provided `ExchangeHandler` implementations
     /// (`SecureChannel` and `DataModel`) for handling the Secure Channel protocol and the Interaction Model protocol.
     #[inline(always)]
-    pub const fn new_default(data_model: &'d DataModel<'a, N, B, T, C>) -> Self
+    pub const fn new_default(data_model: &'d DataModel<'a, N, C, B, T>) -> Self
     where
         T: DataModelHandler,
     {
@@ -291,15 +291,15 @@ impl<'a> Responder<'a, BusyExchangeHandler> {
 }
 
 /// A composition of the `Responder::new_default` and `Responder::new_busy` responders.
-pub struct DefaultResponder<'d, 'a, const N: usize, B, T, C>
+pub struct DefaultResponder<'d, 'a, const N: usize, C, B, T>
 where
     B: BufferAccess<IMBuffer>,
 {
-    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, N, B, T, C>>,
+    responder: Responder<'a, DefaultExchangeHandler<'d, 'a, N, C, B, T>>,
     busy_responder: Responder<'a, BusyExchangeHandler>,
 }
 
-impl<'d, 'a, const N: usize, B, T, C> DefaultResponder<'d, 'a, N, B, T, C>
+impl<'d, 'a, const N: usize, B, T, C> DefaultResponder<'d, 'a, N, C, B, T>
 where
     B: BufferAccess<IMBuffer>,
     T: DataModelHandler,
@@ -307,7 +307,7 @@ where
 {
     /// Creates the responder composition.
     #[inline(always)]
-    pub const fn new(data_model: &'d DataModel<'a, N, B, T, C>) -> Self {
+    pub const fn new(data_model: &'d DataModel<'a, N, C, B, T>) -> Self {
         Self {
             responder: Responder::new_default(data_model),
             busy_responder: Responder::new_busy(data_model.matter(), RESPOND_BUSY_MS),
@@ -329,7 +329,7 @@ where
     #[allow(clippy::type_complexity)]
     pub const fn responder(
         &self,
-    ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, N, B, T, C>, SecureChannel<&'d C>>>
+    ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, N, C, B, T>, SecureChannel<&'d C>>>
     {
         &self.responder
     }
