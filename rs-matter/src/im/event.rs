@@ -21,6 +21,7 @@ use crate::{
 };
 
 use super::{ClusterId, EndptId, GenericPath, IMStatusCode, Status};
+use num_enum::TryFromPrimitive;
 
 /// Event Filter
 ///
@@ -81,7 +82,7 @@ pub enum EventRespTag {
 ///
 /// Used when there is a need to perform low-level TLV serde on
 /// EventDataIB structures.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, TryFromPrimitive)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum EventDataTag {
@@ -93,29 +94,6 @@ pub enum EventDataTag {
     DeltaEpochTimestamp = 5,
     DeltaSystemTimestamp = 6,
     Data = 7,
-}
-
-// TODO(events) not sure if this is the right way to do this, I'm using it for the match arm in the TLV reading
-impl TryFrom<u8> for EventDataTag {
-    type Error = crate::Error;
-
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            x if x == EventDataTag::Path as u8 => Ok(EventDataTag::Path),
-            x if x == EventDataTag::EventNumber as u8 => Ok(EventDataTag::EventNumber),
-            x if x == EventDataTag::Priority as u8 => Ok(EventDataTag::Priority),
-            x if x == EventDataTag::EpochTimestamp as u8 => Ok(EventDataTag::EpochTimestamp),
-            x if x == EventDataTag::SystemTimestamp as u8 => Ok(EventDataTag::SystemTimestamp),
-            x if x == EventDataTag::DeltaEpochTimestamp as u8 => {
-                Ok(EventDataTag::DeltaEpochTimestamp)
-            }
-            x if x == EventDataTag::DeltaSystemTimestamp as u8 => {
-                Ok(EventDataTag::DeltaSystemTimestamp)
-            }
-            x if x == EventDataTag::Data as u8 => Ok(EventDataTag::Data),
-            _ => Err(Error::new(ErrorCode::Invalid)),
-        }
-    }
 }
 
 /// A status response for an event in the Interaction Model.
