@@ -498,7 +498,7 @@ pub mod globals {
         pub const fn new(element: rs_matter_crate::tlv::TLVElement<'a>) -> Self { Self(element) }
         #[doc = "Return the underlying TLV element"]
         pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
-        pub fn amount(&self) -> Result<money, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?) }
+        pub fn amount(&self) -> Result<rs_matter_crate::im::Money, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?) }
         pub fn currency(&self) -> Result<CurrencyStruct<'_>, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
     }
     impl<'a> rs_matter_crate::tlv::FromTLV<'a> for PriceStruct<'a> { fn from_tlv(element: &rs_matter_crate::tlv::TLVElement<'a>) -> Result<Self, rs_matter_crate::error::Error> { Ok(Self::new(element.clone())) } }
@@ -544,15 +544,15 @@ pub mod globals {
         pub const fn tlv_element(&self) -> &rs_matter_crate::tlv::TLVElement<'a> { &self.0 }
         pub fn range_min(&self) -> Result<i64, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(0)?) }
         pub fn range_max(&self) -> Result<i64, rs_matter_crate::error::Error> { rs_matter_crate::tlv::FromTLV::from_tlv(&self.0.structure()?.ctx(1)?) }
-        pub fn percent_max(&self) -> Result<Option<u16>, rs_matter_crate::error::Error> {
+        pub fn percent_max(&self) -> Result<Option<rs_matter_crate::im::Percent100ths>, rs_matter_crate::error::Error> {
             let element = self.0.structure()?.find_ctx(2)?;
             if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
         }
-        pub fn percent_min(&self) -> Result<Option<u16>, rs_matter_crate::error::Error> {
+        pub fn percent_min(&self) -> Result<Option<rs_matter_crate::im::Percent100ths>, rs_matter_crate::error::Error> {
             let element = self.0.structure()?.find_ctx(3)?;
             if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
         }
-        pub fn percent_typical(&self) -> Result<Option<u16>, rs_matter_crate::error::Error> {
+        pub fn percent_typical(&self) -> Result<Option<rs_matter_crate::im::Percent100ths>, rs_matter_crate::error::Error> {
             let element = self.0.structure()?.find_ctx(4)?;
             if element.is_empty() { Ok(None) } else { Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?)) }
         }
@@ -764,7 +764,7 @@ pub mod globals {
     }
     #[cfg(feature = "defmt")]
     impl<P> PriceStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
-        pub fn amount(mut self, value: money) -> Result<PriceStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+        pub fn amount(mut self, value: rs_matter_crate::im::Money) -> Result<PriceStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "amount" , value);
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "amount" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
@@ -773,7 +773,7 @@ pub mod globals {
     }
     #[cfg(not(feature = "defmt"))]
     impl<P> PriceStructBuilder<P, 0> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
-        pub fn amount(mut self, value: money) -> Result<PriceStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
+        pub fn amount(mut self, value: rs_matter_crate::im::Money) -> Result<PriceStructBuilder<P, 1usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "amount" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(0), self.0.writer())?;
             Ok(PriceStructBuilder(self.0))
@@ -872,7 +872,7 @@ pub mod globals {
     }
     #[cfg(feature = "defmt")]
     impl<P> MeasurementAccuracyRangeStructBuilder<P, 2> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
-        pub fn percent_max(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 3usize>, rs_matter_crate::error::Error> {
+        pub fn percent_max(mut self, value: Option<rs_matter_crate::im::Percent100ths>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 3usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "percentMax" , value);
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMax" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(2), self.0.writer())?;
@@ -881,7 +881,7 @@ pub mod globals {
     }
     #[cfg(not(feature = "defmt"))]
     impl<P> MeasurementAccuracyRangeStructBuilder<P, 2> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
-        pub fn percent_max(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 3usize>, rs_matter_crate::error::Error> {
+        pub fn percent_max(mut self, value: Option<rs_matter_crate::im::Percent100ths>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 3usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMax" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(2), self.0.writer())?;
             Ok(MeasurementAccuracyRangeStructBuilder(self.0))
@@ -889,7 +889,7 @@ pub mod globals {
     }
     #[cfg(feature = "defmt")]
     impl<P> MeasurementAccuracyRangeStructBuilder<P, 3> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
-        pub fn percent_min(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 4usize>, rs_matter_crate::error::Error> {
+        pub fn percent_min(mut self, value: Option<rs_matter_crate::im::Percent100ths>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 4usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "percentMin" , value);
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMin" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(3), self.0.writer())?;
@@ -898,7 +898,7 @@ pub mod globals {
     }
     #[cfg(not(feature = "defmt"))]
     impl<P> MeasurementAccuracyRangeStructBuilder<P, 3> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
-        pub fn percent_min(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 4usize>, rs_matter_crate::error::Error> {
+        pub fn percent_min(mut self, value: Option<rs_matter_crate::im::Percent100ths>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 4usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentMin" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(3), self.0.writer())?;
             Ok(MeasurementAccuracyRangeStructBuilder(self.0))
@@ -906,7 +906,7 @@ pub mod globals {
     }
     #[cfg(feature = "defmt")]
     impl<P> MeasurementAccuracyRangeStructBuilder<P, 4> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug + rs_matter_crate::reexport::defmt::Format, {
-        pub fn percent_typical(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 5usize>, rs_matter_crate::error::Error> {
+        pub fn percent_typical(mut self, value: Option<rs_matter_crate::im::Percent100ths>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 5usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")] rs_matter_crate::reexport::defmt::debug!("{:?}::{} -> {:?} +" , self , "percentTypical" , value);
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentTypical" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(4), self.0.writer())?;
@@ -915,7 +915,7 @@ pub mod globals {
     }
     #[cfg(not(feature = "defmt"))]
     impl<P> MeasurementAccuracyRangeStructBuilder<P, 4> where P: rs_matter_crate::tlv::TLVBuilderParent + core::fmt::Debug, {
-        pub fn percent_typical(mut self, value: Option<u16>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 5usize>, rs_matter_crate::error::Error> {
+        pub fn percent_typical(mut self, value: Option<rs_matter_crate::im::Percent100ths>) -> Result<MeasurementAccuracyRangeStructBuilder<P, 5usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")] rs_matter_crate::reexport::log::debug!("{:?}::{} -> {:?} +" , self , "percentTypical" , value);
             rs_matter_crate::tlv::ToTLV::to_tlv(&value, &rs_matter_crate::tlv::TLVTag::Context(4), self.0.writer())?;
             Ok(MeasurementAccuracyRangeStructBuilder(self.0))
@@ -1659,7 +1659,7 @@ pub mod unit_testing {
                 Ok(Some(rs_matter_crate::tlv::FromTLV::from_tlv(&element)?))
             }
         }
-        pub fn fabric_index(&self) -> Result<Option<u8>, rs_matter_crate::error::Error> {
+        pub fn fabric_index(&self) -> Result<Option<rs_matter_crate::im::FabricIndex>, rs_matter_crate::error::Error> {
             let element = self.0.structure()?.find_ctx(254)?;
             if element.is_empty() {
                 Ok(None)
@@ -7516,7 +7516,7 @@ pub mod unit_testing {
     {
         pub fn fabric_index(
             mut self,
-            value: Option<u8>,
+            value: Option<rs_matter_crate::im::FabricIndex>,
         ) -> Result<TestFabricScopedBuilder<P, 255usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "defmt")]
             rs_matter_crate::reexport::defmt::debug!(
@@ -7547,7 +7547,7 @@ pub mod unit_testing {
     {
         pub fn fabric_index(
             mut self,
-            value: Option<u8>,
+            value: Option<rs_matter_crate::im::FabricIndex>,
         ) -> Result<TestFabricScopedBuilder<P, 255usize>, rs_matter_crate::error::Error> {
             #[cfg(feature = "log")]
             rs_matter_crate::reexport::log::debug!(
