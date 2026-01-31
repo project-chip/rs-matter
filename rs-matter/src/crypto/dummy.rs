@@ -74,7 +74,7 @@ impl Crypto for DummyCrypto {
     where
         Self: 'a;
 
-    type UInt384<'a>
+    type UInt320<'a>
         = DummyCrypto
     where
         Self: 'a;
@@ -131,7 +131,7 @@ impl Crypto for DummyCrypto {
         unimplemented!()
     }
 
-    fn uint384(&self, _uint: super::CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
+    fn uint320(&self, _uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
         unimplemented!()
     }
 
@@ -163,24 +163,24 @@ impl<const HASH_LEN: usize> super::Digest<HASH_LEN> for DummyCrypto {
 }
 
 impl super::Kdf for DummyCrypto {
-    fn expand<const N: usize>(
+    fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         _salt: &[u8],
-        _ikm: &[u8],
+        _ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         _info: &[u8],
-        _key: &mut CryptoSensitive<N>,
-    ) -> Result<(), ()> {
+        _key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error> {
         unimplemented!()
     }
 }
 
 impl super::PbKdf for DummyCrypto {
-    fn derive<const N: usize>(
+    fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
-        _password: &[u8],
+        _password: CryptoSensitiveRef<'_, PASS_LEN>,
         _iter: usize,
         _salt: &[u8],
-        _out: &mut CryptoSensitive<N>,
+        _out: &mut CryptoSensitive<KEY_LEN>,
     ) {
         unimplemented!()
     }

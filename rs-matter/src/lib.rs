@@ -89,6 +89,7 @@ use crate::pairing::qr::{
     no_optional_data, CommFlowType, NoOptionalData, Qr, QrPayload, QrTextType,
 };
 use crate::pairing::DiscoveryCapabilities;
+use crate::sc::pase::spake2p::VerifierPassword;
 use crate::sc::pase::PaseMgr;
 use crate::transport::network::{NetworkReceive, NetworkSend};
 use crate::transport::TransportMgr;
@@ -236,12 +237,12 @@ impl MatterMdnsService {
 }
 
 /// Device basic commissioning data
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BasicCommData {
     /// The password which is necessary to authenticate the device in either
     /// initial commissioning, or when the basic commissioning window is opened
-    pub password: u32,
+    pub password: VerifierPassword,
     /// The 12-bit discriminator used to differentiate between multiple devices
     pub discriminator: u16,
 }
@@ -521,7 +522,7 @@ impl<'a> Matter<'a> {
         let payload = QrPayload::new_from_basic_info(
             disc_caps,
             CommFlowType::Standard,
-            self.dev_comm,
+            self.dev_comm.clone(),
             self.dev_det,
             no_optional_data as _,
         );
@@ -553,7 +554,7 @@ impl<'a> Matter<'a> {
     /// - `timeout_secs`: The timeout in seconds for the basic commissioning window
     pub fn open_basic_comm_window(&self, timeout_secs: u16) -> Result<(), Error> {
         self.pase_mgr.borrow_mut().open_basic_comm_window(
-            self.dev_comm.password,
+            self.dev_comm.password.reference(),
             self.dev_comm.discriminator,
             timeout_secs,
             None,

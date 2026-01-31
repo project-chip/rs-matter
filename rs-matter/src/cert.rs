@@ -789,7 +789,7 @@ impl<'a, C: Crypto> CertVerifier<'a, C> {
                     parent.get_subject_key_id().map(Bytes)
                 );
 
-                Err(ErrorCode::Invalid)?;
+                Err(ErrorCode::InvalidSignature)?;
             }
         }
 

@@ -130,8 +130,8 @@ impl ClusterHandler for AdminCommHandler {
         let matter = ctx.matter();
 
         matter.pase_mgr.borrow_mut().open_comm_window(
-            request.pake_passcode_verifier()?.0,
-            request.salt()?.0,
+            request.pake_passcode_verifier()?.0.try_into()?,
+            request.salt()?.0.try_into()?,
             request.iterations()?,
             request.discriminator()?,
             request.commissioning_timeout()?,
@@ -149,7 +149,7 @@ impl ClusterHandler for AdminCommHandler {
         let matter = ctx.matter();
 
         matter.pase_mgr.borrow_mut().open_basic_comm_window(
-            matter.dev_comm().password,
+            matter.dev_comm().password.reference(),
             matter.dev_comm().discriminator,
             request.commissioning_timeout()?,
             opener,

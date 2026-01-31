@@ -326,6 +326,7 @@ where
     /// Get a reference to the main responder.
     ///
     /// Useful when the user would like to organize its own herd of responders rather than using the `run` method.
+    #[allow(clippy::type_complexity)]
     pub const fn responder(
         &self,
     ) -> &Responder<'a, ChainedExchangeHandler<&'d DataModel<'a, N, B, T, C>, SecureChannel<&'d C>>>

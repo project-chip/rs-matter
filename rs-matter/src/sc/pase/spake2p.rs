@@ -28,14 +28,14 @@ use core::marker::PhantomData;
 use subtle::ConstantTimeEq;
 
 use crate::crypto::{
-    CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint384Ref, Crypto, CryptoSensitive,
-    Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf, PbKdf, UInt,
-    EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED, HASH_LEN,
-    HASH_ZEROED, UINT384_CANON_LEN, UINT384_ZEROED,
+    CanonEcPoint, CanonEcPointRef, CanonEcScalarRef, CanonUint320Ref, Crypto, CryptoSensitive,
+    CryptoSensitiveRef, Digest, EcPoint, EcScalar, Hash, HashRef, HmacHash, HmacHashRef, Kdf,
+    PbKdf, UInt, EC_CANON_POINT_LEN, EC_CANON_SCALAR_LEN, EC_POINT_ZEROED, EC_SCALAR_ZEROED,
+    HASH_LEN, HASH_ZEROED, UINT320_CANON_LEN, UINT320_ZEROED,
 };
 use crate::error::{Error, ErrorCode};
 use crate::sc::SCStatusCodes;
-use crate::utils::init::{init, zeroed, Init, IntoFallibleInit};
+use crate::utils::init::{init, zeroed, Init};
 use crate::utils::rand::Rand;
 
 const MATTER_M_BIN: CanonEcPointRef = CanonEcPointRef::new_from_slice(&[
@@ -82,7 +82,7 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
     }
 
     // Computes w0 from w0s respectively
-    pub fn set_w0_from_w0s(&mut self, w0s: CanonUint384Ref<'_>) -> Result<(), Error> {
+    pub fn set_w0_from_w0s(&mut self, w0s: CanonUint320Ref<'_>) -> Result<(), Error> {
         // From the Matter Spec,
         //         w0 = w0s mod p
         //   where p is the order of the curve
@@ -97,7 +97,7 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         Ok(())
     }
 
-    pub fn set_w1_from_w1s(&mut self, w1s: CanonUint384Ref<'_>) -> Result<(), Error> {
+    pub fn set_w1_from_w1s(&mut self, w1s: CanonUint320Ref<'_>) -> Result<(), Error> {
         // From the Matter Spec,
         //         w1 = w1s mod p
         //   where p is the order of the curve
@@ -114,29 +114,29 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
 
     fn rem(
         &self,
-        value: CanonUint384Ref<'_>,
+        value: CanonUint320Ref<'_>,
         operand: CanonEcScalarRef<'_>,
     ) -> Result<C::EcScalar<'a>, Error> {
-        let value = self.crypto.uint384(value)?;
+        let value = self.crypto.uint320(value)?;
         let operand = self.expand(operand)?;
 
         let result = value.rem(&operand).unwrap();
-        let mut result_uint = UINT384_ZEROED;
+        let mut result_uint = UINT320_ZEROED;
         result.write_canon(&mut result_uint);
 
         let result_scalar: CanonEcScalarRef<'_> = CanonEcScalarRef::new_from_slice(
-            &result_uint.access()[UINT384_CANON_LEN - EC_CANON_SCALAR_LEN..],
+            &result_uint.access()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..],
         );
 
         self.crypto.ec_scalar(result_scalar)
     }
 
-    fn expand(&self, scalar: CanonEcScalarRef<'_>) -> Result<C::UInt384<'_>, Error> {
-        let mut operand_u384 = UINT384_ZEROED;
-        operand_u384.access_mut()[UINT384_CANON_LEN - EC_CANON_SCALAR_LEN..]
+    fn expand(&self, scalar: CanonEcScalarRef<'_>) -> Result<C::UInt320<'_>, Error> {
+        let mut operand_u320 = UINT320_ZEROED;
+        operand_u320.access_mut()[UINT320_CANON_LEN - EC_CANON_SCALAR_LEN..]
             .copy_from_slice(scalar.access());
 
-        self.crypto.uint384(operand_u384.reference())
+        self.crypto.uint320(operand_u320.reference())
     }
 
     pub(crate) fn set_w0(&mut self, w0: CanonEcScalarRef<'_>) -> Result<(), Error> {
@@ -144,6 +144,7 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
         Ok(())
     }
 
+    #[allow(unused)]
     pub(crate) fn set_w1(&mut self, w1: CanonEcScalarRef<'_>) -> Result<(), Error> {
         self.w1 = Some(self.crypto.ec_scalar(w1)?);
         Ok(())
@@ -157,7 +158,7 @@ impl<'a, C: Crypto> CryptoSpake2<'a, C> {
     }
 
     #[allow(non_snake_case)]
-    pub fn set_L_from_w1s(&mut self, w1s: CanonUint384Ref<'_>) -> Result<(), Error> {
+    pub fn set_L_from_w1s(&mut self, w1s: CanonUint320Ref<'_>) -> Result<(), Error> {
         // From the Matter spec,
         //        L = w1 * P
         //    where P is the generator of the underlying elliptic curve
@@ -327,11 +328,20 @@ impl<'a, C: Crypto> ZV<'a, C> {
 
 pub const SPAKE2_ITERATION_COUNT: u32 = 2000;
 
+pub(crate) const VERIFIER_PASSWORD_LEN: usize = 4;
+pub(crate) const VERIFIER_STR_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
+pub(crate) const VERIFIER_SALT_LEN: usize = 32;
+
+pub type VerifierPassword = CryptoSensitive<VERIFIER_PASSWORD_LEN>;
+pub type VerifierPasswordRef<'a> = CryptoSensitiveRef<'a, VERIFIER_PASSWORD_LEN>;
+
+pub(crate) type VerifierStr = CryptoSensitive<VERIFIER_STR_LEN>;
+pub(crate) type VerifierStrRef<'a> = CryptoSensitiveRef<'a, VERIFIER_STR_LEN>;
+
+pub(crate) type VerifierSalt = [u8; VERIFIER_SALT_LEN];
+
 const SPAKE2P_KEY_CONFIRM_INFO: &[u8] = b"ConfirmationKeys";
 const SPAKE2P_CONTEXT_PREFIX: &[u8] = b"CHIP PAKE V1 Commissioning";
-
-pub const VERIFIER_LEN: usize = EC_CANON_SCALAR_LEN + EC_CANON_POINT_LEN;
-pub const SALT_LEN: usize = 32;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -359,7 +369,7 @@ pub struct Spake2P<'a, C: Crypto> {
     pub(crate) crypto: &'a C,
     context: Option<C::Hash<'a>>,
     spake2: Option<CryptoSpake2<'a, C>>,
-    Ke: [u8; 16],
+    Ke: CryptoSensitive<16>,
     cA: HmacHash,
     app_data: u32,
 }
@@ -371,8 +381,8 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
             crypto,
             context: None,
             spake2: None,
-            Ke: [0; 16],
-            cA: CryptoSensitive::<32>::new(),
+            Ke: CryptoSensitive::new(),
+            cA: HmacHash::new(),
             app_data: 0,
         }
     }
@@ -384,8 +394,8 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
             crypto,
             context: None,
             spake2: None,
-            Ke <- zeroed(),
-            cA <- CryptoSensitive::init(),
+            Ke <- CryptoSensitive::init(),
+            cA <- HmacHash::init(),
             app_data: 0,
         })
     }
@@ -411,44 +421,45 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
         Ok(())
     }
 
-    pub fn ke(&self) -> &[u8; 16] {
-        &self.Ke
+    pub fn ke(&self) -> CryptoSensitiveRef<'_, 16> {
+        self.Ke.reference()
     }
 
     fn get_w0w1s(
         &self,
-        pw: u32,
+        pw: VerifierPasswordRef<'_>,
         iter: u32,
         salt: &[u8],
-        w0w1s: &mut CryptoSensitive<{ UINT384_CANON_LEN * 2 }>,
+        w0w1s: &mut CryptoSensitive<{ UINT320_CANON_LEN * 2 }>,
     ) {
-        unwrap!(self.crypto.pbkdf()).derive(&pw.to_le_bytes(), iter as usize, salt, w0w1s);
+        unwrap!(self.crypto.pbkdf()).derive(pw, iter as usize, salt, w0w1s);
     }
 
     pub(crate) fn start_verifier(&mut self, verifier: &VerifierData) -> Result<(), Error> {
         self.spake2 = Some(CryptoSpake2::new(self.crypto)?);
-        if let Some(pw) = verifier.password {
+        if let Some(pw) = verifier.password.as_ref().map(|pw| pw.reference()) {
             // Derive w0 and L from the password
             let mut w0w1s = CryptoSensitive::new();
             self.get_w0w1s(pw, verifier.count, &verifier.salt, &mut w0w1s);
 
             if let Some(spake2) = &mut self.spake2 {
-                spake2.set_w0_from_w0s(CanonUint384Ref::new_from_slice(
-                    &w0w1s.access()[..UINT384_CANON_LEN],
+                spake2.set_w0_from_w0s(CanonUint320Ref::new_from_slice(
+                    &w0w1s.access()[..UINT320_CANON_LEN],
                 ))?;
-                spake2.set_L_from_w1s(CanonUint384Ref::new_from_slice(
-                    &w0w1s.access()[UINT384_CANON_LEN..],
+                spake2.set_L_from_w1s(CanonUint320Ref::new_from_slice(
+                    &w0w1s.access()[UINT320_CANON_LEN..],
                 ))?;
             }
         } else {
             // Extract w0 and L from the verifier
             if let Some(spake2) = &mut self.spake2 {
-                spake2.set_w0(CanonEcScalarRef::new_from_slice(
-                    &verifier.verifier[..EC_CANON_SCALAR_LEN],
-                ))?;
-                spake2.set_L(CanonEcPointRef::new_from_slice(
-                    &verifier.verifier[EC_CANON_SCALAR_LEN..],
-                ))?;
+                let (w0, p_l) = verifier
+                    .verifier
+                    .reference()
+                    .split::<EC_CANON_SCALAR_LEN, EC_CANON_POINT_LEN>();
+
+                spake2.set_w0(w0)?;
+                spake2.set_L(p_l)?;
             }
         }
 
@@ -513,15 +524,14 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
         TT: HashRef<'_>,
         pA: CanonEcPointRef<'_>,
         pB: CanonEcPointRef<'_>,
-        Ke: &mut [u8; 16],
+        Ke: &mut CryptoSensitive<16>,
         cA: &mut HmacHash,
         cB: &mut HmacHash,
     ) -> Result<(), Error> {
         // Step 1: Ka || Ke = Hash(TT)
         let KaKe = TT;
-        let Ka = &KaKe.access()[..HASH_LEN / 2];
-        let ke_internal = &KaKe.access()[HASH_LEN / 2..];
-        Ke.copy_from_slice(ke_internal);
+        let (Ka, ke_internal) = KaKe.split::<{ HASH_LEN / 2 }, { HASH_LEN / 2 }>();
+        Ke.load(ke_internal);
 
         // TODO: Remove the magic constants from here (e.g. 32, 16, etc.)
 
@@ -551,16 +561,16 @@ impl<'a, C: Crypto> Spake2P<'a, C> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) struct VerifierData {
     /// When `password` is `None`, `verifier` is expected to be set
-    pub password: Option<u32>,
-    pub verifier: [u8; VERIFIER_LEN],
+    pub password: Option<VerifierPassword>,
+    pub verifier: VerifierStr,
     // For the VerifierOption::Verifier, the following fields only serve
     // information purposes
-    pub salt: [u8; SALT_LEN],
+    pub salt: VerifierSalt,
     pub count: u32,
 }
 
 impl VerifierData {
-    pub fn init_with_pw(password: u32, rand: Rand) -> impl Init<Self> {
+    pub fn init_with_pw<'a>(password: VerifierPasswordRef<'a>, rand: Rand) -> impl Init<Self> + 'a {
         Self::init_empty().chain(move |this| {
             this.configure_pw(password, rand);
 
@@ -568,42 +578,42 @@ impl VerifierData {
         })
     }
 
-    pub fn init<'a>(verifier: &'a [u8], salt: &'a [u8], count: u32) -> impl Init<Self, Error> + 'a {
-        Self::init_empty()
-            .into_fallible()
-            .chain(move |this| this.configure_verifier(verifier, salt, count))
+    pub fn init<'a>(
+        verifier: VerifierStrRef<'a>,
+        salt: &'a VerifierSalt,
+        count: u32,
+    ) -> impl Init<Self> + 'a {
+        Self::init_empty().chain(move |this| {
+            this.configure_verifier(verifier, salt, count);
+
+            Ok(())
+        })
     }
 
     fn init_empty() -> impl Init<Self> {
         init!(Self {
             password: None,
-            verifier <- zeroed(),
+            verifier <- VerifierStr::init(),
             salt <- zeroed(),
             count: SPAKE2_ITERATION_COUNT,
         })
     }
 
-    fn configure_pw(&mut self, password: u32, rand: Rand) {
-        self.password = Some(password);
+    fn configure_pw(&mut self, password: VerifierPasswordRef<'_>, rand: Rand) {
+        self.password = Some(password.into());
         rand(&mut self.salt);
     }
 
     fn configure_verifier(
         &mut self,
-        verifier: &[u8],
-        salt: &[u8],
+        verifier: VerifierStrRef<'_>,
+        salt: &VerifierSalt,
         count: u32,
-    ) -> Result<(), Error> {
-        if salt.len() != self.salt.len() || verifier.len() != self.verifier.len() {
-            Err(ErrorCode::InvalidData)?;
-        }
-
+    ) {
         self.password = None;
         self.salt.copy_from_slice(salt);
-        self.verifier.copy_from_slice(verifier);
+        self.verifier.load(verifier);
         self.count = count;
-
-        Ok(())
     }
 }
 
@@ -636,11 +646,11 @@ mod tests {
     fn test_get_Y() {
         for t in RFC_T {
             let crypto = test_crypto();
-            let M = unwrap!(crypto.ec_point(MATTER_M_BIN));
+            let N = unwrap!(crypto.ec_point(MATTER_N_BIN));
             let y = unwrap!(crypto.ec_scalar(t.y));
             let w0 = unwrap!(crypto.ec_scalar(t.w0));
             let P = unwrap!(crypto.ec_generator_point());
-            let r = P.add_mul(&y, &M, &w0);
+            let r = P.add_mul(&y, &N, &w0);
 
             let mut point = EC_POINT_ZEROED;
             r.write_canon(&mut point);
@@ -697,12 +707,17 @@ mod tests {
     #[test]
     fn test_pbkdf2() {
         // These are the vectors from one sample run of chip-tool along with our PBKDFParamResponse
-        const SALT: &[u8] = &[
+        const SALT: &[u8; 16] = &[
             0x4, 0xa1, 0xd2, 0xc6, 0x11, 0xf0, 0xbd, 0x36, 0x78, 0x67, 0x79, 0x7b, 0xfe, 0x82,
-            0x36, 0x0,
+            0x36, 0x00,
         ];
         let mut w0w1s = CryptoSensitive::new();
-        Spake2P::new(&test_crypto()).get_w0w1s(123456, 2000, SALT, &mut w0w1s);
+        Spake2P::new(&test_crypto()).get_w0w1s(
+            (&123456_u32.to_le_bytes()).into(),
+            2000,
+            SALT,
+            &mut w0w1s,
+        );
         assert_eq!(
             w0w1s.access(),
             &[
@@ -711,8 +726,7 @@ mod tests {
                 0xe8, 0xa4, 0x0b, 0xb3, 0x42, 0xe8, 0xc6, 0x8e, 0xa9, 0x9a, 0x73, 0xe2, 0x59, 0xd1,
                 0x17, 0xd8, 0xed, 0xcb, 0x72, 0x8c, 0xbf, 0x3b, 0xa9, 0x88, 0x02, 0xd8, 0x45, 0x4b,
                 0xd0, 0x2d, 0xe5, 0xe4, 0x1c, 0xc3, 0xd7, 0x00, 0x03, 0x3c, 0x86, 0x20, 0x9a, 0x42,
-                0x5f, 0x55, 0x96, 0x3b, 0x9f, 0x6f, 0x79, 0xef, 0xcb, 0x37, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x5f, 0x55, 0x96, 0x3b, 0x9f, 0x6f, 0x79, 0xef, 0xcb, 0x37,
             ]
         )
     }
@@ -723,13 +737,13 @@ mod tests {
         let crypto = test_crypto();
 
         for t in RFC_T {
-            let mut Ke = [0; 16];
-            let mut cA = CryptoSensitive::new();
-            let mut cB = CryptoSensitive::new();
+            let mut Ke = CryptoSensitive::new();
+            let mut cA = HmacHash::new();
+            let mut cB = HmacHash::new();
             let mut TT_hash = HASH_ZEROED;
-            let mut h = unwrap!(crypto.hash());
-            h.update(&t.TT[..t.TT_len]);
-            h.finish(&mut TT_hash);
+            let mut hasher = unwrap!(crypto.hash());
+            hasher.update(&t.TT[..t.TT_len]);
+            hasher.finish(&mut TT_hash);
             unwrap!(Spake2P::get_Ke_and_cAcB(
                 &crypto,
                 TT_hash.reference(),
@@ -739,7 +753,7 @@ mod tests {
                 &mut cA,
                 &mut cB,
             ));
-            assert_eq!(&Ke, t.Ke);
+            assert_eq!(Ke.access(), t.Ke.access());
             assert_eq!(cA.access(), t.cA.access());
             assert_eq!(cB.access(), t.cB.access());
         }
@@ -760,7 +774,7 @@ mod tests {
         pub L: CanonEcPointRef<'a>,
         pub cA: HmacHashRef<'a>,
         pub cB: HmacHashRef<'a>,
-        pub Ke: &'a [u8; 16],
+        pub Ke: CryptoSensitiveRef<'a, 16>,
         pub TT: &'a [u8; 547],
         // The TT size changes, as they change the identifiers, address it through this
         pub TT_len: usize,
@@ -833,10 +847,10 @@ mod tests {
                 0x29, 0x8b, 0x1d, 0x07, 0xa5, 0x26, 0xcf, 0x3c, 0xc5, 0x91, 0xad, 0xfe, 0xcd, 0x1f,
                 0x6e, 0xf6, 0xe0, 0x2e,
             ]),
-            Ke: &[
+            Ke: CryptoSensitiveRef::<16>::new_from_slice(&[
                 0x80, 0x1d, 0xb2, 0x97, 0x65, 0x48, 0x16, 0xeb, 0x4f, 0x02, 0x86, 0x81, 0x29, 0xb9,
                 0xdc, 0x89,
-            ],
+            ]),
             TT: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
@@ -947,10 +961,10 @@ mod tests {
                 0xca, 0x24, 0x48, 0xb9, 0x05, 0xbe, 0x19, 0xa4, 0x3b, 0x94, 0xee, 0x24, 0xb7, 0x70,
                 0x20, 0x81, 0x35, 0xe3,
             ]),
-            Ke: &[
+            Ke: CryptoSensitiveRef::<16>::new_from_slice(&[
                 0x69, 0x89, 0xd8, 0xf9, 0x17, 0x7e, 0xf7, 0xdf, 0x67, 0xda, 0x43, 0x79, 0x87, 0xf0,
                 0x72, 0x55,
-            ],
+            ]),
             TT: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
@@ -1061,10 +1075,10 @@ mod tests {
                 0x17, 0xca, 0xdf, 0x3e, 0xa3, 0x79, 0x28, 0x27, 0xf4, 0x79, 0xe8, 0x73, 0xf9, 0x3e,
                 0x90, 0xf2, 0x15, 0x52,
             ]),
-            Ke: &[
+            Ke: CryptoSensitiveRef::<16>::new_from_slice(&[
                 0x2e, 0xa4, 0x0e, 0x4b, 0xad, 0xfa, 0x54, 0x52, 0xb5, 0x74, 0x4d, 0xc5, 0x98, 0x3e,
                 0x99, 0xba,
-            ],
+            ]),
             TT: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,
@@ -1175,10 +1189,10 @@ mod tests {
                 0x15, 0xb3, 0xc1, 0x52, 0x4a, 0xae, 0x80, 0xfd, 0x4e, 0x68, 0x10, 0xcf, 0x53, 0x1c,
                 0xf1, 0x1d, 0x20, 0xe3,
             ]),
-            Ke: &[
+            Ke: CryptoSensitiveRef::<16>::new_from_slice(&[
                 0xea, 0x32, 0x76, 0xd6, 0x83, 0x34, 0x57, 0x60, 0x97, 0xe0, 0x4b, 0x19, 0xee, 0x5a,
                 0x3a, 0x8b,
-            ],
+            ]),
             TT: &[
                 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x53, 0x50, 0x41, 0x4b, 0x45, 0x32,
                 0x2b, 0x2d, 0x50, 0x32, 0x35, 0x36, 0x2d, 0x53, 0x48, 0x41, 0x32, 0x35, 0x36, 0x2d,

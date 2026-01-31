@@ -110,7 +110,7 @@ where
     where
         Self: 'a;
 
-    type UInt384<'a>
+    type UInt320<'a>
         = BigNum
     where
         Self: 'a;
@@ -167,7 +167,7 @@ where
         self.ec_scalar(self.singleton_secret_key.borrow().reference())
     }
 
-    fn uint384(&self, uint: super::CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
+    fn uint320(&self, uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
         let uint = BigNum::from_slice(uint.access())?;
 
         Ok(uint)
@@ -281,19 +281,19 @@ impl Hkdf {
 }
 
 impl super::Kdf for Hkdf {
-    fn expand<const N: usize>(
+    fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
-        ikm: &[u8],
+        ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
-        key: &mut CryptoSensitive<N>,
-    ) -> Result<(), ()> {
+        key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error> {
         let mut ctx = PkeyCtx::new_id(Id::HKDF).unwrap();
 
         ctx.derive_init().unwrap();
 
         ctx.set_hkdf_md(self.0).unwrap();
-        ctx.set_hkdf_key(ikm).unwrap();
+        ctx.set_hkdf_key(ikm.access()).unwrap();
 
         if !salt.is_empty() {
             ctx.set_hkdf_salt(salt).unwrap();
@@ -318,14 +318,14 @@ impl Pbkdf2Hmac {
 }
 
 impl super::PbKdf for Pbkdf2Hmac {
-    fn derive<const N: usize>(
+    fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
-        pass: &[u8],
+        pass: CryptoSensitiveRef<'_, PASS_LEN>,
         iter: usize,
         salt: &[u8],
-        key: &mut CryptoSensitive<N>,
+        key: &mut CryptoSensitive<KEY_LEN>,
     ) {
-        openssl::pkcs5::pbkdf2_hmac(pass, salt, iter, self.0, key.access_mut()).unwrap();
+        openssl::pkcs5::pbkdf2_hmac(pass.access(), salt, iter, self.0, key.access_mut()).unwrap();
     }
 }
 

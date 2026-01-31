@@ -25,8 +25,8 @@ use crate::acl::{self, AccessReq, AclEntry, AuthMode};
 use crate::cert::{CertRef, MAX_CERT_TLV_LEN};
 use crate::crypto::{
     CanonAeadKeyRef, CanonPkcPublicKey, CanonPkcPublicKeyRef, CanonPkcSecretKey,
-    CanonPkcSecretKeyRef, Crypto, CryptoSensitive, Digest, Hash, Kdf, PKC_PUBLIC_KEY_ZEROED,
-    PKC_SECRET_KEY_ZEROED,
+    CanonPkcSecretKeyRef, Crypto, CryptoSensitive, Digest, Hash, Kdf, PKC_CANON_PUBLIC_KEY_LEN,
+    PKC_PUBLIC_KEY_ZEROED, PKC_SECRET_KEY_ZEROED,
 };
 use crate::dm::Privilege;
 use crate::error::{Error, ErrorCode};
@@ -136,12 +136,16 @@ impl Fabric {
             .extend_from_slice(noc)
             .map_err(|_| ErrorCode::BufferTooSmall)?;
 
+        let root_cert = CertRef::new(TLVElement::new(root_ca));
         let noc_cert = CertRef::new(TLVElement::new(noc));
 
         self.node_id = noc_cert.get_node_id()?;
         self.fabric_id = noc_cert.get_fabric_id()?;
-        self.compressed_fabric_id =
-            Self::compute_compressed_fabric_id(&crypto, root_ca, self.fabric_id);
+        self.compressed_fabric_id = Self::compute_compressed_fabric_id(
+            &crypto,
+            root_cert.pubkey()?.try_into()?,
+            self.fabric_id,
+        );
 
         if let Some(epoch_key) = epoch_key {
             self.ipk
@@ -392,7 +396,7 @@ impl Fabric {
     /// Compute the compressed fabric ID
     pub(crate) fn compute_compressed_fabric_id<C: Crypto>(
         crypto: C,
-        root_pubkey: &[u8],
+        root_pubkey: CanonPkcPublicKeyRef<'_>,
         fabric_id: u64,
     ) -> u64 {
         const COMPRESSED_FABRIC_ID_INFO: &[u8; 16] = &[
@@ -401,12 +405,12 @@ impl Fabric {
         ];
 
         let mut compressed_fabric_id = CryptoSensitive::<{ COMPRESSED_FABRIC_ID_LEN }>::new();
-        unwrap!(crypto.kdf()).expand(
+        unwrap!(unwrap!(crypto.kdf()).expand(
             &fabric_id.to_be_bytes(),
-            &root_pubkey[1..],
+            root_pubkey.split::<1, { PKC_CANON_PUBLIC_KEY_LEN - 1 }>().1,
             COMPRESSED_FABRIC_ID_INFO,
             &mut compressed_fabric_id,
-        );
+        ));
 
         u64::from_be_bytes(*compressed_fabric_id.access())
     }

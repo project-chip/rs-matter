@@ -209,7 +209,12 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
 
         self.crypto
             .kdf()?
-            .expand(salt.as_slice(), self.shared_secret.access(), &S2K_INFO, key)
+            .expand(
+                salt.as_slice(),
+                self.shared_secret.reference(),
+                &S2K_INFO,
+                key,
+            )
             .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Sigma2Key: key: {:x?}", key);
 
@@ -329,7 +334,7 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
             .kdf()?
             .expand(
                 salt.as_slice(),
-                self.shared_secret.access(),
+                self.shared_secret.reference(),
                 &SEKEYS_INFO,
                 keys,
             )
@@ -398,7 +403,12 @@ impl<'a, C: Crypto + 'a> CaseSession<'a, C> {
 
         self.crypto
             .kdf()?
-            .expand(salt.as_slice(), self.shared_secret.access(), &S3K_INFO, key)
+            .expand(
+                salt.as_slice(),
+                self.shared_secret.reference(),
+                &S3K_INFO,
+                key,
+            )
             .map_err(|_x| ErrorCode::InvalidData)?;
         //        println!("Sigma3Key: key: {:x?}", key);
 

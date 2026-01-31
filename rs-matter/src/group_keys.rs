@@ -56,7 +56,7 @@ impl KeySet {
             .kdf()?
             .expand(
                 &compressed_fabric_id.to_be_bytes(),
-                epoch_key.access(),
+                epoch_key,
                 GRP_KEY_INFO,
                 &mut self.op_key,
             )

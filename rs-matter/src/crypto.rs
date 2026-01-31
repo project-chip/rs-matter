@@ -86,10 +86,10 @@ pub const PKC_SIGNATURE_LEN: usize = PKC_CANON_SECRET_KEY_LEN * 2;
 /// The shared secret is the ECDH computed value.
 pub const PKC_SHARED_SECRET_LEN: usize = 32;
 
-/// Length of the canonical representation of a 384-bit unsigned integer in bytes.
+/// Length of the canonical representation of a 320-bit unsigned integer in bytes.
 ///
 /// As per the Matter spec, this is used in the SPAKE2+ protocol.
-pub const UINT384_CANON_LEN: usize = 48;
+pub const UINT320_CANON_LEN: usize = 40;
 
 /// Length of the canonical representation of an AEAD key in bytes.
 ///
@@ -106,6 +106,138 @@ pub const AEAD_NONCE_LEN: usize = 13;
 /// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 16-byte tag.
 pub const AEAD_TAG_LEN: usize = 16;
 
+/// Canonical representation of a hash value.
+///
+/// As per the Matter spec, the hasher should be SHA-256.
+pub type Hash = CryptoSensitive<HASH_LEN>;
+
+pub type HashRef<'a> = CryptoSensitiveRef<'a, HASH_LEN>;
+
+/// Zeroed hash value.
+pub const HASH_ZEROED: Hash = Hash::new();
+
+/// Canonical representation of an HMAC hash value.
+///
+/// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.
+pub type HmacHash = CryptoSensitive<HMAC_HASH_LEN>;
+
+pub type HmacHashRef<'a> = CryptoSensitiveRef<'a, HMAC_HASH_LEN>;
+
+/// Zeroed HMAC hash value.
+pub const HMAC_HASH_ZEROED: Hash = HmacHash::new();
+
+/// Canonical representation of a 320-bit unsigned integer (BE format).
+pub type CanonUint320 = CryptoSensitive<UINT320_CANON_LEN>;
+
+pub type CanonUint320Ref<'a> = CryptoSensitiveRef<'a, UINT320_CANON_LEN>;
+
+/// Zeroed 320-bit unsigned integer.
+pub const UINT320_ZEROED: CanonUint320 = CanonUint320::new();
+
+/// Canonical representation of an AEAD key.
+///
+/// As per the Matter spec, the AEAD algorithm used is AES-CCM with 128-bit keys.
+pub type CanonAeadKey = CryptoSensitive<AEAD_CANON_KEY_LEN>;
+
+pub type CanonAeadKeyRef<'a> = CryptoSensitiveRef<'a, AEAD_CANON_KEY_LEN>;
+
+/// Zeroed AEAD key.
+pub const AEAD_KEY_ZEROED: CanonAeadKey = CanonAeadKey::new();
+
+/// Canonical representation of an AEAD nonce.
+///
+/// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 13-byte nonce.
+pub type AeadNonce = CryptoSensitive<AEAD_NONCE_LEN>;
+
+pub type AeadNonceRef<'a> = CryptoSensitiveRef<'a, AEAD_NONCE_LEN>;
+
+/// Zeroed AEAD nonce.
+pub const AEAD_NONCE_ZEROED: AeadNonce = AeadNonce::new();
+
+/// Canonical representation of an AEAD tag.
+///
+/// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 16-byte tag.
+pub type AeadTag = CryptoSensitive<AEAD_TAG_LEN>;
+
+pub type AeadTagRef<'a> = CryptoSensitiveRef<'a, AEAD_TAG_LEN>;
+
+/// Zeroed AEAD tag.
+pub const AEAD_TAG_ZEROED: AeadTag = AeadTag::new();
+
+/// Canonical representation of an EC scalar.
+///
+/// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
+pub type CanonEcScalar = CryptoSensitive<EC_CANON_SCALAR_LEN>;
+
+pub type CanonEcScalarRef<'a> = CryptoSensitiveRef<'a, EC_CANON_SCALAR_LEN>;
+
+/// Zeroed EC scalar.
+pub const EC_SCALAR_ZEROED: CanonEcScalar = CanonEcScalar::new();
+
+/// Canonical representation of an EC point (one byte prefix and then two affine scalar coordinates),
+/// uncompressed.
+///
+/// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
+pub type CanonEcPoint = CryptoSensitive<EC_CANON_POINT_LEN>;
+
+pub type CanonEcPointRef<'a> = CryptoSensitiveRef<'a, EC_CANON_POINT_LEN>;
+
+/// Zeroed EC point.
+pub const EC_POINT_ZEROED: CanonEcPoint = CanonEcPoint::new();
+
+/// Canonical representation of a Public Key Cryptography secret key.
+///
+/// As per the Matter spec, the used Public Key Cryptograqphy should be
+/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
+///
+/// Note that this is the same as `CanonEcScalar`.
+pub type CanonPkcSecretKey = CanonEcScalar;
+
+pub type CanonPkcSecretKeyRef<'a> = CanonEcScalarRef<'a>;
+
+/// Zeroed PKC secret key.
+pub const PKC_SECRET_KEY_ZEROED: CanonPkcSecretKey = EC_SCALAR_ZEROED;
+
+/// Canonical representation of a Public Key Cryptography public key.
+///
+/// As per the Matter spec, the used Public Key Cryptograqphy should be
+/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
+///
+/// Note that this is the same as `CanonEcPoint`.
+pub type CanonPkcPublicKey = CanonEcPoint;
+
+pub type CanonPkcPublicKeyRef<'a> = CanonEcPointRef<'a>;
+
+/// Zeroed PKC public key.
+pub const PKC_PUBLIC_KEY_ZEROED: CanonPkcPublicKey = EC_POINT_ZEROED;
+
+/// Canonical representation of a Public Key Cryptography signature.
+///
+/// As per the Matter spec, the used Public Key Cryptograqphy should be
+/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
+///
+/// Note that this is `2 * EC_CANON_SCALAR_LEN`, as the signature contains
+/// the (r, s) scalars computed using ECDSA.
+pub type CanonPkcSignature = CryptoSensitive<PKC_SIGNATURE_LEN>;
+
+pub type CanonPkcSignatureRef<'a> = CryptoSensitiveRef<'a, PKC_SIGNATURE_LEN>;
+
+/// Zeroed PKC signature.
+pub const EC_SIGNATURE_ZEROED: CanonPkcSignature = CryptoSensitive::new();
+
+/// Canonical representation of a Public Key Cryptography shared secret.
+///
+/// As per the Matter spec, the used Public Key Cryptograqphy should be
+/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
+///
+/// The shared secret is the ECDH computed value.
+pub type CanonPkcSharedSecret = CryptoSensitive<PKC_SHARED_SECRET_LEN>;
+
+pub type CanonPkcSharedSecretRef<'a> = CryptoSensitiveRef<'a, PKC_SHARED_SECRET_LEN>;
+
+/// Zeroed PKC shared secret.
+pub const PKC_SHARED_SECRET_ZEROED: CanonPkcSharedSecret = CryptoSensitive::new();
+
 #[derive(Clone)]
 pub struct CryptoSensitive<const N: usize> {
     data: [u8; N],
@@ -115,6 +247,14 @@ impl<const N: usize> CryptoSensitive<N> {
     #[inline(always)]
     pub const fn new() -> Self {
         Self { data: [0u8; N] }
+    }
+
+    pub const fn new_from_ref(other: CryptoSensitiveRef<'_, N>) -> Self {
+        let mut this = Self::new();
+
+        this.load(other);
+
+        this
     }
 
     #[inline(always)]
@@ -128,11 +268,11 @@ impl<const N: usize> CryptoSensitive<N> {
         CryptoSensitiveRef::new(&self.data)
     }
 
-    pub fn load(&mut self, other: CryptoSensitiveRef<'_, N>) {
+    pub const fn load(&mut self, other: CryptoSensitiveRef<'_, N>) {
         self.load_from_array(other.access());
     }
 
-    pub fn load_from_array(&mut self, data: &[u8; N]) {
+    pub const fn load_from_array(&mut self, data: &[u8; N]) {
         self.data.copy_from_slice(data);
     }
 
@@ -146,11 +286,11 @@ impl<const N: usize> CryptoSensitive<N> {
         Ok(())
     }
 
-    pub fn access(&self) -> &[u8; N] {
+    pub const fn access(&self) -> &[u8; N] {
         &self.data
     }
 
-    pub fn access_mut(&mut self) -> &mut [u8; N] {
+    pub const fn access_mut(&mut self) -> &mut [u8; N] {
         &mut self.data
     }
 }
@@ -198,6 +338,16 @@ impl<const N: usize> From<&[u8; N]> for CryptoSensitive<N> {
         let mut material = CryptoSensitive::new();
 
         material.load_from_array(data);
+
+        material
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for CryptoSensitive<N> {
+    fn from(data: [u8; N]) -> Self {
+        let mut material = CryptoSensitive::new();
+
+        material.load_from_array(&data);
 
         material
     }
@@ -289,7 +439,7 @@ impl<'a, const N: usize> CryptoSensitiveRef<'a, N> {
         )
     }
 
-    pub fn access(&self) -> &'a [u8; N] {
+    pub const fn access(&self) -> &'a [u8; N] {
         self.data
     }
 
@@ -333,138 +483,6 @@ impl<'a, const N: usize> TryFrom<&'a [u8]> for CryptoSensitiveRef<'a, N> {
         Self::try_new(data)
     }
 }
-
-/// Canonical representation of a hash value.
-///
-/// As per the Matter spec, the hasher should be SHA-256.
-pub type Hash = CryptoSensitive<HASH_LEN>;
-
-pub type HashRef<'a> = CryptoSensitiveRef<'a, HASH_LEN>;
-
-/// Zeroed hash value.
-pub const HASH_ZEROED: Hash = CryptoSensitive::new();
-
-/// Canonical representation of an HMAC hash value.
-///
-/// As per the Matter spec, the HMAC hasher should be HMAC-SHA-256.
-pub type HmacHash = CryptoSensitive<HMAC_HASH_LEN>;
-
-pub type HmacHashRef<'a> = CryptoSensitiveRef<'a, HMAC_HASH_LEN>;
-
-/// Zeroed HMAC hash value.
-pub const HMAC_HASH_ZEROED: Hash = CryptoSensitive::new();
-
-/// Canonical representation of a 384-bit unsigned integer (BE format).
-pub type CanonUint384 = CryptoSensitive<UINT384_CANON_LEN>;
-
-pub type CanonUint384Ref<'a> = CryptoSensitiveRef<'a, UINT384_CANON_LEN>;
-
-/// Zeroed 384-bit unsigned integer.
-pub const UINT384_ZEROED: CanonUint384 = CryptoSensitive::new();
-
-/// Canonical representation of an AEAD key.
-///
-/// As per the Matter spec, the AEAD algorithm used is AES-CCM with 128-bit keys.
-pub type CanonAeadKey = CryptoSensitive<AEAD_CANON_KEY_LEN>;
-
-pub type CanonAeadKeyRef<'a> = CryptoSensitiveRef<'a, AEAD_CANON_KEY_LEN>;
-
-/// Zeroed AEAD key.
-pub const AEAD_KEY_ZEROED: CanonAeadKey = CryptoSensitive::new();
-
-/// Canonical representation of an AEAD nonce.
-///
-/// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 13-byte nonce.
-pub type AeadNonce = CryptoSensitive<AEAD_NONCE_LEN>;
-
-pub type AeadNonceRef<'a> = CryptoSensitiveRef<'a, AEAD_NONCE_LEN>;
-
-/// Zeroed AEAD nonce.
-pub const AEAD_NONCE_ZEROED: AeadNonce = CryptoSensitive::new();
-
-/// Canonical representation of an AEAD tag.
-///
-/// As per the Matter spec, the AEAD algorithm used is AES-CCM with a 16-byte tag.
-pub type AeadTag = CryptoSensitive<AEAD_TAG_LEN>;
-
-pub type AeadTagRef<'a> = CryptoSensitiveRef<'a, AEAD_TAG_LEN>;
-
-/// Zeroed AEAD tag.
-pub const AEAD_TAG_ZEROED: AeadTag = CryptoSensitive::new();
-
-/// Canonical representation of an EC scalar.
-///
-/// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
-pub type CanonEcScalar = CryptoSensitive<EC_CANON_SCALAR_LEN>;
-
-pub type CanonEcScalarRef<'a> = CryptoSensitiveRef<'a, EC_CANON_SCALAR_LEN>;
-
-/// Zeroed EC scalar.
-pub const EC_SCALAR_ZEROED: CanonEcScalar = CryptoSensitive::new();
-
-/// Canonical representation of an EC point (one byte prefix and then two affine scalar coordinates),
-/// uncompressed.
-///
-/// As per the Matter spec, the curve used is secp256r1 (NIST P-256).
-pub type CanonEcPoint = CryptoSensitive<EC_CANON_POINT_LEN>;
-
-pub type CanonEcPointRef<'a> = CryptoSensitiveRef<'a, EC_CANON_POINT_LEN>;
-
-/// Zeroed EC point.
-pub const EC_POINT_ZEROED: CanonEcPoint = CryptoSensitive::new();
-
-/// Canonical representation of a Public Key Cryptography secret key.
-///
-/// As per the Matter spec, the used Public Key Cryptograqphy should be
-/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
-///
-/// Note that this is the same as `CanonEcScalar`.
-pub type CanonPkcSecretKey = CanonEcScalar;
-
-pub type CanonPkcSecretKeyRef<'a> = CanonEcScalarRef<'a>;
-
-/// Zeroed PKC secret key.
-pub const PKC_SECRET_KEY_ZEROED: CanonPkcSecretKey = EC_SCALAR_ZEROED;
-
-/// Canonical representation of a Public Key Cryptography public key.
-///
-/// As per the Matter spec, the used Public Key Cryptograqphy should be
-/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
-///
-/// Note that this is the same as `CanonEcPoint`.
-pub type CanonPkcPublicKey = CanonEcPoint;
-
-pub type CanonPkcPublicKeyRef<'a> = CanonEcPointRef<'a>;
-
-/// Zeroed PKC public key.
-pub const PKC_PUBLIC_KEY_ZEROED: CanonPkcPublicKey = EC_POINT_ZEROED;
-
-/// Canonical representation of a Public Key Cryptography signature.
-///
-/// As per the Matter spec, the used Public Key Cryptograqphy should be
-/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
-///
-/// Note that this is `2 * EC_CANON_SCALAR_LEN`, as the signature contains
-/// the (r, s) scalars computed using ECDSA.
-pub type CanonPkcSignature = CryptoSensitive<PKC_SIGNATURE_LEN>;
-
-pub type CanonPkcSignatureRef<'a> = CryptoSensitiveRef<'a, PKC_SIGNATURE_LEN>;
-
-/// Zeroed PKC signature.
-pub const EC_SIGNATURE_ZEROED: CanonPkcSignature = CryptoSensitive::new();
-
-/// Canonical representation of a Public Key Cryptography shared secret.
-///
-/// As per the Matter spec, the used Public Key Cryptograqphy should be
-/// Elliptic-Curve based, and specifically secp256r1 (NIST P-256).
-///
-/// The shared secret is the ECDH computed value.
-pub type CanonPkcSharedSecret = CryptoSensitive<PKC_SHARED_SECRET_LEN>;
-
-pub type CanonPkcSharedSecretRef<'a> = CryptoSensitiveRef<'a, PKC_SHARED_SECRET_LEN>;
-
-/// Zeroed PKC shared secret.
-pub const PKC_SHARED_SECRET_ZEROED: CanonPkcSharedSecret = CryptoSensitive::new();
 
 /// Trait representing a cryptographic backend.
 ///
@@ -567,8 +585,8 @@ pub trait Crypto {
     where
         Self: 'a;
 
-    /// 384-bit unsigned integer type returned by `Crypto::uint384`.
-    type UInt384<'a>: UInt<'a, UINT384_CANON_LEN>
+    /// 320-bit unsigned integer type returned by `Crypto::uint320`.
+    type UInt320<'a>: UInt<'a, UINT320_CANON_LEN>
     where
         Self: 'a;
 
@@ -627,8 +645,8 @@ pub trait Crypto {
     /// This is used for device attestation.
     fn singleton_singing_secret_key(&self) -> Result<Self::SigningSecretKey<'_>, Error>;
 
-    /// Create a 384-bit unsigned integer instance from its canonical representation.
-    fn uint384(&self, uint: CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error>;
+    /// Create a 320-bit unsigned integer instance from its canonical representation.
+    fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error>;
 
     /// Create an EC scalar instance from its canonical representation.
     fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error>;
@@ -687,8 +705,8 @@ where
     where
         Self: 'a;
 
-    type UInt384<'a>
-        = T::UInt384<'a>
+    type UInt320<'a>
+        = T::UInt320<'a>
     where
         Self: 'a;
 
@@ -741,8 +759,8 @@ where
         (*self).singleton_singing_secret_key()
     }
 
-    fn uint384(&self, uint: CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
-        (*self).uint384(uint)
+    fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
+        (*self).uint320(uint)
     }
 
     fn ec_scalar(&self, scalar: CanonEcScalarRef<'_>) -> Result<Self::EcScalar<'_>, Error> {
@@ -779,25 +797,25 @@ pub trait Digest<const HASH_LEN: usize>: Clone {
 pub trait Kdf {
     /// Expand the given input keying material (IKM) with the given salt and info
     /// to produce the output keying material (OKM) written into `key`.
-    fn expand<const N: usize>(
+    fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
-        ikm: &[u8],
+        ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
-        key: &mut CryptoSensitive<N>,
-    ) -> Result<(), ()>;
+        key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error>;
 }
 
 /// Trait representing a Password-Based Key Derivation Function (PBKDF).
 pub trait PbKdf {
     /// Derive a key from the given password, salt and iteration count,
     /// writing the result into `key`.
-    fn derive<const N: usize>(
+    fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
-        pass: &[u8],
+        pass: CryptoSensitiveRef<'_, PASS_LEN>,
         iter: usize,
         salt: &[u8],
-        key: &mut CryptoSensitive<N>,
+        key: &mut CryptoSensitive<KEY_LEN>,
     );
 }
 

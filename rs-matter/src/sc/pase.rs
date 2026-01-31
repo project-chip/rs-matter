@@ -19,7 +19,7 @@ use core::num::NonZeroU8;
 use core::ops::Add;
 use core::time::Duration;
 
-use spake2p::{Spake2P, VerifierData, SALT_LEN};
+use spake2p::{Spake2P, VerifierData, VERIFIER_SALT_LEN};
 
 use crate::crypto::{
     CanonEcPointRef, Crypto, CryptoSensitive, HmacHashRef, Kdf, AEAD_CANON_KEY_LEN,
@@ -29,12 +29,13 @@ use crate::dm::clusters::adm_comm::{self};
 use crate::dm::endpoints::ROOT_ENDPOINT_ID;
 use crate::dm::{BasicContext, BasicContextInstance};
 use crate::error::{Error, ErrorCode};
+use crate::sc::pase::spake2p::{VerifierPasswordRef, VerifierSalt, VerifierStrRef};
 use crate::sc::{check_opcode, complete_with_status, OpCode, SessionParameters};
 use crate::tlv::{get_root_node_struct, FromTLV, OctetStr, TLVElement, TagType, ToTLV};
 use crate::transport::exchange::{Exchange, ExchangeId};
 use crate::transport::session::{ReservedSession, SessionMode};
 use crate::utils::epoch::Epoch;
-use crate::utils::init::{init, try_init, Init};
+use crate::utils::init::{init, Init};
 use crate::utils::maybe::Maybe;
 use crate::utils::rand::Rand;
 use crate::MatterMdnsService;
@@ -91,13 +92,13 @@ impl CommWindow {
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
     /// - `rand` - The random number generator
-    fn init_with_pw(
-        password: u32,
+    fn init_with_pw<'a>(
+        password: VerifierPasswordRef<'a>,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
         rand: Rand,
-    ) -> impl Init<Self> {
+    ) -> impl Init<Self> + 'a {
         init!(Self {
             mdns_id: Self::mdns_id(rand),
             discriminator,
@@ -117,21 +118,21 @@ impl CommWindow {
     /// - `opener` - The opener info
     /// - `window_expiry` - The window expiry instant
     fn init<'a>(
-        verifier: &'a [u8],
-        salt: &'a [u8],
+        verifier: VerifierStrRef<'a>,
+        salt: &'a VerifierSalt,
         count: u32,
         discriminator: u16,
         opener: Option<CommWindowOpener>,
         window_expiry: Duration,
         rand: Rand,
-    ) -> impl Init<Self, Error> + 'a {
-        try_init!(Self {
+    ) -> impl Init<Self> + 'a {
+        init!(Self {
             mdns_id: Self::mdns_id(rand),
             discriminator,
             verifier <- VerifierData::init(verifier, salt, count),
             opener,
             window_expiry,
-        }? Error)
+        })
     }
 
     /// Get the type of commissioning window
@@ -245,7 +246,7 @@ impl PaseMgr {
     ///   or the timeout is invalid)
     pub fn open_basic_comm_window(
         &mut self,
-        password: u32,
+        password: VerifierPasswordRef<'_>,
         discriminator: u16,
         timeout_secs: u16,
         opener: Option<CommWindowOpener>,
@@ -302,8 +303,8 @@ impl PaseMgr {
     #[allow(clippy::too_many_arguments)]
     pub fn open_comm_window(
         &mut self,
-        verifier: &[u8],
-        salt: &[u8],
+        verifier: VerifierStrRef<'_>,
+        salt: &VerifierSalt,
         count: u32,
         discriminator: u16,
         timeout_secs: u16,
@@ -320,16 +321,15 @@ impl PaseMgr {
 
         let window_expiry = (self.epoch)().add(Duration::from_secs(timeout_secs as _));
 
-        self.comm_window
-            .try_reinit(Maybe::init_some(CommWindow::init(
-                verifier,
-                salt,
-                count,
-                discriminator,
-                opener,
-                window_expiry,
-                self.rand,
-            )))?;
+        self.comm_window.reinit(Maybe::init_some(CommWindow::init(
+            verifier,
+            salt,
+            count,
+            discriminator,
+            opener,
+            window_expiry,
+            self.rand,
+        )));
 
         ctx.matter().notify_mdns();
 
@@ -529,7 +529,7 @@ impl<'a, C: Crypto> Pase<'a, C> {
 
         let rx = exchange.rx()?;
 
-        let mut salt = [0; SALT_LEN];
+        let mut salt = [0; VERIFIER_SALT_LEN];
         let mut count = 0;
 
         let ctx = BasicContextInstance::new(exchange.matter(), exchange.matter());

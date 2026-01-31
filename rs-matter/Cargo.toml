@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["matter", "smart", "smart-home", "IoT", "ESP32"]
 categories = ["embedded", "network-programming"]
 license = "Apache-2.0"
-rust-version = "1.83"
+rust-version = "1.87"
 
 [features]
 default = ["os", "rustcrypto", "log", "openssl", "mbedtls"]

@@ -41,7 +41,7 @@ use alloc::vec;
 
 use ccm::{Ccm, NonceSize, TagSize};
 
-use crypto_bigint::{Limb, NonZero};
+use crypto_bigint::{nlimbs, Limb, NonZero};
 
 use digest::Digest as _;
 
@@ -72,9 +72,9 @@ use x509_cert::spki::{AlgorithmIdentifier, SubjectPublicKeyInfoOwned};
 
 use crate::crypto::{
     CanonEcPointRef, CanonEcScalarRef, CanonPkcPublicKeyRef, CanonPkcSecretKey,
-    CanonPkcSecretKeyRef, CanonUint384Ref, Crypto, CryptoSensitive, CryptoSensitiveRef,
+    CanonPkcSecretKeyRef, CanonUint320Ref, Crypto, CryptoSensitive, CryptoSensitiveRef,
 };
-use crate::error::Error;
+use crate::error::{Error, ErrorCode};
 use crate::utils::cell::RefCell;
 use crate::utils::init::InitMaybeUninit;
 use crate::utils::sync::blocking::Mutex;
@@ -172,8 +172,8 @@ where
     where
         Self: 'a;
 
-    type UInt384<'a>
-        = Uint<{ super::UINT384_CANON_LEN }, 384>
+    type UInt320<'a>
+        = Uint<{ super::UINT320_CANON_LEN }, { nlimbs!(320) }>
     where
         Self: 'a;
 
@@ -235,7 +235,7 @@ where
         Ok(unsafe { ECSecretKey::new(self.singleton_secret_key.borrow().reference()) })
     }
 
-    fn uint384(&self, uint: CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
+    fn uint320(&self, uint: CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
         Ok(unsafe { Uint::new(uint) })
     }
 
@@ -295,16 +295,17 @@ where
 pub struct HkdfSha256(());
 
 impl super::Kdf for HkdfSha256 {
-    fn expand<const N: usize>(
+    fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
-        ikm: &[u8],
+        ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
-        key: &mut CryptoSensitive<N>,
-    ) -> Result<(), ()> {
-        let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm);
+        key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error> {
+        let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm.access());
 
-        hkdf.expand(info, key.access_mut()).map_err(|_| ())
+        hkdf.expand(info, key.access_mut())
+            .map_err(|_| ErrorCode::InvalidData.into())
     }
 }
 
@@ -325,15 +326,15 @@ impl<T> super::PbKdf for Pbkdf2<T>
 where
     T: digest::KeyInit + digest::Update + digest::FixedOutput + Clone + Sync,
 {
-    fn derive<const N: usize>(
+    fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
-        pass: &[u8],
+        pass: CryptoSensitiveRef<'_, PASS_LEN>,
         iter: usize,
         salt: &[u8],
-        key: &mut CryptoSensitive<N>,
+        key: &mut CryptoSensitive<KEY_LEN>,
     ) {
         unwrap!(pbkdf2::pbkdf2::<T>(
-            pass,
+            pass.access(),
             salt,
             iter as u32,
             key.access_mut()

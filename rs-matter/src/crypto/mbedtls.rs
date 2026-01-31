@@ -121,7 +121,7 @@ where
     where
         Self: 'a;
 
-    type UInt384<'a>
+    type UInt320<'a>
         = Mpi
     where
         Self: 'a;
@@ -199,7 +199,7 @@ where
         self.ec_scalar(self.singleton_secret_key.borrow().reference())
     }
 
-    fn uint384(&self, uint: super::CanonUint384Ref<'_>) -> Result<Self::UInt384<'_>, Error> {
+    fn uint320(&self, uint: super::CanonUint320Ref<'_>) -> Result<Self::UInt320<'_>, Error> {
         let mut result = Mpi::new();
 
         result.set(uint.access());
@@ -384,24 +384,24 @@ impl Hkdf {
 }
 
 impl super::Kdf for Hkdf {
-    fn expand<const N: usize>(
+    fn expand<const IKM_LEN: usize, const KEY_LEN: usize>(
         self,
         salt: &[u8],
-        ikm: &[u8],
+        ikm: CryptoSensitiveRef<'_, IKM_LEN>,
         info: &[u8],
-        key: &mut CryptoSensitive<N>,
-    ) -> Result<(), ()> {
+        key: &mut CryptoSensitive<KEY_LEN>,
+    ) -> Result<(), Error> {
         merr!(unsafe {
             esp_mbedtls_sys::mbedtls_hkdf(
                 esp_mbedtls_sys::mbedtls_md_info_from_type(self.md_type),
                 salt.as_ptr(),
                 salt.len(),
-                ikm.as_ptr(),
-                ikm.len(),
+                ikm.access().as_ptr(),
+                IKM_LEN,
                 info.as_ptr(),
                 info.len(),
                 key.access_mut().as_mut_ptr(),
-                N,
+                KEY_LEN,
             )
         })
         .unwrap();
@@ -424,22 +424,22 @@ impl Pbkdf2Hmac {
 }
 
 impl super::PbKdf for Pbkdf2Hmac {
-    fn derive<const N: usize>(
+    fn derive<const PASS_LEN: usize, const KEY_LEN: usize>(
         self,
-        password: &[u8],
+        password: CryptoSensitiveRef<'_, PASS_LEN>,
         iter: usize,
         salt: &[u8],
-        out: &mut CryptoSensitive<N>,
+        out: &mut CryptoSensitive<KEY_LEN>,
     ) {
         unsafe {
             esp_mbedtls_sys::mbedtls_pkcs5_pbkdf2_hmac_ext(
                 self.md_type,
-                password.as_ptr(),
-                password.len(),
+                password.access().as_ptr(),
+                PASS_LEN,
                 salt.as_ptr(),
                 salt.len(),
                 iter as u32,
-                N as _,
+                KEY_LEN as _,
                 out.access_mut().as_mut_ptr(),
             );
         }
