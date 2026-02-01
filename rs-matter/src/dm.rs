@@ -366,7 +366,7 @@ where
             )
             .await?;
 
-        let min_event_number = self.events.peek_next_event_no();
+        let min_event_number = self.events.peek_next_event_no().await;
 
         if primed {
             exchange
@@ -517,7 +517,7 @@ where
                         )
                         .await;
 
-                    let min_event_number = self.events.peek_next_event_no();
+                    let min_event_number = self.events.peek_next_event_no().await;
 
                     match result {
                         Ok(primed) => {

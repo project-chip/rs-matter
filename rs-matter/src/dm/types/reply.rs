@@ -354,7 +354,7 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
         event_filters: Option<TLVArray<'_, EventFilter>>,
         mut tw: T,
     ) -> Result<(), Error> {
-        self.events.for_each(|event| {
+        self.events.for_each(async |event| {
             if event.event_number < self.min_event_number {
                 // This event has already been seen by this subscription, skip
                 return Ok(());
@@ -374,7 +374,7 @@ impl<'a, const NE: usize> EventReader<'a, NE> {
             tw.start_struct(&TLVTag::Anonymous)?;
             event.to_tlv(&TLVTag::Context(EventRespTag::Data as _), &mut tw)?;
             tw.end_container()
-        })
+        }).await
     }
 }
 

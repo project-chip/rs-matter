@@ -15,6 +15,7 @@
  *    limitations under the License.
  */
 
+use embassy_futures::block_on;
 use rs_matter::error::Error;
 use rs_matter::im::EventDataTag;
 use rs_matter::im::EventFilter;
@@ -147,7 +148,7 @@ fn test_subscribe_events() {
                 TestReadReq {
                     ..TestReadReq::event_reqs(&[WILDCARD_PATH.clone()])
                 },
-                TestReportDataMsg::event_reports(&[event_data_path!(ep0_event1, 0, 2, Some(&[1u8;128]))]),
+                TestReportDataMsg::event_reports(&[event_data_path!(ep0_event1, 0, 2, Some(&0x41u8))]),
                 ReplyProcessor::none,
             ),
             &TLVTest::subscription_report(
@@ -232,10 +233,9 @@ fn test_long_read_events() {
         ],
     );
 }
-
 fn push_events(im: &ImEngine, events: &[TestEventData]) {
     for ev in events {
-        im.events
+        block_on(im.events
             .push(ev.path.clone(), ev.priority, |tw| -> Result<(), Error> {
                 if let Some(data) = ev.data {
                     // TODO(events) the public API shouldn't require knowing about the tag index here
@@ -247,6 +247,6 @@ fn push_events(im: &ImEngine, events: &[TestEventData]) {
                 }
                 Ok(())
             })
-            .unwrap();
+        ).unwrap();
     }
 }

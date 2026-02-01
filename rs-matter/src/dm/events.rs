@@ -23,7 +23,7 @@ use crate::tlv::{
 };
 use crate::utils::cell::RefCell;
 use crate::utils::init::{init, Init};
-use crate::utils::sync::blocking::Mutex;
+use crate::utils::sync::{IfMutex};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
@@ -38,7 +38,7 @@ pub struct Events<const N: usize = DEFAULT_BYTES_PER_BUF, M = NoopRawMutex>
 where
     M: RawMutex,
 {
-    state: Mutex<M, RefCell<EventsInner<N>>>,
+    state: IfMutex<M, RefCell<EventsInner<N>>>,
 }
 
 impl<const N: usize, M> Events<N, M>
@@ -48,56 +48,55 @@ where
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            state: Mutex::new(RefCell::new(EventsInner::new())),
+            state: IfMutex::new(RefCell::new(EventsInner::new())),
         }
     }
 
     pub fn init() -> impl Init<Self> {
         init!(Self {
-            state <- Mutex::init(RefCell::init(EventsInner::init())),
+            state <- IfMutex::init(RefCell::init(EventsInner::init())),
         })
     }
 
-    pub fn push(
+    pub async fn push(
         &self,
         path: EventPath,
         priority: u8,
         data: impl FnOnce(&mut EventQueueWriter<N>) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        self.state.lock(|internal| {
-            let mut q = internal.borrow_mut();
-            let event_no = q.next_event_no;
-            q.next_event_no += 1;
-            // TODO(events): actual timestamps
-            let timestamp = EventDataTimestamp::SystemTimestamp(0);
-            let mut tw = q.push(path, event_no, priority, timestamp)?;
-            data(&mut tw)?;
-            tw.end()
-        })
+        let internal = self.state.lock().await;
+
+        let mut q = internal.borrow_mut();
+        let event_no = q.next_event_no;
+        q.next_event_no += 1;
+        // TODO(events): actual timestamps
+        let timestamp = EventDataTimestamp::SystemTimestamp(0);
+        let mut tw = q.push(path, event_no, priority, timestamp)?;
+        data(&mut tw)?;
+        tw.end()
     }
 
     // Iterate over each entry in the queue, aborts if f returns Err
-    pub fn for_each<'a, F>(&'a self, mut f: F) -> Result<(), Error>
+    pub async fn for_each<'a, F>(&'a self, mut f: F) -> Result<(), Error>
     where
-        F: FnMut(&EventData<'_>) -> Result<(), Error>,
+        F: AsyncFnMut(&EventData<'_>) -> Result<(), Error>,
     {
-        self.state.lock(|internal| {
-            let q = internal.borrow();
-            for entry in q.iter() {
-                let entry = entry?;
-                f(&entry)?;
-            }
-            Ok(())
-        })
+        let internal = self.state.lock().await;
+    
+        let q = internal.borrow();
+        for entry in q.iter() {
+            let entry = entry?;
+            f(&entry).await?;
+        }
+        Ok(())
     }
 
     // TODO(events) we can't do it like this, this will miss events when pushing happens after for_each but before we call this
     //              we need to return the last processed one from for_each or something like that
-    pub fn peek_next_event_no(&self) -> u64 {
-        self.state.lock(|internal| {
-            let q = internal.borrow();
-            q.next_event_no
-        })
+    pub async fn peek_next_event_no(&self) -> u64 {
+        let internal = self.state.lock().await;
+        let q = internal.borrow();
+        q.next_event_no
     }
 }
 
